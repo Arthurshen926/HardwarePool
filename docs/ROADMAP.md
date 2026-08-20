@@ -4,7 +4,7 @@ The roadmap uses gates instead of calendar promises. A gate closes only when its
 
 ## Gate 0 — Repository bootstrap
 
-Status: **local Windows validation complete; hosted multi-platform CI pending**.
+Status: **complete**.
 
 Deliverables:
 
@@ -24,10 +24,10 @@ Exit criteria:
 - frontend typecheck/build passes;
 - CI passes on Windows, Linux and macOS.
 
-Windows-local evidence now exists for lockfile generation, the unified CI
-command, all deterministic tests and demos, Browser Mock, and the Tauri desktop
-build/runtime. Gate 0 remains open until the first reviewed commit and hosted
-Windows/Linux/macOS CI complete.
+Windows-local evidence covers lockfile generation, the unified CI command, all
+deterministic tests and demos, Browser Mock, and the Tauri desktop build/runtime.
+Commit `4a658d5` additionally passed hosted Windows/Linux/macOS Rust CI, Linux UI
+build and Linux repository validation on 2026-08-21.
 
 ## Gate 1 — Core contract hardening
 

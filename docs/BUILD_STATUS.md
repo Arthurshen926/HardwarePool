@@ -2,6 +2,7 @@
 
 Created: 2026-08-20
 Last local validation: 2026-08-20 on Windows build 26200, x86_64
+Last hosted validation: 2026-08-21 on GitHub Actions
 
 ## Creation environment
 
@@ -70,10 +71,20 @@ One informational Rust warning remains during Tauri linking: MSVC reports the
 creation of the DLL import library through `linker_messages`. It is not a
 source/Clippy warning and the executable links successfully.
 
+## First hosted validation completed
+
+The repository baseline and CI repair were committed and pushed to the private
+GitHub repository. Commit `4a658d5` completed all required hosted workflows:
+
+- Rust core matrix on Windows, Linux and macOS: **PASS**;
+- Shared UI typecheck and production build on Linux: **PASS**;
+- static repository validation on Linux: **PASS**.
+
+The first hosted run exposed and verified repairs for PowerShell line-ending
+normalization and pnpm-before-cache setup ordering. Gate 0 is complete.
+
 ## Validation still pending
 
-- GitHub repository creation, first commit/push and hosted CI;
-- Windows/Linux/macOS CI comparison;
 - release-mode Tauri bundles, installers, signing and reproducible-build checks;
 - Android generation/build or physical-device tests;
 - Windows Broker/driver build, deployment or Driver Verifier;
@@ -101,6 +112,5 @@ pnpm build
 pnpm tauri dev
 ```
 
-The commands above now pass locally. Gate 0 remains open until the lockfiles and
-repairs receive an explicit first commit and the hosted multi-platform CI in M4
-has evidence.
+The commands above pass locally, and the corresponding Core, UI and static
+checks pass in hosted CI. Gate 0 is closed.

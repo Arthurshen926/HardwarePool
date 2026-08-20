@@ -1,6 +1,6 @@
 # Plan 0001 — Bootstrap validation
 
-Status: active
+Status: complete
 
 ## Objective
 
@@ -16,7 +16,7 @@ Turn the generated bootstrap archive into the first reproducibly building reposi
 
 ### M1 — Toolchain and lockfiles
 
-Local status: **complete except for the explicitly authorized first commit**.
+Status: **complete**.
 
 - install Rust 1.97.1, Node 24 LTS and pnpm 11.5.3;
 - run `cargo xtask doctor`;
@@ -49,13 +49,16 @@ stopping microphone left speaker active.
 
 ### M4 — CI
 
-Status: **pending explicit repository publication/remote authorization**.
+Status: **complete**.
 
 - create GitHub repository;
 - push with explicit review;
 - run Core and UI workflows;
 - fix cross-platform-only errors;
 - make required checks branch-protection candidates.
+
+Evidence: initial commit `d1936d3`; hosted CI repair `4a658d5`; Rust core,
+Shared UI and Static repository checks all passed on the repair commit.
 
 ## Exit criteria
 
