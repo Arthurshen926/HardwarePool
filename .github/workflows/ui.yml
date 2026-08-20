@@ -18,11 +18,12 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
-      - uses: actions/setup-node@v4
+      - uses: pnpm/setup@v1
         with:
-          node-version: 24
-          cache: pnpm
-      - run: corepack enable
-      - run: pnpm install --no-frozen-lockfile
+          version: 11.5.3
+          runtime: node@24
+          cache: true
+          install: false
+      - run: pnpm install --frozen-lockfile
       - run: pnpm --filter @hardwarepool/gui typecheck
       - run: pnpm --filter @hardwarepool/gui build
