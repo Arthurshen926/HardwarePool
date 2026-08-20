@@ -6,7 +6,10 @@ use hardwarepool_core::{
     NodeDescriptor, NodeId, NodeRole, PermissionRequirement, Platform, ProfileId, ProjectionKind,
     StreamRole,
 };
-use hardwarepool_runtime::NodeRuntime;
+use hardwarepool_runtime::{
+    ActualAudioStreamParameters, HostOperation, HostOperationCompletion, HostOperationOutput,
+    NodeRuntime, OperationStatus, OperationUpdate, RuntimeEventKind,
+};
 
 fn windows_node() -> NodeDescriptor {
     NodeDescriptor::new(
@@ -143,4 +146,62 @@ fn peer_loss_marks_active_binding_offline() {
             .state,
         BindingState::Offline
     );
+}
+
+#[test]
+fn host_completion_enters_runtime_through_ordered_events() {
+    let mut runtime = NodeRuntime::new(windows_node()).expect("runtime");
+    let session_id = hardwarepool_core::SessionId::new();
+    let capability_id = CapabilityId::new();
+    let operation_id = runtime
+        .begin_host_operation(HostOperation::StartAudioStream {
+            session_id,
+            capability_id,
+            projection_kind: ProjectionKind::ApplicationStream,
+            requested_format: AudioFormat::microphone_baseline(),
+        })
+        .expect("begin");
+
+    let update = runtime
+        .complete_host_operation(
+            operation_id,
+            HostOperationCompletion::Succeeded {
+                output: HostOperationOutput::AudioStreamStarted {
+                    actual: ActualAudioStreamParameters {
+                        format: AudioFormat::microphone_baseline(),
+                        frames_per_burst: Some(192),
+                        buffer_capacity_frames: 960,
+                    },
+                },
+            },
+        )
+        .expect("complete");
+    assert_eq!(update, OperationUpdate::Applied(OperationStatus::Completed));
+
+    let events_before_late_cancel = runtime.snapshot().events.len();
+    assert_eq!(
+        runtime
+            .cancel_host_operation(operation_id)
+            .expect("late cancel"),
+        OperationUpdate::AlreadyTerminal(OperationStatus::Completed)
+    );
+
+    let snapshot = runtime.snapshot();
+    assert_eq!(snapshot.operations.len(), 1);
+    assert_eq!(snapshot.operations[0].status, OperationStatus::Completed);
+    assert_eq!(snapshot.events.len(), events_before_late_cancel);
+    assert!(matches!(
+        snapshot.events[snapshot.events.len() - 2].kind,
+        RuntimeEventKind::OperationChanged {
+            operation_id: id,
+            status: OperationStatus::Pending,
+        } if id == operation_id
+    ));
+    assert!(matches!(
+        snapshot.events[snapshot.events.len() - 1].kind,
+        RuntimeEventKind::OperationChanged {
+            operation_id: id,
+            status: OperationStatus::Completed,
+        } if id == operation_id
+    ));
 }

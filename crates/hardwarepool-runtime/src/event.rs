@@ -3,6 +3,8 @@ use hardwarepool_core::{
 };
 use serde::{Deserialize, Serialize};
 
+use crate::{OperationId, OperationStatus};
+
 /// Structured, sanitized Runtime event suitable for UI and diagnostics.
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 pub struct RuntimeEvent {
@@ -33,5 +35,9 @@ pub enum RuntimeEventKind {
         capability_id: CapabilityId,
         projection_kind: ProjectionKind,
         state: BindingState,
+    },
+    OperationChanged {
+        operation_id: OperationId,
+        status: OperationStatus,
     },
 }

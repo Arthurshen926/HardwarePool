@@ -6,7 +6,11 @@ use hardwarepool_core::{
 };
 use serde::{Deserialize, Serialize};
 
-use crate::{PeerSnapshot, RuntimeError, RuntimeEvent, RuntimeEventKind, RuntimeSnapshot};
+use crate::{
+    HostOperation, HostOperationCompletion, OperationId, OperationRecord, OperationRegistry,
+    OperationStatus, OperationUpdate, PeerSnapshot, RuntimeError, RuntimeEvent, RuntimeEventKind,
+    RuntimeSnapshot,
+};
 
 const MAX_RETAINED_EVENTS: usize = 256;
 const DEMO_LEASE_DURATION_MS: u64 = 60 * 60 * 1_000;
@@ -24,6 +28,7 @@ pub struct NodeRuntime {
     local_node: NodeDescriptor,
     peers: BTreeMap<NodeId, PeerRecord>,
     sessions: BTreeMap<SessionId, Session>,
+    operations: OperationRegistry,
     events: VecDeque<RuntimeEvent>,
     next_event_sequence: u64,
 }
@@ -35,6 +40,7 @@ impl NodeRuntime {
             local_node,
             peers: BTreeMap::new(),
             sessions: BTreeMap::new(),
+            operations: OperationRegistry::default(),
             events: VecDeque::new(),
             next_event_sequence: 1,
         })
@@ -241,6 +247,52 @@ impl NodeRuntime {
         Ok(())
     }
 
+    /// Registers asynchronous host work without exposing mutable Core state to callbacks.
+    pub fn begin_host_operation(
+        &mut self,
+        operation: HostOperation,
+    ) -> Result<OperationId, RuntimeError> {
+        let id = self.operations.begin(operation)?;
+        self.emit(RuntimeEventKind::OperationChanged {
+            operation_id: id,
+            status: OperationStatus::Pending,
+        });
+        Ok(id)
+    }
+
+    /// Applies a typed host completion. The first terminal transition wins a race.
+    pub fn complete_host_operation(
+        &mut self,
+        id: OperationId,
+        completion: HostOperationCompletion,
+    ) -> Result<OperationUpdate, RuntimeError> {
+        let update = self.operations.complete(id, completion)?;
+        self.emit_operation_update(id, update);
+        Ok(update)
+    }
+
+    pub fn cancel_host_operation(
+        &mut self,
+        id: OperationId,
+    ) -> Result<OperationUpdate, RuntimeError> {
+        let update = self.operations.cancel(id)?;
+        self.emit_operation_update(id, update);
+        Ok(update)
+    }
+
+    pub fn dispose_host_operation(
+        &mut self,
+        id: OperationId,
+    ) -> Result<OperationUpdate, RuntimeError> {
+        let update = self.operations.dispose(id)?;
+        self.emit_operation_update(id, update);
+        Ok(update)
+    }
+
+    pub fn host_operation(&self, id: OperationId) -> Result<&OperationRecord, RuntimeError> {
+        self.operations.record(id)
+    }
+
     #[must_use]
     pub fn snapshot(&self) -> RuntimeSnapshot {
         RuntimeSnapshot {
@@ -255,6 +307,7 @@ impl NodeRuntime {
                 })
                 .collect(),
             sessions: self.sessions.values().cloned().collect(),
+            operations: self.operations.records().cloned().collect(),
             events: self.events.iter().cloned().collect(),
         }
     }
@@ -287,6 +340,15 @@ impl NodeRuntime {
             state,
         });
         Ok(())
+    }
+
+    fn emit_operation_update(&mut self, id: OperationId, update: OperationUpdate) {
+        if let OperationUpdate::Applied(status) = update {
+            self.emit(RuntimeEventKind::OperationChanged {
+                operation_id: id,
+                status,
+            });
+        }
     }
 
     fn emit(&mut self, kind: RuntimeEventKind) {
