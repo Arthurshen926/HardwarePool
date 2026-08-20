@@ -83,6 +83,15 @@ GitHub repository. Commit `4a658d5` completed all required hosted workflows:
 The first hosted run exposed and verified repairs for PowerShell line-ending
 normalization and pnpm-before-cache setup ordering. Gate 0 is complete.
 
+## Gate 1 progress
+
+`HP-CORE-003` added the bounded host-operation completion/cancellation seam in
+commit `d1dd746`. It includes opaque process-local IDs, typed audio start/stop
+requests and actual parameters, pending/completed/cancelled/disposed states,
+bounded pending and terminal retention, Runtime events/snapshots, and race
+tests. Local CI and hosted Windows/Linux/macOS Rust CI passed. This is a
+deterministic platform callback boundary; it does not perform real audio I/O.
+
 ## Validation still pending
 
 - release-mode Tauri bundles, installers, signing and reproducible-build checks;

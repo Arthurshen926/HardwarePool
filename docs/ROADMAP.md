@@ -34,7 +34,8 @@ build and Linux repository validation on 2026-08-21.
 - property/state-transition tests;
 - stable error codes;
 - Profile validation registry;
-- operation completion/cancellation seam;
+- operation completion/cancellation seam: **complete** (`HP-CORE-003`,
+  commit `d1dd746`);
 - golden Protobuf fixtures;
 - structured diagnostics format;
 - architecture dependency checks.

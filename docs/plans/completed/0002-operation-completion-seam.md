@@ -1,6 +1,6 @@
 # HP-CORE-003 — Operation completion and cancellation seam
 
-Status: active  
+Status: complete  
 Owner: Codex  
 Created: 2026-08-21  
 Requirements: `NFR-STAB-002`, architecture section 9
@@ -101,11 +101,20 @@ None.
 
 Implemented:
 
-- pending
+- opaque process-local operation IDs;
+- typed audio stream start/stop requests, actual parameters and completion
+  results;
+- pending/completed/cancelled/disposed transitions with independent pending and
+  retained-terminal bounds;
+- deterministic first-terminal-wins race handling;
+- Runtime operation events, lookup and snapshots.
 
 Validation:
 
-- pending
+- `cargo xtask ci`: pass, 34 Rust unit/integration tests plus doc tests;
+- `cargo check -p hardwarepool-gui --all-targets`: pass;
+- hosted Rust core matrix on Windows, Ubuntu and macOS: pass;
+- hosted Shared UI and Static repository checks: pass.
 
 Not validated:
 
