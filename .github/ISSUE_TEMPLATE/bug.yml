@@ -1,0 +1,40 @@
+name: Bug report
+description: Reproducible incorrect behavior
+labels: ["type:bug", "status:needs-triage"]
+body:
+  - type: textarea
+    id: observed
+    attributes:
+      label: Observed behavior
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Minimal reproduction
+    validations:
+      required: true
+  - type: textarea
+    id: environment
+    attributes:
+      label: Environment
+      description: Commit, OS/build, architecture, app/driver/APK versions, network and audio configuration.
+    validations:
+      required: true
+  - type: textarea
+    id: evidence
+    attributes:
+      label: Logs, metrics, WAV files or crash evidence
+  - type: dropdown
+    id: risk
+    attributes:
+      label: Does this involve a driver, microphone permission, signing key or production release?
+      options: ["No", "Yes"]
+    validations:
+      required: true

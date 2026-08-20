@@ -1,0 +1,16 @@
+{
+  "name": "hardwarepool-workspace",
+  "version": "0.1.0",
+  "private": true,
+  "packageManager": "pnpm@11.5.3",
+  "engines": {
+    "node": ">=24 <27"
+  },
+  "scripts": {
+    "dev": "pnpm --filter @hardwarepool/gui dev",
+    "build": "pnpm --filter @hardwarepool/gui build",
+    "typecheck": "pnpm --filter @hardwarepool/gui typecheck",
+    "lint": "pnpm --filter @hardwarepool/gui lint",
+    "tauri": "pnpm --filter @hardwarepool/gui tauri"
+  }
+}

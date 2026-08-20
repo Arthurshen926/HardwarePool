@@ -1,0 +1,12 @@
+[package]
+name = "hardwarepool-runtime"
+description = "Deterministic OS-independent orchestration runtime for HardwarePool."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[dependencies]
+hardwarepool-core = { path = "../hardwarepool-core" }
+serde.workspace = true
+thiserror.workspace = true

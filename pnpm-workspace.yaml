@@ -1,0 +1,7 @@
+packages:
+  - "apps/gui"
+
+allowBuilds:
+  esbuild: set this to true or false
+
+minimumReleaseAge: 1440

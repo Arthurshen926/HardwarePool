@@ -1,0 +1,11 @@
+[package]
+name = "hardwarepool-testkit"
+description = "Deterministic fixtures and demo lab for HardwarePool."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[dependencies]
+hardwarepool-core = { path = "../hardwarepool-core" }
+hardwarepool-runtime = { path = "../hardwarepool-runtime" }

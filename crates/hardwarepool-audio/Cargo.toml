@@ -1,0 +1,12 @@
+[package]
+name = "hardwarepool-audio"
+description = "OS-independent audio frame, buffering and drift primitives for HardwarePool."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[dependencies]
+hardwarepool-core = { path = "../hardwarepool-core" }
+serde.workspace = true
+thiserror.workspace = true

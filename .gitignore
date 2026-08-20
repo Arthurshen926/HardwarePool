@@ -1,0 +1,49 @@
+# Rust
+/target/
+**/*.rs.bk
+
+# JavaScript
+node_modules/
+.pnpm-store/
+apps/gui/dist/
+apps/gui/.vite/
+
+# Python
+__pycache__/
+*.py[cod]
+
+# Tauri / generated mobile projects
+apps/gui/src-tauri/gen/
+apps/gui/src-tauri/target/
+
+# IDE and OS
+.idea/
+.vscode/settings.json
+.vscode/*.local.json
+.DS_Store
+Thumbs.db
+*.swp
+
+# Local configuration and secrets
+.env
+.env.*
+!.env.example
+*.pfx
+*.p12
+*.cer
+*.key
+*.pem
+*.snk
+*.cat
+
+# Driver and test output
+artifacts/
+test-results/
+*.dmp
+*.etl
+*.evtx
+*.log
+
+# Local agent state
+.codex/
+.agent-cache/

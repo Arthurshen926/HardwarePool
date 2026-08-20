@@ -1,0 +1,126 @@
+syntax = "proto3";
+
+package hardwarepool.v1;
+
+import "hardwarepool/v1/capability.proto";
+import "hardwarepool/v1/common.proto";
+
+enum ProjectionCommandAction {
+  PROJECTION_COMMAND_ACTION_UNSPECIFIED = 0;
+  PROJECTION_COMMAND_ACTION_START = 1;
+  PROJECTION_COMMAND_ACTION_STOP = 2;
+  PROJECTION_COMMAND_ACTION_SUSPEND = 3;
+  PROJECTION_COMMAND_ACTION_RESUME = 4;
+}
+
+enum BindingState {
+  BINDING_STATE_UNSPECIFIED = 0;
+  BINDING_STATE_REQUESTED = 1;
+  BINDING_STATE_AUTHORIZED = 2;
+  BINDING_STATE_NEGOTIATED = 3;
+  BINDING_STATE_STARTING = 4;
+  BINDING_STATE_ACTIVE = 5;
+  BINDING_STATE_SUSPENDED = 6;
+  BINDING_STATE_STOPPING = 7;
+  BINDING_STATE_STOPPED = 8;
+  BINDING_STATE_REJECTED = 9;
+  BINDING_STATE_OFFLINE = 10;
+  BINDING_STATE_FAILED = 11;
+}
+
+message Hello {
+  NodeDescriptor node = 1;
+  repeated uint32 supported_protocol_majors = 2;
+}
+
+message CapabilityList {
+  string node_id = 1;
+  repeated CapabilityDescriptor capabilities = 2;
+}
+
+message OpenSessionRequest {
+  string local_node_id = 1;
+  string remote_node_id = 2;
+}
+
+message OpenSessionResponse {
+  bool accepted = 1;
+  string session_id = 2;
+  string reason = 3;
+}
+
+message ProjectionRequest {
+  string capability_id = 1;
+  string projection_id = 2;
+  ProjectionKind projection_kind = 3;
+}
+
+message ProjectionAuthorization {
+  string capability_id = 1;
+  bool granted = 2;
+  uint64 lease_expires_at_ms = 3;
+  string reason = 4;
+}
+
+message ProjectionNegotiation {
+  string capability_id = 1;
+  AudioFormat selected_audio_format = 2;
+  AudioQosMode selected_qos_mode = 3;
+}
+
+message ProjectionCommand {
+  string capability_id = 1;
+  ProjectionCommandAction action = 2;
+}
+
+message ProjectionStatus {
+  string capability_id = 1;
+  string projection_id = 2;
+  BindingState state = 3;
+  string error_code = 4;
+  string detail = 5;
+}
+
+message StreamStats {
+  string stream_id = 1;
+  uint64 frames = 2;
+  uint64 lost_frames = 3;
+  uint64 reordered_frames = 4;
+  uint64 underruns = 5;
+  uint64 overruns = 6;
+  double estimated_jitter_ms = 7;
+  double estimated_latency_ms = 8;
+  double buffer_fill_ms = 9;
+}
+
+message ErrorMessage {
+  string code = 1;
+  string category = 2;
+  bool retryable = 3;
+  string detail = 4;
+  string related_id = 5;
+}
+
+message Envelope {
+  uint32 protocol_major = 1;
+  uint32 protocol_minor = 2;
+  string message_id = 3;
+  string session_id = 4;
+
+  oneof payload {
+    Hello hello = 10;
+    CapabilityList capability_list = 11;
+    OpenSessionRequest open_session_request = 12;
+    OpenSessionResponse open_session_response = 13;
+    ProjectionRequest projection_request = 14;
+    ProjectionAuthorization projection_authorization = 15;
+    ProjectionNegotiation projection_negotiation = 16;
+    ProjectionCommand projection_command = 17;
+    ProjectionStatus projection_status = 18;
+    StreamStats stream_stats = 19;
+    ErrorMessage error = 20;
+  }
+
+  reserved 5 to 9;
+  reserved 21 to 40;
+}

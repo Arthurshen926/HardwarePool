@@ -1,0 +1,40 @@
+{
+  "backendMode": "browser_mock",
+  "schemaVersion": 1,
+  "projectVersion": "0.1.0-bootstrap",
+  "localNodeName": "HP OmniBook Ultra Flip 14",
+  "peers": [
+    {
+      "id": "00000000-0000-4000-8000-000000000002",
+      "displayName": "vivo X200 Pro mini",
+      "platform": "android",
+      "platformVersion": "Build not inventoried",
+      "online": true
+    }
+  ],
+  "capabilities": [
+    {
+      "id": "00000000-0000-4000-8000-000000000101",
+      "displayName": "Internal Microphone",
+      "kind": "audio_capture",
+      "profile": "hardwarepool.audio.capture/1",
+      "permissionRequirement": "foreground_service",
+      "availability": "permission_required",
+      "projectionKind": "system_capture_endpoint",
+      "bindingState": "not_mapped",
+      "active": false,
+      "formatSummary": "48 kHz · PCM i16 LE · Mono · 10 ms",
+      "qosModes": ["voice_interactive", "raw_lan"],
+      "metrics": {
+        "estimatedLatencyMs": null,
+        "packetLossPercent": null,
+        "bufferFillMs": null,
+        "underruns": 0,
+        "overruns": 0,
+        "simulated": true
+      }
+    }
+  ],
+  "events": [],
+  "warnings": ["Example only; no real audio path is active."]
+}

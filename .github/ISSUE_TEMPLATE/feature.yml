@@ -1,0 +1,54 @@
+name: Feature task
+description: A scoped, testable implementation task
+labels: ["type:feature", "status:needs-triage"]
+body:
+  - type: input
+    id: task
+    attributes:
+      label: Task ID
+      placeholder: HP-CORE-001
+    validations:
+      required: true
+  - type: textarea
+    id: goal
+    attributes:
+      label: Goal
+      description: State one observable outcome.
+    validations:
+      required: true
+  - type: input
+    id: requirements
+    attributes:
+      label: Requirement IDs / source documents
+      placeholder: FR-AUD-001, docs/AUDIO_PROFILE.md
+    validations:
+      required: true
+  - type: textarea
+    id: scope
+    attributes:
+      label: In scope
+    validations:
+      required: true
+  - type: textarea
+    id: non_scope
+    attributes:
+      label: Out of scope
+    validations:
+      required: true
+  - type: textarea
+    id: acceptance
+    attributes:
+      label: Acceptance criteria
+      description: Use independently verifiable statements.
+    validations:
+      required: true
+  - type: textarea
+    id: tests
+    attributes:
+      label: Required tests and evidence
+    validations:
+      required: true
+  - type: textarea
+    id: safety
+    attributes:
+      label: Safety / permission constraints
