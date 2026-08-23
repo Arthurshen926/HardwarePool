@@ -1,0 +1,106 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://capyio.dev/schemas/adapter-manifest-v1.json",
+  "title": "CapyIO Adapter Manifest v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "id",
+    "name",
+    "version",
+    "control_protocol",
+    "kind",
+    "deployment_modes",
+    "platforms",
+    "entrypoints",
+    "capability_templates",
+    "integration_mode",
+    "license"
+  ],
+  "properties": {
+    "schema_version": { "const": 1 },
+    "id": { "type": "string", "pattern": "^[a-z0-9]+(?:[.-][a-z0-9]+)+$" },
+    "name": { "$ref": "#/$defs/nonEmpty" },
+    "version": { "$ref": "#/$defs/nonEmpty" },
+    "control_protocol": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["major", "minor"],
+      "properties": {
+        "major": { "const": 1 },
+        "minor": { "type": "integer", "minimum": 0, "maximum": 65535 }
+      }
+    },
+    "kind": {
+      "enum": ["physical", "projection", "connection", "composite", "export", "panel", "mock"]
+    },
+    "deployment_modes": {
+      "type": "array",
+      "minItems": 1,
+      "uniqueItems": true,
+      "contains": { "const": "sidecar" },
+      "items": { "enum": ["in_process", "sidecar", "external_service", "driver_backed"] }
+    },
+    "platforms": {
+      "type": "array",
+      "minItems": 1,
+      "uniqueItems": true,
+      "items": { "$ref": "#/$defs/nonEmpty" }
+    },
+    "entrypoints": {
+      "type": "object",
+      "minProperties": 1,
+      "additionalProperties": { "$ref": "#/$defs/nonEmpty" }
+    },
+    "permissions": {
+      "type": "array",
+      "uniqueItems": true,
+      "items": { "$ref": "#/$defs/nonEmpty" }
+    },
+    "capability_templates": {
+      "type": "array",
+      "minItems": 1,
+      "items": { "$ref": "#/$defs/capabilityTemplate" }
+    },
+    "integration_mode": { "$ref": "#/$defs/nonEmpty" },
+    "license": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["spdx", "notice"],
+      "properties": {
+        "spdx": { "$ref": "#/$defs/nonEmpty" },
+        "notice": { "$ref": "#/$defs/nonEmpty" }
+      }
+    },
+    "upstream": { "type": ["string", "null"] }
+  },
+  "$defs": {
+    "nonEmpty": { "type": "string", "minLength": 1 },
+    "capabilityTemplate": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "class", "ports"],
+      "properties": {
+        "name": { "$ref": "#/$defs/nonEmpty" },
+        "class": { "$ref": "#/$defs/nonEmpty" },
+        "ports": {
+          "type": "array",
+          "minItems": 1,
+          "items": { "$ref": "#/$defs/portTemplate" }
+        }
+      }
+    },
+    "portTemplate": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "direction", "profile", "profile_major"],
+      "properties": {
+        "name": { "$ref": "#/$defs/nonEmpty" },
+        "direction": { "enum": ["source", "sink", "control"] },
+        "profile": { "$ref": "#/$defs/nonEmpty" },
+        "profile_major": { "type": "integer", "minimum": 1, "maximum": 65535 }
+      }
+    }
+  }
+}

@@ -2,10 +2,9 @@ use std::collections::{BTreeMap, BTreeSet, btree_map::Entry};
 
 use serde::{Deserialize, Serialize};
 
-use crate::{AudioBundleSpec, AudioCapabilitySpec, CapabilityId, CoreError, NodeId};
+use crate::{AdapterInstanceId, CapabilityId, CoreError, NodeId, PortId, RouteBackend};
 
-/// Host operating-system family.
-#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Platform {
     Windows,
@@ -17,18 +16,149 @@ pub enum Platform {
     Unknown(String),
 }
 
-/// Roles a Node can perform in the capability graph.
 #[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum NodeRole {
-    Provider,
-    Consumer,
-    Duplex,
-    Lightweight,
+pub struct ProtocolVersion {
+    pub major: u16,
+    pub minor: u16,
 }
 
-/// Versioned semantic contract for one class of capability.
+impl ProtocolVersion {
+    #[must_use]
+    pub const fn new(major: u16, minor: u16) -> Self {
+        Self { major, minor }
+    }
+
+    pub fn validate(self) -> Result<(), CoreError> {
+        if self.major == 0 {
+            return Err(CoreError::InvalidNode(
+                "protocol major must be greater than zero".to_owned(),
+            ));
+        }
+        Ok(())
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum OnlineState {
+    Online,
+    Offline,
+}
+
+#[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum AdapterDeploymentMode {
+    InProcess,
+    Sidecar,
+    ExternalService,
+    DriverBacked,
+}
+
+#[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum AdapterState {
+    Discovered,
+    Initializing,
+    Ready,
+    Degraded,
+    Failed,
+    Stopped,
+}
+
+#[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum AdapterHealth {
+    Unknown,
+    Healthy,
+    Degraded,
+    Unhealthy,
+}
+
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub struct AdapterInstanceDescriptor {
+    pub id: AdapterInstanceId,
+    pub adapter_type: String,
+    pub display_name: String,
+    pub deployment_mode: AdapterDeploymentMode,
+    pub version: String,
+    pub state: AdapterState,
+    pub health: AdapterHealth,
+    pub owned_capabilities: BTreeSet<CapabilityId>,
+    pub supported_route_modes: BTreeSet<RouteBackend>,
+}
+
+impl AdapterInstanceDescriptor {
+    pub fn validate(&self) -> Result<(), CoreError> {
+        if self.adapter_type.trim().is_empty() {
+            return Err(CoreError::InvalidAdapter {
+                adapter_id: self.id,
+                reason: "adapter type cannot be empty".to_owned(),
+            });
+        }
+        if self.display_name.trim().is_empty() || self.version.trim().is_empty() {
+            return Err(CoreError::InvalidAdapter {
+                adapter_id: self.id,
+                reason: "display name and version cannot be empty".to_owned(),
+            });
+        }
+        if self.supported_route_modes.is_empty() {
+            return Err(CoreError::InvalidAdapter {
+                adapter_id: self.id,
+                reason: "at least one Route backend must be declared".to_owned(),
+            });
+        }
+        Ok(())
+    }
+}
+
+#[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum CapabilityClass {
+    Microphone,
+    Speaker,
+    Camera,
+    Display,
+    Keyboard,
+    Pointer,
+    Touchscreen,
+    Gamepad,
+    Imu,
+    Gnss,
+    SensorSuite,
+    Haptics,
+    Recorder,
+    Panel,
+    Bridge,
+    Custom(String),
+}
+
+#[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Availability {
+    Available,
+    Busy,
+    PermissionRequired,
+    Offline,
+}
+
+#[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum PermissionRequirement {
+    None,
+    UserConfirmation,
+    ForegroundService,
+    Privileged,
+}
+
+#[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum PortDirection {
+    Source,
+    Sink,
+    Control,
+}
+
+#[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd, Serialize, Deserialize)]
 pub struct ProfileId {
     pub name: String,
     pub major: u16,
@@ -44,250 +174,191 @@ impl ProfileId {
     }
 
     #[must_use]
-    pub fn audio_capture_v1() -> Self {
-        Self::new("capyio.audio.capture", 1)
+    pub fn audio_frames_v1() -> Self {
+        Self::new("capyio.audio.frames", 1)
     }
 
     #[must_use]
-    pub fn audio_render_v1() -> Self {
-        Self::new("capyio.audio.render", 1)
+    pub fn video_frames_v1() -> Self {
+        Self::new("capyio.video.frames", 1)
     }
 
     #[must_use]
-    pub fn audio_duplex_bundle_v1() -> Self {
-        Self::new("capyio.audio.duplex_bundle", 1)
+    pub fn imu_samples_v1() -> Self {
+        Self::new("capyio.motion.imu-samples", 1)
     }
 
     pub fn validate(&self) -> Result<(), CoreError> {
-        if self.name.trim().is_empty() {
-            return Err(CoreError::InvalidProfile(
-                "profile name cannot be empty".to_owned(),
-            ));
-        }
-        if self.major == 0 {
-            return Err(CoreError::InvalidProfile(
-                "profile major version must be greater than zero".to_owned(),
-            ));
-        }
-        Ok(())
-    }
-}
-
-/// Broad capability class used for indexing and UI; typed details remain authoritative.
-#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum CapabilityKind {
-    AudioCapture,
-    AudioRender,
-    AudioDuplexBundle,
-    Custom(String),
-}
-
-/// Physical/API role on the provider Node.
-#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum LocalRole {
-    Capture,
-    Render,
-    Control,
-    Compute,
-    Composite,
-}
-
-/// Direction of data relative to the provider Node.
-#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum StreamRole {
-    Producer,
-    Consumer,
-    Duplex,
-    None,
-}
-
-/// Local representation available on a consumer.
-#[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum ProjectionKind {
-    ApplicationStream,
-    SystemCaptureEndpoint,
-    SystemRenderEndpoint,
-    VirtualInputDevice,
-    VirtualDisplay,
-    RemoteComputeService,
-}
-
-/// Provider-side consent/lifecycle requirement.
-#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum PermissionRequirement {
-    None,
-    UserConfirmation,
-    ForegroundService,
-    Privileged,
-}
-
-/// Current static availability advertised by a provider.
-#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum Availability {
-    Available,
-    Busy,
-    PermissionRequired,
-    Offline,
-}
-
-/// Extension payload used when Core does not have a typed Profile model.
-#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
-pub struct OpaqueCapabilitySpec {
-    pub schema_uri: String,
-    pub metadata: BTreeMap<String, String>,
-}
-
-/// Typed details attached to a Capability.
-#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
-#[serde(tag = "type", content = "value", rename_all = "snake_case")]
-pub enum CapabilityDetails {
-    Audio(AudioCapabilitySpec),
-    AudioDuplexBundle(AudioBundleSpec),
-    Opaque(OpaqueCapabilitySpec),
-}
-
-/// Machine-readable description of one independently authorized ability.
-#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
-pub struct CapabilityDescriptor {
-    pub id: CapabilityId,
-    pub display_name: String,
-    pub profile: ProfileId,
-    pub kind: CapabilityKind,
-    pub local_role: LocalRole,
-    pub stream_role: StreamRole,
-    pub supported_projections: BTreeSet<ProjectionKind>,
-    pub permission_requirement: PermissionRequirement,
-    pub availability: Availability,
-    pub details: CapabilityDetails,
-}
-
-impl CapabilityDescriptor {
-    pub fn validate(&self) -> Result<(), CoreError> {
-        self.profile.validate()?;
-
-        if self.display_name.trim().is_empty() {
-            return Err(self.invalid("display name cannot be empty"));
-        }
-
-        match (&self.kind, &self.details) {
-            (CapabilityKind::AudioCapture, CapabilityDetails::Audio(spec)) => {
-                self.validate_profile("capyio.audio.capture")?;
-                if self.local_role != LocalRole::Capture || self.stream_role != StreamRole::Producer
-                {
-                    return Err(self.invalid(
-                        "audio capture requires local_role=capture and stream_role=producer",
-                    ));
-                }
-                if !self
-                    .supported_projections
-                    .contains(&ProjectionKind::ApplicationStream)
-                    && !self
-                        .supported_projections
-                        .contains(&ProjectionKind::SystemCaptureEndpoint)
-                {
-                    return Err(self.invalid(
-                        "audio capture requires an application or system capture projection",
-                    ));
-                }
-                spec.validate()?;
-            }
-            (CapabilityKind::AudioRender, CapabilityDetails::Audio(spec)) => {
-                self.validate_profile("capyio.audio.render")?;
-                if self.local_role != LocalRole::Render || self.stream_role != StreamRole::Consumer
-                {
-                    return Err(self.invalid(
-                        "audio render requires local_role=render and stream_role=consumer",
-                    ));
-                }
-                if !self
-                    .supported_projections
-                    .contains(&ProjectionKind::ApplicationStream)
-                    && !self
-                        .supported_projections
-                        .contains(&ProjectionKind::SystemRenderEndpoint)
-                {
-                    return Err(self.invalid(
-                        "audio render requires an application or system render projection",
-                    ));
-                }
-                spec.validate()?;
-            }
-            (CapabilityKind::AudioDuplexBundle, CapabilityDetails::AudioDuplexBundle(bundle)) => {
-                self.validate_profile("capyio.audio.duplex_bundle")?;
-                if self.local_role != LocalRole::Composite || self.stream_role != StreamRole::None {
-                    return Err(self.invalid(
-                        "audio duplex bundle requires local_role=composite and stream_role=none",
-                    ));
-                }
-                if bundle.capture_capability_id == bundle.render_capability_id {
-                    return Err(
-                        self.invalid("duplex bundle capture and render members must be different")
-                    );
-                }
-                if !self.supported_projections.is_empty() {
-                    return Err(self.invalid(
-                        "duplex bundle is relationship metadata and must not advertise projections",
-                    ));
-                }
-            }
-            (CapabilityKind::Custom(_), CapabilityDetails::Opaque(spec)) => {
-                if spec.schema_uri.trim().is_empty() {
-                    return Err(self.invalid("opaque capability requires a schema URI"));
-                }
-            }
-            _ => {
-                return Err(self.invalid("capability kind does not match typed details"));
-            }
-        }
-
-        Ok(())
-    }
-
-    #[must_use]
-    pub fn supports_projection(&self, projection: ProjectionKind) -> bool {
-        self.supported_projections.contains(&projection)
-    }
-
-    #[must_use]
-    pub fn audio_spec(&self) -> Option<&AudioCapabilitySpec> {
-        match &self.details {
-            CapabilityDetails::Audio(spec) => Some(spec),
-            _ => None,
-        }
-    }
-
-    fn validate_profile(&self, expected_name: &str) -> Result<(), CoreError> {
-        if self.profile.name != expected_name || self.profile.major != 1 {
-            return Err(self.invalid(format!(
-                "expected profile {expected_name}/1, got {}/{}",
-                self.profile.name, self.profile.major
+        if self.name.trim().is_empty() || self.major == 0 {
+            return Err(CoreError::InvalidProfile(format!(
+                "profile must have a non-empty name and positive major: {}/{}",
+                self.name, self.major
             )));
         }
         Ok(())
     }
+}
 
-    fn invalid(&self, reason: impl Into<String>) -> CoreError {
-        CoreError::InvalidCapability {
-            capability_id: self.id,
-            reason: reason.into(),
+#[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd, Serialize, Deserialize)]
+pub struct FormatDescriptor {
+    pub id: String,
+    pub parameters: BTreeMap<String, String>,
+}
+
+impl FormatDescriptor {
+    #[must_use]
+    pub fn new(id: impl Into<String>) -> Self {
+        Self {
+            id: id.into(),
+            parameters: BTreeMap::new(),
+        }
+    }
+
+    pub fn validate(&self) -> Result<(), CoreError> {
+        if self.id.trim().is_empty() {
+            return Err(CoreError::InvalidFormat(
+                "format descriptor ID cannot be empty".to_owned(),
+            ));
+        }
+        if self.parameters.keys().any(|key| key.trim().is_empty()) {
+            return Err(CoreError::InvalidFormat(
+                "format parameter keys cannot be empty".to_owned(),
+            ));
+        }
+        Ok(())
+    }
+}
+
+#[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum QosMode {
+    Basic,
+    Interactive,
+    Measurement,
+    Custom(String),
+}
+
+#[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum InteroperabilityMode {
+    StandardPort,
+    AdapterManaged,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub struct PortDescriptor {
+    pub id: PortId,
+    pub capability_id: CapabilityId,
+    pub display_name: String,
+    pub direction: PortDirection,
+    pub profile: ProfileId,
+    pub schema_id: Option<String>,
+    pub formats: Vec<FormatDescriptor>,
+    pub qos_modes: BTreeSet<QosMode>,
+    pub clock_domain: Option<String>,
+    pub availability: Availability,
+    pub permission_requirement: PermissionRequirement,
+    pub interoperability_mode: InteroperabilityMode,
+}
+
+impl PortDescriptor {
+    pub fn validate(&self) -> Result<(), CoreError> {
+        self.profile.validate()?;
+        if self.display_name.trim().is_empty() {
+            return Err(CoreError::InvalidPort {
+                port_id: self.id,
+                reason: "display name cannot be empty".to_owned(),
+            });
+        }
+        if self
+            .schema_id
+            .as_ref()
+            .is_some_and(|schema| schema.trim().is_empty())
+        {
+            return Err(CoreError::InvalidPort {
+                port_id: self.id,
+                reason: "schema ID cannot be empty when present".to_owned(),
+            });
+        }
+        for format in &self.formats {
+            format.validate()?;
+        }
+        if self.qos_modes.is_empty() {
+            return Err(CoreError::InvalidPort {
+                port_id: self.id,
+                reason: "at least one QoS mode must be declared".to_owned(),
+            });
+        }
+        Ok(())
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub struct CapabilityDescriptor {
+    pub id: CapabilityId,
+    pub adapter_instance_id: AdapterInstanceId,
+    pub display_name: String,
+    pub class: CapabilityClass,
+    pub availability: Availability,
+    pub permission_requirement: PermissionRequirement,
+    pub metadata: BTreeMap<String, String>,
+    pub ports: BTreeMap<PortId, PortDescriptor>,
+}
+
+impl CapabilityDescriptor {
+    pub fn validate(&self) -> Result<(), CoreError> {
+        if self.display_name.trim().is_empty() {
+            return Err(CoreError::InvalidCapability {
+                capability_id: self.id,
+                reason: "display name cannot be empty".to_owned(),
+            });
+        }
+        if self.ports.is_empty() {
+            return Err(CoreError::InvalidCapability {
+                capability_id: self.id,
+                reason: "at least one Port is required".to_owned(),
+            });
+        }
+        for (id, port) in &self.ports {
+            if *id != port.id || port.capability_id != self.id {
+                return Err(CoreError::InvalidCapability {
+                    capability_id: self.id,
+                    reason: "Port map key/owner does not match descriptor".to_owned(),
+                });
+            }
+            port.validate()?;
+        }
+        Ok(())
+    }
+
+    pub fn add_port(&mut self, port: PortDescriptor) -> Result<(), CoreError> {
+        if port.capability_id != self.id {
+            return Err(CoreError::InvalidPort {
+                port_id: port.id,
+                reason: "Port capability ID does not match owner".to_owned(),
+            });
+        }
+        port.validate()?;
+        match self.ports.entry(port.id) {
+            Entry::Occupied(_) => Err(CoreError::DuplicatePort(port.id)),
+            Entry::Vacant(entry) => {
+                entry.insert(port);
+                Ok(())
+            }
         }
     }
 }
 
-/// Static description of a CapyIO runtime instance.
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 pub struct NodeDescriptor {
     pub id: NodeId,
     pub display_name: String,
     pub platform: Platform,
     pub platform_version: String,
-    pub roles: BTreeSet<NodeRole>,
+    pub runtime_version: String,
+    pub protocol_versions: BTreeSet<ProtocolVersion>,
+    pub online_state: OnlineState,
+    pub adapter_instances: BTreeMap<AdapterInstanceId, AdapterInstanceDescriptor>,
     pub capabilities: BTreeMap<CapabilityId, CapabilityDescriptor>,
 }
 
@@ -298,187 +369,166 @@ impl NodeDescriptor {
         display_name: impl Into<String>,
         platform: Platform,
         platform_version: impl Into<String>,
-        roles: impl IntoIterator<Item = NodeRole>,
+        runtime_version: impl Into<String>,
+        protocol_versions: impl IntoIterator<Item = ProtocolVersion>,
     ) -> Self {
         Self {
             id,
             display_name: display_name.into(),
             platform,
             platform_version: platform_version.into(),
-            roles: roles.into_iter().collect(),
+            runtime_version: runtime_version.into(),
+            protocol_versions: protocol_versions.into_iter().collect(),
+            online_state: OnlineState::Online,
+            adapter_instances: BTreeMap::new(),
             capabilities: BTreeMap::new(),
         }
     }
 
-    pub fn add_capability(&mut self, capability: CapabilityDescriptor) -> Result<(), CoreError> {
-        capability.validate()?;
-        match self.capabilities.entry(capability.id) {
-            Entry::Occupied(_) => Err(CoreError::DuplicateCapability(capability.id)),
+    pub fn add_adapter(&mut self, adapter: AdapterInstanceDescriptor) -> Result<(), CoreError> {
+        adapter.validate()?;
+        if !adapter.owned_capabilities.is_empty() {
+            return Err(CoreError::InvalidAdapter {
+                adapter_id: adapter.id,
+                reason: "new Adapter must be registered before its Capabilities".to_owned(),
+            });
+        }
+        match self.adapter_instances.entry(adapter.id) {
+            Entry::Occupied(_) => Err(CoreError::DuplicateAdapter(adapter.id)),
             Entry::Vacant(entry) => {
-                entry.insert(capability);
+                entry.insert(adapter);
                 Ok(())
             }
         }
     }
 
+    pub fn add_capability(&mut self, capability: CapabilityDescriptor) -> Result<(), CoreError> {
+        capability.validate()?;
+        if self.capabilities.contains_key(&capability.id) {
+            return Err(CoreError::DuplicateCapability(capability.id));
+        }
+        let adapter = self
+            .adapter_instances
+            .get_mut(&capability.adapter_instance_id)
+            .ok_or(CoreError::UnknownAdapter(capability.adapter_instance_id))?;
+        adapter.owned_capabilities.insert(capability.id);
+        self.capabilities.insert(capability.id, capability);
+        Ok(())
+    }
+
+    pub fn replace_adapter_catalog(
+        &mut self,
+        adapter_id: AdapterInstanceId,
+        capabilities: Vec<CapabilityDescriptor>,
+    ) -> Result<(), CoreError> {
+        let adapter = self
+            .adapter_instances
+            .get(&adapter_id)
+            .ok_or(CoreError::UnknownAdapter(adapter_id))?;
+        let old_ids = adapter.owned_capabilities.clone();
+
+        let mut new_ids = BTreeSet::new();
+        for capability in &capabilities {
+            capability.validate()?;
+            if capability.adapter_instance_id != adapter_id {
+                return Err(CoreError::InvalidCapability {
+                    capability_id: capability.id,
+                    reason: "replacement Capability belongs to another Adapter".to_owned(),
+                });
+            }
+            if !new_ids.insert(capability.id)
+                || (self.capabilities.contains_key(&capability.id)
+                    && !old_ids.contains(&capability.id))
+            {
+                return Err(CoreError::DuplicateCapability(capability.id));
+            }
+        }
+
+        for id in old_ids {
+            self.capabilities.remove(&id);
+        }
+        let adapter = self
+            .adapter_instances
+            .get_mut(&adapter_id)
+            .expect("Adapter existence checked above");
+        adapter.owned_capabilities.clear();
+        for capability in capabilities {
+            adapter.owned_capabilities.insert(capability.id);
+            self.capabilities.insert(capability.id, capability);
+        }
+        Ok(())
+    }
+
+    pub fn port(
+        &self,
+        capability_id: CapabilityId,
+        port_id: PortId,
+    ) -> Result<&PortDescriptor, CoreError> {
+        self.capabilities
+            .get(&capability_id)
+            .ok_or(CoreError::UnknownCapability(capability_id))?
+            .ports
+            .get(&port_id)
+            .ok_or(CoreError::UnknownPort(port_id))
+    }
+
     pub fn validate(&self) -> Result<(), CoreError> {
-        if self.display_name.trim().is_empty() {
-            return Err(CoreError::InvalidProfile(
-                "node display name cannot be empty".to_owned(),
+        if self.display_name.trim().is_empty()
+            || self.platform_version.trim().is_empty()
+            || self.runtime_version.trim().is_empty()
+        {
+            return Err(CoreError::InvalidNode(
+                "display/platform/runtime versions cannot be empty".to_owned(),
             ));
         }
-        if self.roles.is_empty() {
-            return Err(CoreError::InvalidProfile(
-                "node must advertise at least one role".to_owned(),
+        if self.protocol_versions.is_empty() {
+            return Err(CoreError::InvalidNode(
+                "at least one protocol version is required".to_owned(),
             ));
+        }
+        for version in &self.protocol_versions {
+            version.validate()?;
+        }
+        for (id, adapter) in &self.adapter_instances {
+            if *id != adapter.id {
+                return Err(CoreError::InvalidAdapter {
+                    adapter_id: adapter.id,
+                    reason: "Adapter map key does not match descriptor".to_owned(),
+                });
+            }
+            adapter.validate()?;
+            for capability_id in &adapter.owned_capabilities {
+                let capability = self
+                    .capabilities
+                    .get(capability_id)
+                    .ok_or(CoreError::UnknownCapability(*capability_id))?;
+                if capability.adapter_instance_id != adapter.id {
+                    return Err(CoreError::InvalidCapability {
+                        capability_id: capability.id,
+                        reason: "Capability owner and Adapter catalog disagree".to_owned(),
+                    });
+                }
+            }
         }
         for (id, capability) in &self.capabilities {
             if *id != capability.id {
                 return Err(CoreError::InvalidCapability {
                     capability_id: capability.id,
-                    reason: "capability map key does not match descriptor ID".to_owned(),
+                    reason: "Capability map key does not match descriptor".to_owned(),
                 });
             }
             capability.validate()?;
-        }
-
-        for capability in self.capabilities.values() {
-            let CapabilityDetails::AudioDuplexBundle(bundle) = &capability.details else {
-                continue;
-            };
-            let capture = self
-                .capabilities
-                .get(&bundle.capture_capability_id)
-                .ok_or_else(|| capability.invalid("duplex bundle capture member is missing"))?;
-            let render = self
-                .capabilities
-                .get(&bundle.render_capability_id)
-                .ok_or_else(|| capability.invalid("duplex bundle render member is missing"))?;
-            if capture.kind != CapabilityKind::AudioCapture {
-                return Err(capability.invalid(
-                    "duplex bundle capture member must reference an audio capture capability",
-                ));
-            }
-            if render.kind != CapabilityKind::AudioRender {
-                return Err(capability.invalid(
-                    "duplex bundle render member must reference an audio render capability",
-                ));
+            let adapter = self
+                .adapter_instances
+                .get(&capability.adapter_instance_id)
+                .ok_or(CoreError::UnknownAdapter(capability.adapter_instance_id))?;
+            if !adapter.owned_capabilities.contains(&capability.id) {
+                return Err(CoreError::InvalidCapability {
+                    capability_id: capability.id,
+                    reason: "owning Adapter does not list Capability".to_owned(),
+                });
             }
         }
         Ok(())
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::{AudioFormat, AudioProcessingSupport, AudioQosMode, CapabilityId, NodeId};
-
-    fn capture_capability() -> CapabilityDescriptor {
-        CapabilityDescriptor {
-            id: CapabilityId::new(),
-            display_name: "Internal microphone".to_owned(),
-            profile: ProfileId::audio_capture_v1(),
-            kind: CapabilityKind::AudioCapture,
-            local_role: LocalRole::Capture,
-            stream_role: StreamRole::Producer,
-            supported_projections: [
-                ProjectionKind::ApplicationStream,
-                ProjectionKind::SystemCaptureEndpoint,
-            ]
-            .into_iter()
-            .collect(),
-            permission_requirement: PermissionRequirement::ForegroundService,
-            availability: Availability::PermissionRequired,
-            details: CapabilityDetails::Audio(AudioCapabilitySpec {
-                formats: vec![AudioFormat::microphone_baseline()],
-                qos_modes: vec![AudioQosMode::VoiceInteractive],
-                processing: AudioProcessingSupport::default(),
-                supports_volume_control: false,
-                supports_mute: true,
-            }),
-        }
-    }
-
-    #[test]
-    fn capture_role_mismatch_is_rejected() {
-        let mut capability = capture_capability();
-        capability.local_role = LocalRole::Render;
-        assert!(matches!(
-            capability.validate(),
-            Err(CoreError::InvalidCapability { .. })
-        ));
-    }
-
-    #[test]
-    fn duplicate_capability_id_is_rejected() {
-        let mut node = NodeDescriptor::new(
-            NodeId::new(),
-            "Android phone",
-            Platform::Android,
-            "test",
-            [NodeRole::Provider],
-        );
-        let capability = capture_capability();
-        node.add_capability(capability.clone())
-            .expect("first insert");
-        assert_eq!(
-            node.add_capability(capability.clone()),
-            Err(CoreError::DuplicateCapability(capability.id))
-        );
-    }
-
-    #[test]
-    fn duplex_bundle_requires_existing_typed_members() {
-        let capture = capture_capability();
-        let missing_render = CapabilityId::new();
-        let bundle_id = CapabilityId::new();
-        let mut node = NodeDescriptor::new(
-            NodeId::new(),
-            "Android phone",
-            Platform::Android,
-            "test",
-            [NodeRole::Provider],
-        );
-        node.add_capability(capture.clone()).expect("capture");
-        node.add_capability(CapabilityDescriptor {
-            id: bundle_id,
-            display_name: "Built-in audio".to_owned(),
-            profile: ProfileId::audio_duplex_bundle_v1(),
-            kind: CapabilityKind::AudioDuplexBundle,
-            local_role: LocalRole::Composite,
-            stream_role: StreamRole::None,
-            supported_projections: BTreeSet::new(),
-            permission_requirement: PermissionRequirement::UserConfirmation,
-            availability: Availability::Available,
-            details: CapabilityDetails::AudioDuplexBundle(AudioBundleSpec {
-                capture_capability_id: capture.id,
-                render_capability_id: missing_render,
-                shared_acoustic_environment: true,
-            }),
-        })
-        .expect("bundle descriptor is locally valid");
-
-        assert!(matches!(
-            node.validate(),
-            Err(CoreError::InvalidCapability {
-                capability_id,
-                ..
-            }) if capability_id == bundle_id
-        ));
-    }
-
-    #[test]
-    fn valid_node_accepts_capability() {
-        let mut node = NodeDescriptor::new(
-            NodeId::new(),
-            "Android phone",
-            Platform::Android,
-            "test",
-            [NodeRole::Provider],
-        );
-        node.add_capability(capture_capability())
-            .expect("valid capability");
-        node.validate().expect("valid node");
     }
 }

@@ -3,12 +3,12 @@
 Tasks are small implementation slices. A task enters `docs/plans/active/` before
 code changes. Roadmap presence is not authorization to begin hardware work.
 
-## Active foundation
+## Completed foundation
 
 ### CAPY-FOUNDATION-001 — Gates 0–3 migration
 
 Requirements: PRD v0.3 foundation acceptance.
-Plan: `docs/plans/active/0003-capyio-foundation-migration.md`.
+Plan: `docs/plans/completed/0003-capyio-foundation-migration.md`.
 
 Deliverables:
 

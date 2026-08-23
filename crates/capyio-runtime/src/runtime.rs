@@ -1,46 +1,44 @@
 use std::collections::{BTreeMap, VecDeque};
 
 use capyio_core::{
-    AudioFormat, BindingState, CapabilityDescriptor, CapabilityId, NodeDescriptor, NodeId,
-    ProjectionKind, Session, SessionId, SessionPhase,
+    AdapterHealth, AdapterInstanceId, AdapterState, AuthorizationState, CapabilityDescriptor,
+    NodeDescriptor, NodeId, OnlineState, PortDescriptor, PortRef, Problem, ProblemCategory,
+    ProblemId, ProblemSeverity, Route, RouteBackend, RouteId, RouteState, Session, SessionId,
+    SessionState,
 };
-use serde::{Deserialize, Serialize};
 
 use crate::{
     HostOperation, HostOperationCompletion, OperationId, OperationRecord, OperationRegistry,
-    OperationStatus, OperationUpdate, PeerSnapshot, RuntimeError, RuntimeEvent, RuntimeEventKind,
+    OperationStatus, OperationUpdate, RuntimeError, RuntimeEvent, RuntimeEventKind,
     RuntimeSnapshot,
 };
 
 const MAX_RETAINED_EVENTS: usize = 256;
-const DEMO_LEASE_DURATION_MS: u64 = 60 * 60 * 1_000;
+const MAX_RETAINED_PROBLEMS: usize = 128;
 
-/// Runtime record for one known peer.
-#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
-pub struct PeerRecord {
-    pub descriptor: NodeDescriptor,
-    pub online: bool,
-}
-
-/// OS-independent owner of peers, sessions and deterministic lifecycle commands.
 #[derive(Clone, Debug)]
 pub struct NodeRuntime {
     local_node: NodeDescriptor,
-    peers: BTreeMap<NodeId, PeerRecord>,
+    peers: BTreeMap<NodeId, NodeDescriptor>,
     sessions: BTreeMap<SessionId, Session>,
+    routes: BTreeMap<RouteId, Route>,
     operations: OperationRegistry,
+    problems: VecDeque<Problem>,
     events: VecDeque<RuntimeEvent>,
     next_event_sequence: u64,
 }
 
 impl NodeRuntime {
-    pub fn new(local_node: NodeDescriptor) -> Result<Self, RuntimeError> {
+    pub fn new(mut local_node: NodeDescriptor) -> Result<Self, RuntimeError> {
+        local_node.online_state = OnlineState::Online;
         local_node.validate()?;
         Ok(Self {
             local_node,
             peers: BTreeMap::new(),
             sessions: BTreeMap::new(),
+            routes: BTreeMap::new(),
             operations: OperationRegistry::default(),
+            problems: VecDeque::new(),
             events: VecDeque::new(),
             next_event_sequence: 1,
         })
@@ -48,31 +46,42 @@ impl NodeRuntime {
 
     pub fn register_peer(
         &mut self,
-        descriptor: NodeDescriptor,
+        mut descriptor: NodeDescriptor,
         online: bool,
     ) -> Result<(), RuntimeError> {
+        descriptor.online_state = if online {
+            OnlineState::Online
+        } else {
+            OnlineState::Offline
+        };
         descriptor.validate()?;
         let peer_id = descriptor.id;
-        let _previous = self
-            .peers
-            .insert(peer_id, PeerRecord { descriptor, online });
+        self.peers.insert(peer_id, descriptor);
         self.emit(RuntimeEventKind::PeerRegistered { peer_id });
         Ok(())
     }
 
     pub fn open_session(&mut self, peer_id: NodeId) -> Result<SessionId, RuntimeError> {
+        self.open_session_with_id(SessionId::new(), peer_id)
+    }
+
+    pub fn open_session_with_id(
+        &mut self,
+        session_id: SessionId,
+        peer_id: NodeId,
+    ) -> Result<SessionId, RuntimeError> {
         let peer = self
             .peers
             .get(&peer_id)
             .ok_or(RuntimeError::UnknownPeer(peer_id))?;
-        if !peer.online {
+        if peer.online_state != OnlineState::Online {
             return Err(RuntimeError::PeerOffline(peer_id));
         }
-
-        let session = Session::new(self.local_node.id, peer_id);
-        let session_id = session.id;
-        let previous = self.sessions.insert(session_id, session);
-        debug_assert!(previous.is_none(), "fresh SessionId must be unique");
+        if self.sessions.contains_key(&session_id) {
+            return Err(RuntimeError::DuplicateSession(session_id));
+        }
+        let session = Session::with_id(session_id, self.local_node.id, peer_id);
+        self.sessions.insert(session_id, session);
         self.emit(RuntimeEventKind::SessionOpened {
             session_id,
             peer_id,
@@ -80,134 +89,139 @@ impl NodeRuntime {
         Ok(session_id)
     }
 
-    /// Activates an audio projection through request, authorization, negotiation and start.
-    ///
-    /// This convenience method is for the deterministic bootstrap UI/demo. Production hosts
-    /// will drive these transitions from authenticated peer messages and platform completions.
-    pub fn activate_audio_projection(
+    pub fn create_route(
         &mut self,
         session_id: SessionId,
-        capability_id: CapabilityId,
-        projection_kind: ProjectionKind,
-        now_ms: u64,
-    ) -> Result<(), RuntimeError> {
-        let (peer_id, phase) = {
-            let session = self.session(session_id)?;
-            (session.remote_node_id, session.phase)
-        };
-        if phase != SessionPhase::Ready {
+        source: PortRef,
+        sink: PortRef,
+        backend: RouteBackend,
+    ) -> Result<RouteId, RuntimeError> {
+        self.create_route_with_id(RouteId::new(), session_id, source, sink, backend)
+    }
+
+    pub fn create_route_with_id(
+        &mut self,
+        route_id: RouteId,
+        session_id: SessionId,
+        source: PortRef,
+        sink: PortRef,
+        backend: RouteBackend,
+    ) -> Result<RouteId, RuntimeError> {
+        if self.routes.contains_key(&route_id) {
+            return Err(RuntimeError::DuplicateRoute(route_id));
+        }
+        let session = self
+            .sessions
+            .get(&session_id)
+            .ok_or(RuntimeError::UnknownSession(session_id))?;
+        if session.state != SessionState::Ready {
             return Err(capyio_core::CoreError::InvalidSessionTransition {
-                from: phase,
-                action: "activate_audio_projection",
+                from: session.state,
+                action: "create_route",
             }
             .into());
         }
-
-        let peer = self
-            .peers
-            .get(&peer_id)
-            .ok_or(RuntimeError::UnknownPeer(peer_id))?;
-        if !peer.online {
-            return Err(RuntimeError::PeerOffline(peer_id));
+        let valid_nodes = [session.local_node_id, session.remote_node_id];
+        if !valid_nodes.contains(&source.node_id) || !valid_nodes.contains(&sink.node_id) {
+            return Err(RuntimeError::UnknownPeer(
+                if !valid_nodes.contains(&source.node_id) {
+                    source.node_id
+                } else {
+                    sink.node_id
+                },
+            ));
         }
-        let capability = peer
-            .descriptor
-            .capabilities
-            .get(&capability_id)
-            .cloned()
-            .ok_or(RuntimeError::CapabilityNotAdvertised {
-                peer_id,
-                capability_id,
-            })?;
-        let selected_format = first_audio_format(&capability)?;
+        let source_port = self.resolve_port(source)?.clone();
+        let sink_port = self.resolve_port(sink)?.clone();
+        let route = Route::new(
+            route_id,
+            session_id,
+            source,
+            &source_port,
+            sink,
+            &sink_port,
+            backend,
+        )?;
+        self.routes.insert(route_id, route);
+        self.emit(RuntimeEventKind::RouteChanged {
+            route_id,
+            state: RouteState::Draft,
+        });
+        Ok(route_id)
+    }
 
-        {
-            let session = self.session_mut(session_id)?;
-            let state = session
-                .bindings
-                .get(&capability_id)
-                .map(|binding| binding.state);
-
-            match state {
-                None | Some(BindingState::Rejected | BindingState::Failed) => {
-                    session.request_binding(&capability, projection_kind)?;
+    /// Deterministic demo helper using synthetic authorization and immediate host completion.
+    pub fn set_route_active(
+        &mut self,
+        route_id: RouteId,
+        active: bool,
+        now_ms: u64,
+    ) -> Result<(), RuntimeError> {
+        let route = self
+            .routes
+            .get_mut(&route_id)
+            .ok_or(RuntimeError::UnknownRoute(route_id))?;
+        if active {
+            match route.state {
+                RouteState::Draft => {
+                    if !matches!(route.authorization, AuthorizationState::Authorized { .. }) {
+                        route.authorize(None)?;
+                    }
+                    let format = route.compatible_formats.first().cloned();
+                    let qos = route
+                        .compatible_qos_modes
+                        .first()
+                        .cloned()
+                        .expect("Route compatibility requires QoS");
+                    route.prepare(format, qos, now_ms)?;
+                    route.begin_start(now_ms)?;
+                    route.mark_active()?;
                 }
-                Some(BindingState::Active) => return Ok(()),
-                Some(BindingState::Offline) => return Err(RuntimeError::PeerOffline(peer_id)),
-                _ => {}
-            }
-
-            let state = session.binding(capability_id)?.state;
-            if state == BindingState::Requested {
-                session.authorize(
-                    capability_id,
-                    now_ms,
-                    now_ms.saturating_add(DEMO_LEASE_DURATION_MS),
-                )?;
-            }
-
-            let state = session.binding(capability_id)?.state;
-            if state == BindingState::Authorized {
-                session.negotiate_audio(&capability, selected_format, now_ms)?;
-            }
-
-            let state = session.binding(capability_id)?.state;
-            match state {
-                BindingState::Negotiated | BindingState::Stopped => {
-                    session.begin_start(capability_id, now_ms)?;
-                    session.mark_active(capability_id)?;
+                RouteState::Stopped => {
+                    let format = route.compatible_formats.first().cloned();
+                    let qos = route
+                        .compatible_qos_modes
+                        .first()
+                        .cloned()
+                        .expect("Route compatibility requires QoS");
+                    route.prepare(format, qos, now_ms)?;
+                    route.begin_start(now_ms)?;
+                    route.mark_active()?;
                 }
-                BindingState::Suspended => {
-                    session.resume_binding(capability_id, now_ms)?;
-                    session.mark_active(capability_id)?;
+                RouteState::Prepared => {
+                    route.begin_start(now_ms)?;
+                    route.mark_active()?;
                 }
-                BindingState::Starting => session.mark_active(capability_id)?,
-                BindingState::Stopping => {
-                    session.mark_stopped(capability_id)?;
-                    session.begin_start(capability_id, now_ms)?;
-                    session.mark_active(capability_id)?;
+                RouteState::Starting => route.mark_active()?,
+                RouteState::Offline => {
+                    route.recover(now_ms)?;
+                    route.begin_start(now_ms)?;
+                    route.mark_active()?;
                 }
-                BindingState::Active => {}
-                other => {
-                    return Err(capyio_core::CoreError::InvalidBindingTransition {
-                        from: other,
-                        action: "activate_audio_projection",
+                RouteState::Active => return Ok(()),
+                RouteState::Stopping | RouteState::Failed => {
+                    return Err(capyio_core::CoreError::InvalidRouteTransition {
+                        from: route.state,
+                        action: "set_route_active",
                     }
                     .into());
                 }
             }
-        }
-
-        self.emit_binding_state(session_id, capability_id)?;
-        Ok(())
-    }
-
-    pub fn deactivate_projection(
-        &mut self,
-        session_id: SessionId,
-        capability_id: CapabilityId,
-    ) -> Result<(), RuntimeError> {
-        {
-            let session = self.session_mut(session_id)?;
-            let state = session.binding(capability_id)?.state;
-            match state {
-                BindingState::Active
-                | BindingState::Starting
-                | BindingState::Suspended
-                | BindingState::Offline => {
-                    session.begin_stop(capability_id)?;
-                    session.mark_stopped(capability_id)?;
+        } else {
+            match route.state {
+                RouteState::Prepared
+                | RouteState::Starting
+                | RouteState::Active
+                | RouteState::Offline => {
+                    route.begin_stop()?;
+                    route.mark_stopped()?;
                 }
-                BindingState::Requested | BindingState::Authorized | BindingState::Negotiated => {
-                    session.cancel_binding(capability_id)?;
-                }
-                BindingState::Stopping => session.mark_stopped(capability_id)?,
-                BindingState::Stopped | BindingState::Rejected | BindingState::Failed => {
-                    return Ok(());
-                }
+                RouteState::Draft | RouteState::Stopped | RouteState::Failed => return Ok(()),
+                RouteState::Stopping => route.mark_stopped()?,
             }
         }
-        self.emit_binding_state(session_id, capability_id)?;
+        let state = route.state;
+        self.emit(RuntimeEventKind::RouteChanged { route_id, state });
         Ok(())
     }
 
@@ -216,38 +230,136 @@ impl NodeRuntime {
             .peers
             .get_mut(&peer_id)
             .ok_or(RuntimeError::UnknownPeer(peer_id))?;
-        if peer.online == online {
+        let desired = if online {
+            OnlineState::Online
+        } else {
+            OnlineState::Offline
+        };
+        if peer.online_state == desired {
             return Ok(());
         }
-        peer.online = online;
+        peer.online_state = desired;
 
-        let affected_sessions: Vec<SessionId> = self
+        let session_ids = self
             .sessions
             .values()
             .filter(|session| session.remote_node_id == peer_id)
             .map(|session| session.id)
-            .collect();
-
-        for session_id in affected_sessions {
-            let phase = {
-                let session = self.session_mut(session_id)?;
+            .collect::<Vec<_>>();
+        for session_id in session_ids {
+            let state = {
+                let session = self
+                    .sessions
+                    .get_mut(&session_id)
+                    .expect("collected Session");
                 if online {
-                    if session.phase == SessionPhase::Suspended {
+                    if session.state == SessionState::Suspended {
                         session.mark_remote_online()?;
                     }
-                } else if matches!(session.phase, SessionPhase::Ready | SessionPhase::Suspended) {
+                } else if session.state == SessionState::Ready {
                     session.mark_remote_offline()?;
                 }
-                session.phase
+                session.state
             };
-            self.emit(RuntimeEventKind::SessionPhaseChanged { session_id, phase });
+            self.emit(RuntimeEventKind::SessionStateChanged { session_id, state });
         }
 
+        if !online {
+            let route_ids = self
+                .routes
+                .values()
+                .filter(|route| {
+                    (route.source.node_id == peer_id || route.sink.node_id == peer_id)
+                        && !matches!(
+                            route.state,
+                            RouteState::Stopped | RouteState::Failed | RouteState::Offline
+                        )
+                })
+                .map(|route| route.id)
+                .collect::<Vec<_>>();
+            for route_id in route_ids {
+                let route = self.routes.get_mut(&route_id).expect("collected Route");
+                route.mark_offline()?;
+                self.emit(RuntimeEventKind::RouteChanged {
+                    route_id,
+                    state: RouteState::Offline,
+                });
+            }
+        }
         self.emit(RuntimeEventKind::PeerOnlineChanged { peer_id, online });
         Ok(())
     }
 
-    /// Registers asynchronous host work without exposing mutable Core state to callbacks.
+    pub fn replace_adapter_catalog(
+        &mut self,
+        node_id: NodeId,
+        adapter_id: AdapterInstanceId,
+        capabilities: Vec<CapabilityDescriptor>,
+    ) -> Result<(), RuntimeError> {
+        self.node_mut(node_id)?
+            .replace_adapter_catalog(adapter_id, capabilities)?;
+        self.emit(RuntimeEventKind::CatalogChanged {
+            node_id,
+            adapter_id,
+        });
+        Ok(())
+    }
+
+    pub fn fail_adapter(
+        &mut self,
+        node_id: NodeId,
+        adapter_id: AdapterInstanceId,
+        code: impl Into<String>,
+    ) -> Result<(), RuntimeError> {
+        let code = code.into();
+        let owned = {
+            let node = self.node_mut(node_id)?;
+            let adapter = node.adapter_instances.get_mut(&adapter_id).ok_or(
+                RuntimeError::UnknownAdapter {
+                    node_id,
+                    adapter_id,
+                },
+            )?;
+            adapter.state = AdapterState::Failed;
+            adapter.health = AdapterHealth::Unhealthy;
+            adapter.owned_capabilities.clone()
+        };
+        self.emit(RuntimeEventKind::AdapterChanged {
+            node_id,
+            adapter_id,
+            state: AdapterState::Failed,
+            health: AdapterHealth::Unhealthy,
+        });
+
+        let affected = self
+            .routes
+            .values()
+            .filter(|route| {
+                ((route.source.node_id == node_id && owned.contains(&route.source.capability_id))
+                    || (route.sink.node_id == node_id && owned.contains(&route.sink.capability_id)))
+                    && !matches!(route.state, RouteState::Stopped | RouteState::Failed)
+            })
+            .map(|route| route.id)
+            .collect::<Vec<_>>();
+
+        if affected.is_empty() {
+            self.push_problem(adapter_problem(node_id, adapter_id, None, code))?;
+        } else {
+            for route_id in affected {
+                let problem = adapter_problem(node_id, adapter_id, Some(route_id), code.clone());
+                let problem_id = problem.id;
+                self.push_problem(problem)?;
+                let route = self.routes.get_mut(&route_id).expect("affected Route");
+                route.mark_failed(problem_id)?;
+                self.emit(RuntimeEventKind::RouteChanged {
+                    route_id,
+                    state: RouteState::Failed,
+                });
+            }
+        }
+        Ok(())
+    }
+
     pub fn begin_host_operation(
         &mut self,
         operation: HostOperation,
@@ -260,7 +372,6 @@ impl NodeRuntime {
         Ok(id)
     }
 
-    /// Applies a typed host completion. The first terminal transition wins a race.
     pub fn complete_host_operation(
         &mut self,
         id: OperationId,
@@ -293,52 +404,62 @@ impl NodeRuntime {
         self.operations.record(id)
     }
 
+    pub fn session(&self, id: SessionId) -> Result<&Session, RuntimeError> {
+        self.sessions
+            .get(&id)
+            .ok_or(RuntimeError::UnknownSession(id))
+    }
+
+    pub fn route(&self, id: RouteId) -> Result<&Route, RuntimeError> {
+        self.routes.get(&id).ok_or(RuntimeError::UnknownRoute(id))
+    }
+
     #[must_use]
     pub fn snapshot(&self) -> RuntimeSnapshot {
         RuntimeSnapshot {
             local_node: self.local_node.clone(),
-            peers: self
-                .peers
-                .values()
-                .cloned()
-                .map(|peer| PeerSnapshot {
-                    descriptor: peer.descriptor,
-                    online: peer.online,
-                })
-                .collect(),
+            peers: self.peers.values().cloned().collect(),
             sessions: self.sessions.values().cloned().collect(),
+            routes: self.routes.values().cloned().collect(),
             operations: self.operations.records().cloned().collect(),
+            problems: self.problems.iter().cloned().collect(),
             events: self.events.iter().cloned().collect(),
         }
     }
 
-    pub fn session(&self, session_id: SessionId) -> Result<&Session, RuntimeError> {
-        self.sessions
-            .get(&session_id)
-            .ok_or(RuntimeError::UnknownSession(session_id))
+    fn resolve_port(&self, reference: PortRef) -> Result<&PortDescriptor, RuntimeError> {
+        let node = self.node(reference.node_id)?;
+        node.port(reference.capability_id, reference.port_id)
+            .map_err(|_| RuntimeError::PortNotAdvertised {
+                node_id: reference.node_id,
+                port_id: reference.port_id,
+            })
     }
 
-    fn session_mut(&mut self, session_id: SessionId) -> Result<&mut Session, RuntimeError> {
-        self.sessions
-            .get_mut(&session_id)
-            .ok_or(RuntimeError::UnknownSession(session_id))
+    fn node(&self, id: NodeId) -> Result<&NodeDescriptor, RuntimeError> {
+        if self.local_node.id == id {
+            Ok(&self.local_node)
+        } else {
+            self.peers.get(&id).ok_or(RuntimeError::UnknownPeer(id))
+        }
     }
 
-    fn emit_binding_state(
-        &mut self,
-        session_id: SessionId,
-        capability_id: CapabilityId,
-    ) -> Result<(), RuntimeError> {
-        let (projection_kind, state) = {
-            let binding = self.session(session_id)?.binding(capability_id)?;
-            (binding.projection_kind, binding.state)
-        };
-        self.emit(RuntimeEventKind::BindingChanged {
-            session_id,
-            capability_id,
-            projection_kind,
-            state,
-        });
+    fn node_mut(&mut self, id: NodeId) -> Result<&mut NodeDescriptor, RuntimeError> {
+        if self.local_node.id == id {
+            Ok(&mut self.local_node)
+        } else {
+            self.peers.get_mut(&id).ok_or(RuntimeError::UnknownPeer(id))
+        }
+    }
+
+    fn push_problem(&mut self, problem: Problem) -> Result<(), RuntimeError> {
+        problem.validate()?;
+        let id = problem.id;
+        self.problems.push_back(problem);
+        while self.problems.len() > MAX_RETAINED_PROBLEMS {
+            self.problems.pop_front();
+        }
+        self.emit(RuntimeEventKind::ProblemReported { problem_id: id });
         Ok(())
     }
 
@@ -352,22 +473,33 @@ impl NodeRuntime {
     }
 
     fn emit(&mut self, kind: RuntimeEventKind) {
-        let event = RuntimeEvent {
+        self.events.push_back(RuntimeEvent {
             sequence: self.next_event_sequence,
             kind,
-        };
+        });
         self.next_event_sequence = self.next_event_sequence.saturating_add(1);
-        self.events.push_back(event);
         while self.events.len() > MAX_RETAINED_EVENTS {
-            let _discarded = self.events.pop_front();
+            self.events.pop_front();
         }
     }
 }
 
-fn first_audio_format(capability: &CapabilityDescriptor) -> Result<AudioFormat, RuntimeError> {
-    capability
-        .audio_spec()
-        .and_then(|spec| spec.formats.first())
-        .cloned()
-        .ok_or_else(|| capyio_core::CoreError::NotAudioCapability(capability.id).into())
+fn adapter_problem(
+    node_id: NodeId,
+    adapter_id: AdapterInstanceId,
+    route_id: Option<RouteId>,
+    code: String,
+) -> Problem {
+    Problem {
+        id: ProblemId::new(),
+        code,
+        category: ProblemCategory::Adapter,
+        severity: ProblemSeverity::Error,
+        retryable: true,
+        related_node: Some(node_id),
+        related_adapter: Some(adapter_id),
+        related_route: route_id,
+        human_message: "Adapter stopped unexpectedly".to_owned(),
+        technical_detail: None,
+    }
 }

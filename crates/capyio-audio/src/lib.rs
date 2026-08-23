@@ -8,10 +8,12 @@
 
 mod drift;
 mod error;
+mod format;
 mod frame;
 mod reorder;
 
 pub use drift::{ClockDriftEstimate, ClockDriftEstimator};
 pub use error::AudioDataError;
+pub use format::{AudioFormat, AudioProcessingSupport, AudioSampleFormat, ChannelLayout};
 pub use frame::AudioFrame;
 pub use reorder::{FrameBufferStats, InsertOutcome, ReorderBuffer};

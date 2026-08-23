@@ -1,0 +1,16 @@
+[package]
+name = "capyio-mock-source"
+description = "Finite low-rate test Source Sidecar for the CapyIO Adapter smoke test."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish = false
+
+[lib]
+name = "capyio_mock_sidecar_support"
+
+[dependencies]
+capyio-adapter-sdk = { path = "../../crates/capyio-adapter-sdk" }
+capyio-core = { path = "../../crates/capyio-core" }
+serde_json.workspace = true

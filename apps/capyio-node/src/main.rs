@@ -1,9 +1,9 @@
 use anyhow::Context;
-use clap::{Parser, Subcommand};
-use capyio_audio::{AudioFrame, ClockDriftEstimator, InsertOutcome, ReorderBuffer};
-use capyio_core::{AudioFormat, StreamId};
+use capyio_audio::{AudioFormat, AudioFrame, ClockDriftEstimator, InsertOutcome, ReorderBuffer};
+use capyio_core::StreamId;
 use capyio_protocol::{decode_envelope, encode_envelope, new_envelope, v1};
 use capyio_testkit::{DemoLab, android_node};
+use clap::{Parser, Subcommand};
 use tracing_subscriber::EnvFilter;
 
 #[derive(Debug, Parser)]
@@ -16,7 +16,7 @@ struct Cli {
 
 #[derive(Debug, Subcommand)]
 enum Command {
-    /// Runs the complete mock speaker/microphone lifecycle.
+    /// Runs four independent mock Routes across audio, motion and video Profiles.
     Demo,
     /// Prints the initial deterministic Runtime snapshot as JSON.
     Snapshot,
@@ -46,12 +46,15 @@ fn main() -> anyhow::Result<()> {
 
 fn run_demo() -> anyhow::Result<()> {
     let mut lab = DemoLab::new().context("create deterministic lab")?;
-    tracing::info!("activating phone speaker projection");
-    lab.set_speaker_active(true, 1_000)?;
-    tracing::info!("activating phone microphone projection");
-    lab.set_microphone_active(true, 2_000)?;
-    tracing::info!("stopping microphone while leaving speaker active");
-    lab.set_microphone_active(false, 3_000)?;
+    for (index, route_id) in lab.routes.all().into_iter().enumerate() {
+        tracing::info!(%route_id, "activating deterministic Route");
+        lab.set_route_active(route_id, true, 1_000 + index as u64)?;
+    }
+    tracing::info!(
+        route_id = %lab.routes.phone_microphone_to_windows,
+        "stopping one Route while leaving the other three active"
+    );
+    lab.set_route_active(lab.routes.phone_microphone_to_windows, false, 2_000)?;
 
     println!("{}", serde_json::to_string_pretty(&lab.runtime.snapshot())?);
     Ok(())

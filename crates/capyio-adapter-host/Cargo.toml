@@ -1,0 +1,22 @@
+[package]
+name = "capyio-adapter-host"
+description = "Process supervisor and failure boundary for CapyIO Sidecar Adapters."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[dependencies]
+capyio-adapter-sdk = { path = "../capyio-adapter-sdk" }
+capyio-core = { path = "../capyio-core" }
+capyio-runtime = { path = "../capyio-runtime" }
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+
+[dev-dependencies]
+capyio-testkit = { path = "../capyio-testkit" }
+
+[[bin]]
+name = "capyio-adapter-smoke"
+path = "src/bin/adapter-smoke.rs"

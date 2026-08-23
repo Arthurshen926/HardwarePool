@@ -4,82 +4,51 @@ package capyio.v1;
 
 import "capyio/v1/common.proto";
 
-enum AudioSampleFormat {
-  AUDIO_SAMPLE_FORMAT_UNSPECIFIED = 0;
-  AUDIO_SAMPLE_FORMAT_SIGNED_I16_LE = 1;
-  AUDIO_SAMPLE_FORMAT_SIGNED_I24_LE = 2;
-  AUDIO_SAMPLE_FORMAT_SIGNED_I32_LE = 3;
-  AUDIO_SAMPLE_FORMAT_FLOAT_F32_LE = 4;
+message FormatDescriptor {
+  string id = 1;
+  map<string, string> parameters = 2;
 }
 
-enum ChannelLayout {
-  CHANNEL_LAYOUT_UNSPECIFIED = 0;
-  CHANNEL_LAYOUT_MONO = 1;
-  CHANNEL_LAYOUT_STEREO = 2;
-  CHANNEL_LAYOUT_DISCRETE = 3;
+message PortDescriptor {
+  string id = 1;
+  string capability_id = 2;
+  string display_name = 3;
+  PortDirection direction = 4;
+  ProfileId profile = 5;
+  optional string schema_id = 6;
+  repeated FormatDescriptor formats = 7;
+  repeated QosDescriptor qos_modes = 8;
+  optional string clock_domain = 9;
+  Availability availability = 10;
+  PermissionRequirement permission_requirement = 11;
+  InteroperabilityMode interoperability_mode = 12;
 }
 
-enum AudioQosMode {
-  AUDIO_QOS_MODE_UNSPECIFIED = 0;
-  AUDIO_QOS_MODE_MEDIA_PLAYBACK = 1;
-  AUDIO_QOS_MODE_VOICE_INTERACTIVE = 2;
-  AUDIO_QOS_MODE_RAW_LAN = 3;
-  AUDIO_QOS_MODE_RAW_DUPLEX = 4;
-}
-
-message AudioFormat {
-  uint32 sample_rate_hz = 1;
-  AudioSampleFormat sample_format = 2;
-  uint32 channels = 3;
-  ChannelLayout channel_layout = 4;
-  uint32 frame_duration_micros = 5;
-}
-
-message AudioProcessingSupport {
-  bool acoustic_echo_cancellation = 1;
-  bool noise_suppression = 2;
-  bool automatic_gain_control = 3;
-  bool raw_capture = 4;
-}
-
-message AudioCapabilitySpec {
-  repeated AudioFormat formats = 1;
-  repeated AudioQosMode qos_modes = 2;
-  AudioProcessingSupport processing = 3;
-  bool supports_volume_control = 4;
-  bool supports_mute = 5;
-}
-
-message AudioBundleSpec {
-  string capture_capability_id = 1;
-  string render_capability_id = 2;
-  bool shared_acoustic_environment = 3;
-}
-
-message OpaqueCapabilitySpec {
-  string schema_uri = 1;
-  map<string, string> metadata = 2;
+message AdapterInstanceDescriptor {
+  string id = 1;
+  string adapter_type = 2;
+  string display_name = 3;
+  AdapterDeploymentMode deployment_mode = 4;
+  string version = 5;
+  AdapterState state = 6;
+  AdapterHealth health = 7;
+  repeated string owned_capability_ids = 8;
+  repeated RouteBackend supported_route_modes = 9;
 }
 
 message CapabilityDescriptor {
   string id = 1;
   string display_name = 2;
-  ProfileId profile = 3;
-  CapabilityKind kind = 4;
-  string custom_kind = 5;
-  LocalRole local_role = 6;
-  StreamRole stream_role = 7;
-  repeated ProjectionKind supported_projections = 8;
-  PermissionRequirement permission_requirement = 9;
-  Availability availability = 10;
 
-  oneof details {
-    AudioCapabilitySpec audio = 11;
-    AudioBundleSpec audio_bundle = 12;
-    OpaqueCapabilitySpec opaque = 13;
-  }
+  reserved 3 to 20;
 
-  reserved 14 to 20;
+  string adapter_instance_id = 21;
+  CapabilityClass capability_class = 22;
+  string custom_class = 23;
+  Availability availability = 24;
+  PermissionRequirement permission_requirement = 25;
+  map<string, string> metadata = 26;
+  repeated PortDescriptor ports = 27;
 }
 
 message NodeDescriptor {
@@ -88,8 +57,48 @@ message NodeDescriptor {
   Platform platform = 3;
   string platform_detail = 4;
   string platform_version = 5;
-  repeated NodeRole roles = 6;
-  repeated CapabilityDescriptor capabilities = 7;
 
-  reserved 8 to 20;
+  reserved 6, 8 to 20;
+
+  repeated CapabilityDescriptor capabilities = 7;
+  string runtime_version = 21;
+  repeated ProtocolVersion protocol_versions = 22;
+  OnlineState online_state = 23;
+  repeated AdapterInstanceDescriptor adapter_instances = 24;
+}
+
+enum ProblemCategory {
+  PROBLEM_CATEGORY_UNSPECIFIED = 0;
+  PROBLEM_CATEGORY_PROTOCOL = 1;
+  PROBLEM_CATEGORY_IDENTITY = 2;
+  PROBLEM_CATEGORY_AUTHORIZATION = 3;
+  PROBLEM_CATEGORY_CAPABILITY = 4;
+  PROBLEM_CATEGORY_ROUTE = 5;
+  PROBLEM_CATEGORY_ADAPTER = 6;
+  PROBLEM_CATEGORY_TRANSPORT = 7;
+  PROBLEM_CATEGORY_PLATFORM = 8;
+  PROBLEM_CATEGORY_DATA = 9;
+  PROBLEM_CATEGORY_DRIVER = 10;
+  PROBLEM_CATEGORY_INTERNAL = 11;
+}
+
+enum ProblemSeverity {
+  PROBLEM_SEVERITY_UNSPECIFIED = 0;
+  PROBLEM_SEVERITY_INFO = 1;
+  PROBLEM_SEVERITY_WARNING = 2;
+  PROBLEM_SEVERITY_ERROR = 3;
+  PROBLEM_SEVERITY_CRITICAL = 4;
+}
+
+message ProblemDescriptor {
+  string id = 1;
+  string code = 2;
+  ProblemCategory category = 3;
+  ProblemSeverity severity = 4;
+  bool retryable = 5;
+  optional string related_node_id = 6;
+  optional string related_adapter_id = 7;
+  optional string related_route_id = 8;
+  string human_message = 9;
+  optional string technical_detail = 10;
 }

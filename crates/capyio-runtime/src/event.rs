@@ -1,11 +1,11 @@
 use capyio_core::{
-    BindingState, CapabilityId, NodeId, ProjectionKind, SessionId, SessionPhase,
+    AdapterHealth, AdapterInstanceId, AdapterState, NodeId, ProblemId, RouteId, RouteState,
+    SessionId, SessionState,
 };
 use serde::{Deserialize, Serialize};
 
 use crate::{OperationId, OperationStatus};
 
-/// Structured, sanitized Runtime event suitable for UI and diagnostics.
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 pub struct RuntimeEvent {
     pub sequence: u64,
@@ -26,15 +26,26 @@ pub enum RuntimeEventKind {
         session_id: SessionId,
         peer_id: NodeId,
     },
-    SessionPhaseChanged {
+    SessionStateChanged {
         session_id: SessionId,
-        phase: SessionPhase,
+        state: SessionState,
     },
-    BindingChanged {
-        session_id: SessionId,
-        capability_id: CapabilityId,
-        projection_kind: ProjectionKind,
-        state: BindingState,
+    CatalogChanged {
+        node_id: NodeId,
+        adapter_id: AdapterInstanceId,
+    },
+    AdapterChanged {
+        node_id: NodeId,
+        adapter_id: AdapterInstanceId,
+        state: AdapterState,
+        health: AdapterHealth,
+    },
+    RouteChanged {
+        route_id: RouteId,
+        state: RouteState,
+    },
+    ProblemReported {
+        problem_id: ProblemId,
     },
     OperationChanged {
         operation_id: OperationId,

@@ -1,5 +1,5 @@
-use capyio_audio::{AudioFrame, ClockDriftEstimator, InsertOutcome, ReorderBuffer};
-use capyio_core::{AudioFormat, StreamId};
+use capyio_audio::{AudioFormat, AudioFrame, ClockDriftEstimator, InsertOutcome, ReorderBuffer};
+use capyio_core::StreamId;
 
 #[test]
 fn decoded_frames_can_be_validated_reordered_and_measured() {

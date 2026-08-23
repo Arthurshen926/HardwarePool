@@ -20,11 +20,14 @@ Exact evidence is in `docs/BASELINE_REPORT.md`.
 - Gate 0: complete.
 - Gate 1: complete locally — names/docs/ADRs, dependency paths, Rust check and
   pinned pnpm UI build passed.
-- Gate 2: pending — typed Port/Route domain, protocol, Runtime and four-Route UI.
-- Gate 3: pending — Adapter SDK/Host/mock Sidecars.
+- Gate 2: implemented — symmetric Nodes, typed Port/Route Core, generic
+  protocol/Runtime, four independent Routes and Quick Actions/Workspace UI.
+- Gate 3: implemented — manifest/schema, bounded NDJSON codec, Sidecar Host,
+  finite Mock Source/Sink and scoped crash isolation.
 
-Intermediate checks do not close a Gate until the active plan acceptance list is
-complete and `cargo xtask ci` plus UI validation pass.
+Full Rust checks (42 tests), Clippy, manifest validation, Adapter Smoke, pnpm
+typecheck/build, repository validation and `cargo xtask ci` pass. Evidence and
+remaining risks are recorded in `docs/GATE_0_3_REPORT.md`.
 
 ## Not built or tested
 

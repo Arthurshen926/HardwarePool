@@ -28,18 +28,23 @@ shape does not make IDs substitutable.
 ## Catalog messages
 
 - `Hello`: Node identity and supported protocol versions;
-- `NodeCatalog`: Node metadata, Adapter instances and Capability/Port catalog;
+- `CatalogSnapshot`: Node metadata, Adapter instances and Capability/Port
+  catalog;
 - catalog updates may replace an Adapter-owned subset after restart;
 - both peers send catalogs; neither is structurally provider-only.
 
 ## Route control
 
 - `OpenSessionRequest/Response`;
-- `RouteRequest`: Source/Sink Port references, backend, format/QoS intent;
-- `RouteAuthorization`: scope and lease result;
-- `RouteCommand`: prepare/start/stop/recover as supported;
+- `RouteDescriptor`: Source/Sink Port references, backend, compatible and
+  selected format/QoS, authorization, epoch, state and diagnostics;
+- `RouteCommand`: start/stop intent in the current foundation envelope;
 - `RouteStatus`: selected values, state and diagnostic reference;
-- `ProblemReport` and heartbeat.
+- `ProblemDescriptor`: structured, typed diagnostic context.
+
+Prepare and authorization transitions currently execute through the local
+Runtime/Adapter-control seam. Adding them to the Node-to-Node envelope is later
+protocol work and must append fields/messages rather than reusing numbers.
 
 One Route is one direction. Duplex behavior uses multiple Routes.
 
@@ -55,17 +60,24 @@ selects CapyDataPlane, AdapterManaged, LocalPipeline or ExternalProtocol.
 
 ## Sidecar protocol
 
-Sidecar control is a separate versioned NDJSON request/response contract on
-stdin/stdout. It includes Adapter initialize/probe/catalog/health/shutdown and
-Route prepare/start/stop/status. Normal logs go to stderr. Message size, line
-length, pending correlations and retained stderr are bounded.
+Sidecar control is a separate JSON-RPC 2.0/NDJSON request/response contract on
+stdin/stdout. Gate 3 implements Adapter initialize/probe/catalog/health/shutdown
+and Route prepare/start/stop. Normal logs go to stderr. Lines are limited to 64
+KiB, pending correlations to 64, buffered stdout lines to 8 and retained stderr
+lines to 128. The foundation Host uses a five-second response deadline.
+
+The Mock Source/Sink return one finite, low-frequency `SmokeSample` when a test
+Route starts. It is explicitly a test token, not an audio/video/sensor data
+plane. `route.status` and unsolicited Adapter events remain specified future
+control methods, not implemented behavior.
 
 ## Parser limits
 
-The Rust envelope codec rejects messages larger than 1 MiB before decode. Each
-binding also enforces descriptor/Port/format/metadata counts and string limits.
-Sidecar control uses a smaller dedicated line limit. Data-plane payload bounds
-derive from the selected Profile/format.
+The Rust envelope codec rejects messages larger than 1 MiB before decode. Core
+then validates required IDs, enum values, catalog ownership and Port/Profile
+semantics. Descriptor-count and metadata-string limits are still required
+before an untrusted production transport is enabled. Sidecar control uses the
+smaller dedicated line limit above.
 
 ## Error behavior
 
@@ -80,8 +92,9 @@ Protobuf fields remain forward-compatible. Human messages are not parsed.
 - Capability/Port/Route/Problem round trips;
 - malformed UUID and missing fields;
 - unknown/zero enum values;
-- appended unknown optional field behavior;
-- size boundaries;
-- golden fixtures before external consumption.
+- size boundaries.
+
+Unknown-field compatibility fixtures and golden wire fixtures remain required
+before external protocol consumption.
 
 Diagnostic/UI JSON snapshots are not automatically public protocol schemas.

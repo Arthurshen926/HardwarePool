@@ -1,46 +1,51 @@
 import type {
-  BindingState,
   CapyIOApi,
-  UiCapability,
+  RouteState,
   UiEvent,
+  UiPort,
+  UiRoute,
   UiSnapshot,
 } from "./types";
 
-const MICROPHONE_ID = "00000000-0000-4000-8000-000000000101";
-const SPEAKER_ID = "00000000-0000-4000-8000-000000000102";
+const WINDOWS = "HP OmniBook Ultra Flip 14";
+const PHONE = "vivo X200 Pro mini";
 
-function capability(
+function port(
+  nodeName: string,
+  capabilityName: string,
+  capabilityClass: string,
+  portName: string,
+  direction: "source" | "sink",
+): UiPort {
+  return { nodeName, capabilityName, capabilityClass, portName, direction };
+}
+
+function route(
   id: string,
-  displayName: string,
-  kind: "audio_capture" | "audio_render",
-): UiCapability {
-  const capture = kind === "audio_capture";
+  source: UiPort,
+  sink: UiPort,
+  profile: string,
+  formatSummary: string,
+  backend: string,
+  projectionNote: string,
+): UiRoute {
   return {
     id,
-    displayName,
-    kind,
-    profile: capture
-      ? "capyio.audio.capture/1"
-      : "capyio.audio.render/1",
-    permissionRequirement: capture ? "foreground_service" : "user_confirmation",
-    availability: capture ? "permission_required" : "available",
-    projectionKind: capture
-      ? "system_capture_endpoint"
-      : "system_render_endpoint",
-    bindingState: "not_mapped",
+    title: `${source.capabilityName} → ${sink.capabilityName}`,
+    summary: `${source.nodeName} → ${sink.nodeName}`,
+    profile,
+    backend,
+    state: "draft",
     active: false,
-    formatSummary: capture
-      ? "48 kHz · PCM i16 LE · Mono · 10 ms"
-      : "48 kHz · PCM i16 LE · Stereo · 10 ms",
-    qosModes: capture
-      ? ["voice_interactive", "raw_lan"]
-      : ["media_playback", "voice_interactive"],
+    source,
+    sink,
+    formatSummary,
+    qosModes: [profile.includes("imu") ? "measurement" : profile.includes("video") ? "basic" : "interactive"],
+    projectionNote,
     metrics: {
       estimatedLatencyMs: null,
       packetLossPercent: null,
       bufferFillMs: null,
-      underruns: 0,
-      overruns: 0,
       simulated: true,
     },
   };
@@ -49,29 +54,30 @@ function capability(
 function initialSnapshot(): UiSnapshot {
   return {
     backendMode: "browser_mock",
-    schemaVersion: 1,
-    projectVersion: "0.1.0-bootstrap",
-    localNodeName: "HP OmniBook Ultra Flip 14",
-    peers: [
-      {
-        id: "00000000-0000-4000-8000-000000000002",
-        displayName: "vivo X200 Pro mini",
-        platform: "android",
-        platformVersion: "Build not inventoried",
-        online: true,
-      },
+    schemaVersion: 2,
+    projectVersion: "0.1.0",
+    nodes: [
+      { id: "00000000-0000-4000-8000-000000000001", displayName: WINDOWS, platform: "windows", platformVersion: "Windows fixture", online: true, local: true, capabilityCount: 6 },
+      { id: "00000000-0000-4000-8000-000000000002", displayName: PHONE, platform: "android", platformVersion: "Android fixture", online: true, local: false, capabilityCount: 6 },
     ],
-    capabilities: [
-      capability(MICROPHONE_ID, "Internal Microphone", "audio_capture"),
-      capability(SPEAKER_ID, "Internal Speaker", "audio_render"),
+    routes: [
+      route("00000000-0000-4000-8000-000000000911", port(PHONE, "Phone Microphone", "microphone", "Phone Microphone Source", "source"), port(WINDOWS, "Windows Virtual Microphone", "microphone", "Virtual Microphone Sink", "sink"), "capyio.audio.frames/1", "pcm-s16le-48000-mono", "capydataplane", "Windows 系统端点投影（驱动尚未实现）"),
+      route("00000000-0000-4000-8000-000000000912", port(WINDOWS, "System Mix", "system_audio_capture", "System Mix Source", "source"), port(PHONE, "Phone Speaker", "speaker", "Phone Speaker Sink", "sink"), "capyio.audio.frames/1", "pcm-s16le-48000-stereo", "capydataplane", "Android 应用内播放端（模拟）"),
+      route("00000000-0000-4000-8000-000000000913", port(PHONE, "Phone IMU", "imu", "IMU Sample Source", "source"), port(WINDOWS, "Windows Gamepad Projection", "gamepad", "Gamepad Projection Sink", "sink"), "capyio.motion.imu-samples/1", "imu-si-f32-le", "localpipeline", "本地游戏手柄投影（best-effort，模拟）"),
+      route("00000000-0000-4000-8000-000000000914", port(PHONE, "Back Camera", "camera", "Back Camera Source", "source"), port(WINDOWS, "Camera Preview Panel", "panel", "Camera Preview Sink", "sink"), "capyio.video.frames/1", "bgra8-1280x720-30", "capydataplane", "CapyIO 应用内 Panel（模拟）"),
+    ],
+    adapters: [
+      { id: "adapter-windows-audio", nodeName: WINDOWS, displayName: "Windows Audio Adapter", adapterType: "capyio.windows.audio", deploymentMode: "sidecar", state: "ready", health: "healthy", capabilityCount: 4 },
+      { id: "adapter-windows-projection", nodeName: WINDOWS, displayName: "Windows Projection Adapter", adapterType: "capyio.windows.projection", deploymentMode: "sidecar", state: "ready", health: "healthy", capabilityCount: 2 },
+      { id: "adapter-android-hardware", nodeName: PHONE, displayName: "Android Integrated Hardware Adapter", adapterType: "capyio.android.integrated-hardware", deploymentMode: "in_process", state: "ready", health: "healthy", capabilityCount: 6 },
     ],
     events: [
-      { sequence: 1, summary: "Registered vivo X200 Pro mini" },
-      { sequence: 2, summary: "Opened deterministic demo session" },
+      { sequence: 1, summary: `Registered ${PHONE}` },
+      { sequence: 2, summary: "Created four independent deterministic Routes" },
     ],
     warnings: [
-      "Browser Mock 模式：状态与指标为确定性演示数据，不代表真实音频或设备访问。",
-      "Windows 虚拟音频驱动、Android 音频 Adapter 和网络传输尚未实现。",
+      "Browser Mock：状态、授权和指标是确定性演示数据，不代表真实硬件访问。",
+      "当前没有真实网络、Android 节点、Windows 虚拟设备或驱动。",
     ],
   };
 }
@@ -84,42 +90,24 @@ export class BrowserMockCapyIOApi implements CapyIOApi {
     return structuredClone(this.snapshot);
   }
 
-  async setProjection(
-    capabilityId: string,
-    active: boolean,
-  ): Promise<UiSnapshot> {
-    const target = this.snapshot.capabilities.find(
-      (item) => item.id === capabilityId,
-    );
-    if (!target) {
-      throw new Error(`Unknown capability: ${capabilityId}`);
-    }
+  async setRoute(routeId: string, active: boolean): Promise<UiSnapshot> {
+    const target = this.snapshot.routes.find((item) => item.id === routeId);
+    if (!target) throw new Error(`Unknown Route: ${routeId}`);
 
-    const state: BindingState = active ? "active" : "stopped";
+    const state: RouteState = active ? "active" : "stopped";
     target.active = active;
-    target.bindingState = state;
+    target.state = state;
+    const video = target.profile.includes("video");
+    const motion = target.profile.includes("imu");
     target.metrics = active
       ? {
-          estimatedLatencyMs:
-            target.kind === "audio_capture" ? 47.3 : 63.8,
-          packetLossPercent: target.kind === "audio_capture" ? 0.03 : 0.01,
-          bufferFillMs: target.kind === "audio_capture" ? 30 : 45,
-          underruns: 0,
-          overruns: 0,
+          estimatedLatencyMs: video ? 81.2 : motion ? 18.6 : 47.3,
+          packetLossPercent: video ? 0.07 : motion ? 0.01 : 0.03,
+          bufferFillMs: video ? 66 : motion ? 12 : 30,
           simulated: true,
         }
-      : {
-          estimatedLatencyMs: null,
-          packetLossPercent: null,
-          bufferFillMs: null,
-          underruns: 0,
-          overruns: 0,
-          simulated: true,
-        };
-
-    this.pushEvent(
-      `${target.displayName}: projection ${active ? "started" : "stopped"}`,
-    );
+      : { estimatedLatencyMs: null, packetLossPercent: null, bufferFillMs: null, simulated: true };
+    this.pushEvent(`${target.title}: Route ${active ? "started" : "stopped"}`);
     return structuredClone(this.snapshot);
   }
 
@@ -133,6 +121,6 @@ export class BrowserMockCapyIOApi implements CapyIOApi {
     const event: UiEvent = { sequence: this.nextSequence, summary };
     this.nextSequence += 1;
     this.snapshot.events.push(event);
-    this.snapshot.events = this.snapshot.events.slice(-12);
+    this.snapshot.events = this.snapshot.events.slice(-20);
   }
 }

@@ -5,8 +5,8 @@ use std::{
 };
 
 use capyio_core::{
-    AudioQosMode, Availability, BindingState, CapabilityDetails, CapabilityId, CapabilityKind,
-    PermissionRequirement, ProjectionKind,
+    AdapterDeploymentMode, CapabilityClass, NodeDescriptor, OnlineState, PortDirection, PortRef,
+    QosMode, Route, RouteId, RouteState,
 };
 use capyio_testkit::DemoLab;
 use serde::{Deserialize, Serialize};
@@ -18,8 +18,8 @@ struct AppState {
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
-struct SetProjectionRequest {
-    capability_id: String,
+struct SetRouteRequest {
+    route_id: String,
     active: bool,
 }
 
@@ -29,38 +29,64 @@ struct UiSnapshot {
     backend_mode: &'static str,
     schema_version: u8,
     project_version: &'static str,
-    local_node_name: String,
-    peers: Vec<UiPeer>,
-    capabilities: Vec<UiCapability>,
+    nodes: Vec<UiNode>,
+    routes: Vec<UiRoute>,
+    adapters: Vec<UiAdapter>,
     events: Vec<UiEvent>,
     warnings: Vec<String>,
 }
 
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
-struct UiPeer {
+struct UiNode {
     id: String,
     display_name: String,
     platform: String,
     platform_version: String,
     online: bool,
+    local: bool,
+    capability_count: usize,
 }
 
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
-struct UiCapability {
+struct UiRoute {
     id: String,
-    display_name: String,
-    kind: &'static str,
+    title: String,
+    summary: String,
     profile: String,
-    permission_requirement: String,
-    availability: String,
-    projection_kind: Option<String>,
-    binding_state: &'static str,
+    backend: String,
+    state: String,
     active: bool,
+    source: UiPort,
+    sink: UiPort,
     format_summary: Option<String>,
     qos_modes: Vec<String>,
+    projection_note: String,
     metrics: UiMetricSet,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct UiPort {
+    node_name: String,
+    capability_name: String,
+    capability_class: String,
+    port_name: String,
+    direction: String,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct UiAdapter {
+    id: String,
+    node_name: String,
+    display_name: String,
+    adapter_type: String,
+    deployment_mode: String,
+    state: String,
+    health: String,
+    capability_count: usize,
 }
 
 #[derive(Debug, Serialize)]
@@ -69,8 +95,6 @@ struct UiMetricSet {
     estimated_latency_ms: Option<f64>,
     packet_loss_percent: Option<f64>,
     buffer_fill_ms: Option<f64>,
-    underruns: u64,
-    overruns: u64,
     simulated: bool,
 }
 
@@ -88,25 +112,11 @@ fn get_snapshot(state: State<'_, AppState>) -> Result<UiSnapshot, String> {
 }
 
 #[tauri::command]
-fn set_projection(
-    request: SetProjectionRequest,
-    state: State<'_, AppState>,
-) -> Result<UiSnapshot, String> {
-    let capability_id = CapabilityId::from_str(&request.capability_id)
-        .map_err(|_| "invalid capability ID".to_owned())?;
+fn set_route(request: SetRouteRequest, state: State<'_, AppState>) -> Result<UiSnapshot, String> {
+    let route_id = RouteId::from_str(&request.route_id).map_err(|_| "invalid Route ID")?;
     let mut lab = state.lab.lock().map_err(|_| "demo state lock poisoned")?;
-    let now_ms = unix_time_ms()?;
-
-    if capability_id == lab.microphone_capability_id {
-        lab.set_microphone_active(request.active, now_ms)
-            .map_err(|error| error.to_string())?;
-    } else if capability_id == lab.speaker_capability_id {
-        lab.set_speaker_active(request.active, now_ms)
-            .map_err(|error| error.to_string())?;
-    } else {
-        return Err("the bootstrap UI only controls microphone and speaker".to_owned());
-    }
-
+    lab.set_route_active(route_id, request.active, unix_time_ms()?)
+        .map_err(|error| error.to_string())?;
     Ok(to_ui_snapshot(&lab))
 }
 
@@ -125,7 +135,7 @@ pub fn run() {
         })
         .invoke_handler(tauri::generate_handler![
             get_snapshot,
-            set_projection,
+            set_route,
             reset_demo
         ])
         .run(tauri::generate_context!())
@@ -134,79 +144,41 @@ pub fn run() {
 
 fn to_ui_snapshot(lab: &DemoLab) -> UiSnapshot {
     let snapshot = lab.runtime.snapshot();
-    let session = snapshot
-        .sessions
-        .iter()
-        .find(|session| session.id == lab.session_id);
-
-    let peers = snapshot
-        .peers
-        .iter()
-        .map(|peer| UiPeer {
-            id: peer.descriptor.id.to_string(),
-            display_name: peer.descriptor.display_name.clone(),
-            platform: platform_label(&peer.descriptor.platform),
-            platform_version: peer.descriptor.platform_version.clone(),
-            online: peer.online,
+    let all_nodes = std::iter::once(&snapshot.local_node).chain(snapshot.peers.iter());
+    let nodes = all_nodes
+        .clone()
+        .map(|node| UiNode {
+            id: node.id.to_string(),
+            display_name: node.display_name.clone(),
+            platform: platform_label(&node.platform),
+            platform_version: node.platform_version.clone(),
+            online: node.online_state == OnlineState::Online,
+            local: node.id == snapshot.local_node.id,
+            capability_count: node.capabilities.len(),
         })
         .collect();
-
-    let capabilities = snapshot
-        .peers
-        .iter()
-        .flat_map(|peer| peer.descriptor.capabilities.values())
-        .filter(|capability| {
-            matches!(
-                &capability.kind,
-                CapabilityKind::AudioCapture | CapabilityKind::AudioRender
-            )
-        })
-        .map(|capability| {
-            let binding = session.and_then(|session| session.bindings.get(&capability.id));
-            let state = binding.map_or(BindingStateView::NotMapped, |binding| {
-                BindingStateView::Core(binding.state)
-            });
-            let active = matches!(state, BindingStateView::Core(BindingState::Active));
-            let projection_kind = binding
-                .map(|binding| binding.projection_kind)
-                .or_else(|| default_projection(&capability.kind));
-            let (format_summary, qos_modes) = match &capability.details {
-                CapabilityDetails::Audio(spec) => {
-                    let format = spec.formats.first().map(format_summary);
-                    let qos = spec
-                        .qos_modes
-                        .iter()
-                        .copied()
-                        .map(audio_qos_label)
-                        .map(str::to_owned)
-                        .collect();
-                    (format, qos)
-                }
-                _ => (None, Vec::new()),
-            };
-
-            UiCapability {
-                id: capability.id.to_string(),
-                display_name: capability.display_name.clone(),
-                kind: match &capability.kind {
-                    CapabilityKind::AudioCapture => "audio_capture",
-                    CapabilityKind::AudioRender => "audio_render",
-                    _ => "audio_duplex_bundle",
-                },
-                profile: format!("{}/{}", capability.profile.name, capability.profile.major),
-                permission_requirement: permission_label(capability.permission_requirement)
-                    .to_owned(),
-                availability: availability_label(capability.availability).to_owned(),
-                projection_kind: projection_kind.map(projection_label).map(str::to_owned),
-                binding_state: state.label(),
-                active,
-                format_summary,
-                qos_modes,
-                metrics: demo_metrics(&capability.kind, active),
-            }
+    let adapters = all_nodes
+        .clone()
+        .flat_map(|node| {
+            node.adapter_instances
+                .values()
+                .map(move |adapter| UiAdapter {
+                    id: adapter.id.to_string(),
+                    node_name: node.display_name.clone(),
+                    display_name: adapter.display_name.clone(),
+                    adapter_type: adapter.adapter_type.clone(),
+                    deployment_mode: deployment_label(adapter.deployment_mode).to_owned(),
+                    state: format!("{:?}", adapter.state).to_lowercase(),
+                    health: format!("{:?}", adapter.health).to_lowercase(),
+                    capability_count: adapter.owned_capabilities.len(),
+                })
         })
         .collect();
-
+    let routes = snapshot
+        .routes
+        .iter()
+        .map(|route| route_to_ui(route, &snapshot.local_node, &snapshot.peers))
+        .collect();
     let events = snapshot
         .events
         .iter()
@@ -218,130 +190,158 @@ fn to_ui_snapshot(lab: &DemoLab) -> UiSnapshot {
 
     UiSnapshot {
         backend_mode: "tauri_demo",
-        schema_version: 1,
-        project_version: "0.1.0-bootstrap",
-        local_node_name: snapshot.local_node.display_name,
-        peers,
-        capabilities,
+        schema_version: 2,
+        project_version: env!("CARGO_PKG_VERSION"),
+        nodes,
+        routes,
+        adapters,
         events,
         warnings: vec![
-            "Tauri Demo 模式仍使用确定性 Rust Runtime；没有真实网络、音频或驱动。".to_owned(),
-            "界面中的延迟、丢包和缓冲指标是模拟值。".to_owned(),
+            "Tauri Demo 使用确定性 Rust Runtime；没有访问真实摄像头、麦克风、传感器、网络或驱动。"
+                .to_owned(),
+            "四条 Route 的授权、指标与系统投影状态均为模拟数据。".to_owned(),
         ],
     }
 }
 
-#[derive(Clone, Copy)]
-enum BindingStateView {
-    NotMapped,
-    Core(BindingState),
-}
+fn route_to_ui(route: &Route, local: &NodeDescriptor, peers: &[NodeDescriptor]) -> UiRoute {
+    let source = resolve_port(route.source, local, peers);
+    let sink = resolve_port(route.sink, local, peers);
+    let active = route.state == RouteState::Active;
+    let title = format!("{} → {}", source.capability_name, sink.capability_name);
+    let summary = format!("{} → {}", source.node_name, sink.node_name);
+    let format_summary = route
+        .selected_format
+        .as_ref()
+        .or_else(|| route.compatible_formats.first())
+        .map(|format| format.id.clone());
+    let qos_modes = route
+        .compatible_qos_modes
+        .iter()
+        .map(qos_label)
+        .map(str::to_owned)
+        .collect();
+    let projection_note = match sink.capability_class.as_str() {
+        "panel" => "CapyIO 应用内 Panel（模拟）",
+        "gamepad" => "本地游戏手柄投影（best-effort，模拟）",
+        "microphone" => "Windows 系统端点投影（驱动尚未实现）",
+        "speaker" => "Android 应用内播放端（模拟）",
+        _ => "标准 Port Sink",
+    }
+    .to_owned();
 
-impl BindingStateView {
-    const fn label(self) -> &'static str {
-        match self {
-            Self::NotMapped => "not_mapped",
-            Self::Core(BindingState::Requested) => "requested",
-            Self::Core(BindingState::Authorized) => "authorized",
-            Self::Core(BindingState::Negotiated) => "negotiated",
-            Self::Core(BindingState::Starting) => "starting",
-            Self::Core(BindingState::Active) => "active",
-            Self::Core(BindingState::Suspended) => "suspended",
-            Self::Core(BindingState::Stopping) => "stopping",
-            Self::Core(BindingState::Stopped) => "stopped",
-            Self::Core(BindingState::Rejected) => "rejected",
-            Self::Core(BindingState::Offline) => "offline",
-            Self::Core(BindingState::Failed) => "failed",
-        }
+    UiRoute {
+        id: route.id.to_string(),
+        title,
+        summary,
+        profile: format!("{}/{}", route.profile.name, route.profile.major),
+        backend: format!("{:?}", route.backend).to_lowercase(),
+        state: route_state_label(route.state).to_owned(),
+        active,
+        source,
+        sink,
+        format_summary,
+        qos_modes,
+        projection_note,
+        metrics: demo_metrics(&route.profile.name, active),
     }
 }
 
-fn default_projection(kind: &CapabilityKind) -> Option<ProjectionKind> {
-    match kind {
-        CapabilityKind::AudioCapture => Some(ProjectionKind::SystemCaptureEndpoint),
-        CapabilityKind::AudioRender => Some(ProjectionKind::SystemRenderEndpoint),
-        _ => None,
+fn resolve_port(reference: PortRef, local: &NodeDescriptor, peers: &[NodeDescriptor]) -> UiPort {
+    let node = std::iter::once(local)
+        .chain(peers.iter())
+        .find(|node| node.id == reference.node_id)
+        .expect("demo Route references advertised Node");
+    let capability = node
+        .capabilities
+        .get(&reference.capability_id)
+        .expect("demo Route references advertised Capability");
+    let port = capability
+        .ports
+        .get(&reference.port_id)
+        .expect("demo Route references advertised Port");
+    UiPort {
+        node_name: node.display_name.clone(),
+        capability_name: capability.display_name.clone(),
+        capability_class: capability_class_label(&capability.class),
+        port_name: port.display_name.clone(),
+        direction: port_direction_label(port.direction).to_owned(),
     }
 }
 
-fn permission_label(value: PermissionRequirement) -> &'static str {
+fn capability_class_label(value: &CapabilityClass) -> String {
     match value {
-        PermissionRequirement::None => "none",
-        PermissionRequirement::UserConfirmation => "user_confirmation",
-        PermissionRequirement::ForegroundService => "foreground_service",
-        PermissionRequirement::Privileged => "privileged",
+        CapabilityClass::Custom(custom) => custom.clone(),
+        other => format!("{other:?}").to_lowercase(),
     }
 }
 
-fn availability_label(value: Availability) -> &'static str {
+fn platform_label(value: &capyio_core::Platform) -> String {
     match value {
-        Availability::Available => "available",
-        Availability::Busy => "busy",
-        Availability::PermissionRequired => "permission_required",
-        Availability::Offline => "offline",
-    }
-}
-
-fn projection_label(value: ProjectionKind) -> &'static str {
-    match value {
-        ProjectionKind::ApplicationStream => "application_stream",
-        ProjectionKind::SystemCaptureEndpoint => "system_capture_endpoint",
-        ProjectionKind::SystemRenderEndpoint => "system_render_endpoint",
-        ProjectionKind::VirtualInputDevice => "virtual_input_device",
-        ProjectionKind::VirtualDisplay => "virtual_display",
-        ProjectionKind::RemoteComputeService => "remote_compute_service",
-    }
-}
-
-fn audio_qos_label(value: AudioQosMode) -> &'static str {
-    match value {
-        AudioQosMode::MediaPlayback => "media_playback",
-        AudioQosMode::VoiceInteractive => "voice_interactive",
-        AudioQosMode::RawLan => "raw_lan",
-        AudioQosMode::RawDuplex => "raw_duplex",
-    }
-}
-
-fn platform_label(platform: &capyio_core::Platform) -> String {
-    match platform {
         capyio_core::Platform::Unknown(detail) => detail.clone(),
         other => format!("{other:?}").to_lowercase(),
     }
 }
 
-fn format_summary(format: &capyio_core::AudioFormat) -> String {
-    format!(
-        "{} kHz · {:?} · {} ch · {} ms",
-        format.sample_rate_hz / 1_000,
-        format.sample_format,
-        format.channels,
-        format.frame_duration_micros / 1_000
-    )
+const fn deployment_label(value: AdapterDeploymentMode) -> &'static str {
+    match value {
+        AdapterDeploymentMode::InProcess => "in_process",
+        AdapterDeploymentMode::Sidecar => "sidecar",
+        AdapterDeploymentMode::ExternalService => "external_service",
+        AdapterDeploymentMode::DriverBacked => "driver_backed",
+    }
 }
 
-fn demo_metrics(kind: &CapabilityKind, active: bool) -> UiMetricSet {
+const fn port_direction_label(value: PortDirection) -> &'static str {
+    match value {
+        PortDirection::Source => "source",
+        PortDirection::Sink => "sink",
+        PortDirection::Control => "control",
+    }
+}
+
+fn qos_label(value: &QosMode) -> &str {
+    match value {
+        QosMode::Basic => "basic",
+        QosMode::Interactive => "interactive",
+        QosMode::Measurement => "measurement",
+        QosMode::Custom(custom) => custom,
+    }
+}
+
+const fn route_state_label(value: RouteState) -> &'static str {
+    match value {
+        RouteState::Draft => "draft",
+        RouteState::Prepared => "prepared",
+        RouteState::Starting => "starting",
+        RouteState::Active => "active",
+        RouteState::Stopping => "stopping",
+        RouteState::Stopped => "stopped",
+        RouteState::Failed => "failed",
+        RouteState::Offline => "offline",
+    }
+}
+
+fn demo_metrics(profile: &str, active: bool) -> UiMetricSet {
     if !active {
         return UiMetricSet {
             estimated_latency_ms: None,
             packet_loss_percent: None,
             buffer_fill_ms: None,
-            underruns: 0,
-            overruns: 0,
             simulated: true,
         };
     }
-
-    let (latency, loss, buffer) = match kind {
-        CapabilityKind::AudioCapture => (47.3, 0.03, 30.0),
-        CapabilityKind::AudioRender => (63.8, 0.01, 45.0),
-        _ => (0.0, 0.0, 0.0),
+    let (latency, loss, buffer) = if profile.contains("audio") {
+        (47.3, 0.03, 30.0)
+    } else if profile.contains("video") {
+        (81.2, 0.07, 66.0)
+    } else {
+        (18.6, 0.01, 12.0)
     };
     UiMetricSet {
         estimated_latency_ms: Some(latency),
         packet_loss_percent: Some(loss),
         buffer_fill_ms: Some(buffer),
-        underruns: 0,
-        overruns: 0,
         simulated: true,
     }
 }

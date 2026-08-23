@@ -284,6 +284,29 @@ dependencies = [
 ]
 
 [[package]]
+name = "capyio-adapter-host"
+version = "0.1.0"
+dependencies = [
+ "capyio-adapter-sdk",
+ "capyio-core",
+ "capyio-runtime",
+ "capyio-testkit",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.20",
+]
+
+[[package]]
+name = "capyio-adapter-sdk"
+version = "0.1.0"
+dependencies = [
+ "capyio-core",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.20",
+]
+
+[[package]]
 name = "capyio-audio"
 version = "0.1.0"
 dependencies = [
@@ -315,6 +338,22 @@ dependencies = [
 ]
 
 [[package]]
+name = "capyio-mock-sink"
+version = "0.1.0"
+dependencies = [
+ "capyio-mock-source",
+]
+
+[[package]]
+name = "capyio-mock-source"
+version = "0.1.0"
+dependencies = [
+ "capyio-adapter-sdk",
+ "capyio-core",
+ "serde_json",
+]
+
+[[package]]
 name = "capyio-node"
 version = "0.1.0"
 dependencies = [
@@ -335,6 +374,7 @@ name = "capyio-protocol"
 version = "0.1.0"
 dependencies = [
  "capyio-core",
+ "capyio-testkit",
  "prost",
  "prost-build",
  "protoc-bin-vendored",
@@ -4906,7 +4946,9 @@ name = "xtask"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "capyio-adapter-sdk",
  "clap",
+ "serde_json",
 ]
 
 [[package]]

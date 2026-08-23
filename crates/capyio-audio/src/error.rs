@@ -3,6 +3,9 @@ use thiserror::Error;
 /// Validation and bounded-buffer errors in the shared audio data plane.
 #[derive(Clone, Debug, Eq, Error, PartialEq)]
 pub enum AudioDataError {
+    #[error("invalid audio format: {0}")]
+    InvalidFormat(String),
+
     #[error("audio frame sample count must be greater than zero")]
     EmptyFrame,
 

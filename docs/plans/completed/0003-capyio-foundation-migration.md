@@ -1,8 +1,11 @@
 # CAPY-FOUNDATION-001 — CapyIO foundation migration
 
-Status: active  
-Owner: Codex  
-Created: 2026-08-23  
+Status: complete
+
+Owner: Codex
+
+Created: 2026-08-23
+
 Source: `CapyIO_Codex_Master_Prompt.md`, PRD v0.2, Architecture v0.1
 
 > The master prompt requested plan number `0002`, but that identifier already
@@ -89,25 +92,25 @@ and an isolated mock Adapter sidecar.
 
 ### Gate 2
 
-- [ ] `NodeRole`, `LocalRole`, `StreamRole` and Binding/Projection-centric Core
+- [x] `NodeRole`, `LocalRole`, `StreamRole` and Binding/Projection-centric Core
   flows no longer define the active model.
-- [ ] Capability owns one or more typed Ports and Adapter ownership is explicit.
-- [ ] Route rejects Source→Source, Sink→Sink and incompatible Profiles.
-- [ ] Route states implement Draft, Prepared, Starting, Active, Stopping,
+- [x] Capability owns one or more typed Ports and Adapter ownership is explicit.
+- [x] Route rejects Source→Source, Sink→Sink and incompatible Profiles.
+- [x] Route states implement Draft, Prepared, Starting, Active, Stopping,
   Stopped, Failed and Offline with invalid-transition tests.
-- [ ] Opposite-direction Routes coexist and stopping one does not affect another.
-- [ ] Protocol round trips Node Catalog, Capability/Port Catalog, Route and Problem.
-- [ ] Mock UI exposes Quick Actions and Workspace with four independent Routes.
+- [x] Opposite-direction Routes coexist and stopping one does not affect another.
+- [x] Protocol round trips Node Catalog, Capability/Port Catalog, Route and Problem.
+- [x] Mock UI exposes Quick Actions and Workspace with four independent Routes.
 
 ### Gate 3
 
-- [ ] Adapter manifest Rust types validate against the committed JSON Schema.
-- [ ] NDJSON codec handles framing, malformed messages and response correlation.
-- [ ] Mock sidecars keep normal logs on stderr and control messages on stdout.
-- [ ] Adapter Host can initialize, probe, read a catalog, prepare/start/stop a
+- [x] Adapter manifest Rust types validate against the committed JSON Schema.
+- [x] NDJSON codec handles framing, malformed messages and response correlation.
+- [x] Mock sidecars keep normal logs on stderr and control messages on stdout.
+- [x] Adapter Host can initialize, probe, read a catalog, prepare/start/stop a
   Route and shut a child process down.
-- [ ] Unexpected child exit only fails the owning Adapter and Routes.
-- [ ] `cargo xtask validate-manifests` and `cargo xtask adapter-smoke` pass.
+- [x] Unexpected child exit only fails the owning Adapter and Routes.
+- [x] `cargo xtask validate-manifests` and `cargo xtask adapter-smoke` pass.
 
 ## Required validation
 
@@ -131,17 +134,18 @@ pnpm build
 |---|---|---|
 | 0 — baseline | complete | `docs/BASELINE_REPORT.md` |
 | 1 — naming/docs | complete | repository validator, Rust check and UI build |
-| 2 — domain/runtime/UI | pending | Rust tests, protocol tests, UI build |
-| 3 — Adapter SDK/sidecars | pending | manifest validation and smoke test |
+| 2 — domain/runtime/UI | complete | 42 Rust tests, protocol round trips, UI build |
+| 3 — Adapter SDK/sidecars | complete | manifest validation and process smoke test |
 
 ## Known risks
 
 - This is an intentional breaking pre-alpha model and Protobuf package rename.
 - Renaming directories and crates touches most of the small repository; changes
   must remain split into buildable Gates.
-- The existing host-operation seam is audio-shaped and may need a compatible
-  generalization rather than deletion.
-- Child-process tests can be sensitive to Windows process and pipe behavior.
+- The foundation Host is deliberately sequential; concurrent Adapter requests
+  and event streams need a later async design without weakening bounds.
+- Child-process behavior is verified on this Windows host but still needs
+  hosted Linux/macOS CI evidence.
 - The local Codex process PATH differs from the persisted user environment;
   validation commands must use a documented session PATH until a new shell is
   opened.
@@ -152,15 +156,24 @@ Implemented:
 
 - Gate 0 baseline audit and report;
 - Gate 1 CapyIO naming, repository layout, PRD v0.3, architecture, ADR and
-  third-party provenance skeleton.
+  third-party provenance skeleton;
+- Gate 2 symmetric Node/Port/Route Core, generic Runtime/Protocol/Testkit/CLI
+  and four-Route Quick Actions/Workspace Mock UI;
+- Gate 3 Adapter SDK/manifest schema, bounded JSON-RPC/NDJSON codec, Sidecar
+  Host, finite Mock Source/Sink and scoped process-crash handling.
 
 Validation:
 
 - See `docs/BASELINE_REPORT.md`;
 - Gate 1: repository validation, `cargo check --workspace`, pinned pnpm
-  typecheck and production build passed on 2026-08-23.
+  typecheck and production build passed on 2026-08-23;
+- Gates 2–3: full Rust format/check/Clippy/test, docs/manifests, Adapter Smoke,
+  repository validation and frontend typecheck/build passed on 2026-08-23;
+- detailed evidence is in `docs/GATE_0_3_REPORT.md`.
 
 Not validated:
 
-- Gates 2–3 are still in progress;
-- no hardware, driver, APK, transport or production security behavior.
+- no Android/physical-device, Linux/macOS Sidecar-process or isolated Windows
+  driver environment was exercised;
+- no hardware, driver, APK, production transport or production security
+  behavior exists in Gates 0–3.

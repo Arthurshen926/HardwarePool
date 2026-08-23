@@ -42,9 +42,11 @@ crates/capyio-runtime       deterministic route/catalog orchestration
 crates/capyio-adapter-sdk   Adapter manifest and control contract
 crates/capyio-adapter-host  desktop sidecar supervision
 crates/capyio-testkit       stable fixtures
-apps/capyio-node            headless demo and mock sidecars
+apps/capyio-node            headless four-Route demo
 apps/desktop                Vue + Tauri control surface
-adapters/                   integration boundaries and mock manifests
+adapters/mock-source        finite test Source Sidecar and manifest
+adapters/mock-sink          finite test Sink Sidecar and manifest
+adapters/                   planned integration boundaries
 protocol/                   Protobuf and JSON Schema sources
 docs/                       normative requirements, architecture and plans
 ```

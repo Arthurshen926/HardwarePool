@@ -9,4 +9,6 @@ publish = false
 
 [dependencies]
 anyhow.workspace = true
+capyio-adapter-sdk = { path = "../crates/capyio-adapter-sdk" }
 clap.workspace = true
+serde_json.workspace = true

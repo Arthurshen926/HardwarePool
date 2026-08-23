@@ -1,54 +1,65 @@
 export type BackendMode = "browser_mock" | "tauri_demo";
 
-export type CapabilityKind =
-  | "audio_capture"
-  | "audio_render"
-  | "audio_duplex_bundle";
-
-export type BindingState =
-  | "not_mapped"
-  | "requested"
-  | "authorized"
-  | "negotiated"
+export type RouteState =
+  | "draft"
+  | "prepared"
   | "starting"
   | "active"
-  | "suspended"
   | "stopping"
   | "stopped"
-  | "rejected"
-  | "offline"
-  | "failed";
+  | "failed"
+  | "offline";
 
 export interface UiMetricSet {
   estimatedLatencyMs: number | null;
   packetLossPercent: number | null;
   bufferFillMs: number | null;
-  underruns: number;
-  overruns: number;
   simulated: boolean;
 }
 
-export interface UiCapability {
+export interface UiPort {
+  nodeName: string;
+  capabilityName: string;
+  capabilityClass: string;
+  portName: string;
+  direction: "source" | "sink" | "control";
+}
+
+export interface UiRoute {
   id: string;
-  displayName: string;
-  kind: CapabilityKind;
+  title: string;
+  summary: string;
   profile: string;
-  permissionRequirement: string;
-  availability: string;
-  projectionKind: string | null;
-  bindingState: BindingState;
+  backend: string;
+  state: RouteState;
   active: boolean;
+  source: UiPort;
+  sink: UiPort;
   formatSummary: string | null;
   qosModes: string[];
+  projectionNote: string;
   metrics: UiMetricSet;
 }
 
-export interface UiPeer {
+export interface UiNode {
   id: string;
   displayName: string;
   platform: string;
   platformVersion: string;
   online: boolean;
+  local: boolean;
+  capabilityCount: number;
+}
+
+export interface UiAdapter {
+  id: string;
+  nodeName: string;
+  displayName: string;
+  adapterType: string;
+  deploymentMode: string;
+  state: string;
+  health: string;
+  capabilityCount: number;
 }
 
 export interface UiEvent {
@@ -58,17 +69,17 @@ export interface UiEvent {
 
 export interface UiSnapshot {
   backendMode: BackendMode;
-  schemaVersion: 1;
+  schemaVersion: 2;
   projectVersion: string;
-  localNodeName: string;
-  peers: UiPeer[];
-  capabilities: UiCapability[];
+  nodes: UiNode[];
+  routes: UiRoute[];
+  adapters: UiAdapter[];
   events: UiEvent[];
   warnings: string[];
 }
 
 export interface CapyIOApi {
   getSnapshot(): Promise<UiSnapshot>;
-  setProjection(capabilityId: string, active: boolean): Promise<UiSnapshot>;
+  setRoute(routeId: string, active: boolean): Promise<UiSnapshot>;
   resetDemo(): Promise<UiSnapshot>;
 }

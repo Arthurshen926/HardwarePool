@@ -25,9 +25,8 @@ implementation scope automatically.
 
 ## Current status
 
-- Gate 0: complete (`docs/BASELINE_REPORT.md`).
-- Gates 1–3: active under
-  `docs/plans/active/0003-capyio-foundation-migration.md`.
+- Gates 0–3: complete locally; evidence is in `docs/GATE_0_3_REPORT.md` and the
+  completed `0003-capyio-foundation-migration.md` plan.
 - Gates 4–15: roadmap only; no implementation authorization is implied.
 
 ## Public-alpha proof bar

@@ -1,0 +1,36 @@
+{
+  "schema_version": 1,
+  "id": "dev.capyio.mock-source",
+  "name": "CapyIO Mock Source",
+  "version": "0.1.0",
+  "control_protocol": { "major": 1, "minor": 0 },
+  "kind": "mock",
+  "deployment_modes": ["sidecar"],
+  "platforms": ["windows", "linux", "macos"],
+  "entrypoints": {
+    "windows": "capyio-mock-source.exe",
+    "linux": "capyio-mock-source",
+    "macos": "capyio-mock-source"
+  },
+  "permissions": [],
+  "capability_templates": [
+    {
+      "name": "Mock Sample Source",
+      "class": "dev.capyio.mock.sample-source",
+      "ports": [
+        {
+          "name": "Finite Smoke Sample Source",
+          "direction": "source",
+          "profile": "capyio.test.samples",
+          "profile_major": 1
+        }
+      ]
+    }
+  ],
+  "integration_mode": "foundation_mock",
+  "license": {
+    "spdx": "Apache-2.0",
+    "notice": "Original CapyIO test-only code; no upstream source imported."
+  },
+  "upstream": null
+}

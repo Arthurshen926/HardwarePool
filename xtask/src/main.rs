@@ -1,6 +1,7 @@
 use std::{
     env,
     ffi::OsStr,
+    fs,
     path::{Path, PathBuf},
     process::{Command, ExitStatus},
 };
@@ -30,6 +31,12 @@ enum Task {
     Ci,
     /// Runs the deterministic CLI demo.
     Demo,
+    /// Validates the normative documentation inventory and Requirement IDs.
+    ValidateDocs,
+    /// Validates the Adapter manifest schema and every committed manifest.
+    ValidateManifests,
+    /// Builds and supervises the finite Mock Source/Sink Sidecars.
+    AdapterSmoke,
 }
 
 fn main() -> Result<()> {
@@ -43,10 +50,10 @@ fn main() -> Result<()> {
         Task::Check => check(),
         Task::Test => test(),
         Task::Ci => ci(),
-        Task::Demo => run(
-            "cargo",
-            ["run", "--package", "capyio-node", "--", "demo"],
-        ),
+        Task::Demo => run("cargo", ["run", "--package", "capyio-node", "--", "demo"]),
+        Task::ValidateDocs => validate_docs(),
+        Task::ValidateManifests => validate_manifests(),
+        Task::AdapterSmoke => adapter_smoke(&root),
     }
 }
 
@@ -78,15 +85,20 @@ fn doctor() -> Result<()> {
     ];
 
     let mut missing_required = Vec::new();
-    println!("Required:");
+    println!("required-now:");
     for tool in &required {
         if !print_tool(tool) {
             missing_required.push(tool.program);
         }
     }
 
-    println!("\nOptional / platform-specific:");
-    for tool in &optional {
+    println!("\noptional-android:");
+    for tool in &optional[..2] {
+        print_tool(tool);
+    }
+
+    println!("\noptional-windows-native:");
+    for tool in &optional[2..] {
         print_tool(tool);
     }
 
@@ -162,6 +174,9 @@ fn ci() -> Result<()> {
     run("cargo", ["fmt", "--all", "--", "--check"])?;
     check()?;
     test()?;
+    validate_docs()?;
+    validate_manifests()?;
+    adapter_smoke(&repository_root()?)?;
     run("python", ["scripts/validate_repository.py"])?;
 
     if command_available("pnpm") {
@@ -171,6 +186,133 @@ fn ci() -> Result<()> {
         println!("pnpm is not available; frontend checks were skipped");
     }
     Ok(())
+}
+
+fn validate_docs() -> Result<()> {
+    let required = [
+        "README.md",
+        "docs/PRODUCT_REQUIREMENTS.md",
+        "docs/ARCHITECTURE.md",
+        "docs/PROJECT_CHARTER.md",
+        "docs/DOMAIN_MODEL.md",
+        "docs/ADAPTER_MODEL.md",
+        "docs/PORT_PROFILES.md",
+        "docs/PROTOCOL.md",
+        "docs/SECURITY_MODEL.md",
+        "docs/TESTING.md",
+        "docs/UX_MODEL.md",
+        "docs/THIRD_PARTY_STRATEGY.md",
+        "docs/ROADMAP.md",
+        "docs/BACKLOG.md",
+        "docs/BUILD_STATUS.md",
+    ];
+    for path in required {
+        if !Path::new(path).is_file() {
+            bail!("required documentation is missing: {path}");
+        }
+    }
+    let prd = fs::read_to_string("docs/PRODUCT_REQUIREMENTS.md")?;
+    let requirement_count = prd.match_indices("- **").count();
+    if requirement_count < 40 {
+        bail!(
+            "PRD contains only {requirement_count} Requirement ID references; expected at least 40"
+        );
+    }
+    println!("Documentation validation: PASS ({requirement_count} Requirement ID references)");
+    Ok(())
+}
+
+fn validate_manifests() -> Result<()> {
+    let schema_path = Path::new("protocol/schemas/adapter-manifest.schema.json");
+    let schema: serde_json::Value = serde_json::from_slice(
+        &fs::read(schema_path).context("read Adapter manifest JSON Schema")?,
+    )
+    .context("parse Adapter manifest JSON Schema")?;
+    if schema["$schema"] != "https://json-schema.org/draft/2020-12/schema"
+        || schema["properties"]["schema_version"]["const"] != 1
+    {
+        bail!("Adapter manifest JSON Schema does not declare the supported v1 contract");
+    }
+
+    let mut paths = Vec::new();
+    collect_named_files(Path::new("adapters"), "adapter.json", &mut paths)?;
+    if paths.is_empty() {
+        bail!("no Adapter manifests found");
+    }
+    paths.sort();
+    for path in &paths {
+        let bytes = fs::read(path).with_context(|| format!("read {}", path.display()))?;
+        let manifest = capyio_adapter_sdk::AdapterManifest::from_json(&bytes)
+            .with_context(|| format!("validate {}", path.display()))?;
+        println!("  OK  {} ({})", path.display(), manifest.id);
+    }
+    println!(
+        "Adapter manifest validation: PASS ({} manifests)",
+        paths.len()
+    );
+    Ok(())
+}
+
+fn collect_named_files(root: &Path, name: &str, output: &mut Vec<PathBuf>) -> Result<()> {
+    for entry in fs::read_dir(root).with_context(|| format!("read {}", root.display()))? {
+        let entry = entry?;
+        let path = entry.path();
+        if path.is_dir() {
+            collect_named_files(&path, name, output)?;
+        } else if path.file_name().is_some_and(|value| value == name) {
+            output.push(path);
+        }
+    }
+    Ok(())
+}
+
+fn adapter_smoke(root: &Path) -> Result<()> {
+    run(
+        "cargo",
+        [
+            "build",
+            "--package",
+            "capyio-mock-source",
+            "--package",
+            "capyio-mock-sink",
+            "--package",
+            "capyio-adapter-host",
+            "--bins",
+        ],
+    )?;
+    run(
+        "cargo",
+        [
+            "test",
+            "--package",
+            "capyio-adapter-host",
+            "--test",
+            "crash_isolation",
+        ],
+    )?;
+
+    let target = match env::var_os("CARGO_TARGET_DIR") {
+        Some(directory) if Path::new(&directory).is_absolute() => PathBuf::from(directory),
+        Some(directory) => root.join(directory),
+        None => root.join("target"),
+    };
+    let executable = |name: &str| {
+        target
+            .join("debug")
+            .join(format!("{name}{}", env::consts::EXE_SUFFIX))
+    };
+    let smoke = executable("capyio-adapter-smoke");
+    let source = executable("capyio-mock-source");
+    let sink = executable("capyio-mock-sink");
+    run_path(
+        &smoke,
+        [
+            source.as_os_str(),
+            root.join("adapters/mock-source/adapter.json").as_os_str(),
+            sink.as_os_str(),
+            root.join("adapters/mock-sink/adapter.json").as_os_str(),
+        ],
+    )
 }
 
 fn command_available(program: &str) -> bool {
@@ -210,6 +352,30 @@ where
         .status()
         .with_context(|| format!("start command: {program}"))?;
     require_success(program, status)
+}
+
+fn run_path<I, S>(program: &Path, args: I) -> Result<()>
+where
+    I: IntoIterator<Item = S>,
+    S: AsRef<OsStr>,
+{
+    let args = args
+        .into_iter()
+        .map(|value| value.as_ref().to_owned())
+        .collect::<Vec<_>>();
+    println!(
+        "> {} {}",
+        program.display(),
+        args.iter()
+            .map(|value| value.to_string_lossy())
+            .collect::<Vec<_>>()
+            .join(" ")
+    );
+    let status = Command::new(program)
+        .args(&args)
+        .status()
+        .with_context(|| format!("start command: {}", program.display()))?;
+    require_success(&program.display().to_string(), status)
 }
 
 fn require_success(program: &str, status: ExitStatus) -> Result<()> {

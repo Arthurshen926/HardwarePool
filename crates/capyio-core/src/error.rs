@@ -1,61 +1,85 @@
 use thiserror::Error;
 
-use crate::{BindingState, CapabilityId, ProjectionKind, SessionId, SessionPhase};
+use crate::{
+    AdapterInstanceId, CapabilityId, PortDirection, PortId, PortRef, ProfileId, RouteId,
+    RouteState, SessionId, SessionState,
+};
 
-/// Domain validation and lifecycle errors.
 #[derive(Debug, Clone, Error, PartialEq, Eq)]
 pub enum CoreError {
-    #[error("invalid profile: {0}")]
-    InvalidProfile(String),
-
-    #[error("invalid audio format: {0}")]
-    InvalidAudioFormat(String),
-
-    #[error("invalid capability {capability_id}: {reason}")]
+    #[error("invalid Node: {0}")]
+    InvalidNode(String),
+    #[error("invalid Adapter {adapter_id}: {reason}")]
+    InvalidAdapter {
+        adapter_id: AdapterInstanceId,
+        reason: String,
+    },
+    #[error("invalid Capability {capability_id}: {reason}")]
     InvalidCapability {
         capability_id: CapabilityId,
         reason: String,
     },
-
-    #[error("capability {capability_id} does not support projection {mapping:?}")]
-    UnsupportedProjection {
-        capability_id: CapabilityId,
-        mapping: ProjectionKind,
-    },
-
-    #[error("capability {0} is not present in the session")]
-    UnknownCapability(CapabilityId),
-
-    #[error("node already contains capability {0}")]
+    #[error("invalid Port {port_id}: {reason}")]
+    InvalidPort { port_id: PortId, reason: String },
+    #[error("invalid Profile: {0}")]
+    InvalidProfile(String),
+    #[error("invalid format: {0}")]
+    InvalidFormat(String),
+    #[error("invalid Problem: {0}")]
+    InvalidProblem(String),
+    #[error("duplicate Adapter {0}")]
+    DuplicateAdapter(AdapterInstanceId),
+    #[error("duplicate Capability {0}")]
     DuplicateCapability(CapabilityId),
-
-    #[error("session {0} is unknown")]
+    #[error("duplicate Port {0}")]
+    DuplicatePort(PortId),
+    #[error("unknown Adapter {0}")]
+    UnknownAdapter(AdapterInstanceId),
+    #[error("unknown Capability {0}")]
+    UnknownCapability(CapabilityId),
+    #[error("unknown Port {0}")]
+    UnknownPort(PortId),
+    #[error("unknown Route {0}")]
+    UnknownRoute(RouteId),
+    #[error("unknown Session {0}")]
     UnknownSession(SessionId),
-
-    #[error("binding transition '{action}' is not valid from {from:?}")]
-    InvalidBindingTransition {
-        from: BindingState,
+    #[error("Port reference does not match its descriptor: {0:?}")]
+    InvalidPortRef(PortRef),
+    #[error("Route endpoint {port_id} must be {expected:?}, got {actual:?}")]
+    InvalidRouteEndpoint {
+        port_id: PortId,
+        expected: PortDirection,
+        actual: PortDirection,
+    },
+    #[error("incompatible Profiles: {source_profile:?} -> {sink_profile:?}")]
+    IncompatibleProfiles {
+        source_profile: ProfileId,
+        sink_profile: ProfileId,
+    },
+    #[error("Source and Sink interoperability modes differ")]
+    IncompatibleInteroperabilityModes,
+    #[error("Source and Sink have no compatible format")]
+    NoCompatibleFormat,
+    #[error("Source and Sink have no compatible QoS mode")]
+    NoCompatibleQos,
+    #[error("selected Route format was not mutually advertised")]
+    UnsupportedRouteFormat,
+    #[error("selected Route QoS was not mutually advertised")]
+    UnsupportedRouteQos,
+    #[error("Route authorization transition is invalid")]
+    InvalidAuthorizationTransition,
+    #[error("Route is not authorized")]
+    RouteNotAuthorized,
+    #[error("Route authorization has expired")]
+    AuthorizationExpired,
+    #[error("Route transition '{action}' is not valid from {from:?}")]
+    InvalidRouteTransition {
+        from: RouteState,
         action: &'static str,
     },
-
-    #[error("session transition '{action}' is not valid from {from:?}")]
+    #[error("Session transition '{action}' is not valid from {from:?}")]
     InvalidSessionTransition {
-        from: SessionPhase,
+        from: SessionState,
         action: &'static str,
     },
-
-    #[error("authorization lease must expire after it is issued")]
-    InvalidLease,
-
-    #[error("authorization lease has expired")]
-    LeaseExpired,
-
-    #[error("audio format was not advertised by capability {0}")]
-    UnsupportedAudioFormat(CapabilityId),
-
-    #[error("capability {0} is not an audio capability")]
-    NotAudioCapability(CapabilityId),
-
-    #[error("a live binding already exists for capability {0}")]
-    BindingAlreadyExists(CapabilityId),
 }

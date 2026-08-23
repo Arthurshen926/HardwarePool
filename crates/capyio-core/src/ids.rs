@@ -13,19 +13,16 @@ macro_rules! define_id {
         pub struct $name(Uuid);
 
         impl $name {
-            /// Creates a new random version-4 identifier.
             #[must_use]
             pub fn new() -> Self {
                 Self(Uuid::new_v4())
             }
 
-            /// Wraps an existing UUID without changing it.
             #[must_use]
             pub const fn from_uuid(value: Uuid) -> Self {
                 Self(value)
             }
 
-            /// Returns the underlying UUID.
             #[must_use]
             pub const fn as_uuid(self) -> Uuid {
                 self.0
@@ -66,18 +63,26 @@ macro_rules! define_id {
     };
 }
 
-define_id!(NodeId, "Stable identity of a CapyIO node.");
+define_id!(NodeId, "Stable identity of one logical CapyIO Node.");
+define_id!(
+    AdapterInstanceId,
+    "Identity of one deployed Adapter instance."
+);
 define_id!(
     CapabilityId,
-    "Identity of one independently authorized capability."
+    "Identity of one user-understandable capability."
 );
-define_id!(SessionId, "Identity of one peer control session.");
-define_id!(BindingId, "Identity of one per-capability session binding.");
 define_id!(
-    ProjectionId,
-    "Identity of a local projection of a remote capability."
+    PortId,
+    "Identity of one typed endpoint owned by a Capability."
 );
-define_id!(StreamId, "Identity of one media or data stream.");
+define_id!(RouteId, "Identity of one directed Source-to-Sink Route.");
+define_id!(
+    SessionId,
+    "Identity of one peer trust/control relationship."
+);
+define_id!(ProblemId, "Identity of one structured diagnostic.");
+define_id!(StreamId, "Identity of one data-plane stream.");
 define_id!(MessageId, "Identity used to correlate protocol messages.");
 
 #[cfg(test)]
@@ -85,9 +90,9 @@ mod tests {
     use super::*;
 
     #[test]
-    fn typed_ids_round_trip_as_strings() {
-        let original = NodeId::new();
-        let parsed: NodeId = original.to_string().parse().expect("valid UUID");
+    fn typed_ids_round_trip_without_becoming_interchangeable() {
+        let original = PortId::new();
+        let parsed: PortId = original.to_string().parse().expect("valid UUID");
         assert_eq!(original, parsed);
     }
 }

@@ -18,4 +18,5 @@ prost-build.workspace = true
 protoc-bin-vendored.workspace = true
 
 [dev-dependencies]
+capyio-testkit = { path = "../capyio-testkit" }
 serde_json.workspace = true

@@ -1,0 +1,36 @@
+{
+  "schema_version": 1,
+  "id": "dev.capyio.mock-sink",
+  "name": "CapyIO Mock Sink",
+  "version": "0.1.0",
+  "control_protocol": { "major": 1, "minor": 0 },
+  "kind": "mock",
+  "deployment_modes": ["sidecar"],
+  "platforms": ["windows", "linux", "macos"],
+  "entrypoints": {
+    "windows": "capyio-mock-sink.exe",
+    "linux": "capyio-mock-sink",
+    "macos": "capyio-mock-sink"
+  },
+  "permissions": [],
+  "capability_templates": [
+    {
+      "name": "Mock Sample Sink",
+      "class": "dev.capyio.mock.sample-sink",
+      "ports": [
+        {
+          "name": "Finite Smoke Sample Sink",
+          "direction": "sink",
+          "profile": "capyio.test.samples",
+          "profile_major": 1
+        }
+      ]
+    }
+  ],
+  "integration_mode": "foundation_mock",
+  "license": {
+    "spdx": "Apache-2.0",
+    "notice": "Original CapyIO test-only code; no upstream source imported."
+  },
+  "upstream": null
+}

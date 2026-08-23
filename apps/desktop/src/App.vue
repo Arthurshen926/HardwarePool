@@ -1,57 +1,45 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from "vue";
 
-import CapabilityCard from "./components/CapabilityCard.vue";
+import RouteCard from "./components/RouteCard.vue";
 import StatusPill from "./components/StatusPill.vue";
 import { createCapyIOApi } from "./lib/api";
-import type { UiCapability, UiSnapshot } from "./lib/types";
+import type { UiRoute, UiSnapshot } from "./lib/types";
 
 const api = createCapyIOApi();
 const snapshot = ref<UiSnapshot | null>(null);
-const busyCapabilityId = ref<string | null>(null);
+const busyRouteId = ref<string | null>(null);
 const loading = ref(true);
 const errorMessage = ref("");
+const view = ref<"quick" | "workspace">("quick");
 
-const onlinePeer = computed(() => snapshot.value?.peers.find((peer) => peer.online));
-const activeCount = computed(
-  () => snapshot.value?.capabilities.filter((capability) => capability.active).length ?? 0,
-);
+const localNode = computed(() => snapshot.value?.nodes.find((node) => node.local));
+const remoteNode = computed(() => snapshot.value?.nodes.find((node) => !node.local));
+const activeCount = computed(() => snapshot.value?.routes.filter((route) => route.active).length ?? 0);
 const recentEvents = computed(() => [...(snapshot.value?.events ?? [])].reverse());
 
 async function load(): Promise<void> {
   loading.value = true;
   errorMessage.value = "";
-  try {
-    snapshot.value = await api.getSnapshot();
-  } catch (error) {
-    errorMessage.value = normalizeError(error);
-  } finally {
-    loading.value = false;
-  }
+  try { snapshot.value = await api.getSnapshot(); }
+  catch (error) { errorMessage.value = normalizeError(error); }
+  finally { loading.value = false; }
 }
 
-async function toggleCapability(capability: UiCapability): Promise<void> {
-  busyCapabilityId.value = capability.id;
+async function toggleRoute(route: UiRoute): Promise<void> {
+  busyRouteId.value = route.id;
   errorMessage.value = "";
-  try {
-    snapshot.value = await api.setProjection(capability.id, !capability.active);
-  } catch (error) {
-    errorMessage.value = normalizeError(error);
-  } finally {
-    busyCapabilityId.value = null;
-  }
+  try { snapshot.value = await api.setRoute(route.id, !route.active); }
+  catch (error) { errorMessage.value = normalizeError(error); }
+  finally { busyRouteId.value = null; }
 }
 
 async function resetDemo(): Promise<void> {
   loading.value = true;
   errorMessage.value = "";
-  try {
-    snapshot.value = await api.resetDemo();
-  } catch (error) {
-    errorMessage.value = normalizeError(error);
-  } finally {
-    loading.value = false;
-  }
+  try { snapshot.value = await api.resetDemo(); }
+  catch (error) { errorMessage.value = normalizeError(error); }
+  finally { loading.value = false; }
 }
 
 function normalizeError(error: unknown): string {
@@ -65,124 +53,107 @@ onMounted(load);
   <main class="app-shell">
     <header class="topbar">
       <a class="brand" href="#overview" aria-label="CapyIO home">
-        <span class="brand__mark" aria-hidden="true">HP</span>
-        <span>
-          <strong>CapyIO</strong>
-          <small>Distributed capability fabric</small>
-        </span>
+        <span class="brand__mark" aria-hidden="true">IO</span>
+        <span><strong>CapyIO</strong><small>Distributed capability fabric</small></span>
       </a>
+      <nav class="view-switch" aria-label="Primary views">
+        <button type="button" :class="{ active: view === 'quick' }" @click="view = 'quick'">Quick Actions</button>
+        <button type="button" :class="{ active: view === 'workspace' }" @click="view = 'workspace'">Workspace</button>
+      </nav>
       <div class="topbar__actions">
-        <StatusPill
-          v-if="snapshot"
-          :tone="snapshot.backendMode === 'tauri_demo' ? 'success' : 'warning'"
-          :label="snapshot.backendMode"
-        />
-        <button class="ghost-button" type="button" :disabled="loading" @click="resetDemo">
-          Reset demo
-        </button>
+        <StatusPill v-if="snapshot" :tone="snapshot.backendMode === 'tauri_demo' ? 'success' : 'warning'" :label="snapshot.backendMode" />
+        <button class="ghost-button" type="button" :disabled="loading" @click="resetDemo">Reset demo</button>
       </div>
     </header>
 
-    <section id="overview" class="hero-panel">
+    <section id="overview" class="hero-panel hero-panel--compact">
       <div class="hero-panel__copy">
-        <p class="eyebrow">Bootstrap control surface · v0.1</p>
-        <h1>把远端硬件能力，映射成可控的本地设备。</h1>
-        <p>
-          当前垂直切片把 vivo 手机的麦克风和扬声器建模为两项独立能力。
-          界面、Rust Runtime 与协议契约已经连接；真实音频和 Windows 驱动将在后续 Gate 接入。
-        </p>
+        <p class="eyebrow">Gate 2 · Generic mock vertical slices</p>
+        <h1>连接能力，不绑定设备角色。</h1>
+        <p>两个对等 Node 通过有方向、强类型的 Route 组合音频、IMU 与视频能力。每条 Route 独立启动和停止。</p>
         <div class="hero-panel__summary">
-          <div>
-            <span>Local node</span>
-            <strong>{{ snapshot?.localNodeName ?? "Loading…" }}</strong>
-          </div>
-          <div>
-            <span>Remote peer</span>
-            <strong>{{ onlinePeer?.displayName ?? "No online peer" }}</strong>
-          </div>
-          <div>
-            <span>Active projections</span>
-            <strong>{{ activeCount }} / {{ snapshot?.capabilities.length ?? 0 }}</strong>
-          </div>
+          <div><span>Local Node</span><strong>{{ localNode?.displayName ?? "Loading…" }}</strong></div>
+          <div><span>Peer Node</span><strong>{{ remoteNode?.displayName ?? "No peer" }}</strong></div>
+          <div><span>Active Routes</span><strong>{{ activeCount }} / {{ snapshot?.routes.length ?? 0 }}</strong></div>
         </div>
       </div>
-      <div class="hero-panel__diagram" aria-label="Current MVP data flow">
-        <div class="node-box node-box--phone">
-          <span>Android provider</span>
-          <strong>vivo X200 Pro mini</strong>
-          <small>mic · speaker</small>
-        </div>
-        <div class="flow-line">
-          <span>capability session</span>
-          <i></i>
-          <span>independent streams</span>
-        </div>
-        <div class="node-box node-box--pc">
-          <span>Windows consumer</span>
-          <strong>CapyIO endpoints</strong>
-          <small>driver planned</small>
-        </div>
+      <div class="hero-panel__diagram" aria-label="Symmetric Node model">
+        <div class="node-box node-box--phone"><span>Node · Android</span><strong>vivo X200 Pro mini</strong><small>source + sink Ports</small></div>
+        <div class="flow-line"><span>typed Routes</span><i></i><span>both directions</span></div>
+        <div class="node-box node-box--pc"><span>Node · Windows</span><strong>HP OmniBook</strong><small>source + sink Ports</small></div>
       </div>
     </section>
 
     <section v-if="snapshot?.warnings.length" class="warning-stack" aria-label="Warnings">
       <p v-for="warning in snapshot.warnings" :key="warning">{{ warning }}</p>
     </section>
-
     <p v-if="errorMessage" class="error-banner" role="alert">{{ errorMessage }}</p>
-
-    <section class="section-heading">
-      <div>
-        <p class="eyebrow">Capability projections</p>
-        <h2>独立控制每一项硬件能力</h2>
-      </div>
-      <p>启动或停止其中一项，不会隐式修改另一项。</p>
-    </section>
-
     <section v-if="loading && !snapshot" class="loading-panel">Loading Runtime snapshot…</section>
-    <section v-else class="capability-grid">
-      <CapabilityCard
-        v-for="capability in snapshot?.capabilities ?? []"
-        :key="capability.id"
-        :capability="capability"
-        :busy="busyCapabilityId === capability.id"
-        @toggle="toggleCapability"
-      />
-    </section>
+
+    <template v-if="view === 'quick'">
+      <section class="section-heading">
+        <div><p class="eyebrow">Quick Actions</p><h2>四条互不耦合的 Route</h2></div>
+        <p>这里隐藏 Adapter 与 Port 细节，只呈现用户要完成的硬件组合。</p>
+      </section>
+      <section class="capability-grid">
+        <RouteCard v-for="route in snapshot?.routes ?? []" :key="route.id" :route="route" :busy="busyRouteId === route.id" @toggle="toggleRoute" />
+      </section>
+    </template>
+
+    <template v-else>
+      <section class="section-heading">
+        <div><p class="eyebrow">Workspace</p><h2>Node、Adapter、Port 与 Route</h2></div>
+        <p>用于开发期诊断和编排；这些术语不会强加给 Quick Actions 用户。</p>
+      </section>
+
+      <section class="workspace-grid">
+        <article class="info-panel">
+          <p class="eyebrow">Nodes</p><h2>对等节点目录</h2>
+          <ul class="workspace-list">
+            <li v-for="node in snapshot?.nodes ?? []" :key="node.id">
+              <div><strong>{{ node.displayName }}</strong><span>{{ node.platform }} · {{ node.local ? "local" : "peer" }}</span></div>
+              <StatusPill :tone="node.online ? 'success' : 'warning'" :label="node.online ? 'online' : 'offline'" />
+            </li>
+          </ul>
+        </article>
+        <article class="info-panel">
+          <p class="eyebrow">Adapters</p><h2>显式部署边界</h2>
+          <ul class="workspace-list">
+            <li v-for="adapter in snapshot?.adapters ?? []" :key="adapter.id">
+              <div><strong>{{ adapter.displayName }}</strong><span>{{ adapter.nodeName }} · {{ adapter.deploymentMode }} · {{ adapter.capabilityCount }} capabilities</span></div>
+              <StatusPill :tone="adapter.health === 'healthy' ? 'success' : 'warning'" :label="adapter.state" />
+            </li>
+          </ul>
+        </article>
+      </section>
+
+      <article class="info-panel route-table-panel">
+        <p class="eyebrow">Route graph</p><h2>强类型连接</h2>
+        <div class="route-table-wrap">
+          <table class="route-table">
+            <thead><tr><th>Source Port</th><th>Profile</th><th>Sink Port</th><th>Backend</th><th>State</th></tr></thead>
+            <tbody><tr v-for="route in snapshot?.routes ?? []" :key="route.id"><td>{{ route.source.nodeName }}<small>{{ route.source.portName }}</small></td><td>{{ route.profile }}</td><td>{{ route.sink.nodeName }}<small>{{ route.sink.portName }}</small></td><td>{{ route.backend }}</td><td>{{ route.state }}</td></tr></tbody>
+          </table>
+        </div>
+      </article>
+    </template>
 
     <section class="lower-grid">
       <article class="info-panel">
-        <p class="eyebrow">Architecture contract</p>
-        <h2>共享核心，不强行共享平台实现</h2>
+        <p class="eyebrow">Architecture contract</p><h2>共享语义，隔离平台实现</h2>
         <ol class="contract-list">
-          <li><strong>Core</strong><span>能力、授权、会话、Binding 状态机</span></li>
-          <li><strong>Profile</strong><span>音频格式、QoS、处理与时间语义</span></li>
-          <li><strong>Adapter</strong><span>Android / Windows / Linux / macOS 平台能力</span></li>
-          <li><strong>Projection</strong><span>应用流或系统虚拟设备</span></li>
+          <li><strong>Core</strong><span>Node、Capability、Port、Route、Session、Problem</span></li>
+          <li><strong>Adapter</strong><span>硬件枚举、权限、数据面和系统投影</span></li>
+          <li><strong>Profile</strong><span>格式、QoS、时钟与互操作语义</span></li>
+          <li><strong>Panel</strong><span>当系统投影不可用时的应用内 Sink</span></li>
         </ol>
       </article>
-
       <article class="event-panel">
-        <header>
-          <div>
-            <p class="eyebrow">Runtime events</p>
-            <h2>可追踪的状态变化</h2>
-          </div>
-          <span>{{ snapshot?.events.length ?? 0 }} retained</span>
-        </header>
-        <ol class="event-list">
-          <li v-for="event in recentEvents" :key="event.sequence">
-            <span>#{{ event.sequence.toString().padStart(3, "0") }}</span>
-            <p>{{ event.summary }}</p>
-          </li>
-        </ol>
+        <header><div><p class="eyebrow">Runtime events</p><h2>可追踪状态变化</h2></div><span>{{ snapshot?.events.length ?? 0 }} retained</span></header>
+        <ol class="event-list"><li v-for="event in recentEvents" :key="event.sequence"><span>#{{ event.sequence.toString().padStart(3, "0") }}</span><p>{{ event.summary }}</p></li></ol>
       </article>
     </section>
 
-    <footer class="app-footer">
-      <span>CapyIO pre-alpha</span>
-      <span>Protocol 1.0 · Audio Profile 1</span>
-      <span>No real microphone access in this bootstrap UI</span>
-    </footer>
+    <footer class="app-footer"><span>CapyIO pre-alpha</span><span>Protocol 1.0 · Mock Gate 2</span><span>No real hardware access in this UI</span></footer>
   </main>
 </template>

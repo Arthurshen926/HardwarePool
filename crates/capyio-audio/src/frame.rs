@@ -1,7 +1,7 @@
-use capyio_core::{AudioFormat, StreamId};
+use capyio_core::StreamId;
 use serde::{Deserialize, Serialize};
 
-use crate::AudioDataError;
+use crate::{AudioDataError, AudioFormat};
 
 /// Conservative bootstrap bound before a transport-specific MTU/fragmentation policy exists.
 const MAX_BOOTSTRAP_PAYLOAD_BYTES: usize = 1024 * 1024;

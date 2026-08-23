@@ -8,12 +8,9 @@ class TauriCapyIOApi implements CapyIOApi {
     return invoke<UiSnapshot>("get_snapshot");
   }
 
-  setProjection(
-    capabilityId: string,
-    active: boolean,
-  ): Promise<UiSnapshot> {
-    return invoke<UiSnapshot>("set_projection", {
-      request: { capabilityId, active },
+  setRoute(routeId: string, active: boolean): Promise<UiSnapshot> {
+    return invoke<UiSnapshot>("set_route", {
+      request: { routeId, active },
     });
   }
 

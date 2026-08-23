@@ -18,6 +18,7 @@ fn main() {
 
     let mut config = prost_build::Config::new();
     config
+        .boxed(".capyio.v1.Envelope.payload.route_status")
         .compile_protos(&protos, &[proto_root])
         .expect("compile protobuf schema");
 

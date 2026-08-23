@@ -1,26 +1,29 @@
 #![forbid(unsafe_code)]
 
-//! Operating-system independent domain model for CapyIO.
+//! Portable deterministic domain model for CapyIO.
 //!
-//! This crate intentionally contains no sockets, codecs, UI framework, platform SDK,
-//! or driver integration. It defines stable capability semantics and deterministic
-//! lifecycle transitions that can be shared by every host implementation.
+//! Core knows Nodes, Adapter instances, Capabilities, typed Ports, directed
+//! Routes, Sessions and Problems. It intentionally performs no I/O and contains
+//! no platform, transport, codec, UI or generated protocol dependency.
 
-pub mod audio;
 pub mod capability;
 pub mod error;
 pub mod ids;
+pub mod problem;
+pub mod route;
 pub mod session;
 
-pub use audio::{
-    AudioBundleSpec, AudioCapabilitySpec, AudioFormat, AudioProcessingSupport, AudioQosMode,
-    AudioSampleFormat, ChannelLayout,
-};
 pub use capability::{
-    Availability, CapabilityDescriptor, CapabilityDetails, CapabilityKind, LocalRole,
-    NodeDescriptor, NodeRole, OpaqueCapabilitySpec, PermissionRequirement, Platform, ProfileId,
-    ProjectionKind, StreamRole,
+    AdapterDeploymentMode, AdapterHealth, AdapterInstanceDescriptor, AdapterState, Availability,
+    CapabilityClass, CapabilityDescriptor, FormatDescriptor, InteroperabilityMode, NodeDescriptor,
+    OnlineState, PermissionRequirement, Platform, PortDescriptor, PortDirection, ProfileId,
+    ProtocolVersion, QosMode,
 };
 pub use error::CoreError;
-pub use ids::{BindingId, CapabilityId, MessageId, NodeId, ProjectionId, SessionId, StreamId};
-pub use session::{BindingState, CapabilityBinding, Session, SessionPhase};
+pub use ids::{
+    AdapterInstanceId, CapabilityId, MessageId, NodeId, PortId, ProblemId, RouteId, SessionId,
+    StreamId,
+};
+pub use problem::{Problem, ProblemCategory, ProblemSeverity};
+pub use route::{AuthorizationState, PortRef, Route, RouteBackend, RouteState};
+pub use session::{Session, SessionState};

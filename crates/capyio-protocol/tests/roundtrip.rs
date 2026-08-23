@@ -1,63 +1,51 @@
-use std::collections::BTreeSet;
-
 use capyio_core::{
-    AudioCapabilitySpec, AudioFormat, AudioProcessingSupport, AudioQosMode, Availability,
-    CapabilityDescriptor, CapabilityDetails, CapabilityId, CapabilityKind, LocalRole,
-    NodeDescriptor, NodeId, NodeRole, PermissionRequirement, Platform, ProfileId, ProjectionKind,
-    StreamRole,
+    AdapterInstanceId, NodeDescriptor, Problem, ProblemCategory, ProblemId, ProblemSeverity, Route,
 };
 use capyio_protocol::{
     PROTOCOL_MAJOR, ProtocolError, decode_envelope, encode_envelope, new_envelope, v1,
 };
-
-fn android_node() -> NodeDescriptor {
-    let mut node = NodeDescriptor::new(
-        NodeId::new(),
-        "Android phone",
-        Platform::Android,
-        "test-build",
-        [NodeRole::Provider],
-    );
-    node.add_capability(CapabilityDescriptor {
-        id: CapabilityId::new(),
-        display_name: "Internal microphone".to_owned(),
-        profile: ProfileId::audio_capture_v1(),
-        kind: CapabilityKind::AudioCapture,
-        local_role: LocalRole::Capture,
-        stream_role: StreamRole::Producer,
-        supported_projections: BTreeSet::from([
-            ProjectionKind::ApplicationStream,
-            ProjectionKind::SystemCaptureEndpoint,
-        ]),
-        permission_requirement: PermissionRequirement::ForegroundService,
-        availability: Availability::PermissionRequired,
-        details: CapabilityDetails::Audio(AudioCapabilitySpec {
-            formats: vec![AudioFormat::microphone_baseline()],
-            qos_modes: vec![AudioQosMode::VoiceInteractive],
-            processing: AudioProcessingSupport {
-                acoustic_echo_cancellation: true,
-                noise_suppression: true,
-                automatic_gain_control: true,
-                raw_capture: true,
-            },
-            supports_volume_control: false,
-            supports_mute: true,
-        }),
-    })
-    .expect("valid capability");
-    node
-}
+use capyio_testkit::{DemoLab, android_node};
 
 #[test]
-fn core_node_round_trips_through_protobuf_model() {
+fn generic_node_catalog_round_trips_through_protobuf() {
     let original = android_node();
     let wire = v1::NodeDescriptor::try_from(&original).expect("to wire");
-    let decoded = NodeDescriptor::try_from(wire).expect("to core");
+    let decoded = NodeDescriptor::try_from(wire).expect("to Core");
     assert_eq!(original, decoded);
 }
 
 #[test]
-fn envelope_round_trips_as_binary() {
+fn all_demo_routes_round_trip() {
+    let lab = DemoLab::new().expect("demo lab");
+    for route_id in lab.routes.all() {
+        let original = lab.runtime.route(route_id).expect("Route");
+        let wire = v1::RouteDescriptor::try_from(original).expect("to wire");
+        let decoded = Route::try_from(wire).expect("to Core");
+        assert_eq!(*original, decoded);
+    }
+}
+
+#[test]
+fn structured_problem_round_trips() {
+    let original = Problem {
+        id: ProblemId::new(),
+        code: "adapter_process_exit_23".to_owned(),
+        category: ProblemCategory::Adapter,
+        severity: ProblemSeverity::Error,
+        retryable: true,
+        related_node: Some(android_node().id),
+        related_adapter: Some(AdapterInstanceId::new()),
+        related_route: None,
+        human_message: "Adapter stopped unexpectedly".to_owned(),
+        technical_detail: Some("finite smoke-test crash".to_owned()),
+    };
+    let wire = v1::ProblemDescriptor::try_from(&original).expect("to wire");
+    let decoded = Problem::try_from(wire).expect("to Core");
+    assert_eq!(original, decoded);
+}
+
+#[test]
+fn hello_envelope_round_trips_as_binary() {
     let node = android_node();
     let hello = v1::Hello {
         node: Some(v1::NodeDescriptor::try_from(&node).expect("node conversion")),
@@ -66,10 +54,32 @@ fn envelope_round_trips_as_binary() {
     let envelope = new_envelope(None, v1::envelope::Payload::Hello(hello));
     let bytes = encode_envelope(&envelope);
     let decoded = decode_envelope(&bytes).expect("decode envelope");
-    assert_eq!(decoded.protocol_major, PROTOCOL_MAJOR);
     assert!(matches!(
         decoded.payload,
         Some(v1::envelope::Payload::Hello(_))
+    ));
+}
+
+#[test]
+fn zero_or_unknown_enum_is_rejected() {
+    let mut wire = v1::NodeDescriptor::try_from(&android_node()).expect("to wire");
+    wire.online_state = 0;
+    assert!(matches!(
+        NodeDescriptor::try_from(wire),
+        Err(ProtocolError::InvalidEnum {
+            field: "node.online_state",
+            value: 0
+        })
+    ));
+}
+
+#[test]
+fn catalog_ownership_mismatch_is_rejected() {
+    let mut wire = v1::NodeDescriptor::try_from(&android_node()).expect("to wire");
+    wire.adapter_instances[0].owned_capability_ids.clear();
+    assert!(matches!(
+        NodeDescriptor::try_from(wire),
+        Err(ProtocolError::CatalogOwnershipMismatch { .. })
     ));
 }
 
