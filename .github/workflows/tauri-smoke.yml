@@ -13,7 +13,7 @@ jobs:
     name: Windows Tauri check/build (non-Windows explicitly skipped by policy)
     runs-on: windows-latest
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
         with:
           ref: ${{ github.event.pull_request.head.sha || github.sha }}
       - uses: dtolnay/rust-toolchain@master
