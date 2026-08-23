@@ -1,5 +1,5 @@
 {
-  "name": "hardwarepool-workspace",
+  "name": "capyio-workspace",
   "version": "0.1.0",
   "private": true,
   "packageManager": "pnpm@11.5.3",
@@ -7,10 +7,10 @@
     "node": ">=24 <27"
   },
   "scripts": {
-    "dev": "pnpm --filter @hardwarepool/gui dev",
-    "build": "pnpm --filter @hardwarepool/gui build",
-    "typecheck": "pnpm --filter @hardwarepool/gui typecheck",
-    "lint": "pnpm --filter @hardwarepool/gui lint",
-    "tauri": "pnpm --filter @hardwarepool/gui tauri"
+    "dev": "pnpm --filter @capyio/desktop dev",
+    "build": "pnpm --filter @capyio/desktop build",
+    "typecheck": "pnpm --filter @capyio/desktop typecheck",
+    "lint": "pnpm --filter @capyio/desktop lint",
+    "tauri": "pnpm --filter @capyio/desktop tauri"
   }
 }

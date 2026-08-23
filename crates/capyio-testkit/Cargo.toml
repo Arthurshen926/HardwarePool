@@ -1,0 +1,11 @@
+[package]
+name = "capyio-testkit"
+description = "Deterministic fixtures and demo lab for CapyIO."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[dependencies]
+capyio-core = { path = "../capyio-core" }
+capyio-runtime = { path = "../capyio-runtime" }

@@ -1,19 +1,20 @@
-# Glossary
+# CapyIO Glossary
 
-- **Adapter** — platform or transport implementation behind a stable interface.
-- **Binding** — per-session lifecycle of one remote Capability.
-- **Broker** — Windows user-mode process responsible for network, protocol, codec, buffering and driver IPC.
-- **Bundle** — logical reference to multiple capabilities without merging their state or permission.
-- **Capability** — independently described, authorized and used hardware/software resource.
-- **Clock domain** — monotonic sample timing source associated with an audio device/stream.
-- **Core** — OS-independent domain model and lifecycle rules.
-- **Data plane** — high-frequency media or sensor payload path.
-- **Epoch** — a continuous stream interval with one format, sample origin and clock domain.
-- **Lease** — time-bounded authorization to use a capability.
-- **Node** — HardwarePool runtime instance on a device/process.
-- **Profile** — versioned semantics for a capability class.
-- **Projection** — local representation of a remote capability.
-- **Runtime** — orchestration layer that owns peers, sessions, commands, events and snapshots.
-- **System capture endpoint** — OS recording device such as a virtual microphone.
-- **System render endpoint** — OS playback device such as a virtual speaker.
-- **Transport binding** — concrete network/IPC mechanism carrying protocol semantics.
+- **AdapterInstance** — one deployed integration that owns Capabilities.
+- **AdapterManaged Route** — Route whose owning Adapter retains its data plane.
+- **Capability** — user-understandable resource owned by an Adapter.
+- **CapyDataPlane** — future CapyIO-standard data path for interoperable Ports.
+- **Clock Domain** — monotonic time basis associated with sampled data.
+- **Control Port** — Port receiving typed control commands.
+- **Node** — one logical CapyIO Runtime instance.
+- **Panel** — Adapter-owned interactive/visual Capability in the UI.
+- **Port** — typed Source, Sink or Control endpoint owned by a Capability.
+- **Problem** — structured diagnosable failure/warning.
+- **Profile** — versioned semantic contract for a Port payload.
+- **Projection** — Adapter mechanism exposing a Port through an OS/API/protocol.
+- **Quick Action** — user-task Route Template.
+- **Recorder** — Adapter-owned multi-Port Sink/Source for record/playback.
+- **Route** — one directed compatible Source-to-Sink connection.
+- **Session** — trust/catalog/control relationship between two Nodes.
+- **Sidecar** — child process controlled through the Adapter protocol.
+- **Workspace** — advanced Node/Capability/Port/Route/Adapter UI.

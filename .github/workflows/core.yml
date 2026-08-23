@@ -28,6 +28,6 @@ jobs:
           components: rustfmt, clippy
       - uses: Swatinem/rust-cache@v2
       - run: cargo fmt --all -- --check
-      - run: cargo check --workspace --exclude hardwarepool-gui --all-targets
-      - run: cargo clippy --workspace --exclude hardwarepool-gui --all-targets -- -D warnings
-      - run: cargo test --workspace --exclude hardwarepool-gui
+      - run: cargo check --workspace --exclude capyio-desktop --all-targets
+      - run: cargo clippy --workspace --exclude capyio-desktop --all-targets -- -D warnings
+      - run: cargo test --workspace --exclude capyio-desktop

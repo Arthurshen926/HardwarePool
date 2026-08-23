@@ -10,7 +10,7 @@ use clap::{Parser, Subcommand};
 
 #[derive(Debug, Parser)]
 #[command(name = "xtask")]
-#[command(about = "HardwarePool repository development commands")]
+#[command(about = "CapyIO repository development commands")]
 struct Cli {
     #[command(subcommand)]
     command: Task,
@@ -45,7 +45,7 @@ fn main() -> Result<()> {
         Task::Ci => ci(),
         Task::Demo => run(
             "cargo",
-            ["run", "--package", "hardwarepool-node", "--", "demo"],
+            ["run", "--package", "capyio-node", "--", "demo"],
         ),
     }
 }
@@ -59,7 +59,7 @@ fn repository_root() -> Result<PathBuf> {
 }
 
 fn doctor() -> Result<()> {
-    println!("HardwarePool environment doctor (read-only)\n");
+    println!("CapyIO environment doctor (read-only)\n");
 
     let required = [
         Tool::new("git", ["--version"]),
@@ -94,8 +94,8 @@ fn doctor() -> Result<()> {
     for path in [
         "docs/PRODUCT_REQUIREMENTS.md",
         "docs/ARCHITECTURE.md",
-        "protocol/proto/hardwarepool/v1/control.proto",
-        "apps/gui/package.json",
+        "protocol/proto/capyio/v1/control.proto",
+        "apps/desktop/package.json",
     ] {
         let present = Path::new(path).is_file();
         println!("  {:<42} {}", path, if present { "OK" } else { "MISSING" });
@@ -118,7 +118,7 @@ fn doctor() -> Result<()> {
 fn format_sources() -> Result<()> {
     run("cargo", ["fmt", "--all"])?;
     if command_available("pnpm") {
-        run("pnpm", ["--filter", "@hardwarepool/gui", "typecheck"])?;
+        run("pnpm", ["--filter", "@capyio/desktop", "typecheck"])?;
     } else {
         println!("pnpm is not available; frontend typecheck was skipped");
     }
@@ -132,7 +132,7 @@ fn check() -> Result<()> {
             "check",
             "--workspace",
             "--exclude",
-            "hardwarepool-gui",
+            "capyio-desktop",
             "--all-targets",
         ],
     )?;
@@ -142,7 +142,7 @@ fn check() -> Result<()> {
             "clippy",
             "--workspace",
             "--exclude",
-            "hardwarepool-gui",
+            "capyio-desktop",
             "--all-targets",
             "--",
             "-D",
@@ -154,7 +154,7 @@ fn check() -> Result<()> {
 fn test() -> Result<()> {
     run(
         "cargo",
-        ["test", "--workspace", "--exclude", "hardwarepool-gui"],
+        ["test", "--workspace", "--exclude", "capyio-desktop"],
     )
 }
 
@@ -165,8 +165,8 @@ fn ci() -> Result<()> {
     run("python", ["scripts/validate_repository.py"])?;
 
     if command_available("pnpm") {
-        run("pnpm", ["--filter", "@hardwarepool/gui", "typecheck"])?;
-        run("pnpm", ["--filter", "@hardwarepool/gui", "build"])?;
+        run("pnpm", ["--filter", "@capyio/desktop", "typecheck"])?;
+        run("pnpm", ["--filter", "@capyio/desktop", "build"])?;
     } else {
         println!("pnpm is not available; frontend checks were skipped");
     }

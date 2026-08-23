@@ -1,92 +1,69 @@
-# HardwarePool Development Guide
+# CapyIO Development
 
-## 1. Bootstrap
+## Safe local loop
 
-```bash
-git clone <repository-url>
-cd hardwarepool
+```text
 cargo xtask doctor
-corepack enable
-pnpm install
-```
-
-After the first successful online install, commit `Cargo.lock` and `pnpm-lock.yaml`.
-
-## 2. Common commands
-
-```bash
 cargo xtask fmt
 cargo xtask check
 cargo xtask test
-cargo xtask ci
 cargo xtask demo
 ```
 
-UI:
+Before a local foundation commit:
 
-```bash
-pnpm dev
-pnpm typecheck
-pnpm build
-pnpm tauri dev
+```text
+cargo xtask validate-docs
+cargo xtask validate-manifests
+cargo xtask adapter-smoke
+cargo xtask ci
 ```
 
-## 3. Branch and task flow
+Frontend:
 
-1. Create or select an issue with requirement IDs.
-2. Add an execution plan for multi-step changes.
-3. Create a focused feature branch.
-4. Ask an Agent to implement one bounded task.
-5. Require tests and command output.
-6. Use another review pass or Agent for architecture/security review.
-7. Run hardware tests when the change crosses a platform boundary.
-8. Merge only after evidence is attached.
+```text
+corepack pnpm install --frozen-lockfile
+corepack pnpm typecheck
+corepack pnpm build
+corepack pnpm dev
+```
 
-## 4. Code ownership boundaries
+The demo and browser UI are deterministic and simulated.
 
-- `crates/hardwarepool-core`: deterministic domain logic only.
-- `crates/hardwarepool-audio`: bounded frame/reorder/drift primitives; no sockets or platform APIs.
-- `crates/hardwarepool-protocol`: generated protocol and conversion.
-- `crates/hardwarepool-runtime`: orchestration and events; still OS-independent.
-- `crates/hardwarepool-testkit`: fixtures, not production platform logic.
-- `apps/gui`: shared UI and Tauri command boundary.
-- `platform/*`: platform-specific user-mode adapters.
-- `drivers/windows-audio`: Windows kernel project only.
+## Change sequence
 
-## 5. Adding a capability Profile
+1. Read the active plan and nearest `AGENTS.md`.
+2. Identify Requirement IDs and architecture/ADR constraints.
+3. Record baseline behavior when the change is non-trivial.
+4. Implement one bounded slice with success and rejection tests.
+5. Run the smallest relevant checks immediately.
+6. Run the full Gate checks before a commit.
+7. Update evidence and risks; do not claim unrun hardware tests.
 
-1. Write requirements and a Profile document.
-2. Define roles, permissions, projections, formats and errors.
-3. Add typed Core model or opaque extension strategy.
-4. Extend Protobuf append-only.
-5. Add validation and compatibility tests.
-6. Add platform Adapter interfaces.
-7. Add UI representation only after semantics are stable.
+## Dependencies
 
-## 6. Adding a dependency
+Do not add a production dependency without recording purpose, license,
+maintenance status and considered alternatives. Third-party vertical code also
+requires a `third_party/THIRD_PARTY.yml` entry with a pinned revision before
+import.
 
-A task report must state:
+## Protocol and manifests
 
-- package and version range;
-- why it is needed;
-- alternatives considered;
-- license;
-- maintenance/security status;
-- whether it enters real-time, network, privileged or kernel paths.
+- edit `.proto` and JSON Schema sources, never generated Rust/Tauri schema files;
+- never reuse a removed Protobuf field number;
+- add conversion, unknown-version and malformed-input tests;
+- keep high-rate data out of control messages;
+- keep Adapter stdout machine-only and send logs to stderr.
 
-## 7. Agent review checklist
+## Platform and hardware work
 
-Ask the review Agent to inspect:
+Pure foundation commands do not install system components. APK installation,
+Android permission/service declarations, physical devices, Windows drivers,
+boot/security configuration, signing, releases and remote publication require
+the approvals documented in root `AGENTS.md`.
 
-- requirement compliance;
-- dependency direction;
-- illegal state transitions;
-- unbounded queues and allocations;
-- protocol compatibility;
-- permission and privacy changes;
-- unsafe/high-risk system commands;
-- missing tests or false test claims.
+## Task evidence
 
-## 8. Platform work
-
-Platform work should begin with a small Audio Lab or Driver Spike. Do not combine initial platform access, networking, UI and production security in one task. Preserve logs and measurements in `test-results/` outside Git unless sanitized summaries are committed.
+Each non-trivial task records implemented files, exact commands/results,
+unvalidated platform behavior and the next risk. Hardware evidence belongs under
+`test-results/<run-id>/` and records commit, OS/device versions and configuration.

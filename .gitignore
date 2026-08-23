@@ -5,16 +5,16 @@
 # JavaScript
 node_modules/
 .pnpm-store/
-apps/gui/dist/
-apps/gui/.vite/
+apps/desktop/dist/
+apps/desktop/.vite/
 
 # Python
 __pycache__/
 *.py[cod]
 
 # Tauri / generated mobile projects
-apps/gui/src-tauri/gen/
-apps/gui/src-tauri/target/
+apps/desktop/src-tauri/gen/
+apps/desktop/src-tauri/target/
 
 # IDE and OS
 .idea/

@@ -1,0 +1,95 @@
+syntax = "proto3";
+
+package capyio.v1;
+
+import "capyio/v1/common.proto";
+
+enum AudioSampleFormat {
+  AUDIO_SAMPLE_FORMAT_UNSPECIFIED = 0;
+  AUDIO_SAMPLE_FORMAT_SIGNED_I16_LE = 1;
+  AUDIO_SAMPLE_FORMAT_SIGNED_I24_LE = 2;
+  AUDIO_SAMPLE_FORMAT_SIGNED_I32_LE = 3;
+  AUDIO_SAMPLE_FORMAT_FLOAT_F32_LE = 4;
+}
+
+enum ChannelLayout {
+  CHANNEL_LAYOUT_UNSPECIFIED = 0;
+  CHANNEL_LAYOUT_MONO = 1;
+  CHANNEL_LAYOUT_STEREO = 2;
+  CHANNEL_LAYOUT_DISCRETE = 3;
+}
+
+enum AudioQosMode {
+  AUDIO_QOS_MODE_UNSPECIFIED = 0;
+  AUDIO_QOS_MODE_MEDIA_PLAYBACK = 1;
+  AUDIO_QOS_MODE_VOICE_INTERACTIVE = 2;
+  AUDIO_QOS_MODE_RAW_LAN = 3;
+  AUDIO_QOS_MODE_RAW_DUPLEX = 4;
+}
+
+message AudioFormat {
+  uint32 sample_rate_hz = 1;
+  AudioSampleFormat sample_format = 2;
+  uint32 channels = 3;
+  ChannelLayout channel_layout = 4;
+  uint32 frame_duration_micros = 5;
+}
+
+message AudioProcessingSupport {
+  bool acoustic_echo_cancellation = 1;
+  bool noise_suppression = 2;
+  bool automatic_gain_control = 3;
+  bool raw_capture = 4;
+}
+
+message AudioCapabilitySpec {
+  repeated AudioFormat formats = 1;
+  repeated AudioQosMode qos_modes = 2;
+  AudioProcessingSupport processing = 3;
+  bool supports_volume_control = 4;
+  bool supports_mute = 5;
+}
+
+message AudioBundleSpec {
+  string capture_capability_id = 1;
+  string render_capability_id = 2;
+  bool shared_acoustic_environment = 3;
+}
+
+message OpaqueCapabilitySpec {
+  string schema_uri = 1;
+  map<string, string> metadata = 2;
+}
+
+message CapabilityDescriptor {
+  string id = 1;
+  string display_name = 2;
+  ProfileId profile = 3;
+  CapabilityKind kind = 4;
+  string custom_kind = 5;
+  LocalRole local_role = 6;
+  StreamRole stream_role = 7;
+  repeated ProjectionKind supported_projections = 8;
+  PermissionRequirement permission_requirement = 9;
+  Availability availability = 10;
+
+  oneof details {
+    AudioCapabilitySpec audio = 11;
+    AudioBundleSpec audio_bundle = 12;
+    OpaqueCapabilitySpec opaque = 13;
+  }
+
+  reserved 14 to 20;
+}
+
+message NodeDescriptor {
+  string id = 1;
+  string display_name = 2;
+  Platform platform = 3;
+  string platform_detail = 4;
+  string platform_version = 5;
+  repeated NodeRole roles = 6;
+  repeated CapabilityDescriptor capabilities = 7;
+
+  reserved 8 to 20;
+}

@@ -1,71 +1,73 @@
-# HardwarePool Toolchain
+# CapyIO Toolchain
 
-> Versions are the bootstrap baseline as of August 2026. Update them through an explicit dependency/toolchain change, not ad hoc on one workstation.
+> Foundation baseline: 2026-08-23. Update pins through an explicit toolchain
+> task, lockfile regeneration and validation.
 
-## Shared development
+## required-now
 
-- Git 2.4x or newer;
-- Rust 1.97.1 via rustup;
-- `rustfmt` and Clippy components;
-- Node.js 24 LTS;
-- Corepack and pnpm 11.5.3;
-- Python 3.11+ for test analysis scripts;
-- Protobuf compiler is supplied to Rust builds by `protoc-bin-vendored`.
+- Git 2.4x+;
+- Rust/rustc/cargo 1.97.1 with rustfmt and Clippy;
+- Node.js 24 LTS (repository accepts `>=24 <27`);
+- Corepack and pnpm 11.5.3 from root `packageManager`;
+- Python 3.11+;
+- MSVC/Windows SDK and WebView2 for the Tauri desktop shell on Windows;
+- vendored `protoc` supplied by `protoc-bin-vendored`.
 
-The frontend currently declares Tauri CLI 2.11.2, Tauri JavaScript API 2.11.1,
-Vue 3.5.x and Vite 8.x. The JavaScript API uses 2.11.1 because 2.11.2 was
-never published to npm; see ADR 0007.
+Foundation frontend pins include Tauri CLI 2.11.2, Tauri JavaScript API
+2.11.1, Vue 3.5.35, TypeScript 6.0.3 and Vite 8.0.16. The CLI/API version
+difference is recorded in ADR 0007.
 
-## Windows GUI and Broker
+## optional-android
 
-- Windows 11 development host;
-- Microsoft C++ Build Tools / Visual Studio with desktop C++ workload;
-- Windows SDK matching the selected toolchain;
-- WebView2 runtime;
-- Rust MSVC target.
+- Android Studio;
+- compatible JBR/JDK, Android SDK command-line tools, platform/build tools, NDK;
+- Rust Android targets;
+- ADB and an explicitly designated physical device.
 
-Tauri on Windows still needs Microsoft native build tools even though application logic is Rust and Vue.
+The current machine has Android Studio 2026.1.3.7 and JBR 25.0.2, plus the
+command-line-tools shell under the user SDK directory. Foundation Gates 0–3 do
+not require SDK packages, ADB, Android project generation, APK installation or
+permissions, so no additional Android component is installed by this task.
 
-## Windows driver
+## optional-windows-native
 
-Required only when Gate 5 begins:
+- Visual Studio/Build Tools desktop C++ workload;
+- Windows SDK matching the selected host target;
+- MSBuild when a native helper requires it.
 
-- Visual Studio Build Tools or supported Visual Studio edition;
-- matching Windows SDK and WDK;
-- MSBuild;
-- WinDbg;
-- isolated test Windows VM or dedicated installation;
-- test certificate and test signing inside the target only;
-- later EV certificate/Partner Center path for public distribution.
+The Windows Rust/Tauri workspace compiles on the current host. `msbuild` is not
+visible on the audited session PATH and is not required for pure foundation
+tests.
 
-The WDK is not required to work on requirements, Core, Protocol, Runtime, frontend, Android Adapter or application-level audio transport.
+## optional-driver
 
-## Android
+- supported Visual Studio, Windows SDK and WDK;
+- MSBuild, WinDbg and signing/test tools;
+- isolated Windows VM or dedicated installation.
 
-- JDK 21 or a version supported by the selected Tauri/Android Gradle stack;
-- Android Studio or command-line SDK tools;
-- Android SDK platform and build tools selected by generated project;
-- Android NDK selected by generated project;
-- ADB;
-- physical Android device for microphone tests.
+These are deliberately absent from foundation requirements. The WDK and driver
+tools must never be auto-installed or executed on the daily-development host.
 
-Do not hard-code an Android SDK/NDK version before running `pnpm tauri android init` with the pinned Tauri CLI and recording the generated baseline.
+## optional-media
 
-## Environment doctor
+FFmpeg, GStreamer, AOO, WebRTC stacks, codec SDKs, ROS 2, MCAP and USB/IP tools
+are future Adapter dependencies, not Core prerequisites.
 
-Run:
+## Windows session PATH note
 
-```bash
-cargo xtask doctor
+The current Codex process did not inherit newly installed tool locations. Until
+a fresh shell is opened, local validation prefixes:
+
+```powershell
+$env:Path = 'C:\Users\arthu\.cargo\bin;C:\Program Files\nodejs;' + $env:Path
 ```
 
-The command checks executables and reports optional platform tools. It does not install anything or change system security settings.
+Use `corepack pnpm` so the root `packageManager` pin is honored. A populated
+`node_modules` created by another pnpm version may require one
+`corepack pnpm install --frozen-lockfile` rebuild.
 
-## Version update process
+## Doctor categories
 
-1. Create an issue describing motivation and risk.
-2. Update toolchain manifests in one branch.
-3. Regenerate Rust and pnpm lockfiles online.
-4. Run Core, UI and platform CI.
-5. Review release/security notes.
-6. Update this document and an ADR if compatibility or architecture changes.
+`cargo xtask doctor` reports the categories above separately. Missing optional
+Android, Windows-native, driver or media tools does not fail Core development.
+The command is read-only and never installs or reconfigures the machine.

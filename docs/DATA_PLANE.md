@@ -4,7 +4,7 @@
 
 ## 1. Purpose
 
-`hardwarepool-audio` provides transport-independent primitives used after a transport has authenticated, bounded and decoded an audio frame. It does not open sockets, choose a codec, access a hardware device or run inside the Windows driver.
+`capyio-audio` provides transport-independent primitives used after a transport has authenticated, bounded and decoded an audio frame. It does not open sockets, choose a codec, access a hardware device or run inside the Windows driver.
 
 ## 2. Audio frame semantics
 

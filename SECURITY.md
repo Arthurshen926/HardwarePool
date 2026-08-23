@@ -1,6 +1,6 @@
 # Security Policy
 
-HardwarePool is pre-release software that is intended to access microphones, speakers, system audio endpoints, and eventually other sensitive hardware capabilities. Do not use current builds for secrets, regulated data, or unattended production systems.
+CapyIO is pre-release software that is intended to access microphones, speakers, system audio endpoints, and eventually other sensitive hardware capabilities. Do not use current builds for secrets, regulated data, or unattended production systems.
 
 ## Reporting a vulnerability
 

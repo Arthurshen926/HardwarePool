@@ -2,40 +2,40 @@
   "version": "2.0.0",
   "tasks": [
     {
-      "label": "HardwarePool: doctor",
+      "label": "CapyIO: doctor",
       "type": "shell",
       "command": "cargo xtask doctor",
       "problemMatcher": []
     },
     {
-      "label": "HardwarePool: structural validation",
+      "label": "CapyIO: structural validation",
       "type": "shell",
       "command": "python scripts/validate_repository.py",
       "problemMatcher": []
     },
     {
-      "label": "HardwarePool: Rust check",
+      "label": "CapyIO: Rust check",
       "type": "shell",
       "command": "cargo xtask check",
       "group": "build",
       "problemMatcher": ["$rustc"]
     },
     {
-      "label": "HardwarePool: Rust tests",
+      "label": "CapyIO: Rust tests",
       "type": "shell",
       "command": "cargo xtask test",
       "group": "test",
       "problemMatcher": ["$rustc"]
     },
     {
-      "label": "HardwarePool: UI typecheck",
+      "label": "CapyIO: UI typecheck",
       "type": "shell",
       "command": "pnpm typecheck",
       "group": "test",
       "problemMatcher": []
     },
     {
-      "label": "HardwarePool: UI dev",
+      "label": "CapyIO: UI dev",
       "type": "shell",
       "command": "pnpm dev",
       "isBackground": true,

@@ -5,7 +5,7 @@ on:
   pull_request:
     branches: [main, develop]
     paths:
-      - "apps/gui/**"
+      - "apps/desktop/**"
       - "crates/**"
       - "Cargo.toml"
       - "rust-toolchain.toml"
@@ -29,5 +29,5 @@ jobs:
           cache: pnpm
       - run: corepack enable
       - run: pnpm install --no-frozen-lockfile
-      - run: cargo check -p hardwarepool-gui
-      - run: pnpm --filter @hardwarepool/gui build
+      - run: cargo check -p capyio-desktop
+      - run: pnpm --filter @capyio/desktop build

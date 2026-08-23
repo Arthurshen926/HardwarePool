@@ -25,5 +25,5 @@ jobs:
           cache: true
           install: false
       - run: pnpm install --frozen-lockfile
-      - run: pnpm --filter @hardwarepool/gui typecheck
-      - run: pnpm --filter @hardwarepool/gui build
+      - run: pnpm --filter @capyio/desktop typecheck
+      - run: pnpm --filter @capyio/desktop build

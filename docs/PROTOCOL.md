@@ -1,188 +1,87 @@
-# HardwarePool Protocol v1
+# CapyIO Protocol v1
 
-## 1. Purpose
+## Purpose
 
-The Protocol represents Node identity metadata, Capability descriptors, session intent, Projection commands and structured errors. It is separate from any particular socket, signaling library or real-time audio implementation.
+`capyio.v1` represents Node identity/catalogs, Sessions, Route intent/status,
+authorization and structured Problems. It is independent of sockets and data
+planes. Canonical definitions live under `protocol/proto/capyio/v1/` and are
+compiled with vendored `protoc`.
 
-Canonical definitions live in `protocol/proto/hardwarepool/v1/` and are compiled by `hardwarepool-protocol` with a vendored `protoc` binary.
+## Versioning
 
-## 2. Version model
+Each Envelope has protocol major/minor, typed message ID, optional Session ID
+and one payload. Major mismatch is rejected without an explicit compatibility
+implementation. Minor evolution appends optional fields. Removed field numbers
+are reserved forever within v1. Profile and Adapter-control versions negotiate
+independently.
 
-Every envelope contains:
+Initial envelope constants remain `1.0`; the pre-alpha package rename from
+`hardwarepool.v1` to `capyio.v1` is intentionally breaking and recorded in ADR
+0009/0011. No released external consumer exists.
 
-- `protocol_major`;
-- `protocol_minor`;
-- `message_id`;
-- optional `session_id`;
-- one typed payload.
+## Identifiers
 
-Rules:
+Node, AdapterInstance, Capability, Port, Route, Session, Message and Problem IDs
+are UUID strings at the wire boundary. Type context is validated; equal storage
+shape does not make IDs substitutable.
 
-- major mismatch is rejected unless an explicit compatibility implementation exists;
-- minor versions are backward-compatible through appended optional fields;
-- Protobuf field numbers are never reused;
-- Profile version is negotiated independently of envelope version;
-- transport version is negotiated by its Adapter.
+## Catalog messages
 
-Initial constants:
+- `Hello`: Node identity and supported protocol versions;
+- `NodeCatalog`: Node metadata, Adapter instances and Capability/Port catalog;
+- catalog updates may replace an Adapter-owned subset after restart;
+- both peers send catalogs; neither is structurally provider-only.
 
-```text
-protocol_major = 1
-protocol_minor = 0
-```
+## Route control
 
-## 3. Identifiers
+- `OpenSessionRequest/Response`;
+- `RouteRequest`: Source/Sink Port references, backend, format/QoS intent;
+- `RouteAuthorization`: scope and lease result;
+- `RouteCommand`: prepare/start/stop/recover as supported;
+- `RouteStatus`: selected values, state and diagnostic reference;
+- `ProblemReport` and heartbeat.
 
-All v1 identifiers are UUID strings at the wire boundary:
+One Route is one direction. Duplex behavior uses multiple Routes.
 
-- Node ID;
-- Capability ID;
-- Session ID;
-- Binding ID;
-- Projection ID;
-- Message ID.
+## Transport separation
 
-Receivers validate UUID syntax and type context. A Capability ID cannot be substituted where a Projection ID is expected merely because both are strings.
+Node control requires ordered reliable delivery, mutual authentication,
+confidentiality/integrity, replay/downgrade defense, bounded messages and
+identity binding before production use. The foundation selects no production
+transport and is unsafe for untrusted networks.
 
-## 4. Control messages
+High-rate audio/video/sensor data never travels in an Envelope. A Route backend
+selects CapyDataPlane, AdapterManaged, LocalPipeline or ExternalProtocol.
 
-Initial payloads:
+## Sidecar protocol
 
-- `Hello` — protocol support and Node descriptor;
-- `CapabilityList` — current Capability descriptors;
-- `OpenSessionRequest` / `OpenSessionResponse`;
-- `ProjectionRequest` — request a specific mapping for one Capability;
-- `ProjectionAuthorization` — provider grant/reject with lease;
-- `ProjectionNegotiation` — selected Profile configuration;
-- `ProjectionCommand` — start, stop, suspend or resume;
-- `ProjectionStatus` — resulting binding/projection state;
-- `StreamStats` — sanitized per-stream metrics;
-- `Error` — stable machine-readable code and human detail.
+Sidecar control is a separate versioned NDJSON request/response contract on
+stdin/stdout. It includes Adapter initialize/probe/catalog/health/shutdown and
+Route prepare/start/stop/status. Normal logs go to stderr. Message size, line
+length, pending correlations and retained stderr are bounded.
 
-The bootstrap `.proto` defines these initial message families. Runtime tests currently exercise descriptors and projection lifecycles primarily through direct Rust APIs; transport wiring remains deferred.
+## Parser limits
 
-## 5. Capability descriptor
+The Rust envelope codec rejects messages larger than 1 MiB before decode. Each
+binding also enforces descriptor/Port/format/metadata counts and string limits.
+Sidecar control uses a smaller dedicated line limit. Data-plane payload bounds
+derive from the selected Profile/format.
 
-A descriptor contains:
+## Error behavior
 
-```text
-id
-display_name
-profile { name, major }
-kind
-local_role
-stream_role
-supported_projections[]
-permission_requirement
-availability
-details: oneof {
-  audio
-  audio_bundle
-  opaque
-}
-```
+Zero/unknown enums, invalid UUIDs, missing semantic fields, unsupported Profile
+majors and incompatible Route endpoints return typed errors. Unknown optional
+Protobuf fields remain forward-compatible. Human messages are not parsed.
 
-`direction: input/output` is intentionally absent because it is ambiguous across hardware, node and OS-device perspectives.
+## Compatibility tests
 
-## 6. Audio descriptor
+- Core ↔ Protobuf catalog round trip;
+- Envelope binary round trip and unsupported major;
+- Capability/Port/Route/Problem round trips;
+- malformed UUID and missing fields;
+- unknown/zero enum values;
+- appended unknown optional field behavior;
+- size boundaries;
+- golden fixtures before external consumption.
 
-Audio details contain:
-
-- supported formats;
-- supported QoS modes;
-- AEC/NS/AGC support;
-- volume/mute control flags;
-
-A duplex bundle is a separate relationship descriptor that references independent capture and render Capability IDs. It does not carry or merge their permission state.
-
-Selected stream configuration belongs to session negotiation, not the static descriptor.
-
-## 7. Transport separation
-
-### Reliable control channel
-
-Required properties:
-
-- ordered reliable delivery;
-- mutual authentication;
-- confidentiality and integrity;
-- replay and downgrade resistance;
-- bounded message size;
-- connection/session identity binding.
-
-Candidate mechanisms may include QUIC streams, WebSocket over mutually authenticated TLS, or a Noise-based channel. The bootstrap does not select one.
-
-### Real-time audio data channel
-
-Required semantics:
-
-- compact binary frame header;
-- per-stream sequence and sample index;
-- optional codec payload;
-- packet loss and reordering visibility;
-- bounded receiver buffering;
-- authenticated encryption in production.
-
-Candidate mechanisms include a reference UDP/PCM Adapter for the local lab and a production Adapter based on AOO/RTP/QUIC after evaluation.
-
-## 8. Message size and parser limits
-
-The Rust bootstrap codec already rejects a control envelope larger than 1 MiB and validates message/session UUIDs plus the required payload. Before production use, each binding must additionally enforce:
-
-- a potentially smaller transport-specific control-envelope limit;
-- maximum descriptor count and string length;
-- maximum audio format count;
-- maximum metadata/opaque payload length;
-- maximum audio frame payload based on negotiated format;
-- per-peer rate limits.
-
-Decoded PCM frame semantics, reorder-window behavior and drift estimation are defined in `docs/DATA_PLANE.md` and implemented by `hardwarepool-audio`.
-
-The Windows kernel driver never receives these messages.
-
-## 9. Error model
-
-Errors have:
-
-- stable code;
-- category;
-- retryable flag;
-- human-readable detail;
-- related node/session/capability/projection IDs when available;
-- optional sanitized context.
-
-Suggested categories:
-
-```text
-protocol
-identity
-authorization
-capability
-negotiation
-lifecycle
-transport
-platform
-audio
-driver
-internal
-```
-
-Human text is not parsed for behavior.
-
-## 10. Compatibility tests
-
-Required test classes:
-
-- Core → Protobuf → Core round trip;
-- Protobuf encode/decode round trip;
-- malformed UUID;
-- unknown enum value;
-- unsupported Profile major;
-- missing required semantic fields;
-- appended unknown optional field;
-- maximum-size boundary cases;
-- golden binary fixtures after the protocol becomes externally consumed.
-
-## 11. Debug JSON
-
-Core and Runtime snapshots derive `serde` representations for diagnostics and UI. These JSON shapes are not automatically the public wire protocol. Public JSON endpoints require their own schema and version.
+Diagnostic/UI JSON snapshots are not automatically public protocol schemas.

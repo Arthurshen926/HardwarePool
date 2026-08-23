@@ -1,0 +1,46 @@
+schema_version: 1
+foundation_source_imports: []
+planned_integrations:
+  - id: micyou
+    upstream_repository: null
+    pinned_revision: null
+    license: pending_verification
+    integration_mode: planned_sidecar
+    source_imported: false
+  - id: audio-share
+    upstream_repository: null
+    pinned_revision: null
+    license: pending_verification
+    integration_mode: planned_sidecar
+    source_imported: false
+  - id: vcamdroid
+    upstream_repository: null
+    pinned_revision: null
+    license: pending_verification
+    integration_mode: planned_sidecar
+    source_imported: false
+  - id: sensor-server
+    upstream_repository: null
+    pinned_revision: null
+    license: pending_verification
+    integration_mode: planned_sidecar
+    source_imported: false
+  - id: viiper
+    upstream_repository: null
+    pinned_revision: null
+    license: pending_verification
+    integration_mode: planned_sidecar
+    source_imported: false
+  - id: scrcpy
+    upstream_repository: null
+    pinned_revision: null
+    license: pending_verification
+    integration_mode: planned_composite_sidecar
+    source_imported: false
+  - id: sunshine-moonlight
+    upstream_repository: null
+    pinned_revision: null
+    license: pending_verification
+    integration_mode: planned_composite_sidecar
+    source_imported: false
+

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Offline structural validation for the HardwarePool bootstrap repository.
+"""Offline structural validation for the CapyIO bootstrap repository.
 
 This script deliberately avoids dependency installation, compilation, device access and
 privileged operations. It catches repository-shape, parser, compatibility and hygiene errors
@@ -29,23 +29,23 @@ REQUIRED_FILES = [
     "docs/TESTING.md",
     "docs/BACKLOG.md",
     "docs/plans/TEMPLATE.md",
-    "crates/hardwarepool-core/src/lib.rs",
-    "crates/hardwarepool-audio/src/lib.rs",
-    "crates/hardwarepool-runtime/src/lib.rs",
-    "crates/hardwarepool-protocol/src/lib.rs",
-    "protocol/proto/hardwarepool/v1/common.proto",
-    "protocol/proto/hardwarepool/v1/capability.proto",
-    "protocol/proto/hardwarepool/v1/control.proto",
-    "apps/gui/package.json",
-    "apps/gui/src/App.vue",
-    "apps/gui/src-tauri/tauri.conf.json",
+    "crates/capyio-core/src/lib.rs",
+    "crates/capyio-audio/src/lib.rs",
+    "crates/capyio-runtime/src/lib.rs",
+    "crates/capyio-protocol/src/lib.rs",
+    "protocol/proto/capyio/v1/common.proto",
+    "protocol/proto/capyio/v1/capability.proto",
+    "protocol/proto/capyio/v1/control.proto",
+    "apps/desktop/package.json",
+    "apps/desktop/src/App.vue",
+    "apps/desktop/src-tauri/tauri.conf.json",
 ]
 
 JSON_FILES = [
     "package.json",
-    "apps/gui/package.json",
-    "apps/gui/src-tauri/tauri.conf.json",
-    "apps/gui/src-tauri/capabilities/default.json",
+    "apps/desktop/package.json",
+    "apps/desktop/src-tauri/tauri.conf.json",
+    "apps/desktop/src-tauri/capabilities/default.json",
     "protocol/examples/ui-snapshot.json",
     ".vscode/extensions.json",
     ".vscode/tasks.json",
@@ -240,7 +240,7 @@ def validate_proto_field_numbers() -> None:
         text = path.read_text(encoding="utf-8")
         if 'syntax = "proto3";' not in text:
             fail(f"protobuf file does not declare proto3 syntax: {relative(path)}")
-        if "package hardwarepool.v1;" not in text:
+        if "package capyio.v1;" not in text:
             fail(f"protobuf file uses an unexpected package: {relative(path)}")
 
         stack: list[tuple[str, dict[int, str], int]] = []
@@ -276,7 +276,7 @@ def validate_proto_field_numbers() -> None:
 
 
 def validate_architecture_dependencies() -> None:
-    core_manifest = (ROOT / "crates/hardwarepool-core/Cargo.toml").read_text(
+    core_manifest = (ROOT / "crates/capyio-core/Cargo.toml").read_text(
         encoding="utf-8"
     )
     forbidden = ["tauri", "tokio", "windows", "android", "prost", "cpal", "oboe"]

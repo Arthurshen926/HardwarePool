@@ -1,6 +1,6 @@
 # Platform Adapters
 
-Platform adapters connect the shared HardwarePool Runtime to operating-system facilities. They are replaceable mechanisms, not the source of Core semantics.
+Platform adapters connect the shared CapyIO Runtime to operating-system facilities. They are replaceable mechanisms, not the source of Core semantics.
 
 Each adapter must implement only the capabilities it can prove on the target platform. Unsupported projections must be rejected explicitly rather than silently emulated.
 

@@ -1,126 +1,37 @@
-# HardwarePool Roadmap
+# CapyIO Roadmap
 
-The roadmap uses gates instead of calendar promises. A gate closes only when its acceptance evidence exists.
+Gates are evidence thresholds, not calendar promises. A Gate closes only when
+its acceptance criteria and tests exist. Later Gates do not expand the active
+implementation scope automatically.
 
-## Gate 0 — Repository bootstrap
+| Gate | Goal | Non-goal | Acceptance and tests | Primary risk |
+|---|---|---|---|---|
+| 0 — baseline | Audit and reproduce the bootstrap | new architecture code | baseline report; repository validator, Rust workspace, tests and UI build | hidden environment differences |
+| 1 — CapyIO baseline | Name migration, PRD v0.3, architecture, ADRs and provenance skeleton | physical integrations | all active names/docs consistent; validator and full builds pass | large rename obscures behavior changes |
+| 2 — typed graph | Symmetric Node, AdapterInstance, Capability/Port/Route/Session/Problem, protocol and Mock UI | real data planes | direction/profile rejection, opposite Routes, independent stop, protocol round trips, four UI Routes | breaking pre-alpha model conversion |
+| 3 — Adapter foundation | Manifest/SDK, NDJSON control, Host/Supervisor, mock Source/Sink | real third-party code | schema validation, framing/errors, child lifecycle, crash isolation, smoke test | Windows process/pipe edge cases |
+| 4 — product UX | versioned Quick Actions, Workspace pages and built-in Panel registry | dynamic plugin market | accessible Route Builder, task templates, persisted layout tests | exposing internals to ordinary users |
+| 5 — standard IMU path | SensorServer Source, `motion.imu-samples/1`, IMU Panel and initial Recorder | system gamepad | vivo manual data evidence, timing metadata, mock/record replay | Android sensor timestamp/permission variance |
+| 6 — gamepad | IMU/touch to DSU and VIIPER, haptics feedback | universal USB classes | emulator/game recognition plus reverse feedback; driver work only in approved target | virtual-input distribution and licensing |
+| 7 — remote speaker | Windows/Linux system mix to Android speaker through Audio Share AdapterManaged Route | dedicated virtual render endpoint | real playback, disconnect/background/focus evidence | latency, protected audio and mobile lifecycle |
+| 8 — remote microphone | MicYou engine to Windows system microphone Quick Action | new audio stack from scratch | ordinary-app recording, permission/revoke/lock tests | virtual audio packaging/signing |
+| 9 — camera | VCamdroid to preview and Windows virtual camera | rewritten codec/FFmpeg stack | resolution/rotation/disconnect and ordinary-app enumeration evidence | upstream C++/FFmpeg/Softcam maintenance |
+| 10 — input and mirror | scrcpy composite, keyboard/pointer Adapters, screen mirror | extended display | independent input/display Routes and platform fallback tests | platform injection restrictions |
+| 11 — extended display | Windows IDD experiment to mobile Display Sink | conflate mirror with display extension | isolated driver target enumerates/stabilizes virtual display | WDK/IDD stability and signing |
+| 12 — research ecosystem | production MCAP recording/playback, ROS 2 and Foxglove export | ROS types in Core | multi-stream timestamp/provenance/replay tests | clock calibration and dependency weight |
+| 13 — multi-node/overlay | multi-node catalogs, fan-out and external EasyTier process integration | embed overlay into Core | mDNS/manual IP/EasyTier-address scenarios and independent Routes | topology/security complexity |
+| 14 — secure public alpha | pairing, capability authorization, installers, signing, SBOM, log collection | broad enterprise multi-tenancy | three Capability Classes, both directions, system Projection, Panel/Recorder, security evidence | signing, support and supply chain |
+| 15 — consolidate | selectively turn valuable AdapterManaged Routes into StandardPorts and decide mobile vendoring | rewrite stable integrations for uniformity | measured interoperability and migration decisions per Adapter | abstraction-driven regressions |
 
-Status: **complete**.
+## Current status
 
-Deliverables:
+- Gate 0: complete (`docs/BASELINE_REPORT.md`).
+- Gates 1–3: active under
+  `docs/plans/active/0003-capyio-foundation-migration.md`.
+- Gates 4–15: roadmap only; no implementation authorization is implied.
 
-- product requirements v0.2;
-- architecture, protocol, audio, security and testing specifications;
-- Agent instructions and task workflow;
-- Cargo/pnpm monorepo skeleton;
-- pure Rust Core, Runtime, Protocol and testkit;
-- CLI demo;
-- Vue/Tauri UI with Mock Backend;
-- CI workflow drafts.
+## Public-alpha proof bar
 
-Exit criteria:
-
-- first online dependency install generates lockfiles;
-- `cargo xtask ci` passes locally;
-- frontend typecheck/build passes;
-- CI passes on Windows, Linux and macOS.
-
-Windows-local evidence covers lockfile generation, the unified CI command, all
-deterministic tests and demos, Browser Mock, and the Tauri desktop build/runtime.
-Commit `4a658d5` additionally passed hosted Windows/Linux/macOS Rust CI, Linux UI
-build and Linux repository validation on 2026-08-21.
-
-## Gate 1 — Core contract hardening
-
-- property/state-transition tests;
-- stable error codes;
-- Profile validation registry;
-- operation completion/cancellation seam: **complete** (`HP-CORE-003`,
-  commit `d1dd746`);
-- golden Protobuf fixtures;
-- structured diagnostics format;
-- architecture dependency checks.
-
-## Gate 2 — Android Audio Lab
-
-- generated Tauri Android project;
-- Kotlin foreground service and permission plugin;
-- local microphone capture to WAV;
-- local speaker tone/WAV render;
-- actual parameter/xrun display;
-- route/focus/background test evidence;
-- Adapter selection ADR.
-
-## Gate 3 — Application-level reference audio
-
-- reference control transport in local LAN;
-- reference UDP/PCM or equivalent test data transport;
-- Windows test source → Android speaker;
-- Android microphone → Windows WAV;
-- bounded jitter buffer;
-- initial drift estimator/resampler;
-- network impairment proxy and metrics.
-
-No Windows driver is required for this gate.
-
-## Gate 4 — Production transport decision
-
-- compare reference transport, AOO Adapter and at least one alternative;
-- measure latency, loss behavior, CPU, battery and implementation risk;
-- decide control-channel authentication and data-channel encryption;
-- record decision in ADR;
-- implement downgrade/replay protections before untrusted-network use.
-
-## Gate 5 — Windows Driver Spike
-
-- provision isolated Windows test environment;
-- build and install unmodified Microsoft sample baseline separately;
-- document endpoint topology and legal provenance;
-- define versioned Broker-driver IPC;
-- expose fixed virtual speaker and microphone;
-- test endpoint lifecycle without networking.
-
-## Gate 6 — Windows system-level speaker
-
-- Windows Audio Engine → virtual endpoint → Broker → Android speaker;
-- endpoint format conversion and clock recovery in user mode;
-- offline/disconnect behavior;
-- two-hour soak and latency evidence.
-
-## Gate 7 — Windows system-level microphone
-
-- Android microphone → Broker → virtual capture endpoint;
-- silence behavior while offline;
-- permission revocation;
-- application compatibility matrix;
-- two-hour soak.
-
-## Gate 8 — Full duplex and release hardening
-
-- independent and combined operation;
-- AEC/NS/AGC negotiation;
-- feedback-safe UI;
-- sleep, lock, route, network and process-crash recovery;
-- Driver Verifier, static analysis and selected HLK;
-- signed installer planning, SBOM and security review.
-
-## Gate 9 — First public pre-release
-
-- reproducible build documentation;
-- signed artifacts where required;
-- support matrix backed by evidence;
-- issue templates and diagnostics bundle;
-- migration and protocol compatibility policy.
-
-## Post-MVP profiles
-
-Only after the audio MVP is stable:
-
-- camera capture and virtual camera;
-- display source/sink and virtual monitor;
-- keyboard, pointer and touch/HID;
-- IMU and generic sensors;
-- actuators;
-- remote inference/compute Profile;
-- automatic discovery;
-- additional system projections for Linux and macOS;
-- multiple nodes and WAN relay.
+One product must manage at least three Capability Classes, Android→Windows and
+Windows→Android directions, one system Projection, one Panel/API/Recorder path,
+and independent Route failure after one node pairing flow.

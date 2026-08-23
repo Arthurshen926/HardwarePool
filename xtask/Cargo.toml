@@ -1,6 +1,6 @@
 [package]
 name = "xtask"
-description = "Unified local development commands for HardwarePool."
+description = "Unified local development commands for CapyIO."
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true

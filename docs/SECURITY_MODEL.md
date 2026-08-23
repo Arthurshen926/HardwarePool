@@ -1,167 +1,100 @@
-# HardwarePool Security Model
+# CapyIO Security Model
 
-> Status: bootstrap threat model; production pairing and cryptographic protocol are not yet implemented.
+> Status: pre-alpha threat model. Production pairing/cryptography are absent.
 
-## 1. Protected assets
+## Protected assets
 
-- live microphone audio;
-- audio played through a remote speaker;
-- device identity and trust records;
-- session keys and pairing secrets;
-- capability authorization state;
-- system audio endpoint availability;
-- host stability, especially Windows kernel and Audio Service;
-- diagnostic logs and captured test recordings.
+- live audio/video, input events, location and sensor data;
+- actuator/haptics/control commands;
+- node identity, trust records, pairing/session secrets;
+- Capability/Route authorization and system Projection availability;
+- Adapter executable integrity and child-process control;
+- host stability, especially OS services and kernel components;
+- recordings, diagnostic logs and test artifacts.
 
-## 2. Actors
+## Actors and trust boundaries
 
-- local interactive user;
-- trusted paired peer;
-- unpaired network peer;
-- compromised paired peer;
-- malicious local unprivileged process;
-- privileged local administrator;
-- malicious or mistaken plugin/Agent;
-- supply-chain attacker.
-
-Pairing does not make a peer fully trusted. A paired peer must still request each capability.
-
-## 3. Trust boundaries
+Actors include local user, paired peer, unpaired peer, compromised paired peer,
+malicious local process, administrator, faulty/malicious Adapter, UI/WebView and
+supply-chain attacker. Pairing does not authorize every Capability.
 
 ```text
-Untrusted network
-  -> authenticated control/data transport
-  -> shared Runtime/Broker
-  -> platform Adapter
-  -> minimal driver IPC
-  -> Windows kernel driver
-  -> Windows Audio Engine
-
-UI WebView
-  -> allow-listed Tauri commands
-  -> Runtime
+untrusted network -> authenticated control/data -> Node Runtime
+Node Runtime -> Adapter Host -> Sidecar/external service -> platform/driver
+UI WebView -> allow-listed local API -> Node Runtime
 ```
 
-## 4. Principal threats
+## Principal threats and controls
 
-### Unauthorized microphone activation
+### Unauthorized sensors/actuators
 
-Controls:
+Capability/Route-scoped requests, provider confirmation, expiring leases,
+immediate revoke, visible platform lifecycle and persistent use indicators.
+Microphone/camera/screen capture never starts silently.
 
-- capability-scoped request;
-- provider-side confirmation;
-- visible Android foreground service;
-- short lease and immediate revoke;
-- persistent use indicator;
-- no silent background start.
+### Eavesdropping, injection and replay
 
-### Eavesdropping or audio injection
+Production paths require mutual authentication, authenticated encryption,
+Session/Route/epoch binding, replay windows, fresh keys and version binding.
+The current Mock/Sidecar loop is local test behavior, not a secure network.
 
-Controls required before production:
+### Adapter process abuse
 
-- mutual authentication;
-- authenticated encryption;
-- session/stream binding in associated data;
-- replay window;
-- fresh key per session;
-- key rotation for long sessions.
+Versioned manifests, allow-listed entrypoints, bounded NDJSON, correlation
+limits, stderr-only logging, timeouts, least privilege and ownership-scoped
+failure. A manifest is not a sandbox; production distribution additionally
+needs signing and provenance.
 
-### Protocol confusion and downgrade
+### UI command abuse
 
-Controls:
-
-- explicit protocol and Profile major versions;
-- negotiated version included in transcript/key derivation;
-- reject unknown required semantics;
-- never infer type from display name.
+Narrow DTO commands, Rust-side validation, CSP, no remote WebView content and no
+arbitrary shell/filesystem/updater plugin in the foundation.
 
 ### Kernel compromise
 
-Controls:
+No network, DNS, pairing, crypto negotiation, JSON/Protobuf, codecs or reconnect
+logic in drivers. Kernel IPC is fixed/bounded and validated. Driver tests and
+Verifier run only in an isolated approved target.
 
-- no network/protocol/codec parser in driver;
-- fixed-size validated IPC structures;
-- bounded ring indices and overflow checks;
-- Driver Verifier and fuzzing of user-mode IPC producer;
-- least-privilege device ACL;
-- isolated driver test environment.
+### Denial of service and stale state
 
-### Denial of service
-
-Controls:
-
-- size and rate limits;
-- bounded queues;
-- operation deadlines;
-- disconnect cleanup;
-- endpoint stays safe when Broker disappears;
-- no unbounded event/log retention.
-
-### Stale session data
-
-Controls:
-
-- session ID, stream ID and epoch on every frame;
-- discard data from closed or previous epochs;
-- reset queues on reconnect;
-- monotonic sequence and sample index validation.
-
-### WebView/UI command abuse
-
-Controls:
-
-- narrow Tauri command allow-list;
-- validate all DTOs in Rust;
-- no arbitrary shell or file-system plugin in MVP;
-- Content Security Policy;
-- no remote web content in the application WebView.
+Bound message/queue/event/log sizes, rate/deadline limits, disconnect cleanup,
+fresh epochs, bounded child shutdown and safe OS endpoint behavior when user-mode
+processes disappear.
 
 ### Supply chain
 
-Controls:
+Pinned toolchains/lockfiles, dependency review, provenance manifests, retained
+licenses/notices, SBOM/signing before release and no secrets in untrusted builds.
 
-- lockfiles and pinned toolchain;
-- dependency review and SBOM;
-- no production dependencies added without review;
-- signed release artifacts;
-- secrets never available to untrusted PR builds.
-
-## 5. Authorization model
-
-Grant tuple:
+## Authorization tuple
 
 ```text
-provider_node
-consumer_node
-capability_id
-allowed_projection_kind
-constraints
-issued_at
-expires_at
+requesting_node
+providing_node
+capability_id / port_id
+route_backend and constraints
 session_id
+issued_at / expires_at
 ```
 
-Speaker and microphone have separate grants. A duplex UI action may create two grants, and partial failure is representable.
+Opposite-direction or compound-device Routes have independent grants and may
+partially fail.
 
-## 6. Logging and privacy
+## Logging/privacy
 
-Default logs may contain IDs, states, timings, counters and sanitized platform errors. They must not contain:
+Default logs may include typed IDs, states, timings, counters and sanitized
+errors. They exclude raw content, pairing codes after use, private/session keys,
+tokens, unrelated process lists and personal filenames. Recordings are explicit
+artifacts with retention/deletion policy.
 
-- raw PCM or encoded microphone content;
-- pairing codes after use;
-- private keys or session keys;
-- full access tokens;
-- personal filenames or unrelated process lists.
+## Milestones
 
-Test recordings are opt-in artifacts with explicit retention and deletion.
+1. Foundation: deterministic validation and process boundaries.
+2. Local real-Adapter lab: clearly marked insecure/local mode.
+3. Pairing spike: device identity and authenticated transcript.
+4. Production transport: encryption, replay and downgrade binding.
+5. Projection/driver hardening: ACLs, isolated tests, fuzzing and review.
+6. Release: signing, SBOM, vulnerability and update process.
 
-## 7. Security milestones
-
-1. Bootstrap: state validation and documented boundaries.
-2. Local-lab transport: clearly marked insecure/test-only mode.
-3. Pairing spike: authenticated device identity and transcript.
-4. Production transport: encryption, replay protection and downgrade binding.
-5. Driver hardening: ACL, verifier, fuzzing and independent review.
-6. Release security: signing, SBOM, reproducible build evidence and vulnerability process.
-
-No build before milestone 4 should be described as safe for untrusted networks.
+No build before milestone 4 is described as safe for untrusted networks.

@@ -17,7 +17,7 @@
       "id": "00000000-0000-4000-8000-000000000101",
       "displayName": "Internal Microphone",
       "kind": "audio_capture",
-      "profile": "hardwarepool.audio.capture/1",
+      "profile": "capyio.audio.capture/1",
       "permissionRequirement": "foreground_service",
       "availability": "permission_required",
       "projectionKind": "system_capture_endpoint",
