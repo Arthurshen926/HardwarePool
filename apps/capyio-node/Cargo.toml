@@ -1,0 +1,19 @@
+[package]
+name = "capyio-node"
+description = "Headless CapyIO bootstrap node and deterministic CLI demo."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[dependencies]
+anyhow.workspace = true
+clap.workspace = true
+capyio-core = { path = "../../crates/capyio-core" }
+capyio-audio = { path = "../../crates/capyio-audio" }
+capyio-protocol = { path = "../../crates/capyio-protocol" }
+capyio-runtime = { path = "../../crates/capyio-runtime" }
+capyio-testkit = { path = "../../crates/capyio-testkit" }
+serde_json.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true

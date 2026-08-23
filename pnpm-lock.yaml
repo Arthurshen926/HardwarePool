@@ -8,7 +8,7 @@ importers:
 
   .: {}
 
-  apps/gui:
+  apps/desktop:
     dependencies:
       '@tauri-apps/api':
         specifier: 2.11.1

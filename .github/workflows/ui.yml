@@ -18,6 +18,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
       - uses: pnpm/setup@v1
         with:
           version: 11.5.3
@@ -25,5 +27,5 @@ jobs:
           cache: true
           install: false
       - run: pnpm install --frozen-lockfile
-      - run: pnpm --filter @hardwarepool/gui typecheck
-      - run: pnpm --filter @hardwarepool/gui build
+      - run: pnpm --filter @capyio/desktop typecheck
+      - run: pnpm --filter @capyio/desktop build

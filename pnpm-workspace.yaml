@@ -1,5 +1,5 @@
 packages:
-  - "apps/gui"
+  - "apps/desktop"
 
 allowBuilds:
   esbuild: set this to true or false

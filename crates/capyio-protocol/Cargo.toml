@@ -1,0 +1,22 @@
+[package]
+name = "capyio-protocol"
+description = "Versioned Protobuf control protocol and Core conversion for CapyIO."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+build = "build.rs"
+
+[dependencies]
+capyio-core = { path = "../capyio-core" }
+prost.workspace = true
+thiserror.workspace = true
+uuid.workspace = true
+
+[build-dependencies]
+prost-build.workspace = true
+protoc-bin-vendored.workspace = true
+
+[dev-dependencies]
+capyio-testkit = { path = "../capyio-testkit" }
+serde_json.workspace = true

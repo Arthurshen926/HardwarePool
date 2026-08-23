@@ -1,108 +1,85 @@
-# HardwarePool
+# CapyIO
 
-HardwarePool 是一个开放、跨平台的分布式硬件能力共享框架。项目把设备内部的硬件模块描述为可发现、可授权、可协商、可组合的“能力”，并在目标操作系统允许时把远端能力投影为本地系统设备。
+> **Pre-alpha foundation. No real hardware Adapter, system virtual device or
+> production network path is connected yet.**
 
-当前仓库是 **Bootstrap v0.1**：先用 Android 手机的扬声器与麦克风验证统一能力模型、会话生命周期、协议、共享 UI 和 Windows 系统设备投影边界。
+**CapyIO — Cross-device I/O Capability Fabric**
+**CapyIO 跨设备 I/O 能力织网平台**
 
-## 当前 MVP
+CapyIO connects I/O already built into phones, tablets, laptops, desktops and
+embedded devices. A Node publishes user-understandable Capabilities; each
+Capability owns typed Source, Sink or Control Ports; a Route connects compatible
+Ports. When a platform supports it, an Adapter can expose a remote capability as
+a system virtual device. Otherwise it can use an API, built-in Panel, standard
+protocol or recording output.
 
-```text
-Windows application
-  -> HardwarePool Speaker (future Windows virtual endpoint)
-  -> Windows broker
-  -> HardwarePool protocol / audio transport
-  -> Android speaker
+CapyIO is not remote desktop, USB/IP with a GUI, one universal media transport,
+or a collection of copied vertical tools. Existing projects may be integrated
+behind isolated Adapter boundaries while the Core owns identity, catalogs,
+Routes, lifecycle and diagnostics.
 
-Android microphone
-  -> HardwarePool protocol / audio transport
-  -> Windows broker
-  -> HardwarePool Microphone (future Windows virtual endpoint)
-  -> Windows application
-```
+## Current executable scope
 
-麦克风与扬声器是两个独立能力，可以分别映射、分别启停，也可以组成全双工音频会话。
+The repository currently provides deterministic foundation code only:
 
-## 本仓库已经包含
+- pure Rust domain/runtime/protocol crates;
+- typed Port and independent Route lifecycle tests;
+- a browser/Tauri Mock UI with Quick Actions and Workspace views;
+- an Adapter manifest and local sidecar-control test path;
+- offline repository validation and CI commands.
 
-- 音频优先的完整需求文档与架构文档；
-- Agent 开发规则、安全边界、ADR 与执行计划；
-- 纯 Rust 领域 Core：节点、能力、音频格式、会话和投影状态机；
-- 纯 Rust Runtime：节点注册、会话操作、事件和 UI 快照；
-- 纯 Rust 音频数据面基础件：帧校验、有限乱序缓冲、丢帧统计和时钟漂移估计；
-- Protobuf v1 协议定义、Rust 编解码与 Core 转换层；
-- 可运行的命令行演示程序；
-- Tauri 2 + Vue 3 共用 UI 骨架，浏览器模式内置 Mock Backend；
-- Windows 音频驱动、Android、Linux、macOS 平台插槽与边界说明；
-- `xtask` 统一命令、GitHub Actions 草案、可直接交给 Agent 的 Backlog 与任务模板。
+It does **not** capture a phone microphone, play remote audio, open a camera,
+read IMU hardware, install a driver, create a Windows endpoint, pair devices or
+secure a network connection.
 
-## 尚未实现
-
-- 真实 Android 音频采集与播放；
-- 网络音频数据面、抖动缓冲和时钟漂移修正；
-- Windows 虚拟音频驱动及 Broker IPC；
-- 设备配对、加密传输和正式安装器。
-
-这些内容按 `docs/ROADMAP.md` 中的 Gate 逐步推进。
-
-## 项目结构
+## Repository map
 
 ```text
-apps/
-  hardwarepool-node/       # Headless/CLI 演示节点
-  gui/                     # Vue + Tauri 共用 UI
-crates/
-  hardwarepool-core/       # OS 无关领域模型和状态机
-  hardwarepool-audio/      # 音频帧、乱序缓冲和时钟估计
-  hardwarepool-runtime/    # OS 无关节点运行时
-  hardwarepool-protocol/   # Protobuf 协议和转换
-  hardwarepool-testkit/    # 确定性的样例节点与测试夹具
-protocol/
-  proto/hardwarepool/v1/   # 线上协议定义
-drivers/windows-audio/     # Windows 虚拟声卡插槽（尚无驱动代码）
-platform/                  # Android/Linux/macOS Adapter 插槽
-docs/                      # 需求、架构、安全、测试、ADR
-xtask/                     # 统一开发命令
+crates/capyio-core          portable domain rules
+crates/capyio-audio         reusable audio frame/buffer primitives
+crates/capyio-protocol      capyio.v1 control protocol
+crates/capyio-runtime       deterministic route/catalog orchestration
+crates/capyio-adapter-sdk   Adapter manifest and control contract
+crates/capyio-adapter-host  desktop sidecar supervision
+crates/capyio-testkit       stable fixtures
+apps/capyio-node            headless four-Route demo
+apps/desktop                Vue + Tauri control surface
+adapters/mock-source        finite test Source Sidecar and manifest
+adapters/mock-sink          finite test Sink Sidecar and manifest
+adapters/                   planned integration boundaries
+protocol/                   Protobuf and JSON Schema sources
+docs/                       normative requirements, architecture and plans
 ```
 
-## 推荐工具链
+## Validate and run
 
-- Rust `1.97.1`；
-- Node.js `24 LTS`；
-- pnpm `11.5.3`；
-- Tauri `2.11.2`；
-- Windows Driver 工作后续需要匹配的 Visual Studio Build Tools、Windows SDK、WDK 和 WinDbg；
-- Android 工作后续需要 JDK、Android SDK、NDK、ADB 和一台真机。
+Prerequisites and pinned versions are in [docs/TOOLCHAIN.md](docs/TOOLCHAIN.md).
 
-详细要求见 `docs/TOOLCHAIN.md`；首次 Windows 验证见 `docs/FIRST_RUN_WINDOWS.md`；可执行任务见 `docs/BACKLOG.md`；模块入口见 `docs/REPOSITORY_MAP.md`；音频数据面语义见 `docs/DATA_PLANE.md`。
-
-## 快速开始
-
-安装依赖后：
-
-```bash
+```text
 cargo xtask doctor
-cargo xtask fmt
-cargo xtask check
-cargo xtask test
-cargo run -p hardwarepool-node -- demo
-cargo run -p hardwarepool-node -- audio-frame-demo
-
-corepack enable
-pnpm install
-pnpm build
+cargo xtask ci
+cargo xtask demo
+cargo xtask adapter-smoke
 pnpm dev
 ```
 
-浏览器中的 UI 会自动使用本地 Mock Backend；通过 `pnpm tauri dev` 启动时则调用 Rust Runtime。
+`cargo xtask demo` and the UI are explicitly simulated. Metrics and Route state
+do not represent physical devices.
 
-## 首次接手建议
+## Product modes
 
-1. 阅读 `docs/PRODUCT_REQUIREMENTS.md`；
-2. 阅读 `docs/ARCHITECTURE.md` 和 `AGENTS.md`；
-3. 运行 `cargo xtask doctor`；
-4. 完成 `docs/plans/active/0001-bootstrap-validation.md`；
-5. 不要在日常 Windows 主系统安装测试驱动。
+- **Quick Actions** present tasks such as “Use phone as microphone”.
+- **Workspace / Lab** exposes Nodes, Capabilities, Ports, Routes, Adapters and
+  Problems for developers and research users.
 
-## 许可证
+## Safety
 
-Apache License 2.0。第三方依赖和未来驱动组件仍需持续维护 `THIRD_PARTY_NOTICES.md` 与许可证审计。
+No repository command installs a driver or APK. Windows driver testing must use
+an isolated VM or dedicated machine. Microphone capture requires visible,
+platform-compliant permission and lifecycle handling.
+
+## License
+
+The foundation remains Apache-2.0. No third-party vertical-project source is
+vendored in the current Gates. Future integration provenance and licenses are
+tracked in `third_party/THIRD_PARTY.yml` before code import.

@@ -1,22 +1,28 @@
 [workspace]
 resolver = "2"
 members = [
-    "crates/hardwarepool-core",
-    "crates/hardwarepool-audio",
-    "crates/hardwarepool-protocol",
-    "crates/hardwarepool-runtime",
-    "crates/hardwarepool-testkit",
-    "apps/hardwarepool-node",
-    "apps/gui/src-tauri",
+    "crates/capyio-core",
+    "crates/capyio-audio",
+    "crates/capyio-protocol",
+    "crates/capyio-runtime",
+    "crates/capyio-testkit",
+    "crates/capyio-adapter-sdk",
+    "crates/capyio-adapter-host",
+    "adapters/mock-source",
+    "adapters/mock-sink",
+    "apps/capyio-node",
+    "apps/desktop/src-tauri",
     "xtask",
 ]
 default-members = [
-    "crates/hardwarepool-core",
-    "crates/hardwarepool-audio",
-    "crates/hardwarepool-protocol",
-    "crates/hardwarepool-runtime",
-    "crates/hardwarepool-testkit",
-    "apps/hardwarepool-node",
+    "crates/capyio-core",
+    "crates/capyio-audio",
+    "crates/capyio-protocol",
+    "crates/capyio-runtime",
+    "crates/capyio-testkit",
+    "crates/capyio-adapter-sdk",
+    "crates/capyio-adapter-host",
+    "apps/capyio-node",
     "xtask",
 ]
 
@@ -25,7 +31,7 @@ version = "0.1.0"
 edition = "2024"
 rust-version = "1.97.1"
 license = "Apache-2.0"
-authors = ["HardwarePool contributors"]
+authors = ["CapyIO contributors"]
 
 [workspace.dependencies]
 anyhow = "1.0"

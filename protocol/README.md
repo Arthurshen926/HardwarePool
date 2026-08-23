@@ -1,6 +1,6 @@
 # Protocol sources
 
-`proto/hardwarepool/v1/` is the canonical Protobuf control-plane definition.
+`proto/capyio/v1/` is the canonical Protobuf control-plane definition.
 
 Compatibility rules:
 

@@ -5,7 +5,7 @@
 
 ## 1. Purpose
 
-The IPC surface transfers bounded PCM blocks and minimal endpoint state between the Windows user-mode Broker and the virtual audio driver. It does not carry HardwarePool network messages or Core objects.
+The IPC surface transfers bounded PCM blocks and minimal endpoint state between the Windows user-mode Broker and the virtual audio driver. It does not carry CapyIO network messages or Core objects.
 
 ## 2. Design constraints
 

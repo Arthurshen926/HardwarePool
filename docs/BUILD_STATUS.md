@@ -1,125 +1,72 @@
-# Bootstrap Build Status
+# CapyIO Build Status
 
-Created: 2026-08-20
-Last local validation: 2026-08-20 on Windows build 26200, x86_64
-Last hosted validation: 2026-08-21 on GitHub Actions
+> Updated: 2026-08-24 during `CAPY-FOUNDATION-002`.
 
-## Creation environment
+## Verified baseline
 
-- Linux container, x86_64;
-- Node.js 22.16.0 and global TypeScript 5.8.3 available;
-- Rust/Cargo not installed;
-- no network access from the container, so Rust/npm dependencies could not be downloaded;
-- no Windows SDK/WDK, Android SDK/NDK, physical device or Windows test VM.
+At commit `d33d585`, before migration:
 
-## Validation completed during archive creation
+- repository validation passed;
+- Rust workspace check passed;
+- 34 Rust tests passed;
+- Vue typecheck/build passed;
+- hosted Windows/Linux/macOS Rust CI and UI/static jobs had passed on prior
+  bootstrap commits.
 
-- `python3 scripts/validate_repository.py`: **PASS**;
-- required-file and Cargo workspace-member inventory;
-- UTF-8 and LF line-ending validation;
-- no symbolic links, generated caches or obvious committed secrets;
-- JSON, TOML and GitHub Actions/issue-form YAML parsing;
-- Python source syntax validation;
-- Protobuf package, brace and field-number structural validation;
-- requirement-ID uniqueness validation: 65 normative requirements;
-- Core/platform/driver dependency-boundary checks;
-- local Markdown-link validation;
-- standalone TypeScript compilation of the UI DTO and browser Mock Backend: **PASS**;
-- `scripts/new_agent_task.py` smoke test: **PASS**;
-- SHA-256 repository manifest generation and verification: **PASS**;
-- final ZIP central-directory and payload integrity check: **PASS**.
+Exact evidence is in `docs/BASELINE_REPORT.md`.
 
-## First Windows validation completed
+## Foundation status
 
-Toolchain established:
+- Gate 0: complete.
+- Gate 1: complete locally — names/docs/ADRs, dependency paths, Rust check and
+  pinned pnpm UI build passed.
+- Gate 2: implemented — symmetric Nodes, typed Port/Route Core, generic
+  protocol/Runtime, four independent Routes and Quick Actions/Workspace UI.
+- Gate 3: implemented — manifest/schema, bounded NDJSON codec, Sidecar Host,
+  finite Mock Source/Sink and scoped crash isolation.
 
-- Rust/Cargo 1.97.1 with rustfmt and Clippy;
-- Node.js 24.19.0, Corepack 0.35.0 and pnpm 11.5.3;
-- Python 3.12.10 with PyYAML 6.0.3;
-- Visual Studio 2022 Build Tools 17.14.37614 with VC Tools and Windows SDK;
-- generated `Cargo.lock` and `pnpm-lock.yaml`.
+The original Gate 0–3 run passed 42 Rust tests, Clippy, manifest validation,
+Adapter Smoke, pnpm typecheck/build, repository validation and `cargo xtask ci`.
+That historical evidence is recorded in `docs/GATE_0_3_REPORT.md`.
 
-Validated behavior:
+## CAPY-FOUNDATION-002 hardening
 
-- `cargo xtask doctor`: **PASS** for all required bootstrap tools;
-- `cargo xtask ci`: **PASS**;
-- Rust formatting, workspace check and Clippy with warnings denied: **PASS**;
-- 28 Rust unit/integration tests: **PASS**; all doc tests: **PASS**;
-- vendored Protobuf generation and Rust protocol compilation: **PASS**;
-- deterministic CLI `demo`, `snapshot`, `protocol-roundtrip` and
-  `audio-frame-demo`: **PASS**;
-- repository structural validation including YAML parsing: **PASS**;
-- pnpm install, Vue typecheck and Vite 8/Oxc production build: **PASS**;
-- Browser Mock runtime: **PASS**; starting microphone produced `1 / 2` while
-  speaker remained `not_mapped`;
-- Tauri Rust target check and `tauri build --debug --no-bundle`: **PASS**;
-- `pnpm tauri dev --no-watch`: **PASS** in the desktop-user context;
-- Tauri Demo UI: **PASS**; both capabilities reached `2 / 2`, then stopping
-  microphone left speaker active and produced separate Runtime events.
+The current working tree hardens Gate 3 without adding a real data plane or
+hardware Adapter:
 
-Bootstrap repairs made from first-build evidence:
+- stdout/stderr are bounded while reading, including newline-free overflow;
+- terminal sequential-control failures poison the Host, close stdin and reap
+  the Sidecar before later requests are rejected;
+- generic Route prepare/start/stop/status contracts replace Mock-specific Host
+  return types while the finite sample remains private to Mock code;
+- manifest deployment validation covers InProcess, Sidecar, ExternalService and
+  DriverBacked metadata without embedding install commands;
+- catalog replacement invalidates only dependent Routes, emits a Problem and
+  advances epoch on compatible recovery;
+- Route backend support is checked against Adapter and interoperability modes;
+- 84 PRD IDs have checked status/Gate/evidence traceability, with automated
+  duplicate and malformed-ID rejection;
+- pull-request workflows check out the exact PR head; Rust/Adapter gates target
+  Windows, Linux and macOS, UI uses a frozen lockfile, and Windows has an
+  additional Tauri check/build gate.
 
-- changed unavailable `@tauri-apps/api` 2.11.2 to published 2.11.1 (ADR 0007);
-- migrated the Vite 8 build from deprecated esbuild minification to Oxc
-  (ADR 0008);
-- excluded downloaded/build directories from structural source validation;
-- taught xtask to execute Corepack/pnpm `.cmd` shims on Windows;
-- added generated Tauri icon resources required by Windows builds;
-- removed the Tauri bundle-identifier and Windows PDB-name warnings.
+The full local matrix passed: repository self-tests/validation, Rust
+format/check/Clippy, 70 workspace tests, docs, two manifests, Adapter Smoke,
+`cargo xtask ci`, frozen pnpm install/typecheck/build and Windows Tauri
+check/build. Exact command and test-count evidence is retained in
+`docs/FOUNDATION_HARDENING_REPORT.md`.
 
-One informational Rust warning remains during Tauri linking: MSVC reports the
-creation of the DLL import library through `linker_messages`. It is not a
-source/Clippy warning and the executable links successfully.
+Hosted results for this exact head are pending until the branch is pushed and
+GitHub Actions completes; workflow configuration is not reported as a hosted
+pass. Linux/macOS native Tauri packaging is an explicit current skip, while
+their Rust/Adapter and web UI jobs remain required.
 
-## First hosted validation completed
+## Not built or tested
 
-The repository baseline and CI repair were committed and pushed to the private
-GitHub repository. Commit `4a658d5` completed all required hosted workflows:
+- Android application/APK or phone;
+- Android permissions/foreground services;
+- real microphone, speaker, camera, IMU or input data path;
+- Windows virtual devices, driver, WDK or isolated-VM driver test;
+- production transport, pairing, encryption, third-party Adapter or performance.
 
-- Rust core matrix on Windows, Linux and macOS: **PASS**;
-- Shared UI typecheck and production build on Linux: **PASS**;
-- static repository validation on Linux: **PASS**.
-
-The first hosted run exposed and verified repairs for PowerShell line-ending
-normalization and pnpm-before-cache setup ordering. Gate 0 is complete.
-
-## Gate 1 progress
-
-`HP-CORE-003` added the bounded host-operation completion/cancellation seam in
-commit `d1dd746`. It includes opaque process-local IDs, typed audio start/stop
-requests and actual parameters, pending/completed/cancelled/disposed states,
-bounded pending and terminal retention, Runtime events/snapshots, and race
-tests. Local CI and hosted Windows/Linux/macOS Rust CI passed. This is a
-deterministic platform callback boundary; it does not perform real audio I/O.
-
-## Validation still pending
-
-- release-mode Tauri bundles, installers, signing and reproducible-build checks;
-- Android generation/build or physical-device tests;
-- Windows Broker/driver build, deployment or Driver Verifier;
-- real network, PCM, latency, clock-drift and acoustic tests.
-
-The Android, network, Broker and driver items remain outside Gate 0. No driver,
-APK, microphone permission, device deployment or security-setting operation was
-performed during this validation.
-
-## First local validation
-
-Follow `docs/FIRST_RUN_WINDOWS.md`. The merge-gate approximation is:
-
-```bash
-cargo xtask doctor
-python scripts/validate_repository.py
-cargo xtask fmt
-cargo xtask check
-cargo xtask test
-cargo xtask demo
-corepack enable
-pnpm install
-pnpm typecheck
-pnpm build
-pnpm tauri dev
-```
-
-The commands above pass locally, and the corresponding Core, UI and static
-checks pass in hosted CI. Gate 0 is closed.
+These absences are expected and must not be reported as working functionality.

@@ -1,0 +1,11 @@
+[package]
+name = "capyio-mock-sink"
+description = "Finite low-rate test Sink Sidecar for the CapyIO Adapter smoke test."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish = false
+
+[dependencies]
+capyio-mock-source = { path = "../mock-source" }

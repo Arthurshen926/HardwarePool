@@ -284,6 +284,124 @@ dependencies = [
 ]
 
 [[package]]
+name = "capyio-adapter-host"
+version = "0.1.0"
+dependencies = [
+ "capyio-adapter-sdk",
+ "capyio-core",
+ "capyio-runtime",
+ "capyio-testkit",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.20",
+]
+
+[[package]]
+name = "capyio-adapter-sdk"
+version = "0.1.0"
+dependencies = [
+ "capyio-core",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.20",
+]
+
+[[package]]
+name = "capyio-audio"
+version = "0.1.0"
+dependencies = [
+ "capyio-core",
+ "serde",
+ "thiserror 2.0.20",
+]
+
+[[package]]
+name = "capyio-core"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
+ "thiserror 2.0.20",
+ "uuid",
+]
+
+[[package]]
+name = "capyio-desktop"
+version = "0.1.0"
+dependencies = [
+ "capyio-core",
+ "capyio-runtime",
+ "capyio-testkit",
+ "serde",
+ "tauri",
+ "tauri-build",
+]
+
+[[package]]
+name = "capyio-mock-sink"
+version = "0.1.0"
+dependencies = [
+ "capyio-mock-source",
+]
+
+[[package]]
+name = "capyio-mock-source"
+version = "0.1.0"
+dependencies = [
+ "capyio-adapter-sdk",
+ "capyio-core",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
+name = "capyio-node"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "capyio-audio",
+ "capyio-core",
+ "capyio-protocol",
+ "capyio-runtime",
+ "capyio-testkit",
+ "clap",
+ "serde_json",
+ "tracing",
+ "tracing-subscriber",
+]
+
+[[package]]
+name = "capyio-protocol"
+version = "0.1.0"
+dependencies = [
+ "capyio-core",
+ "capyio-testkit",
+ "prost",
+ "prost-build",
+ "protoc-bin-vendored",
+ "serde_json",
+ "thiserror 2.0.20",
+ "uuid",
+]
+
+[[package]]
+name = "capyio-runtime"
+version = "0.1.0"
+dependencies = [
+ "capyio-core",
+ "serde",
+ "thiserror 2.0.20",
+]
+
+[[package]]
+name = "capyio-testkit"
+version = "0.1.0"
+dependencies = [
+ "capyio-core",
+ "capyio-runtime",
+]
+
+[[package]]
 name = "cargo-platform"
 version = "0.1.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1322,83 +1440,6 @@ dependencies = [
  "proc-macro2",
  "quote",
  "syn 2.0.119",
-]
-
-[[package]]
-name = "hardwarepool-audio"
-version = "0.1.0"
-dependencies = [
- "hardwarepool-core",
- "serde",
- "thiserror 2.0.20",
-]
-
-[[package]]
-name = "hardwarepool-core"
-version = "0.1.0"
-dependencies = [
- "serde",
- "serde_json",
- "thiserror 2.0.20",
- "uuid",
-]
-
-[[package]]
-name = "hardwarepool-gui"
-version = "0.1.0"
-dependencies = [
- "hardwarepool-core",
- "hardwarepool-runtime",
- "hardwarepool-testkit",
- "serde",
- "tauri",
- "tauri-build",
-]
-
-[[package]]
-name = "hardwarepool-node"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "clap",
- "hardwarepool-audio",
- "hardwarepool-core",
- "hardwarepool-protocol",
- "hardwarepool-runtime",
- "hardwarepool-testkit",
- "serde_json",
- "tracing",
- "tracing-subscriber",
-]
-
-[[package]]
-name = "hardwarepool-protocol"
-version = "0.1.0"
-dependencies = [
- "hardwarepool-core",
- "prost",
- "prost-build",
- "protoc-bin-vendored",
- "serde_json",
- "thiserror 2.0.20",
- "uuid",
-]
-
-[[package]]
-name = "hardwarepool-runtime"
-version = "0.1.0"
-dependencies = [
- "hardwarepool-core",
- "serde",
- "thiserror 2.0.20",
-]
-
-[[package]]
-name = "hardwarepool-testkit"
-version = "0.1.0"
-dependencies = [
- "hardwarepool-core",
- "hardwarepool-runtime",
 ]
 
 [[package]]
@@ -4906,7 +4947,9 @@ name = "xtask"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "capyio-adapter-sdk",
  "clap",
+ "serde_json",
 ]
 
 [[package]]

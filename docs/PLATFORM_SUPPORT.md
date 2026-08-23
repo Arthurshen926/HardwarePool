@@ -1,21 +1,16 @@
-# Platform Support Matrix
+# CapyIO Platform Support Matrix
 
-This file distinguishes architectural intent from tested support.
+This table separates architecture intent from evidence.
 
-| Platform | Shared Core | Shared UI | Provider Adapter | System projection | Current evidence |
-|---|---|---|---|---|---|
-| Windows x64/ARM64 | intended | intended via Tauri | future user-mode audio | virtual speaker/mic planned | source skeleton only |
-| Android ARM64 | intended | intended via Tauri mobile | microphone/speaker planned | ordinary apps cannot expose global audio endpoints | source skeleton only |
-| Linux x64/ARM64 | intended | intended via Tauri | future | PipeWire-oriented future | Core CI draft only |
-| macOS Intel/Apple Silicon | intended | intended via Tauri | future | Core Audio projection future | Core CI draft only |
-| iOS | future | possible through Tauri/mobile | restricted future | no global virtual audio promise | not started |
-| Embedded | future compact runtime | usually no UI | sensors/actuators future | application protocol only | not started |
+| Platform | Foundation Core | Current host/UI evidence | Real Adapters | System Projection evidence |
+|---|---|---|---|---|
+| Windows | CI target/intended | local Rust workspace and Tauri build | none | none; driver docs only |
+| Android | shared model intended | no APK/device run | none | ordinary-app limitations documented |
+| Linux | hosted Core/UI CI history | no current local platform run | none | none |
+| macOS | hosted Core CI history | no current local platform run | none | none |
+| iOS/iPadOS | future app-level host | none | none | no global virtual-device promise |
+| Embedded | future compact Node | none | none | API/protocol only initially |
 
-“Intended” does not mean tested. Update a row only when CI or hardware evidence is linked.
-
-## MVP laboratory
-
-- Development/test PC: HP OmniBook Ultra Flip 14 running Windows (exact edition, build and CPU architecture must be recorded locally).
-- Provider device: vivo X200 Pro mini (exact Android version, API level and build fingerprint must be recorded via ADB).
-- Network: same trusted LAN; manual IP for initial application-level tests.
-- Driver tests: isolated Windows VM or dedicated boot, not the daily host.
+“Intended” is not “tested”. Add support only with linked CI or hardware evidence.
+The deterministic Windows/Android fixtures are cross-platform tests, not
+physical platform support.

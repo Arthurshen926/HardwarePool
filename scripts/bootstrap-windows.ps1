@@ -3,7 +3,7 @@ param()
 
 $ErrorActionPreference = "Stop"
 
-Write-Host "HardwarePool Windows bootstrap check (read-only)" -ForegroundColor Cyan
+Write-Host "CapyIO Windows bootstrap check (read-only)" -ForegroundColor Cyan
 
 $commands = @(
     @{ Name = "git"; Args = @("--version"); Required = $true },

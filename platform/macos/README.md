@@ -1,5 +1,5 @@
-# macOS Adapter Slot
+# macOS platform boundary
 
-Long-term macOS support should reuse Core, Protocol, Runtime and UI while implementing audio capture/render and an approved macOS system-audio projection mechanism.
-
-Signing, entitlements, notarization and current Apple extension constraints must be researched at implementation time. The bootstrap project makes no claim that a system projection is already available.
+Future macOS Adapters may use Core Audio and supported camera/input/display
+extension mechanisms. No macOS hardware or system Projection implementation
+exists in the foundation.

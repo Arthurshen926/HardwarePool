@@ -1,6 +1,6 @@
-# Contributing to HardwarePool
+# Contributing to CapyIO
 
-HardwarePool is currently in architecture-bootstrap stage. Contributions should preserve the separation between shared Core semantics, versioned Profiles, transport bindings, platform adapters, and system-device projections.
+CapyIO is currently in architecture-bootstrap stage. Contributions should preserve the separation between shared Core semantics, versioned Profiles, transport bindings, platform adapters, and system-device projections.
 
 ## Before coding
 

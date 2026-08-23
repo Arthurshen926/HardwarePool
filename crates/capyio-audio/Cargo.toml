@@ -1,0 +1,12 @@
+[package]
+name = "capyio-audio"
+description = "OS-independent audio frame, buffering and drift primitives for CapyIO."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[dependencies]
+capyio-core = { path = "../capyio-core" }
+serde.workspace = true
+thiserror.workspace = true

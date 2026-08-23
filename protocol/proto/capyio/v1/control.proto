@@ -1,0 +1,97 @@
+syntax = "proto3";
+
+package capyio.v1;
+
+import "capyio/v1/capability.proto";
+import "capyio/v1/common.proto";
+
+message Hello {
+  NodeDescriptor node = 1;
+  repeated uint32 supported_protocol_majors = 2;
+}
+
+message OpenSessionRequest {
+  string local_node_id = 1;
+  string remote_node_id = 2;
+}
+
+message OpenSessionResponse {
+  bool accepted = 1;
+  string session_id = 2;
+  string reason = 3;
+}
+
+message PortRef {
+  string node_id = 1;
+  string capability_id = 2;
+  string port_id = 3;
+}
+
+message RouteDescriptor {
+  string id = 1;
+  string session_id = 2;
+  PortRef source = 3;
+  PortRef sink = 4;
+  ProfileId profile = 5;
+  RouteBackend backend = 6;
+  repeated FormatDescriptor compatible_formats = 7;
+  repeated QosDescriptor compatible_qos_modes = 8;
+  optional FormatDescriptor selected_format = 9;
+  optional QosDescriptor selected_qos_mode = 10;
+  RouteState state = 11;
+  AuthorizationState authorization = 12;
+  optional uint64 authorization_expires_at_ms = 13;
+  uint64 epoch = 14;
+  repeated string diagnostic_ids = 15;
+}
+
+enum RouteCommandAction {
+  ROUTE_COMMAND_ACTION_UNSPECIFIED = 0;
+  ROUTE_COMMAND_ACTION_START = 1;
+  ROUTE_COMMAND_ACTION_STOP = 2;
+}
+
+message CatalogSnapshot {
+  NodeDescriptor node = 1;
+}
+
+message RouteCommand {
+  string route_id = 1;
+  RouteCommandAction action = 2;
+}
+
+message RouteStatus {
+  RouteDescriptor route = 1;
+}
+
+message ErrorMessage {
+  string code = 1;
+  string category = 2;
+  bool retryable = 3;
+  string detail = 4;
+  string related_id = 5;
+}
+
+message Envelope {
+  uint32 protocol_major = 1;
+  uint32 protocol_minor = 2;
+  string message_id = 3;
+  string session_id = 4;
+
+  reserved 5 to 9;
+
+  oneof payload {
+    Hello hello = 10;
+    OpenSessionRequest open_session_request = 12;
+    OpenSessionResponse open_session_response = 13;
+    ErrorMessage error = 20;
+    CatalogSnapshot catalog_snapshot = 41;
+    RouteCommand route_command = 42;
+    RouteStatus route_status = 43;
+    ProblemDescriptor problem = 44;
+  }
+
+  reserved 11, 14 to 19;
+  reserved 21 to 40;
+  reserved 45 to 60;
+}
