@@ -71,6 +71,27 @@ Route states are `Draft`, `Prepared`, `Starting`, `Active`, `Stopping`,
 `Stopped`, `Failed`, and `Offline`. State transitions are deterministic and
 independent per Route.
 
+Route creation validates both endpoint Adapters as well as the Ports. Each
+endpoint Adapter must own its Capability and advertise the selected backend.
+The foundation applies these minimum backend/interoperability rules:
+
+- `CapyDataPlane` connects two `StandardPort` endpoints;
+- `AdapterManaged` connects two `AdapterManaged` endpoints whose Adapters
+  explicitly advertise that backend; this declaration is not a claim of
+  interoperability with other Adapter contracts;
+- `LocalPipeline` connects two co-located `StandardPort` endpoints;
+- `ExternalProtocol` may terminate either a matched `StandardPort` pair or a
+  matched `AdapterManaged` pair, but both endpoint Adapters must explicitly
+  advertise the external backend.
+
+When an Adapter catalog replacement removes an endpoint or changes its
+direction, Profile, selected format/QoS support, interoperability contract or
+backend support, the Runtime moves only dependent Routes to `Offline`, attaches
+a structured Problem and immediately advances their epoch. A compatible catalog
+return does not restart them: recovery/restart remains an explicit command and
+uses a later epoch. Metadata-only changes refresh the catalog without changing
+Route lifecycle state.
+
 ## Session
 
 A Session is the trust, catalog and control relationship between two Nodes. It
@@ -89,4 +110,3 @@ Node, Adapter and Route IDs. Human text is never parsed for behavior.
 System projections, Panels, Recorders, ROS topics, USB/IP devices and virtual
 devices are expressed as Adapter-owned Capabilities and Ports. UI may group them
 by mechanism, but Core does not add a distinct lifecycle hierarchy for each.
-

@@ -1,5 +1,5 @@
 {
-  "schema_version": 1,
+  "schema_version": 2,
   "id": "dev.capyio.mock-source",
   "name": "CapyIO Mock Source",
   "version": "0.1.0",
@@ -7,10 +7,14 @@
   "kind": "mock",
   "deployment_modes": ["sidecar"],
   "platforms": ["windows", "linux", "macos"],
-  "entrypoints": {
-    "windows": "capyio-mock-source.exe",
-    "linux": "capyio-mock-source",
-    "macos": "capyio-mock-source"
+  "mode_bindings": {
+    "sidecar": {
+      "entrypoints": {
+        "windows": "capyio-mock-source.exe",
+        "linux": "capyio-mock-source",
+        "macos": "capyio-mock-source"
+      }
+    }
   },
   "permissions": [],
   "capability_templates": [

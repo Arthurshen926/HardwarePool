@@ -5,7 +5,7 @@ use capyio_core::{
     AdapterState, Availability, CapabilityClass, CapabilityDescriptor, CapabilityId, CoreError,
     FormatDescriptor, InteroperabilityMode, NodeDescriptor, NodeId, PermissionRequirement,
     Platform, PortDescriptor, PortDirection, PortId, PortRef, ProblemId, ProfileId,
-    ProtocolVersion, QosMode, Route, RouteBackend, RouteId, RouteState, SessionId,
+    ProtocolVersion, QosMode, Route, RouteBackend, RouteEndpoint, RouteId, RouteState, SessionId,
 };
 
 fn port(direction: PortDirection, profile: ProfileId) -> (CapabilityDescriptor, PortDescriptor) {
@@ -39,23 +39,64 @@ fn port(direction: PortDirection, profile: ProfileId) -> (CapabilityDescriptor, 
 }
 
 fn route(source_port: &PortDescriptor, sink_port: &PortDescriptor) -> Result<Route, CoreError> {
+    route_with_backend(
+        source_port,
+        sink_port,
+        RouteBackend::CapyDataPlane,
+        [RouteBackend::CapyDataPlane],
+        [RouteBackend::CapyDataPlane],
+    )
+}
+
+fn route_with_backend(
+    source_port: &PortDescriptor,
+    sink_port: &PortDescriptor,
+    backend: RouteBackend,
+    source_backends: impl IntoIterator<Item = RouteBackend>,
+    sink_backends: impl IntoIterator<Item = RouteBackend>,
+) -> Result<Route, CoreError> {
+    let source_adapter = endpoint_adapter(source_port, source_backends);
+    let sink_adapter = endpoint_adapter(sink_port, sink_backends);
     Route::new(
         RouteId::new(),
         SessionId::new(),
-        PortRef {
-            node_id: NodeId::new(),
-            capability_id: source_port.capability_id,
-            port_id: source_port.id,
-        },
-        source_port,
-        PortRef {
-            node_id: NodeId::new(),
-            capability_id: sink_port.capability_id,
-            port_id: sink_port.id,
-        },
-        sink_port,
-        RouteBackend::CapyDataPlane,
+        RouteEndpoint::new(
+            PortRef {
+                node_id: NodeId::new(),
+                capability_id: source_port.capability_id,
+                port_id: source_port.id,
+            },
+            source_port,
+            &source_adapter,
+        ),
+        RouteEndpoint::new(
+            PortRef {
+                node_id: NodeId::new(),
+                capability_id: sink_port.capability_id,
+                port_id: sink_port.id,
+            },
+            sink_port,
+            &sink_adapter,
+        ),
+        backend,
     )
+}
+
+fn endpoint_adapter(
+    port: &PortDescriptor,
+    backends: impl IntoIterator<Item = RouteBackend>,
+) -> AdapterInstanceDescriptor {
+    AdapterInstanceDescriptor {
+        id: AdapterInstanceId::new(),
+        adapter_type: "mock.endpoint".to_owned(),
+        display_name: "Mock endpoint".to_owned(),
+        deployment_mode: AdapterDeploymentMode::InProcess,
+        version: "1.0.0".to_owned(),
+        state: AdapterState::Ready,
+        health: AdapterHealth::Healthy,
+        owned_capabilities: BTreeSet::from([port.capability_id]),
+        supported_route_modes: backends.into_iter().collect(),
+    }
 }
 
 #[test]
@@ -124,12 +165,113 @@ fn offline_route_recovers_with_a_new_epoch() {
         .expect("prepare");
     route.begin_start(0).expect("start");
     route.mark_active().expect("active");
+    let active_epoch = route.epoch;
     route.mark_offline().expect("offline");
+    assert!(route.epoch > active_epoch, "offline invalidates stale data");
+    let offline_epoch = route.epoch;
     route.recover(1).expect("recover");
     route.begin_start(1).expect("restart");
     route.mark_active().expect("active again");
     assert_eq!(route.state, RouteState::Active);
-    assert_eq!(route.epoch, 2);
+    assert!(route.epoch > offline_epoch);
+}
+
+#[test]
+fn unsupported_backend_is_a_typed_error() {
+    let (_, source) = port(PortDirection::Source, ProfileId::audio_frames_v1());
+    let (_, sink) = port(PortDirection::Sink, ProfileId::audio_frames_v1());
+
+    assert!(matches!(
+        route_with_backend(
+            &source,
+            &sink,
+            RouteBackend::CapyDataPlane,
+            [RouteBackend::CapyDataPlane],
+            [RouteBackend::LocalPipeline],
+        ),
+        Err(CoreError::UnsupportedRouteBackend {
+            backend: RouteBackend::CapyDataPlane,
+            ..
+        })
+    ));
+}
+
+#[test]
+fn backend_must_match_port_interoperability() {
+    let (_, mut source) = port(PortDirection::Source, ProfileId::audio_frames_v1());
+    let (_, mut sink) = port(PortDirection::Sink, ProfileId::audio_frames_v1());
+    source.interoperability_mode = InteroperabilityMode::AdapterManaged;
+    sink.interoperability_mode = InteroperabilityMode::AdapterManaged;
+
+    assert!(matches!(
+        route_with_backend(
+            &source,
+            &sink,
+            RouteBackend::CapyDataPlane,
+            [RouteBackend::CapyDataPlane],
+            [RouteBackend::CapyDataPlane],
+        ),
+        Err(CoreError::BackendInteroperabilityMismatch {
+            backend: RouteBackend::CapyDataPlane,
+            mode: InteroperabilityMode::AdapterManaged,
+        })
+    ));
+
+    route_with_backend(
+        &source,
+        &sink,
+        RouteBackend::AdapterManaged,
+        [RouteBackend::AdapterManaged],
+        [RouteBackend::AdapterManaged],
+    )
+    .expect("matching Adapter-managed contract");
+}
+
+#[test]
+fn local_pipeline_requires_colocated_endpoints() {
+    let (_, source) = port(PortDirection::Source, ProfileId::audio_frames_v1());
+    let (_, sink) = port(PortDirection::Sink, ProfileId::audio_frames_v1());
+
+    assert!(matches!(
+        route_with_backend(
+            &source,
+            &sink,
+            RouteBackend::LocalPipeline,
+            [RouteBackend::LocalPipeline],
+            [RouteBackend::LocalPipeline],
+        ),
+        Err(CoreError::LocalPipelineRequiresSameNode { .. })
+    ));
+}
+
+#[test]
+fn catalog_offline_transition_retains_problem_and_invalidates_epoch() {
+    let (_, source) = port(PortDirection::Source, ProfileId::audio_frames_v1());
+    let (_, sink) = port(PortDirection::Sink, ProfileId::audio_frames_v1());
+    let mut route = route(&source, &sink).expect("Route");
+    route.authorize(None).expect("authorize");
+    route
+        .prepare(Some(FormatDescriptor::new("mock/1")), QosMode::Basic, 0)
+        .expect("prepare");
+    route.begin_start(0).expect("start");
+    route.mark_active().expect("active");
+    let active_epoch = route.epoch;
+    let problem_id = ProblemId::new();
+
+    route
+        .mark_offline_with_problem(problem_id)
+        .expect("catalog invalidation");
+
+    assert_eq!(route.state, RouteState::Offline);
+    assert!(route.epoch > active_epoch);
+    assert_eq!(route.diagnostic_ids, vec![problem_id]);
+    assert!(matches!(
+        route.mark_offline_with_problem(ProblemId::new()),
+        Err(CoreError::InvalidRouteTransition {
+            from: RouteState::Offline,
+            action: "mark_offline",
+        })
+    ));
 }
 
 #[test]

@@ -127,7 +127,7 @@ impl DemoLab {
                 WIN_GAMEPAD_SINK_CAPABILITY_ID,
                 WIN_GAMEPAD_SINK_PORT_ID,
             ),
-            RouteBackend::LocalPipeline,
+            RouteBackend::CapyDataPlane,
         )?;
         let phone_camera_to_panel = runtime.create_route_with_id(
             parse_id(PHONE_CAMERA_ROUTE_ID),
@@ -549,7 +549,7 @@ where
 
 #[cfg(test)]
 mod tests {
-    use capyio_core::RouteState;
+    use capyio_core::{CapabilityId, CoreError, RouteState};
 
     use super::*;
 
@@ -631,5 +631,349 @@ mod tests {
                 RouteState::Active
             );
         }
+    }
+
+    #[test]
+    fn removing_active_source_port_offlines_only_dependent_route() {
+        let mut lab = active_microphone_lab();
+        let unaffected = lab.routes.windows_system_mix_to_phone;
+        let unaffected_before = lab
+            .runtime
+            .route(unaffected)
+            .expect("unrelated Route")
+            .clone();
+        let mut catalog = android_catalog();
+        catalog.retain(|capability| capability.id != parse_id(PHONE_MICROPHONE_CAPABILITY_ID));
+
+        lab.runtime
+            .replace_adapter_catalog(
+                parse_id(ANDROID_NODE_ID),
+                parse_id(ANDROID_HARDWARE_ADAPTER_ID),
+                catalog,
+            )
+            .expect("replace Android catalog");
+
+        assert_catalog_invalidated(
+            &lab,
+            lab.routes.phone_microphone_to_windows,
+            "CAPY.ROUTE.ENDPOINT_REMOVED",
+        );
+        assert_eq!(
+            lab.runtime.route(unaffected).expect("unrelated Route"),
+            &unaffected_before
+        );
+    }
+
+    #[test]
+    fn removing_active_sink_port_offlines_only_dependent_route() {
+        let mut lab = active_microphone_lab();
+        let unaffected = lab.routes.windows_system_mix_to_phone;
+        let unaffected_before = lab
+            .runtime
+            .route(unaffected)
+            .expect("unrelated Route")
+            .clone();
+        let mut catalog = windows_audio_catalog();
+        catalog.retain(|capability| capability.id != parse_id(WIN_VIRTUAL_MIC_CAPABILITY_ID));
+
+        lab.runtime
+            .replace_adapter_catalog(
+                parse_id(WINDOWS_NODE_ID),
+                parse_id(WINDOWS_AUDIO_ADAPTER_ID),
+                catalog,
+            )
+            .expect("replace Windows audio catalog");
+
+        assert_catalog_invalidated(
+            &lab,
+            lab.routes.phone_microphone_to_windows,
+            "CAPY.ROUTE.ENDPOINT_REMOVED",
+        );
+        assert_eq!(
+            lab.runtime.route(unaffected).expect("unrelated Route"),
+            &unaffected_before
+        );
+    }
+
+    #[test]
+    fn profile_major_change_invalidates_active_route() {
+        let mut lab = active_microphone_lab();
+        let mut catalog = android_catalog();
+        catalog_port_mut(
+            &mut catalog,
+            PHONE_MICROPHONE_CAPABILITY_ID,
+            PHONE_MICROPHONE_PORT_ID,
+        )
+        .profile = ProfileId::new("capyio.audio.frames", 2);
+
+        lab.runtime
+            .replace_adapter_catalog(
+                parse_id(ANDROID_NODE_ID),
+                parse_id(ANDROID_HARDWARE_ADAPTER_ID),
+                catalog,
+            )
+            .expect("replace Android catalog");
+
+        assert_catalog_invalidated(
+            &lab,
+            lab.routes.phone_microphone_to_windows,
+            "CAPY.ROUTE.PROFILE_CHANGED",
+        );
+    }
+
+    #[test]
+    fn selected_format_and_qos_must_survive_catalog_replacement() {
+        let mut format_lab = active_microphone_lab();
+        let mut format_catalog = android_catalog();
+        catalog_port_mut(
+            &mut format_catalog,
+            PHONE_MICROPHONE_CAPABILITY_ID,
+            PHONE_MICROPHONE_PORT_ID,
+        )
+        .formats = vec![FormatDescriptor::new("pcm-s24le-48000-mono")];
+        format_lab
+            .runtime
+            .replace_adapter_catalog(
+                parse_id(ANDROID_NODE_ID),
+                parse_id(ANDROID_HARDWARE_ADAPTER_ID),
+                format_catalog,
+            )
+            .expect("replace format catalog");
+        assert_catalog_invalidated(
+            &format_lab,
+            format_lab.routes.phone_microphone_to_windows,
+            "CAPY.ROUTE.FORMAT_UNAVAILABLE",
+        );
+
+        let mut qos_lab = active_microphone_lab();
+        let mut qos_catalog = android_catalog();
+        catalog_port_mut(
+            &mut qos_catalog,
+            PHONE_MICROPHONE_CAPABILITY_ID,
+            PHONE_MICROPHONE_PORT_ID,
+        )
+        .qos_modes = BTreeSet::from([QosMode::Basic]);
+        qos_lab
+            .runtime
+            .replace_adapter_catalog(
+                parse_id(ANDROID_NODE_ID),
+                parse_id(ANDROID_HARDWARE_ADAPTER_ID),
+                qos_catalog,
+            )
+            .expect("replace QoS catalog");
+        assert_catalog_invalidated(
+            &qos_lab,
+            qos_lab.routes.phone_microphone_to_windows,
+            "CAPY.ROUTE.QOS_UNAVAILABLE",
+        );
+    }
+
+    #[test]
+    fn unrelated_metadata_update_preserves_active_route() {
+        let mut lab = active_microphone_lab();
+        let route_id = lab.routes.phone_microphone_to_windows;
+        let before = lab.runtime.route(route_id).expect("active Route").clone();
+        let problem_count = lab.runtime.snapshot().problems.len();
+        let mut catalog = android_catalog();
+        let capability_id: CapabilityId = parse_id(PHONE_MICROPHONE_CAPABILITY_ID);
+        catalog
+            .iter_mut()
+            .find(|capability| capability.id == capability_id)
+            .expect("microphone Capability")
+            .metadata
+            .insert("fixture_note".to_owned(), "metadata-only change".to_owned());
+
+        lab.runtime
+            .replace_adapter_catalog(
+                parse_id(ANDROID_NODE_ID),
+                parse_id(ANDROID_HARDWARE_ADAPTER_ID),
+                catalog,
+            )
+            .expect("replace Android catalog");
+
+        assert_eq!(lab.runtime.route(route_id).expect("active Route"), &before);
+        assert_eq!(lab.runtime.snapshot().problems.len(), problem_count);
+    }
+
+    #[test]
+    fn unrelated_adapter_catalog_update_preserves_active_route() {
+        let mut lab = active_microphone_lab();
+        let route_id = lab.routes.phone_microphone_to_windows;
+        let before = lab.runtime.route(route_id).expect("active Route").clone();
+        let problem_count = lab.runtime.snapshot().problems.len();
+
+        lab.runtime
+            .replace_adapter_catalog(
+                parse_id(WINDOWS_NODE_ID),
+                parse_id(WINDOWS_PROJECTION_ADAPTER_ID),
+                windows_projection_catalog(),
+            )
+            .expect("replace unrelated projection catalog");
+
+        assert_eq!(lab.runtime.route(route_id).expect("active Route"), &before);
+        assert_eq!(lab.runtime.snapshot().problems.len(), problem_count);
+    }
+
+    #[test]
+    fn compatible_catalog_return_requires_explicit_restart_and_new_epoch() {
+        let mut lab = active_microphone_lab();
+        let route_id = lab.routes.phone_microphone_to_windows;
+        let active_epoch = lab.runtime.route(route_id).expect("active Route").epoch;
+        let mut missing = android_catalog();
+        missing.retain(|capability| capability.id != parse_id(PHONE_MICROPHONE_CAPABILITY_ID));
+        lab.runtime
+            .replace_adapter_catalog(
+                parse_id(ANDROID_NODE_ID),
+                parse_id(ANDROID_HARDWARE_ADAPTER_ID),
+                missing,
+            )
+            .expect("remove source");
+        let offline_epoch = lab.runtime.route(route_id).expect("Offline Route").epoch;
+        assert!(offline_epoch > active_epoch);
+
+        lab.runtime
+            .replace_adapter_catalog(
+                parse_id(ANDROID_NODE_ID),
+                parse_id(ANDROID_HARDWARE_ADAPTER_ID),
+                android_catalog(),
+            )
+            .expect("restore compatible source");
+        assert_eq!(
+            lab.runtime.route(route_id).expect("restored Route").state,
+            RouteState::Offline,
+            "catalog restoration must not implicitly restart data"
+        );
+        assert_eq!(
+            lab.runtime.route(route_id).expect("restored Route").epoch,
+            offline_epoch
+        );
+
+        lab.set_route_active(route_id, true, 2)
+            .expect("explicit restart");
+        let restarted = lab.runtime.route(route_id).expect("restarted Route");
+        assert_eq!(restarted.state, RouteState::Active);
+        assert!(restarted.epoch > offline_epoch);
+    }
+
+    #[test]
+    fn dangling_offline_route_cannot_be_reactivated() {
+        let mut lab = active_microphone_lab();
+        let route_id = lab.routes.phone_microphone_to_windows;
+        let mut missing = android_catalog();
+        missing.retain(|capability| capability.id != parse_id(PHONE_MICROPHONE_CAPABILITY_ID));
+        lab.runtime
+            .replace_adapter_catalog(
+                parse_id(ANDROID_NODE_ID),
+                parse_id(ANDROID_HARDWARE_ADAPTER_ID),
+                missing,
+            )
+            .expect("remove source");
+        let offline_epoch = lab.runtime.route(route_id).expect("Offline Route").epoch;
+
+        let error = lab
+            .set_route_active(route_id, true, 2)
+            .expect_err("absent endpoint must block restart");
+
+        assert!(matches!(
+            error,
+            RuntimeError::PortNotAdvertised {
+                node_id,
+                port_id,
+            } if node_id == parse_id(ANDROID_NODE_ID)
+                && port_id == parse_id(PHONE_MICROPHONE_PORT_ID)
+        ));
+        let route = lab.runtime.route(route_id).expect("still Offline Route");
+        assert_eq!(route.state, RouteState::Offline);
+        assert_eq!(route.epoch, offline_epoch);
+    }
+
+    #[test]
+    fn unsupported_route_backend_is_rejected_by_runtime() {
+        let mut lab = DemoLab::new().expect("demo lab");
+        let error = lab
+            .runtime
+            .create_route(
+                lab.session_id,
+                port_ref(
+                    parse_id(ANDROID_NODE_ID),
+                    PHONE_MICROPHONE_CAPABILITY_ID,
+                    PHONE_MICROPHONE_PORT_ID,
+                ),
+                port_ref(
+                    parse_id(WINDOWS_NODE_ID),
+                    WIN_VIRTUAL_MIC_CAPABILITY_ID,
+                    WIN_VIRTUAL_MIC_PORT_ID,
+                ),
+                RouteBackend::ExternalProtocol,
+            )
+            .expect_err("backend is not advertised by endpoint Adapters");
+
+        assert!(matches!(
+            error,
+            RuntimeError::Core(CoreError::UnsupportedRouteBackend {
+                backend: RouteBackend::ExternalProtocol,
+                ..
+            })
+        ));
+    }
+
+    fn active_microphone_lab() -> DemoLab {
+        let mut lab = DemoLab::new().expect("demo lab");
+        lab.set_microphone_active(true, 1)
+            .expect("activate microphone Route");
+        lab
+    }
+
+    fn android_catalog() -> Vec<CapabilityDescriptor> {
+        adapter_catalog(android_node(), parse_id(ANDROID_HARDWARE_ADAPTER_ID))
+    }
+
+    fn windows_audio_catalog() -> Vec<CapabilityDescriptor> {
+        adapter_catalog(windows_node(), parse_id(WINDOWS_AUDIO_ADAPTER_ID))
+    }
+
+    fn windows_projection_catalog() -> Vec<CapabilityDescriptor> {
+        adapter_catalog(windows_node(), parse_id(WINDOWS_PROJECTION_ADAPTER_ID))
+    }
+
+    fn adapter_catalog(
+        node: NodeDescriptor,
+        adapter_id: AdapterInstanceId,
+    ) -> Vec<CapabilityDescriptor> {
+        node.capabilities
+            .into_values()
+            .filter(|capability| capability.adapter_instance_id == adapter_id)
+            .collect()
+    }
+
+    fn catalog_port_mut<'a>(
+        catalog: &'a mut [CapabilityDescriptor],
+        capability_id: &str,
+        port_id: &str,
+    ) -> &'a mut PortDescriptor {
+        let capability_id: CapabilityId = parse_id(capability_id);
+        let port_id = parse_id(port_id);
+        catalog
+            .iter_mut()
+            .find(|capability| capability.id == capability_id)
+            .expect("catalog Capability")
+            .ports
+            .get_mut(&port_id)
+            .expect("catalog Port")
+    }
+
+    fn assert_catalog_invalidated(lab: &DemoLab, route_id: RouteId, expected_code: &str) {
+        let route = lab.runtime.route(route_id).expect("affected Route");
+        assert_eq!(route.state, RouteState::Offline);
+        let snapshot = lab.runtime.snapshot();
+        let problem = snapshot
+            .problems
+            .iter()
+            .find(|problem| problem.related_route == Some(route_id))
+            .expect("structured catalog Problem");
+        assert_eq!(problem.code, expected_code);
+        assert_eq!(problem.category, capyio_core::ProblemCategory::Route);
+        assert_eq!(problem.related_route, Some(route_id));
+        assert!(route.diagnostic_ids.contains(&problem.id));
     }
 }

@@ -1,10 +1,10 @@
 use std::collections::{BTreeMap, VecDeque};
 
 use capyio_core::{
-    AdapterHealth, AdapterInstanceId, AdapterState, AuthorizationState, CapabilityDescriptor,
-    NodeDescriptor, NodeId, OnlineState, PortDescriptor, PortRef, Problem, ProblemCategory,
-    ProblemId, ProblemSeverity, Route, RouteBackend, RouteId, RouteState, Session, SessionId,
-    SessionState,
+    AdapterHealth, AdapterInstanceDescriptor, AdapterInstanceId, AdapterState, AuthorizationState,
+    CapabilityDescriptor, CoreError, NodeDescriptor, NodeId, OnlineState, PortDescriptor, PortRef,
+    Problem, ProblemCategory, ProblemId, ProblemSeverity, Route, RouteBackend, RouteEndpoint,
+    RouteId, RouteState, Session, SessionId, SessionState,
 };
 
 use crate::{
@@ -131,15 +131,13 @@ impl NodeRuntime {
                 },
             ));
         }
-        let source_port = self.resolve_port(source)?.clone();
-        let sink_port = self.resolve_port(sink)?.clone();
+        let (source_port, source_adapter) = self.resolve_route_endpoint(source)?;
+        let (sink_port, sink_adapter) = self.resolve_route_endpoint(sink)?;
         let route = Route::new(
             route_id,
             session_id,
-            source,
-            &source_port,
-            sink,
-            &sink_port,
+            RouteEndpoint::new(source, &source_port, &source_adapter),
+            RouteEndpoint::new(sink, &sink_port, &sink_adapter),
             backend,
         )?;
         self.routes.insert(route_id, route);
@@ -157,6 +155,9 @@ impl NodeRuntime {
         active: bool,
         now_ms: u64,
     ) -> Result<(), RuntimeError> {
+        if active {
+            self.reconcile_route_before_activation(route_id)?;
+        }
         let route = self
             .routes
             .get_mut(&route_id)
@@ -298,6 +299,14 @@ impl NodeRuntime {
     ) -> Result<(), RuntimeError> {
         self.node_mut(node_id)?
             .replace_adapter_catalog(adapter_id, capabilities)?;
+
+        // Re-evaluate every Route because a changed endpoint can be paired with
+        // either a local or peer endpoint. Compatible changes only refresh the
+        // negotiated candidate sets; they never restart an Offline Route.
+        let route_ids = self.routes.keys().copied().collect::<Vec<_>>();
+        for route_id in route_ids {
+            self.reconcile_route_after_catalog_change(route_id, node_id, adapter_id)?;
+        }
         self.emit(RuntimeEventKind::CatalogChanged {
             node_id,
             adapter_id,
@@ -427,13 +436,127 @@ impl NodeRuntime {
         }
     }
 
-    fn resolve_port(&self, reference: PortRef) -> Result<&PortDescriptor, RuntimeError> {
+    fn resolve_route_endpoint(
+        &self,
+        reference: PortRef,
+    ) -> Result<(PortDescriptor, AdapterInstanceDescriptor), RuntimeError> {
         let node = self.node(reference.node_id)?;
-        node.port(reference.capability_id, reference.port_id)
-            .map_err(|_| RuntimeError::PortNotAdvertised {
+        let capability = node.capabilities.get(&reference.capability_id).ok_or(
+            RuntimeError::PortNotAdvertised {
                 node_id: reference.node_id,
                 port_id: reference.port_id,
-            })
+            },
+        )?;
+        let port =
+            capability
+                .ports
+                .get(&reference.port_id)
+                .ok_or(RuntimeError::PortNotAdvertised {
+                    node_id: reference.node_id,
+                    port_id: reference.port_id,
+                })?;
+        let adapter = node
+            .adapter_instances
+            .get(&capability.adapter_instance_id)
+            .ok_or(RuntimeError::UnknownAdapter {
+                node_id: reference.node_id,
+                adapter_id: capability.adapter_instance_id,
+            })?;
+        Ok((port.clone(), adapter.clone()))
+    }
+
+    fn reconcile_route_after_catalog_change(
+        &mut self,
+        route_id: RouteId,
+        changed_node_id: NodeId,
+        changed_adapter_id: AdapterInstanceId,
+    ) -> Result<(), RuntimeError> {
+        let (source, sink) = {
+            let route = self
+                .routes
+                .get(&route_id)
+                .expect("Route ID collected from map");
+            (route.source, route.sink)
+        };
+        let endpoints = self
+            .resolve_route_endpoint(source)
+            .map_err(|_| CatalogRouteIssue::EndpointMissing(source))
+            .and_then(|(source_port, source_adapter)| {
+                self.resolve_route_endpoint(sink)
+                    .map_err(|_| CatalogRouteIssue::EndpointMissing(sink))
+                    .map(|(sink_port, sink_adapter)| {
+                        (source_port, source_adapter, sink_port, sink_adapter)
+                    })
+            });
+
+        let issue = match endpoints {
+            Ok((source_port, source_adapter, sink_port, sink_adapter)) => self
+                .routes
+                .get_mut(&route_id)
+                .expect("Route ID collected from map")
+                .reconcile_endpoints(&source_port, &source_adapter, &sink_port, &sink_adapter)
+                .err()
+                .map(CatalogRouteIssue::Incompatible),
+            Err(issue) => Some(issue),
+        };
+
+        if let Some(issue) = issue {
+            self.invalidate_route_for_catalog(
+                route_id,
+                changed_node_id,
+                changed_adapter_id,
+                issue,
+            )?;
+        }
+        Ok(())
+    }
+
+    fn reconcile_route_before_activation(&mut self, route_id: RouteId) -> Result<(), RuntimeError> {
+        let (source, sink) = {
+            let route = self
+                .routes
+                .get(&route_id)
+                .ok_or(RuntimeError::UnknownRoute(route_id))?;
+            (route.source, route.sink)
+        };
+        let (source_port, source_adapter) = self.resolve_route_endpoint(source)?;
+        let (sink_port, sink_adapter) = self.resolve_route_endpoint(sink)?;
+        self.routes
+            .get_mut(&route_id)
+            .expect("Route existence checked above")
+            .reconcile_endpoints(&source_port, &source_adapter, &sink_port, &sink_adapter)?;
+        Ok(())
+    }
+
+    fn invalidate_route_for_catalog(
+        &mut self,
+        route_id: RouteId,
+        node_id: NodeId,
+        adapter_id: AdapterInstanceId,
+        issue: CatalogRouteIssue,
+    ) -> Result<(), RuntimeError> {
+        let state = self
+            .routes
+            .get(&route_id)
+            .expect("Route ID collected from map")
+            .state;
+        if matches!(state, RouteState::Offline | RouteState::Failed) {
+            return Ok(());
+        }
+
+        let problem = catalog_problem(node_id, adapter_id, route_id, &issue);
+        problem.validate()?;
+        let problem_id = problem.id;
+        self.routes
+            .get_mut(&route_id)
+            .expect("Route ID collected from map")
+            .mark_offline_with_problem(problem_id)?;
+        self.push_problem(problem)?;
+        self.emit(RuntimeEventKind::RouteChanged {
+            route_id,
+            state: RouteState::Offline,
+        });
+        Ok(())
     }
 
     fn node(&self, id: NodeId) -> Result<&NodeDescriptor, RuntimeError> {
@@ -501,5 +624,70 @@ fn adapter_problem(
         related_route: route_id,
         human_message: "Adapter stopped unexpectedly".to_owned(),
         technical_detail: None,
+    }
+}
+
+#[derive(Debug)]
+enum CatalogRouteIssue {
+    EndpointMissing(PortRef),
+    Incompatible(CoreError),
+}
+
+impl CatalogRouteIssue {
+    const fn code(&self) -> &'static str {
+        match self {
+            Self::EndpointMissing(_) => "CAPY.ROUTE.ENDPOINT_REMOVED",
+            Self::Incompatible(CoreError::InvalidRouteEndpoint { .. }) => {
+                "CAPY.ROUTE.DIRECTION_CHANGED"
+            }
+            Self::Incompatible(
+                CoreError::IncompatibleProfiles { .. } | CoreError::RouteProfileChanged { .. },
+            ) => "CAPY.ROUTE.PROFILE_CHANGED",
+            Self::Incompatible(
+                CoreError::NoCompatibleFormat | CoreError::UnsupportedRouteFormat,
+            ) => "CAPY.ROUTE.FORMAT_UNAVAILABLE",
+            Self::Incompatible(CoreError::NoCompatibleQos | CoreError::UnsupportedRouteQos) => {
+                "CAPY.ROUTE.QOS_UNAVAILABLE"
+            }
+            Self::Incompatible(
+                CoreError::IncompatibleInteroperabilityModes
+                | CoreError::BackendInteroperabilityMismatch { .. },
+            ) => "CAPY.ROUTE.INTEROPERABILITY_CHANGED",
+            Self::Incompatible(
+                CoreError::UnsupportedRouteBackend { .. }
+                | CoreError::LocalPipelineRequiresSameNode { .. },
+            ) => "CAPY.ROUTE.BACKEND_UNSUPPORTED",
+            Self::Incompatible(_) => "CAPY.ROUTE.ENDPOINT_INCOMPATIBLE",
+        }
+    }
+
+    fn detail(&self) -> String {
+        match self {
+            Self::EndpointMissing(reference) => format!(
+                "Port {} on Capability {} is absent from Node {}",
+                reference.port_id, reference.capability_id, reference.node_id
+            ),
+            Self::Incompatible(error) => error.to_string(),
+        }
+    }
+}
+
+fn catalog_problem(
+    node_id: NodeId,
+    adapter_id: AdapterInstanceId,
+    route_id: RouteId,
+    issue: &CatalogRouteIssue,
+) -> Problem {
+    Problem {
+        id: ProblemId::new(),
+        code: issue.code().to_owned(),
+        category: ProblemCategory::Route,
+        severity: ProblemSeverity::Error,
+        retryable: true,
+        related_node: Some(node_id),
+        related_adapter: Some(adapter_id),
+        related_route: Some(route_id),
+        human_message: "A Route endpoint is no longer compatible with its catalog".to_owned(),
+        technical_detail: Some(issue.detail()),
     }
 }

@@ -1,8 +1,8 @@
 use thiserror::Error;
 
 use crate::{
-    AdapterInstanceId, CapabilityId, PortDirection, PortId, PortRef, ProfileId, RouteId,
-    RouteState, SessionId, SessionState,
+    AdapterInstanceId, CapabilityId, InteroperabilityMode, NodeId, PortDirection, PortId, PortRef,
+    ProfileId, RouteBackend, RouteId, RouteState, SessionId, SessionState,
 };
 
 #[derive(Debug, Clone, Error, PartialEq, Eq)]
@@ -58,6 +58,31 @@ pub enum CoreError {
     },
     #[error("Source and Sink interoperability modes differ")]
     IncompatibleInteroperabilityModes,
+    #[error("Route backend {backend:?} is incompatible with Port interoperability mode {mode:?}")]
+    BackendInteroperabilityMismatch {
+        backend: RouteBackend,
+        mode: InteroperabilityMode,
+    },
+    #[error("Adapter {adapter_id} does not support Route backend {backend:?}")]
+    UnsupportedRouteBackend {
+        adapter_id: AdapterInstanceId,
+        backend: RouteBackend,
+    },
+    #[error("Adapter {adapter_id} does not own Route endpoint Capability {capability_id}")]
+    AdapterDoesNotOwnRouteEndpoint {
+        adapter_id: AdapterInstanceId,
+        capability_id: CapabilityId,
+    },
+    #[error("LocalPipeline requires both endpoints on one Node, got {source_node} -> {sink_node}")]
+    LocalPipelineRequiresSameNode {
+        source_node: NodeId,
+        sink_node: NodeId,
+    },
+    #[error("Route Profile changed from {route_profile:?} to {endpoint_profile:?}")]
+    RouteProfileChanged {
+        route_profile: ProfileId,
+        endpoint_profile: ProfileId,
+    },
     #[error("Source and Sink have no compatible format")]
     NoCompatibleFormat,
     #[error("Source and Sink have no compatible QoS mode")]

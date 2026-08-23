@@ -25,5 +25,5 @@ pub use ids::{
     StreamId,
 };
 pub use problem::{Problem, ProblemCategory, ProblemSeverity};
-pub use route::{AuthorizationState, PortRef, Route, RouteBackend, RouteState};
+pub use route::{AuthorizationState, PortRef, Route, RouteBackend, RouteEndpoint, RouteState};
 pub use session::{Session, SessionState};

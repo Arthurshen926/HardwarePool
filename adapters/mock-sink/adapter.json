@@ -1,5 +1,5 @@
 {
-  "schema_version": 1,
+  "schema_version": 2,
   "id": "dev.capyio.mock-sink",
   "name": "CapyIO Mock Sink",
   "version": "0.1.0",
@@ -7,10 +7,14 @@
   "kind": "mock",
   "deployment_modes": ["sidecar"],
   "platforms": ["windows", "linux", "macos"],
-  "entrypoints": {
-    "windows": "capyio-mock-sink.exe",
-    "linux": "capyio-mock-sink",
-    "macos": "capyio-mock-sink"
+  "mode_bindings": {
+    "sidecar": {
+      "entrypoints": {
+        "windows": "capyio-mock-sink.exe",
+        "linux": "capyio-mock-sink",
+        "macos": "capyio-mock-sink"
+      }
+    }
   },
   "permissions": [],
   "capability_templates": [

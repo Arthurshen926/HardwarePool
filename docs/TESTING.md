@@ -39,7 +39,15 @@ Frontend uses `corepack pnpm typecheck` and `corepack pnpm build`.
 - Protocol catalog/Route/Problem round trips and enum/version failures;
 - Adapter manifest validation;
 - NDJSON framing, malformed/oversized messages and correlation;
-- child stdout machine-only behavior and bounded stderr;
+- stdout/stderr limits are enforced while reading, including oversized input
+  without a newline;
+- timeout, late/unexpected response, malformed response and stdout closure
+  poison the sequential Host, reap the child and reject later requests;
+- generic Route prepare/start/stop/status contracts round trip without carrying
+  continuous data payloads;
+- child stdout machine-only behavior and bounded/truncated stderr;
+- Requirement parser rejects duplicate, malformed and non-canonical IDs, and
+  traceability covers every normative PRD ID;
 - deterministic UI snapshot with four Routes.
 
 ## Deterministic integration tests
@@ -52,9 +60,12 @@ ordered bounded events/snapshots.
 ## Sidecar smoke test
 
 Adapter Host launches repository-built mock binaries, performs initialize,
-probe, catalog, Route prepare/start/stop and shutdown, then verifies exit and
-stderr/stdout separation. A second case simulates abnormal child exit and checks
-scoped Failure/Problem behavior. Finite mock payloads are not performance tests.
+probe, health, catalog, Route prepare/start/status/stop/status and shutdown, then
+verifies exit and stderr/stdout separation. Separate cases simulate abnormal
+child exit, newline-free stdout/stderr overflow and a response that arrives after
+the deadline. The terminal-failure cases assert `Poisoned`, child reaping and
+future-request rejection. Finite Mock-private samples are not a generic Adapter
+contract, data plane or performance test.
 
 ## Later platform tests
 
@@ -97,3 +108,16 @@ Required before merge: Rust format, check, Clippy warnings denied, tests,
 Protobuf build, docs/repository validation, manifest validation, Adapter smoke,
 frontend typecheck/build and dependency/license review when dependencies change.
 Hardware jobs may be manual but must attach evidence. Claims match actual runs.
+
+Pull-request workflows targeting `main` explicitly check out
+`github.event.pull_request.head.sha`; a synthetic merge commit is not substituted
+for the submitted head. Rust format/check/Clippy/tests, documentation, manifests
+and Adapter smoke run on Windows, Linux and macOS. The frontend uses the frozen
+pnpm lockfile for typecheck/build. Windows additionally runs native Tauri Cargo
+check/build.
+
+Linux/macOS native Tauri packaging is an explicit merge-gate skip in the current
+foundation: those runners still execute Rust Core/Adapter and web UI gates, but
+they do not count as Tauri application build evidence. Adding non-Windows Tauri
+packaging requires an explicit workflow and platform prerequisites; absence is
+never reported as a pass.

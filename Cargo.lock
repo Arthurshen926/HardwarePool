@@ -350,6 +350,7 @@ version = "0.1.0"
 dependencies = [
  "capyio-adapter-sdk",
  "capyio-core",
+ "serde",
  "serde_json",
 ]
 

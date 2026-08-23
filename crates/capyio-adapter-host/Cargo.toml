@@ -20,3 +20,7 @@ capyio-testkit = { path = "../capyio-testkit" }
 [[bin]]
 name = "capyio-adapter-smoke"
 path = "src/bin/adapter-smoke.rs"
+
+[[bin]]
+name = "capyio-host-fixture"
+path = "src/bin/host-fixture.rs"

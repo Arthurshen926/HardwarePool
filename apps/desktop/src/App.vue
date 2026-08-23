@@ -68,7 +68,7 @@ onMounted(load);
 
     <section id="overview" class="hero-panel hero-panel--compact">
       <div class="hero-panel__copy">
-        <p class="eyebrow">Gate 2 · Generic mock vertical slices</p>
+        <p class="eyebrow">Gate 3 · Hardened Mock Adapter foundation</p>
         <h1>连接能力，不绑定设备角色。</h1>
         <p>两个对等 Node 通过有方向、强类型的 Route 组合音频、IMU 与视频能力。每条 Route 独立启动和停止。</p>
         <div class="hero-panel__summary">
@@ -154,6 +154,6 @@ onMounted(load);
       </article>
     </section>
 
-    <footer class="app-footer"><span>CapyIO pre-alpha</span><span>Protocol 1.0 · Mock Gate 2</span><span>No real hardware access in this UI</span></footer>
+    <footer class="app-footer"><span>CapyIO pre-alpha</span><span>Protocol 1.0 · Mock Adapter Gate 3</span><span>No real hardware access in this UI</span></footer>
   </main>
 </template>

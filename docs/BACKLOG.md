@@ -19,6 +19,28 @@ Deliverables:
 - Adapter manifest/SDK/Host and mock Sidecars;
 - validator, smoke commands and evidence.
 
+## Completed foundation hardening
+
+### CAPY-FOUNDATION-002 — Harden Adapter foundation and exact-head CI
+
+Goal: make the Gate 3 process/control boundary safe enough for the next
+low-rate StandardPort task without starting a real SensorServer or data plane.
+
+In scope:
+
+- bounded stdout/stderr reads and terminal poisoned-Host behavior;
+- generic bounded Route control contracts;
+- deployment-mode-specific manifest validation;
+- scoped Route reconciliation after catalog change and backend support checks;
+- checked PRD traceability, stale status cleanup and exact-head hosted gates.
+
+Completion evidence: `docs/FOUNDATION_HARDENING_REPORT.md` and completed plan
+`docs/plans/completed/0004-capyio-foundation-hardening.md`. All local gates
+passed. Hosted CI is separately pending until a pushed PR head runs.
+
+Explicit non-scope: StandardPort payload transport, SensorServer, Android/phone,
+drivers, production security, third-party source and physical-device tests.
+
 ## Next product slice (do not implement in foundation task)
 
 ### CAPY-IMU-001 — SensorServer IMU Source to Panel and Recorder

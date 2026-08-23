@@ -1,6 +1,9 @@
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 
-use capyio_core::{CapabilityDescriptor, RouteId};
+use capyio_core::{
+    CapabilityDescriptor, FormatDescriptor, PortRef, ProfileId, QosMode, RouteBackend, RouteId,
+    RouteState,
+};
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
 use serde_json::Value;
 use thiserror::Error;
@@ -9,6 +12,15 @@ use crate::ControlProtocolVersion;
 
 pub const MAX_NDJSON_LINE_BYTES: usize = 64 * 1024;
 pub const MAX_PENDING_REQUESTS: usize = 64;
+pub const MAX_ADAPTER_CONFIG_BYTES: usize = 8 * 1024;
+pub const MAX_ADAPTER_CONFIG_ENTRIES: usize = 32;
+pub const MAX_DATA_ENDPOINT_METADATA_ENTRIES: usize = 32;
+pub const MAX_ROUTE_WARNINGS: usize = 16;
+
+const MAX_CONTRACT_STRING_BYTES: usize = 2 * 1024;
+const MAX_JSON_DEPTH: usize = 8;
+const MAX_JSON_NODES: usize = 256;
+const MAX_FORMAT_PARAMETERS: usize = 32;
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct RpcRequest {
@@ -232,22 +244,271 @@ pub struct AdapterCatalog {
     pub capabilities: Vec<CapabilityDescriptor>,
 }
 
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, Default)]
+#[serde(transparent)]
+pub struct BoundedJsonObject(pub BTreeMap<String, Value>);
+
+impl BoundedJsonObject {
+    pub fn validate(&self) -> Result<(), RpcError> {
+        if self.0.len() > MAX_ADAPTER_CONFIG_ENTRIES {
+            return Err(RpcError::ContractLimit("Adapter configuration entries"));
+        }
+        let encoded_bytes = serde_json::to_vec(&self.0)?.len();
+        if encoded_bytes > MAX_ADAPTER_CONFIG_BYTES {
+            return Err(RpcError::ContractLimit("Adapter configuration bytes"));
+        }
+        let mut nodes = 0;
+        validate_json_object(&self.0, 0, &mut nodes)
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub struct DataEndpointDescriptor {
+    pub transport: String,
+    pub address: String,
+    #[serde(default)]
+    pub metadata: BTreeMap<String, String>,
+}
+
+impl DataEndpointDescriptor {
+    pub fn validate(&self) -> Result<(), RpcError> {
+        validate_contract_string("data endpoint transport", &self.transport)?;
+        validate_contract_string("data endpoint address", &self.address)?;
+        if self.metadata.len() > MAX_DATA_ENDPOINT_METADATA_ENTRIES {
+            return Err(RpcError::ContractLimit("data endpoint metadata entries"));
+        }
+        for (key, value) in &self.metadata {
+            validate_contract_string("data endpoint metadata key", key)?;
+            validate_contract_string("data endpoint metadata value", value)?;
+        }
+        Ok(())
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub struct AdapterProblemDescriptor {
+    pub code: String,
+    pub message: String,
+    pub retryable: bool,
+}
+
+impl AdapterProblemDescriptor {
+    fn validate(&self) -> Result<(), RpcError> {
+        validate_contract_string("Adapter warning code", &self.code)?;
+        validate_contract_string("Adapter warning message", &self.message)
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub struct RoutePrepareRequest {
+    pub route_id: RouteId,
+    pub source: PortRef,
+    pub sink: PortRef,
+    pub profile: ProfileId,
+    pub selected_format: Option<FormatDescriptor>,
+    pub selected_qos: QosMode,
+    pub backend: RouteBackend,
+    pub epoch: u64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub data_endpoint: Option<DataEndpointDescriptor>,
+    #[serde(default)]
+    pub adapter_config: BoundedJsonObject,
+}
+
+impl RoutePrepareRequest {
+    pub fn validate(&self) -> Result<(), RpcError> {
+        if self.epoch == 0 {
+            return Err(RpcError::InvalidContract("Route epoch"));
+        }
+        self.profile
+            .validate()
+            .map_err(|_| RpcError::InvalidContract("Route Profile"))?;
+        validate_contract_string("Route Profile name", &self.profile.name)?;
+        if let Some(format) = &self.selected_format {
+            format
+                .validate()
+                .map_err(|_| RpcError::InvalidContract("selected Route format"))?;
+            validate_contract_string("selected Route format ID", &format.id)?;
+            if format.parameters.len() > MAX_FORMAT_PARAMETERS {
+                return Err(RpcError::ContractLimit("selected Route format parameters"));
+            }
+            for (key, value) in &format.parameters {
+                validate_contract_string("selected Route format parameter key", key)?;
+                validate_contract_string("selected Route format parameter value", value)?;
+            }
+        }
+        if let QosMode::Custom(value) = &self.selected_qos {
+            validate_contract_string("selected custom Route QoS", value)?;
+        }
+        if let Some(endpoint) = &self.data_endpoint {
+            endpoint.validate()?;
+        }
+        self.adapter_config.validate()
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub struct RoutePrepareResult {
+    pub accepted: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub data_endpoint: Option<DataEndpointDescriptor>,
+    #[serde(default)]
+    pub warnings: Vec<AdapterProblemDescriptor>,
+}
+
+impl RoutePrepareResult {
+    pub fn validate(&self) -> Result<(), RpcError> {
+        validate_route_result(self.data_endpoint.as_ref(), &self.warnings)
+    }
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
-pub struct RouteParams {
+pub struct RouteStartRequest {
+    pub route_id: RouteId,
+    pub epoch: u64,
+}
+
+impl RouteStartRequest {
+    pub fn validate(&self) -> Result<(), RpcError> {
+        validate_route_epoch(self.epoch)
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub struct RouteStartResult {
+    pub accepted: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub data_endpoint: Option<DataEndpointDescriptor>,
+    #[serde(default)]
+    pub warnings: Vec<AdapterProblemDescriptor>,
+}
+
+impl RouteStartResult {
+    pub fn validate(&self) -> Result<(), RpcError> {
+        validate_route_result(self.data_endpoint.as_ref(), &self.warnings)
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub struct RouteStopRequest {
+    pub route_id: RouteId,
+    pub epoch: u64,
+}
+
+impl RouteStopRequest {
+    pub fn validate(&self) -> Result<(), RpcError> {
+        validate_route_epoch(self.epoch)
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub struct RouteStopResult {
+    pub accepted: bool,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub struct RouteStatusRequest {
     pub route_id: RouteId,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 pub struct RouteStatusResult {
     pub route_id: RouteId,
-    pub state: String,
+    pub epoch: u64,
+    pub state: RouteState,
+    #[serde(default)]
+    pub warnings: Vec<AdapterProblemDescriptor>,
 }
 
-#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
-pub struct SmokeSample {
-    pub test_only: bool,
-    pub sequence: u64,
-    pub payload: String,
+impl RouteStatusResult {
+    pub fn validate(&self) -> Result<(), RpcError> {
+        validate_route_result(None, &self.warnings)
+    }
+}
+
+fn validate_route_result(
+    endpoint: Option<&DataEndpointDescriptor>,
+    warnings: &[AdapterProblemDescriptor],
+) -> Result<(), RpcError> {
+    if let Some(endpoint) = endpoint {
+        endpoint.validate()?;
+    }
+    if warnings.len() > MAX_ROUTE_WARNINGS {
+        return Err(RpcError::ContractLimit("Route warnings"));
+    }
+    for warning in warnings {
+        warning.validate()?;
+    }
+    Ok(())
+}
+
+fn validate_json_object(
+    object: &BTreeMap<String, Value>,
+    depth: usize,
+    nodes: &mut usize,
+) -> Result<(), RpcError> {
+    if depth > MAX_JSON_DEPTH {
+        return Err(RpcError::ContractLimit("Adapter configuration JSON depth"));
+    }
+    if object.len() > MAX_ADAPTER_CONFIG_ENTRIES {
+        return Err(RpcError::ContractLimit(
+            "Adapter configuration object entries",
+        ));
+    }
+    for (key, value) in object {
+        validate_contract_string("Adapter configuration key", key)?;
+        validate_json_value(value, depth + 1, nodes)?;
+    }
+    Ok(())
+}
+
+fn validate_json_value(value: &Value, depth: usize, nodes: &mut usize) -> Result<(), RpcError> {
+    *nodes = nodes.saturating_add(1);
+    if *nodes > MAX_JSON_NODES || depth > MAX_JSON_DEPTH {
+        return Err(RpcError::ContractLimit(
+            "Adapter configuration JSON nodes/depth",
+        ));
+    }
+    match value {
+        Value::String(value) => validate_contract_string("Adapter configuration string", value),
+        Value::Array(values) => {
+            if values.len() > MAX_ADAPTER_CONFIG_ENTRIES {
+                return Err(RpcError::ContractLimit(
+                    "Adapter configuration array entries",
+                ));
+            }
+            for value in values {
+                validate_json_value(value, depth + 1, nodes)?;
+            }
+            Ok(())
+        }
+        Value::Object(values) => {
+            let values = values
+                .iter()
+                .map(|(key, value)| (key.clone(), value.clone()))
+                .collect();
+            validate_json_object(&values, depth, nodes)
+        }
+        Value::Null | Value::Bool(_) | Value::Number(_) => Ok(()),
+    }
+}
+
+fn validate_contract_string(field: &'static str, value: &str) -> Result<(), RpcError> {
+    if value.trim().is_empty() {
+        return Err(RpcError::InvalidContract(field));
+    }
+    if value.len() > MAX_CONTRACT_STRING_BYTES {
+        return Err(RpcError::ContractLimit(field));
+    }
+    Ok(())
+}
+
+fn validate_route_epoch(epoch: u64) -> Result<(), RpcError> {
+    if epoch == 0 {
+        Err(RpcError::InvalidContract("Route epoch"))
+    } else {
+        Ok(())
+    }
 }
 
 #[derive(Debug, Error)]
@@ -264,6 +525,10 @@ pub enum RpcError {
     InvalidCorrelationId,
     #[error("JSON-RPC method cannot be empty")]
     EmptyMethod,
+    #[error("Adapter control contract field is invalid: {0}")]
+    InvalidContract(&'static str),
+    #[error("Adapter control contract limit exceeded: {0}")]
+    ContractLimit(&'static str),
     #[error("JSON-RPC response must contain exactly one of result or error")]
     InvalidResponseShape,
     #[error("pending JSON-RPC request limit {0} reached")]
@@ -282,6 +547,8 @@ pub enum RpcError {
 
 #[cfg(test)]
 mod tests {
+    use capyio_core::{CapabilityId, NodeId, PortId};
+
     use super::*;
 
     #[test]
@@ -332,6 +599,75 @@ mod tests {
         assert!(matches!(
             correlator.resolve(&expected),
             Err(RpcError::UnexpectedResponseId(7))
+        ));
+    }
+
+    #[test]
+    fn generic_route_contract_round_trips_without_payload_data() {
+        let request = RoutePrepareRequest {
+            route_id: RouteId::new(),
+            source: PortRef {
+                node_id: NodeId::new(),
+                capability_id: CapabilityId::new(),
+                port_id: PortId::new(),
+            },
+            sink: PortRef {
+                node_id: NodeId::new(),
+                capability_id: CapabilityId::new(),
+                port_id: PortId::new(),
+            },
+            profile: ProfileId::new("capyio.test.samples", 1),
+            selected_format: Some(FormatDescriptor::new("application/test")),
+            selected_qos: QosMode::Basic,
+            backend: RouteBackend::CapyDataPlane,
+            epoch: 7,
+            data_endpoint: Some(DataEndpointDescriptor {
+                transport: "local_ipc".to_owned(),
+                address: "capyio-test-endpoint".to_owned(),
+                metadata: BTreeMap::from([("direction".to_owned(), "source".to_owned())]),
+            }),
+            adapter_config: BoundedJsonObject(BTreeMap::from([(
+                "fixture".to_owned(),
+                Value::Bool(true),
+            )])),
+        };
+        request.validate().expect("bounded request");
+        let rpc = RpcRequest::new(11, "route.prepare", &request).expect("request");
+        let decoded = decode_request_line(&encode_request_line(&rpc).expect("encode"))
+            .expect("decode")
+            .decode_params::<RoutePrepareRequest>()
+            .expect("Route contract");
+        decoded.validate().expect("decoded bounds");
+        assert_eq!(decoded, request);
+
+        let result = RouteStartResult {
+            accepted: true,
+            data_endpoint: request.data_endpoint,
+            warnings: vec![AdapterProblemDescriptor {
+                code: "mock_notice".to_owned(),
+                message: "finite test acknowledgement".to_owned(),
+                retryable: false,
+            }],
+        };
+        result.validate().expect("bounded result");
+        let response = RpcResponse::success(11, &result).expect("response");
+        let decoded = decode_response_line(&encode_response_line(&response).expect("encode"))
+            .expect("decode")
+            .decode_result::<RouteStartResult>()
+            .expect("Route result");
+        decoded.validate().expect("decoded result bounds");
+        assert_eq!(decoded, result);
+    }
+
+    #[test]
+    fn adapter_configuration_limits_are_explicit() {
+        let config = BoundedJsonObject(BTreeMap::from([(
+            "oversized".to_owned(),
+            Value::String("x".repeat(MAX_CONTRACT_STRING_BYTES + 1)),
+        )]));
+        assert!(matches!(
+            config.validate(),
+            Err(RpcError::ContractLimit("Adapter configuration string"))
         ));
     }
 }

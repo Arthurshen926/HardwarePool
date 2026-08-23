@@ -36,9 +36,39 @@ for correctness and records removed UI/updater/store code.
 ## Manifest
 
 The versioned manifest declares ID, name, version, control protocol version,
-kind, deployment modes, platforms, entrypoints, permissions, declared
-Capability/Route Templates, integration mode, license metadata and upstream
-metadata. Unknown required manifest versions fail explicitly.
+kind, deployment modes, platforms, mode-specific bindings, permissions,
+declared Capability/Route Templates, integration mode, license metadata and
+upstream metadata. Unknown required manifest versions fail explicitly.
+
+Manifest v2 is an intentionally breaking pre-alpha contract. `platforms` is the
+union of supported platforms, while each declared deployment mode has exactly
+one matching section under `mode_bindings`. Every top-level platform must be
+covered by at least one mode-specific binding, and a binding cannot name an
+undeclared platform. This permits one Adapter to use an Android `InProcess`
+binding and desktop `Sidecar` bindings without inventing executables for the
+mobile platform.
+
+Mode-specific requirements are:
+
+- `InProcess`: at least one platform binding with a non-empty module identifier,
+  library identifier, or both;
+- `Sidecar`: a direct executable entrypoint for every platform assigned to the
+  Sidecar binding;
+- `ExternalService`: a typed probe target and typed connection endpoint for
+  every assigned platform;
+- `DriverBacked`: a user-mode controller entrypoint/control interface plus
+  driver dependency identifier, version requirement and interface metadata.
+
+Entrypoints are opaque paths passed directly to a platform process API, not
+shell command lines. Driver dependency records are descriptive prerequisites;
+the manifest contains no installation command or privileged deployment action.
+All manifest objects deny unknown fields so misspelled or unsupported required
+semantics fail explicitly.
+
+Rust semantic validation is canonical for cross-field rules such as mode/binding
+and platform coverage. The committed JSON Schema is the distribution-facing
+structural contract; repository tests check its version, required sections,
+closed object shapes and committed examples against the Rust validator.
 
 Canonical JSON Schema: `protocol/schemas/adapter-manifest.schema.json`.
 
@@ -88,4 +118,3 @@ children are not left running after a completed smoke test.
   controls lifecycle and UX only.
 
 UI must label AdapterManaged limitations and must not imply arbitrary routing.
-

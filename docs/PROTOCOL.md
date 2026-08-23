@@ -62,14 +62,36 @@ selects CapyDataPlane, AdapterManaged, LocalPipeline or ExternalProtocol.
 
 Sidecar control is a separate JSON-RPC 2.0/NDJSON request/response contract on
 stdin/stdout. Gate 3 implements Adapter initialize/probe/catalog/health/shutdown
-and Route prepare/start/stop. Normal logs go to stderr. Lines are limited to 64
-KiB, pending correlations to 64, buffered stdout lines to 8 and retained stderr
-lines to 128. The foundation Host uses a five-second response deadline.
+and Route prepare/start/stop/status. Normal logs go to stderr. The Host is
+sequential and has explicit `Running`, `Poisoned` and `Stopped` states; it does
+not multiplex concurrent requests.
 
-The Mock Source/Sink return one finite, low-frequency `SmokeSample` when a test
-Route starts. It is explicitly a test token, not an audio/video/sensor data
-plane. `route.status` and unsolicited Adapter events remain specified future
-control methods, not implemented behavior.
+`route.prepare` carries bounded Route control metadata: Route ID, Source/Sink
+PortRefs, Profile, selected format/QoS, backend, epoch, optional data-endpoint
+descriptor and optional Adapter configuration. Start/stop/status use generic
+bounded request/results. These objects negotiate lifecycle and endpoint
+metadata only; continuous media or sensor samples are forbidden.
+
+The Mock Source may attach one finite, low-frequency test sample as a
+Mock-private extension to its start response. `SmokeSample` is not part of the
+generic Adapter SDK/Host API, and generic consumers receive only the
+`RouteStartResult` acknowledgement. Unsolicited Adapter events remain future
+control work.
+
+The stdout reader rejects a control line as soon as it exceeds 64 KiB, including
+a newline-free stream, before its buffer can grow past the limit. Stderr uses a
+separate 2 KiB policy: retain a bounded UTF-8 prefix plus a truncation marker,
+then drain through the newline/EOF so the next diagnostic stays aligned. At
+most 8 stdout lines and 128 stderr lines are retained/buffered; the SDK permits
+at most 64 pending correlation IDs. The default response deadline is five
+seconds.
+
+Timeout, unexpected response ID, malformed/oversized response or unexpected
+stdout closure is terminal for the sequential channel. The Host becomes
+`Poisoned`, closes stdin, terminates and reaps the child while retaining bounded
+stderr, and rejects every later request. It never attempts to consume a late
+response as a later request's result. A well-formed JSON-RPC error response is a
+request failure and does not itself desynchronize the channel.
 
 ## Parser limits
 
@@ -77,7 +99,8 @@ The Rust envelope codec rejects messages larger than 1 MiB before decode. Core
 then validates required IDs, enum values, catalog ownership and Port/Profile
 semantics. Descriptor-count and metadata-string limits are still required
 before an untrusted production transport is enabled. Sidecar control uses the
-smaller dedicated line limit above.
+smaller dedicated stdout/stderr limits and terminal desynchronization policy
+above.
 
 ## Error behavior
 

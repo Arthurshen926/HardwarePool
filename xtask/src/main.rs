@@ -205,21 +205,17 @@ fn validate_docs() -> Result<()> {
         "docs/ROADMAP.md",
         "docs/BACKLOG.md",
         "docs/BUILD_STATUS.md",
+        "docs/REQUIREMENTS_TRACEABILITY.md",
     ];
     for path in required {
         if !Path::new(path).is_file() {
             bail!("required documentation is missing: {path}");
         }
     }
-    let prd = fs::read_to_string("docs/PRODUCT_REQUIREMENTS.md")?;
-    let requirement_count = prd.match_indices("- **").count();
-    if requirement_count < 40 {
-        bail!(
-            "PRD contains only {requirement_count} Requirement ID references; expected at least 40"
-        );
-    }
-    println!("Documentation validation: PASS ({requirement_count} Requirement ID references)");
-    Ok(())
+    run(
+        "python",
+        ["scripts/validate_repository.py", "--validate-docs"],
+    )
 }
 
 fn validate_manifests() -> Result<()> {
@@ -229,9 +225,15 @@ fn validate_manifests() -> Result<()> {
     )
     .context("parse Adapter manifest JSON Schema")?;
     if schema["$schema"] != "https://json-schema.org/draft/2020-12/schema"
-        || schema["properties"]["schema_version"]["const"] != 1
+        || schema["properties"]["schema_version"]["const"].as_u64()
+            != Some(u64::from(
+                capyio_adapter_sdk::ADAPTER_MANIFEST_SCHEMA_VERSION,
+            ))
     {
-        bail!("Adapter manifest JSON Schema does not declare the supported v1 contract");
+        bail!(
+            "Adapter manifest JSON Schema does not declare supported version {}",
+            capyio_adapter_sdk::ADAPTER_MANIFEST_SCHEMA_VERSION
+        );
     }
 
     let mut paths = Vec::new();

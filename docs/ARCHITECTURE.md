@@ -67,6 +67,8 @@ Protobuf, codecs, drivers or concrete network transport.
 ### Runtime
 
 - owns the local catalog and peer catalogs;
+- reconciles catalog replacements against persisted Routes, invalidating only
+  Routes whose endpoint contract is removed or changed;
 - sequences commands, operation completions and events;
 - owns Route/Adapter lifecycle orchestration;
 - applies bounded retention;
@@ -170,10 +172,17 @@ Data planes are selected per Route backend:
 
 - `CapyDataPlane`: standard compatible Ports use a CapyIO transport;
 - `AdapterManaged`: a vertical integration owns end-to-end data transfer;
-- `LocalPipeline`: same-node conversion, Panel, Recorder or Projection;
-- `ExternalProtocol`: ROS, USB/IP or another ecosystem protocol.
+- `LocalPipeline`: co-located StandardPorts use same-node conversion, Panel,
+  Recorder or Projection;
+- `ExternalProtocol`: an explicitly advertising Adapter terminates ROS, USB/IP
+  or another ecosystem protocol.
 
-AdapterManaged does not imply arbitrary Port interoperability.
+Both endpoint Adapters must advertise the selected backend. `CapyDataPlane` and
+`LocalPipeline` require StandardPorts; `AdapterManaged` requires matched
+AdapterManaged Ports. `ExternalProtocol` accepts either matched interoperability
+mode because a bridge may expose a StandardPort boundary or retain its own
+contract. AdapterManaged declarations do not imply arbitrary interoperability
+between different Adapter contracts.
 
 ## 9. Timing and real-time policy
 

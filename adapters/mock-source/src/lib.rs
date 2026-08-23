@@ -8,14 +8,31 @@ use std::str::FromStr;
 
 use capyio_adapter_sdk::{
     ADAPTER_CONTROL_PROTOCOL_MAJOR, AdapterCatalog, ControlProtocolVersion, InitializeParams,
-    InitializeResult, ProbeResult, RouteParams, RouteStatusResult, RpcFailure, RpcRequest,
-    RpcResponse, SmokeSample, decode_request_line, encode_response_line,
+    InitializeResult, ProbeResult, RoutePrepareRequest, RoutePrepareResult, RouteStartRequest,
+    RouteStatusRequest, RouteStatusResult, RouteStopRequest, RouteStopResult, RpcFailure,
+    RpcRequest, RpcResponse, decode_request_line, encode_response_line,
 };
 use capyio_core::{
     AdapterInstanceId, Availability, CapabilityClass, CapabilityDescriptor, CapabilityId,
     FormatDescriptor, InteroperabilityMode, PermissionRequirement, PortDescriptor, PortDirection,
-    PortId, ProfileId, QosMode, RouteId,
+    PortId, ProfileId, QosMode, RouteId, RouteState,
 };
+use serde::Serialize;
+
+#[derive(Serialize)]
+struct MockSmokeSample {
+    test_only: bool,
+    sequence: u64,
+    payload: String,
+}
+
+#[derive(Serialize)]
+struct MockRouteStartResult {
+    accepted: bool,
+    data_endpoint: Option<capyio_adapter_sdk::DataEndpointDescriptor>,
+    warnings: Vec<capyio_adapter_sdk::AdapterProblemDescriptor>,
+    test_sample: MockSmokeSample,
+}
 
 #[derive(Clone, Copy, Debug)]
 pub enum MockKind {
@@ -28,8 +45,8 @@ pub fn run(kind: MockKind, crash_on_probe: bool) -> Result<(), Box<dyn std::erro
     let stdin = io::stdin();
     let mut stdout = io::stdout().lock();
     let mut adapter_instance_id = None;
-    let mut prepared_routes = BTreeSet::new();
-    let mut active_routes = BTreeSet::new();
+    let mut prepared_routes = BTreeMap::new();
+    let mut active_routes = BTreeMap::new();
 
     for line in stdin.lock().split(b'\n') {
         let mut line = line?;
@@ -68,8 +85,8 @@ fn handle_request(
     kind: MockKind,
     request: RpcRequest,
     adapter_instance_id: &mut Option<AdapterInstanceId>,
-    prepared_routes: &mut BTreeSet<RouteId>,
-    active_routes: &mut BTreeSet<RouteId>,
+    prepared_routes: &mut BTreeMap<RouteId, u64>,
+    active_routes: &mut BTreeMap<RouteId, u64>,
 ) -> Result<RpcResponse, capyio_adapter_sdk::RpcError> {
     match request.method.as_str() {
         "adapter.initialize" => {
@@ -117,49 +134,78 @@ fn handle_request(
             ),
         },
         "route.prepare" => {
-            let params: RouteParams = request.decode_params()?;
-            prepared_routes.insert(params.route_id);
-            RpcResponse::success(request.id, &true)
+            let params: RoutePrepareRequest = request.decode_params()?;
+            params.validate()?;
+            prepared_routes.insert(params.route_id, params.epoch);
+            RpcResponse::success(
+                request.id,
+                &RoutePrepareResult {
+                    accepted: true,
+                    data_endpoint: params.data_endpoint,
+                    warnings: Vec::new(),
+                },
+            )
         }
         "route.start" => {
-            let params: RouteParams = request.decode_params()?;
-            if !prepared_routes.contains(&params.route_id) {
+            let params: RouteStartRequest = request.decode_params()?;
+            params.validate()?;
+            if prepared_routes.get(&params.route_id) != Some(&params.epoch) {
                 return failure(
                     request.id,
                     "route_not_prepared",
-                    "prepare Route before start",
+                    "prepare the same Route epoch before start",
                 );
             }
-            active_routes.insert(params.route_id);
+            active_routes.insert(params.route_id, params.epoch);
             RpcResponse::success(
                 request.id,
-                &SmokeSample {
-                    test_only: true,
-                    sequence: 1,
-                    payload: format!("finite-{kind:?}-sample").to_lowercase(),
+                &MockRouteStartResult {
+                    accepted: true,
+                    data_endpoint: None,
+                    warnings: Vec::new(),
+                    test_sample: MockSmokeSample {
+                        test_only: true,
+                        sequence: 1,
+                        payload: format!("finite-{kind:?}-sample").to_lowercase(),
+                    },
                 },
             )
         }
         "route.stop" => {
-            let params: RouteParams = request.decode_params()?;
+            let params: RouteStopRequest = request.decode_params()?;
+            params.validate()?;
+            if prepared_routes.get(&params.route_id) != Some(&params.epoch) {
+                return failure(
+                    request.id,
+                    "route_epoch_mismatch",
+                    "stop must reference the prepared Route epoch",
+                );
+            }
             prepared_routes.remove(&params.route_id);
             active_routes.remove(&params.route_id);
-            RpcResponse::success(request.id, &true)
+            RpcResponse::success(request.id, &RouteStopResult { accepted: true })
         }
         "route.status" => {
-            let params: RouteParams = request.decode_params()?;
-            let state = if active_routes.contains(&params.route_id) {
-                "active"
-            } else if prepared_routes.contains(&params.route_id) {
-                "prepared"
+            let params: RouteStatusRequest = request.decode_params()?;
+            let state = if active_routes.contains_key(&params.route_id) {
+                RouteState::Active
+            } else if prepared_routes.contains_key(&params.route_id) {
+                RouteState::Prepared
             } else {
-                "stopped"
+                RouteState::Stopped
             };
+            let epoch = active_routes
+                .get(&params.route_id)
+                .or_else(|| prepared_routes.get(&params.route_id))
+                .copied()
+                .unwrap_or_default();
             RpcResponse::success(
                 request.id,
                 &RouteStatusResult {
                     route_id: params.route_id,
-                    state: state.to_owned(),
+                    epoch,
+                    state,
+                    warnings: Vec::new(),
                 },
             )
         }

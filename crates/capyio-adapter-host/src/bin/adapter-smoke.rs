@@ -2,8 +2,14 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use capyio_adapter_host::{HostError, SidecarHost};
-use capyio_adapter_sdk::AdapterManifest;
-use capyio_core::{AdapterInstanceId, PortDirection, RouteId};
+use capyio_adapter_sdk::{
+    AdapterManifest, BoundedJsonObject, RoutePrepareRequest, RouteStartRequest, RouteStatusRequest,
+    RouteStopRequest,
+};
+use capyio_core::{
+    AdapterInstanceId, CapabilityId, NodeId, PortDirection, PortId, PortRef, RouteBackend, RouteId,
+    RouteState,
+};
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let arguments = std::env::args_os()
@@ -53,19 +59,50 @@ fn run_lifecycle(
     )?;
 
     let route_id = RouteId::new();
-    host.prepare_route(route_id)?;
-    let sample = host.start_route(route_id)?;
+    let advertised = PortRef {
+        node_id: NodeId::new(),
+        capability_id: port.capability_id,
+        port_id: port.id,
+    };
+    let peer = PortRef {
+        node_id: NodeId::new(),
+        capability_id: CapabilityId::new(),
+        port_id: PortId::new(),
+    };
+    let (source, sink) = match expected_direction {
+        PortDirection::Source => (advertised, peer),
+        PortDirection::Sink => (peer, advertised),
+        PortDirection::Control => {
+            return Err(std::io::Error::other("smoke Route requires a data Port").into());
+        }
+    };
+    let epoch = 1;
+    let prepared = host.prepare_route(RoutePrepareRequest {
+        route_id,
+        source,
+        sink,
+        profile: port.profile.clone(),
+        selected_format: port.formats.first().cloned(),
+        selected_qos: port
+            .qos_modes
+            .first()
+            .cloned()
+            .ok_or_else(|| std::io::Error::other("catalog Port must declare QoS"))?,
+        backend: RouteBackend::CapyDataPlane,
+        epoch,
+        data_endpoint: None,
+        adapter_config: BoundedJsonObject::default(),
+    })?;
+    require(prepared.accepted, "Route prepare was not accepted")?;
+    let started = host.start_route(RouteStartRequest { route_id, epoch })?;
+    require(started.accepted, "Route start was not accepted")?;
     require(
-        sample.test_only && sample.sequence == 1,
-        "invalid finite smoke sample",
-    )?;
-    require(
-        host.route_status(route_id)?.state == "active",
+        host.route_status(RouteStatusRequest { route_id })?.state == RouteState::Active,
         "Route status did not become active",
     )?;
-    host.stop_route(route_id)?;
+    host.stop_route(RouteStopRequest { route_id, epoch })?;
     require(
-        host.route_status(route_id)?.state == "stopped",
+        host.route_status(RouteStatusRequest { route_id })?.state == RouteState::Stopped,
         "Route status did not become stopped",
     )?;
     host.shutdown()?;

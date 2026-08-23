@@ -13,4 +13,5 @@ name = "capyio_mock_sidecar_support"
 [dependencies]
 capyio-adapter-sdk = { path = "../../crates/capyio-adapter-sdk" }
 capyio-core = { path = "../../crates/capyio-core" }
+serde.workspace = true
 serde_json.workspace = true
