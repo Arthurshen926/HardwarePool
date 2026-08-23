@@ -39,3 +39,4 @@ jobs:
       - run: cargo xtask validate-docs
       - run: cargo xtask validate-manifests
       - run: cargo xtask adapter-smoke
+      - run: cargo xtask imu-demo

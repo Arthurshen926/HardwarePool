@@ -326,13 +326,25 @@ dependencies = [
 ]
 
 [[package]]
+name = "capyio-data-plane"
+version = "0.1.0"
+dependencies = [
+ "capyio-core",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.20",
+]
+
+[[package]]
 name = "capyio-desktop"
 version = "0.1.0"
 dependencies = [
  "capyio-core",
+ "capyio-data-plane",
  "capyio-runtime",
  "capyio-testkit",
  "serde",
+ "serde_json",
  "tauri",
  "tauri-build",
 ]
@@ -361,6 +373,7 @@ dependencies = [
  "anyhow",
  "capyio-audio",
  "capyio-core",
+ "capyio-data-plane",
  "capyio-protocol",
  "capyio-runtime",
  "capyio-testkit",

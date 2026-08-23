@@ -285,6 +285,75 @@ a:focus-visible {
   font-size: 13px;
 }
 
+.imu-lab {
+  margin-top: 20px;
+}
+
+.imu-lab__header {
+  display: flex;
+  gap: 24px;
+  align-items: flex-start;
+  justify-content: space-between;
+}
+
+.imu-lab__header h2 {
+  max-width: 760px;
+}
+
+.imu-lab__header > div > p:last-child,
+.imu-lab__detail {
+  margin: 12px 0 0;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.6;
+}
+
+.imu-lab__grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1.35fr) minmax(280px, 0.65fr);
+  gap: 28px;
+  margin-top: 28px;
+}
+
+.imu-lab__grid h3 {
+  margin: 0 0 14px;
+  font-size: 15px;
+}
+
+.imu-lab__sinks {
+  display: grid;
+  gap: 12px;
+  margin: 0;
+}
+
+.imu-lab__sinks > div {
+  padding: 14px;
+  border: 1px solid var(--line);
+  border-radius: 15px;
+  background: rgba(255, 255, 255, 0.54);
+}
+
+.imu-lab__sinks dt {
+  color: var(--muted);
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.imu-lab__sinks dd {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+  margin: 9px 0 0;
+}
+
+.imu-lab__sinks dd > span {
+  color: var(--muted);
+  font-size: 11px;
+}
+
 .error-banner {
   margin-top: 12px;
   border-color: rgba(161, 54, 54, 0.25);
@@ -739,7 +808,8 @@ button:disabled {
 
   .capability-grid,
   .lower-grid,
-  .workspace-grid {
+  .workspace-grid,
+  .imu-lab__grid {
     grid-template-columns: 1fr;
   }
 
@@ -789,7 +859,8 @@ button:disabled {
   }
 
   .section-heading,
-  .capability-card__footer {
+  .capability-card__footer,
+  .imu-lab__header {
     align-items: stretch;
     flex-direction: column;
   }

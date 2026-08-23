@@ -10,6 +10,7 @@ license.workspace = true
 anyhow.workspace = true
 clap.workspace = true
 capyio-core = { path = "../../crates/capyio-core" }
+capyio-data-plane = { path = "../../crates/capyio-data-plane" }
 capyio-audio = { path = "../../crates/capyio-audio" }
 capyio-protocol = { path = "../../crates/capyio-protocol" }
 capyio-runtime = { path = "../../crates/capyio-runtime" }

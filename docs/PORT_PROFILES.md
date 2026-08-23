@@ -1,6 +1,7 @@
 # CapyIO Port Profiles
 
-> Status: initial registry; only foundation validation and Mock data exist.
+> Status: initial registry; IMU v1 has deterministic fixture/replay semantics,
+> while live hardware and production transport remain unimplemented.
 
 ## Identity and versioning
 
@@ -71,9 +72,27 @@ PCM and audio callback rules are retained in `docs/AUDIO_PROFILE.md` and
 `docs/DATA_PLANE.md`. Audio types live in `capyio-audio` or Profile-specific
 descriptors rather than dominating Core.
 
+## IMU samples v1
+
+`capyio.motion.imu-samples/1` uses a StandardPort `DataEnvelope` with:
+
+- typed `StreamId`, positive stream epoch and monotonic sequence;
+- source and receiver timestamps plus a named clock domain;
+- acceleration in metres per second squared;
+- angular velocity in radians per second;
+- optional magnetic field in microtesla;
+- Android device coordinates (X right, Y up, Z out of the screen);
+- explicit accuracy and calibration state;
+- bounded sensor name/vendor/version/type metadata.
+
+Unknown major versions or required enum semantics are rejected. Gaps, stale
+epochs, duplicates, late samples and per-consumer overflow are observable and
+are not repaired by changing timestamps. The committed fixture uses
+`android.sensor.elapsed_realtime` only as a semantic clock-domain label; it was
+not captured from the connected phone.
+
 ## Unknown semantics
 
 Unknown optional metadata may be preserved as opaque data. Unknown direction,
 required Profile major, enum or required format semantics cause explicit
 rejection.
-

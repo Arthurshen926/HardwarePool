@@ -31,12 +31,14 @@ REQUIRED_FILES = [
     "docs/REQUIREMENTS_TRACEABILITY.md",
     "docs/plans/TEMPLATE.md",
     "crates/capyio-core/src/lib.rs",
+    "crates/capyio-data-plane/src/lib.rs",
     "crates/capyio-audio/src/lib.rs",
     "crates/capyio-runtime/src/lib.rs",
     "crates/capyio-protocol/src/lib.rs",
     "protocol/proto/capyio/v1/common.proto",
     "protocol/proto/capyio/v1/capability.proto",
     "protocol/proto/capyio/v1/control.proto",
+    "fixtures/imu/imu_samples_v1.jsonl",
     "apps/desktop/package.json",
     "apps/desktop/src/App.vue",
     "apps/desktop/src-tauri/tauri.conf.json",
@@ -59,6 +61,7 @@ GATE_EVIDENCE_ROW_RE = re.compile(
 )
 TARGET_GATE_RE = re.compile(r"^Gate(?:s)?\s+(?P<first>\d+)(?:[\-–](?P<last>\d+))?$")
 FOUNDATION_ACCEPTANCE_IDS = {f"G0-3-{number:02d}" for number in range(1, 10)}
+ACTIVE_IMPLEMENTATION_GATES = {5}
 
 JSON_FILES = [
     "package.json",
@@ -322,7 +325,11 @@ def validate_traceability_report(requirement_ids: set[str]) -> None:
                 f"foundation Requirement {requirement_id} must be implemented or verified, "
                 f"not {status}"
             )
-        if first_gate >= 4 and status != "planned":
+        if (
+            first_gate >= 4
+            and first_gate not in ACTIVE_IMPLEMENTATION_GATES
+            and status != "planned"
+        ):
             fail(f"future Requirement {requirement_id} must be planned, not {status}")
         if not evidence or evidence in {"-", "—"}:
             fail(f"traceability evidence is empty for {requirement_id}")
@@ -435,6 +442,19 @@ def validate_architecture_dependencies() -> None:
     if violations:
         fail(f"Core manifest contains forbidden platform/mechanism dependencies: {violations}")
 
+    data_plane_manifest = (ROOT / "crates/capyio-data-plane/Cargo.toml").read_text(
+        encoding="utf-8"
+    )
+    data_plane_forbidden = ["tauri", "tokio", "windows", "android", "quinn", "webrtc"]
+    data_plane_violations = [
+        name for name in data_plane_forbidden if name in data_plane_manifest.lower()
+    ]
+    if data_plane_violations:
+        fail(
+            "Data-plane manifest contains forbidden platform/transport dependencies: "
+            f"{data_plane_violations}"
+        )
+
     driver_text = "\n".join(
         path.read_text(encoding="utf-8").lower()
         for path in (ROOT / "drivers/windows-audio").rglob("*")
@@ -499,6 +519,7 @@ def validate_hosted_ci_contract() -> None:
         "cargo xtask validate-docs",
         "cargo xtask validate-manifests",
         "cargo xtask adapter-smoke",
+        "cargo xtask imu-demo",
     ]:
         if command not in core:
             fail(f"Rust/Adapter matrix is missing merge-gate command: {command}")

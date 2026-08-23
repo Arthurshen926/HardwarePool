@@ -26,8 +26,13 @@ implementation scope automatically.
 ## Current status
 
 - Gates 0–3: complete locally; evidence is in `docs/GATE_0_3_REPORT.md` and the
-  completed `0003-capyio-foundation-migration.md` plan.
-- Gates 4–15: roadmap only; no implementation authorization is implied.
+  completed foundation plans. PR #10 also passed hosted Windows/Linux/macOS,
+  Adapter, UI and Windows Tauri checks before merge commit `5f5b81f`.
+- Gate 5 groundwork: `CAPY-IMU-001A` is complete with deterministic bounded IMU
+  replay and read-only Android inventory. Gate 5 remains open until the separate
+  live SensorServer/APK slice has physical payload and lifecycle evidence.
+- Gates 4 and 6–15 remain roadmap only; no implementation authorization is
+  implied.
 
 ## Public-alpha proof bar
 

@@ -36,14 +36,29 @@ In scope:
 
 Completion evidence: `docs/FOUNDATION_HARDENING_REPORT.md` and completed plan
 `docs/plans/completed/0004-capyio-foundation-hardening.md`. All local gates
-passed. Hosted CI is separately pending until a pushed PR head runs.
+passed. PR #10 then passed repository, UI, Windows/Linux/macOS Rust/Adapter and
+Windows Tauri hosted checks before merge commit `5f5b81f`.
 
 Explicit non-scope: StandardPort payload transport, SensorServer, Android/phone,
 drivers, production security, third-party source and physical-device tests.
 
-## Next product slice (do not implement in foundation task)
+## Completed product groundwork
 
-### CAPY-IMU-001 — SensorServer IMU Source to Panel and Recorder
+### CAPY-IMU-001A — Fixture-first bounded StandardPort path
+
+Goal: establish generic bounded StandardPort semantics, deterministic IMU
+replay, independent numeric Panel/JSONL Recorder sinks and safe Android lab
+inventory before importing SensorServer or installing an APK.
+
+Completion evidence: `docs/CAPY_IMU_001A_REPORT.md` and completed plan
+`docs/plans/completed/0005-fixture-first-imu-standard-path.md`.
+
+Explicit non-scope: live phone payloads, SensorServer, APK install/permissions,
+network transport, gamepad/VIIPER, driver work and production security.
+
+## Active product slice
+
+### CAPY-IMU-001B — SensorServer IMU Source to Panel and Recorder
 
 Goal: prove one real StandardPort path with a low-risk phone sensor before
 system-driver work.

@@ -1,6 +1,10 @@
 use anyhow::Context;
 use capyio_audio::{AudioFormat, AudioFrame, ClockDriftEstimator, InsertOutcome, ReorderBuffer};
 use capyio_core::StreamId;
+use capyio_data_plane::{
+    BoundedFanout, BoundedJsonlRecorder, ImuSampleV1, NumericImuPanel, RecorderOutcome,
+    parse_imu_fixture_jsonl,
+};
 use capyio_protocol::{decode_envelope, encode_envelope, new_envelope, v1};
 use capyio_testkit::{DemoLab, android_node};
 use clap::{Parser, Subcommand};
@@ -24,6 +28,8 @@ enum Command {
     ProtocolRoundtrip,
     /// Exercises frame validation, out-of-order delivery and clock estimation without hardware.
     AudioFrameDemo,
+    /// Replays the bounded deterministic IMU fixture into independent Panel and Recorder sinks.
+    ImuFixtureDemo,
 }
 
 fn main() -> anyhow::Result<()> {
@@ -41,6 +47,7 @@ fn main() -> anyhow::Result<()> {
         Command::Snapshot => print_snapshot(),
         Command::ProtocolRoundtrip => protocol_roundtrip(),
         Command::AudioFrameDemo => audio_frame_demo(),
+        Command::ImuFixtureDemo => imu_fixture_demo(),
     }
 }
 
@@ -125,5 +132,42 @@ fn audio_frame_demo() -> anyhow::Result<()> {
     println!("buffer_stats={:?}", buffer.stats());
     println!("observed_rate_hz={:.3}", estimate.observed_source_rate_hz);
     println!("drift_ppm={:.3}", estimate.drift_ppm);
+    Ok(())
+}
+
+fn imu_fixture_demo() -> anyhow::Result<()> {
+    const FIXTURE: &str = include_str!("../../../fixtures/imu/imu_samples_v1.jsonl");
+    let envelopes = parse_imu_fixture_jsonl(FIXTURE, 64)?;
+    let first = envelopes.first().context("IMU fixture is empty")?;
+    let mut fanout =
+        BoundedFanout::new(ImuSampleV1::profile(), first.stream_id, first.stream_epoch);
+    fanout.register_consumer("numeric-panel", 64)?;
+    fanout.register_consumer("jsonl-recorder", 64)?;
+    for envelope in envelopes.iter().cloned() {
+        let outcomes = fanout.publish(envelope);
+        anyhow::ensure!(outcomes.values().all(|outcome| outcome.is_ok()));
+    }
+
+    let mut panel = NumericImuPanel::default();
+    let mut recorder = BoundedJsonlRecorder::new(64, 4096)?;
+    while let Some(delivery) = fanout.pop("numeric-panel")? {
+        panel.consume(delivery);
+    }
+    while let Some(delivery) = fanout.pop("jsonl-recorder")? {
+        anyhow::ensure!(recorder.record(&delivery)? == RecorderOutcome::Recorded);
+    }
+    let sample = panel
+        .last_sample
+        .context("numeric Panel received no sample")?;
+    println!("mode=deterministic_fixture (not live phone data)");
+    println!("profile=capyio.motion.imu-samples/1");
+    println!("panel_received={}", panel.received);
+    println!("panel_missing_sequences={}", panel.missing_sequences);
+    println!("acceleration_mps2={:?}", sample.acceleration);
+    println!("angular_velocity_rads={:?}", sample.angular_velocity);
+    println!("recorder_records={}", recorder.len());
+    println!("recorder_jsonl_begin");
+    print!("{}", recorder.as_jsonl());
+    println!("recorder_jsonl_end");
     Ok(())
 }

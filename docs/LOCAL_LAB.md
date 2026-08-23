@@ -19,11 +19,22 @@ Before native/driver work, record Windows edition/build/architecture, SDK/WDK,
 CPU/RAM, network and the isolated test target. Do not change BitLocker, Secure
 Boot, boot policy or Verifier without explicit approval.
 
-## Future Android inventory
+## Android inventory baseline
 
-After explicit physical-device/APK approval, retain model, Android/API/build,
-sanitized fingerprint, relevant sensor/audio metadata and ADB command evidence.
-Device identifiers are sanitized before public sharing.
+`CAPY-IMU-001A` uses explicit-serial, read-only ADB commands. The current vivo
+fixture was observed as Android 16/API 36, arm64-v8a, 1216x2640, security patch
+2026-06-01, with 63 bounded SensorService inventory rows. The ignored evidence
+contains no ADB address/port, serial or build fingerprint.
+
+This inventory proves only that the authorized target was online and exposed
+sensor metadata. It is not live CapyIO data-plane, SensorServer, permission,
+background-lifecycle or APK evidence. Use:
+
+```text
+cargo xtask android-doctor --serial <explicit-serial>
+cargo xtask android-baseline --serial <explicit-serial>
+cargo xtask android-collect --serial <explicit-serial>
+```
 
 ## Network evidence
 

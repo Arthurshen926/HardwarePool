@@ -21,6 +21,10 @@ cargo xtask validate-manifests
 cargo xtask adapter-smoke
 cargo xtask ci
 cargo xtask demo
+cargo xtask imu-demo
+cargo xtask android-doctor --serial <explicit-serial>
+cargo xtask android-baseline --serial <explicit-serial>
+cargo xtask android-collect --serial <explicit-serial>
 ```
 
 Frontend uses `corepack pnpm typecheck` and `corepack pnpm build`.
@@ -50,6 +54,22 @@ Frontend uses `corepack pnpm typecheck` and `corepack pnpm build`.
   traceability covers every normative PRD ID;
 - deterministic UI snapshot with four Routes.
 
+## Fixture-first IMU tests
+
+- committed JSONL envelopes validate Profile, timestamps, clock domain, epoch,
+  sequence, SI units, coordinate frame, accuracy, calibration and sensor data;
+- Panel and Recorder consume independent bounded queues from one fan-out;
+- a full/stopped Recorder does not block Panel progress;
+- gaps, duplicates, late samples, wrong streams, stale/future epochs, sequence
+  exhaustion and recorder bounds have explicit regression tests;
+- `cargo xtask imu-demo` replays the same compiled fixture through the headless
+  node and emits numeric Panel plus JSONL Recorder evidence;
+- the desktop Browser Mock and Tauri backend expose the same schema-v3 fixture
+  summary and label it as simulated rather than live phone data.
+
+These tests require no phone and make no SensorServer, APK, network or physical
+timing claim.
+
 ## Deterministic integration tests
 
 Fixtures use HP OmniBook Ultra Flip 14 and vivo X200 Pro mini with no environment
@@ -77,6 +97,16 @@ contract, data plane or performance test.
   Verifier in an isolated VM/dedicated target;
 - end to end: IMU Panel/Recorder, audio both directions, camera, gamepad,
   independent Routes, disconnect/reconnect and clock epochs.
+
+## Android read-only lab commands
+
+Android commands require `--serial`; target order is never inferred. They use
+an allow-list of `adb devices`, `getprop`, `wm size` and `dumpsys
+sensorservice`, impose a four-megabyte process-output bound, and retain only
+model/build-version plus bounded sensor-list fields. `android-baseline` prints
+sanitized JSON; `android-collect` writes it only below ignored
+`test-results/android/<run-id>/`. Neither command installs an APK, grants a
+permission, starts a service or changes settings.
 
 ## Data and timing quality
 

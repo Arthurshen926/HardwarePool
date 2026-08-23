@@ -68,7 +68,7 @@ onMounted(load);
 
     <section id="overview" class="hero-panel hero-panel--compact">
       <div class="hero-panel__copy">
-        <p class="eyebrow">Gate 3 · Hardened Mock Adapter foundation</p>
+        <p class="eyebrow">Gate 5 groundwork · Fixture-first StandardPort</p>
         <h1>连接能力，不绑定设备角色。</h1>
         <p>两个对等 Node 通过有方向、强类型的 Route 组合音频、IMU 与视频能力。每条 Route 独立启动和停止。</p>
         <div class="hero-panel__summary">
@@ -89,6 +89,33 @@ onMounted(load);
     </section>
     <p v-if="errorMessage" class="error-banner" role="alert">{{ errorMessage }}</p>
     <section v-if="loading && !snapshot" class="loading-panel">Loading Runtime snapshot…</section>
+
+    <section v-if="snapshot?.imuFixture" class="info-panel imu-lab" aria-labelledby="imu-lab-title">
+      <header class="imu-lab__header">
+        <div>
+          <p class="eyebrow">IMU StandardPort lab</p>
+          <h2 id="imu-lab-title">同一份有界数据，独立送往 Panel 与 Recorder</h2>
+          <p>{{ snapshot.imuFixture.profile }} · sequence {{ snapshot.imuFixture.sequence }} · {{ snapshot.imuFixture.clockDomainId }}</p>
+        </div>
+        <StatusPill tone="warning" label="deterministic fixture" />
+      </header>
+      <div class="imu-lab__grid">
+        <div>
+          <h3>Numeric Panel</h3>
+          <div class="metric-grid">
+            <div class="metric-tile"><span class="metric-tile__label">Acceleration X</span><strong class="metric-tile__value">{{ snapshot.imuFixture.acceleration.x.toFixed(3) }}</strong><span class="metric-tile__detail">m/s²</span></div>
+            <div class="metric-tile"><span class="metric-tile__label">Acceleration Y</span><strong class="metric-tile__value">{{ snapshot.imuFixture.acceleration.y.toFixed(3) }}</strong><span class="metric-tile__detail">m/s²</span></div>
+            <div class="metric-tile"><span class="metric-tile__label">Acceleration Z</span><strong class="metric-tile__value">{{ snapshot.imuFixture.acceleration.z.toFixed(3) }}</strong><span class="metric-tile__detail">m/s²</span></div>
+          </div>
+          <p class="imu-lab__detail">Angular velocity: {{ snapshot.imuFixture.angularVelocity.x.toFixed(3) }}, {{ snapshot.imuFixture.angularVelocity.y.toFixed(3) }}, {{ snapshot.imuFixture.angularVelocity.z.toFixed(3) }} rad/s</p>
+        </div>
+        <dl class="imu-lab__sinks">
+          <div><dt>Panel Route</dt><dd><StatusPill tone="success" :label="snapshot.imuFixture.panelRouteState" /><span>{{ snapshot.imuFixture.panelReceived }} samples · {{ snapshot.imuFixture.panelMissingSequences }} missing</span></dd></div>
+          <div><dt>Recorder Route</dt><dd><StatusPill tone="success" :label="snapshot.imuFixture.recorderRouteState" /><span>{{ snapshot.imuFixture.recorderRecords }} bounded JSONL records</span></dd></div>
+          <div><dt>Evidence boundary</dt><dd><span>编译内确定性 fixture；不是手机实时传感器数据。</span></dd></div>
+        </dl>
+      </div>
+    </section>
 
     <template v-if="view === 'quick'">
       <section class="section-heading">
@@ -154,6 +181,6 @@ onMounted(load);
       </article>
     </section>
 
-    <footer class="app-footer"><span>CapyIO pre-alpha</span><span>Protocol 1.0 · Mock Adapter Gate 3</span><span>No real hardware access in this UI</span></footer>
+    <footer class="app-footer"><span>CapyIO pre-alpha</span><span>Protocol 1.0 · IMU fixture lab</span><span>No real hardware access in this UI</span></footer>
   </main>
 </template>

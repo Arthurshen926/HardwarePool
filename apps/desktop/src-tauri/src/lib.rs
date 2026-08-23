@@ -8,6 +8,10 @@ use capyio_core::{
     AdapterDeploymentMode, CapabilityClass, NodeDescriptor, OnlineState, PortDirection, PortRef,
     QosMode, Route, RouteId, RouteState,
 };
+use capyio_data_plane::{
+    BoundedFanout, BoundedJsonlRecorder, ImuSampleV1, NumericImuPanel, RecorderOutcome,
+    parse_imu_fixture_jsonl,
+};
 use capyio_testkit::DemoLab;
 use serde::{Deserialize, Serialize};
 use tauri::State;
@@ -34,6 +38,7 @@ struct UiSnapshot {
     adapters: Vec<UiAdapter>,
     events: Vec<UiEvent>,
     warnings: Vec<String>,
+    imu_fixture: UiImuFixture,
 }
 
 #[derive(Debug, Serialize)]
@@ -103,6 +108,31 @@ struct UiMetricSet {
 struct UiEvent {
     sequence: u64,
     summary: String,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct UiImuFixture {
+    mode: &'static str,
+    simulated: bool,
+    profile: &'static str,
+    sequence: u64,
+    source_timestamp_nanos: u64,
+    clock_domain_id: String,
+    acceleration: UiVector3,
+    angular_velocity: UiVector3,
+    panel_received: u64,
+    panel_missing_sequences: u64,
+    recorder_records: usize,
+    panel_route_state: &'static str,
+    recorder_route_state: &'static str,
+}
+
+#[derive(Debug, Serialize)]
+struct UiVector3 {
+    x: f64,
+    y: f64,
+    z: f64,
 }
 
 #[tauri::command]
@@ -190,7 +220,7 @@ fn to_ui_snapshot(lab: &DemoLab) -> UiSnapshot {
 
     UiSnapshot {
         backend_mode: "tauri_demo",
-        schema_version: 2,
+        schema_version: 3,
         project_version: env!("CARGO_PKG_VERSION"),
         nodes,
         routes,
@@ -201,6 +231,63 @@ fn to_ui_snapshot(lab: &DemoLab) -> UiSnapshot {
                 .to_owned(),
             "四条 Route 的授权、指标与系统投影状态均为模拟数据。".to_owned(),
         ],
+        imu_fixture: build_imu_fixture(),
+    }
+}
+
+fn build_imu_fixture() -> UiImuFixture {
+    const FIXTURE: &str = include_str!("../../../../fixtures/imu/imu_samples_v1.jsonl");
+    let envelopes = parse_imu_fixture_jsonl(FIXTURE, 64).expect("valid compiled IMU fixture");
+    let first = envelopes.first().expect("non-empty compiled IMU fixture");
+    let mut fanout =
+        BoundedFanout::new(ImuSampleV1::profile(), first.stream_id, first.stream_epoch);
+    fanout
+        .register_consumer("numeric-panel", 64)
+        .expect("valid Panel queue");
+    fanout
+        .register_consumer("jsonl-recorder", 64)
+        .expect("valid Recorder queue");
+    for envelope in envelopes.iter().cloned() {
+        let outcomes = fanout.publish(envelope);
+        assert!(outcomes.values().all(Result::is_ok));
+    }
+    let mut panel = NumericImuPanel::default();
+    let mut recorder = BoundedJsonlRecorder::new(64, 4096).expect("valid Recorder bounds");
+    while let Some(delivery) = fanout.pop("numeric-panel").expect("registered Panel") {
+        panel.consume(delivery);
+    }
+    while let Some(delivery) = fanout.pop("jsonl-recorder").expect("registered Recorder") {
+        assert_eq!(
+            recorder.record(&delivery).expect("serializable delivery"),
+            RecorderOutcome::Recorded
+        );
+    }
+    let last_envelope = envelopes.last().expect("non-empty compiled IMU fixture");
+    let sample = panel
+        .last_sample
+        .expect("numeric Panel consumed compiled IMU fixture");
+    UiImuFixture {
+        mode: "deterministic_fixture",
+        simulated: true,
+        profile: "capyio.motion.imu-samples/1",
+        sequence: last_envelope.sequence,
+        source_timestamp_nanos: last_envelope.source_timestamp_nanos,
+        clock_domain_id: last_envelope.clock_domain_id.clone(),
+        acceleration: vector3(sample.acceleration),
+        angular_velocity: vector3(sample.angular_velocity),
+        panel_received: panel.received,
+        panel_missing_sequences: panel.missing_sequences,
+        recorder_records: recorder.len(),
+        panel_route_state: "active",
+        recorder_route_state: "active",
+    }
+}
+
+fn vector3(value: [f64; 3]) -> UiVector3 {
+    UiVector3 {
+        x: value[0],
+        y: value[1],
+        z: value[2],
     }
 }
 

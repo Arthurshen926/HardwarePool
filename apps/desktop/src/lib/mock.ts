@@ -54,7 +54,7 @@ function route(
 function initialSnapshot(): UiSnapshot {
   return {
     backendMode: "browser_mock",
-    schemaVersion: 2,
+    schemaVersion: 3,
     projectVersion: "0.1.0",
     nodes: [
       { id: "00000000-0000-4000-8000-000000000001", displayName: WINDOWS, platform: "windows", platformVersion: "Windows fixture", online: true, local: true, capabilityCount: 6 },
@@ -79,6 +79,21 @@ function initialSnapshot(): UiSnapshot {
       "Browser Mock：状态、授权和指标是确定性演示数据，不代表真实硬件访问。",
       "当前没有真实网络、Android 节点、Windows 虚拟设备或驱动。",
     ],
+    imuFixture: {
+      mode: "deterministic_fixture",
+      simulated: true,
+      profile: "capyio.motion.imu-samples/1",
+      sequence: 5,
+      sourceTimestampNanos: 1_050_000_000,
+      clockDomainId: "android.sensor.elapsed_realtime",
+      acceleration: { x: 0.1, y: 0.03, z: 9.75 },
+      angularVelocity: { x: 0.003, y: 0.001, z: 0 },
+      panelReceived: 6,
+      panelMissingSequences: 0,
+      recorderRecords: 6,
+      panelRouteState: "active",
+      recorderRouteState: "active",
+    },
   };
 }
 

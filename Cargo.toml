@@ -2,6 +2,7 @@
 resolver = "2"
 members = [
     "crates/capyio-core",
+    "crates/capyio-data-plane",
     "crates/capyio-audio",
     "crates/capyio-protocol",
     "crates/capyio-runtime",
@@ -16,6 +17,7 @@ members = [
 ]
 default-members = [
     "crates/capyio-core",
+    "crates/capyio-data-plane",
     "crates/capyio-audio",
     "crates/capyio-protocol",
     "crates/capyio-runtime",

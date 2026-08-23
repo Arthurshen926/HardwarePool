@@ -1,6 +1,6 @@
 # CapyIO Build Status
 
-> Updated: 2026-08-24 during `CAPY-FOUNDATION-002`.
+> Updated: 2026-08-24 during `CAPY-IMU-001A`.
 
 ## Verified baseline
 
@@ -56,14 +56,33 @@ format/check/Clippy, 70 workspace tests, docs, two manifests, Adapter Smoke,
 check/build. Exact command and test-count evidence is retained in
 `docs/FOUNDATION_HARDENING_REPORT.md`.
 
-Hosted results for this exact head are pending until the branch is pushed and
-GitHub Actions completes; workflow configuration is not reported as a hosted
-pass. Linux/macOS native Tauri packaging is an explicit current skip, while
-their Rust/Adapter and web UI jobs remain required.
+PR #10 passed repository, UI, Windows/Linux/macOS Rust/Adapter and Windows
+Tauri exact-head checks before merge commit `5f5b81f`. Linux/macOS native Tauri
+packaging remains an explicit skip; their Rust/Adapter jobs did pass.
+
+## CAPY-IMU-001A fixture-first path
+
+The active branch adds a real in-process semantic data path, not a live phone
+transport:
+
+- bounded Profile/stream/epoch/sequence/timestamp envelopes;
+- explicit gap, duplicate, late, wrong-stream, stale/future-epoch and full
+  outcomes;
+- independent per-consumer queues and lifecycle for Panel and Recorder;
+- deterministic `capyio.motion.imu-samples/1` JSONL fixture with SI units,
+  coordinate frame, accuracy, calibration and sensor metadata;
+- headless replay plus shared Browser/Tauri numeric Panel and Recorder summary;
+- safe Android doctor/baseline/collect commands requiring an explicit serial.
+
+Full workspace format/check/Clippy, 79 Rust tests, repository validation,
+headless replay, `cargo xtask ci`, frozen frontend install/typecheck/build and
+Windows Tauri check/build passed. A real read-only vivo inventory also passed;
+the ignored artifact is sanitized and explicitly says no APK, permission change
+or live CapyIO stream. Exact evidence is in `docs/CAPY_IMU_001A_REPORT.md`.
 
 ## Not built or tested
 
-- Android application/APK or phone;
+- Android application/APK or live phone payload path;
 - Android permissions/foreground services;
 - real microphone, speaker, camera, IMU or input data path;
 - Windows virtual devices, driver, WDK or isolated-VM driver test;

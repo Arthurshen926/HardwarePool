@@ -1,6 +1,6 @@
 # CapyIO Requirements Traceability
 
-> Updated: 2026-08-24 for `CAPY-FOUNDATION-002`.
+> Updated: 2026-08-24 for `CAPY-IMU-001A`.
 >
 > Scope: the 84 normative Requirement IDs in `PRODUCT_REQUIREMENTS.md`.
 
@@ -12,6 +12,10 @@
   evidence is not retained yet.
 - `planned`: the complete requirement belongs to a future Gate. Foundation
   types or documentation do not upgrade a future product requirement.
+
+An active Gate may contain verified small-slice evidence while the Gate itself
+remains open. Only the behavior named in that row is claimed; later live
+hardware, lifecycle or production evidence remains planned separately.
 
 Paths and test names below are evidence locators, not claims that future
 hardware, networking, security or performance behavior has run.
@@ -27,7 +31,7 @@ hardware, networking, security or performance behavior has run.
 | `G0-3-05` | `capyio-protocol` round-trip tests and `cargo xtask validate-manifests` validate the current protocol and manifest contracts. |
 | `G0-3-06` | `cargo xtask adapter-smoke` exercises initialize, probe, catalog, health, prepare, start, status, stop, shutdown and scoped child failure. |
 | `G0-3-07` | Browser Mock and Tauri Mock share the UI DTO contract; frozen frontend typecheck/build validate Quick Actions and Workspace. |
-| `G0-3-08` | `cargo xtask ci` is the local gate; hosted workflows run repository, Rust, Adapter and UI checks on the exact PR head. Current hosted results remain pending until pushed. |
+| `G0-3-08` | `cargo xtask ci` is the local gate; PR #10 passed repository, UI, Windows/Linux/macOS Rust/Adapter and Windows Tauri exact-head checks before merge commit `5f5b81f`. |
 | `G0-3-09` | `PRODUCT_REQUIREMENTS.md`, `BUILD_STATUS.md` and the UI explicitly exclude real hardware, APK, driver and production-network claims. |
 
 ## Normative requirement matrix
@@ -42,7 +46,7 @@ hardware, networking, security or performance behavior has run.
 | `FR-SCEN-006` | planned | Gate 10 | Platform keyboard, pointer and touchpad projection tests. |
 | `FR-SCEN-007` | planned | Gate 12 | Multi-stream provenance, visualization and recording evidence. |
 | `FR-SCEN-008` | planned | Gate 13 | Multi-node temporary-workspace composition evidence. |
-| `FR-SCEN-009` | planned | Gate 5 | Recorded IMU fixture, replay, gap and abnormal-path tests. |
+| `FR-SCEN-009` | verified | Gate 5 | Bounded recorded-style IMU fixture replay covers independent sinks, gaps, overflow, stale epochs and abnormal paths. |
 | `FR-NODE-001` | verified | Gate 2 | Typed Node descriptor and protocol round-trip tests in `capyio-core` and `capyio-protocol`. |
 | `FR-NODE-002` | verified | Gate 2 | Core has no global NodeRole; deterministic fixtures own mixed-direction Ports. |
 | `FR-NODE-003` | verified | Gate 2 | `capyio-testkit` catalogs contain Source and Sink Ports on both Nodes. |
@@ -66,7 +70,7 @@ hardware, networking, security or performance behavior has run.
 | `FR-PORT-001` | verified | Gate 2 | PortDirection enum and Route direction-rejection tests. |
 | `FR-PORT-002` | verified | Gate 2 | Port descriptor validation and protocol round trips cover Profile, formats, QoS, clock, availability and permission. |
 | `FR-PORT-003` | verified | Gate 2 | ProfileId is transport/platform-neutral and Core dependency validation guards the boundary. |
-| `FR-PORT-004` | planned | Gate 5 | Standard IMU envelope must preserve timestamps, sequence, units, frames, accuracy and calibration. |
+| `FR-PORT-004` | verified | Gate 5 | `capyio-data-plane` IMU envelope and fixture tests preserve timestamps, sequence, units, frame, accuracy and calibration. |
 | `FR-PORT-005` | verified | Gate 2 | Profile-major compatibility and unknown/zero protocol enum rejection tests. |
 | `FR-ROUTE-001` | verified | Gate 2 | Route constructor requires exactly one Source PortRef and one Sink PortRef. |
 | `FR-ROUTE-002` | verified | Gate 2 | Direction, Profile, format, QoS and interoperability rejection tests. |
@@ -113,7 +117,7 @@ hardware, networking, security or performance behavior has run.
 | `NFR-RT-001` | planned | Gate 7 | First real-time audio callback audit and stress evidence. |
 | `NFR-RT-002` | planned | Gate 7 | Fixed-capacity callback-path data structures and overflow tests. |
 | `NFR-RT-003` | planned | Gate 7 | Clock-domain timestamps and user-mode recovery/resampling evidence. |
-| `NFR-MAINT-001` | implemented | Gate 3 | Exact-head Windows/Linux/macOS Rust and Adapter CI is configured; current hosted run is pending. |
+| `NFR-MAINT-001` | verified | Gate 3 | PR #10 passed exact-head Windows/Linux/macOS Rust/Adapter, UI, repository and Windows Tauri hosted checks. |
 | `NFR-MAINT-002` | verified | Gate 3 | Cargo dependency boundaries, unit tests and `scripts/validate_repository.py`. |
 | `NFR-MAINT-003` | verified | Gate 3 | ADRs, compatibility documentation and protocol/Core tests cover foundation public changes. |
 | `NFR-MAINT-004` | planned | Gate 5 | First SensorServer integration provenance, license, imported-path and risk record. |
