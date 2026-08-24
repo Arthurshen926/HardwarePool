@@ -151,6 +151,9 @@ Dependency rules:
 - The Audio Share Adapter validates and supervises a pinned external executable;
   its TCP/UDP PCM contract does not become a Core, Protocol or StandardPort
   dependency.
+- Its initial Windows host may observe process-owned established TCP state via
+  IP Helper. That platform signal is transport presence only and never imports
+  peer addresses, Windows structs or lifecycle decisions into Core.
 - Testkit is never a production dependency of Core/Protocol/Runtime/Adapter SDK.
 - Drivers communicate through minimal validated contracts, never Rust memory
   layout or network/wire messages.

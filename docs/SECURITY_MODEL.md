@@ -55,6 +55,12 @@ private TCP/UDP protocol. The pinned upstream Windows release is not
 Authenticode signed and is neither bundled nor treated as trusted production
 software by CapyIO.
 
+Windows receiver observation filters the OS TCP owner table by the supervised
+process ID, explicit local port and established state. It returns only a count,
+not local/remote addresses. An unauthenticated or unrelated TCP peer can still
+produce presence in the current lab, so this signal is not peer identity,
+authorization, successful negotiation or proof of audible playback.
+
 ### Adapter process abuse
 
 Versioned manifests, allow-listed entrypoints, bounded NDJSON, correlation

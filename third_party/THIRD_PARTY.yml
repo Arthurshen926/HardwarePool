@@ -32,6 +32,20 @@ planned_integrations:
       audio_payload: UDP PCM
       default_port: 65530
       capyio_route_backend: AdapterManaged
+    monitor_dependency:
+      name: windows-sys
+      version: 0.61.2
+      license: MIT OR Apache-2.0
+      enabled_features:
+        - Win32_NetworkManagement_IpHelper
+        - Win32_Networking_WinSock
+      purpose: >-
+        Query process-owned established TCP rows without parsing human logs or
+        retaining peer addresses.
+      alternatives_rejected:
+        - localized PowerShell or netstat output
+        - hand-written Windows FFI
+        - upstream log parsing
     distribution_note: >-
       CapyIO does not vendor, link, repackage or distribute Audio Share in this
       slice. Tests use a user-supplied, hash-verified unmodified release. The

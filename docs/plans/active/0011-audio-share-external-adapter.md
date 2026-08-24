@@ -26,10 +26,12 @@ plane.
 3. `CAPY-AUDIO-001A1`: supervise `as-cmd` without a shell, bind an explicit
    address/port/endpoint, type startup/exit failures, and stop/reap the child
    idempotently.
-4. `CAPY-AUDIO-001A2`: bind the controller to one Runtime-owned
-   `AdapterManaged` Route with fresh retry epochs and independent IMU state;
-   resolve receiver-presence observability without parsing ordinary logs.
-5. `CAPY-AUDIO-001A3`: expose the Route through a generic versioned Quick
+4. `CAPY-AUDIO-001A2A`: observe process-owned Windows TCP receiver presence
+   without parsing ordinary logs, while labeling it weaker than playback
+   health.
+5. `CAPY-AUDIO-001A2B`: bind the controller to one Runtime-owned
+   `AdapterManaged` Route with fresh retry epochs and independent IMU state.
+6. `CAPY-AUDIO-001A3`: expose the Route through a generic versioned Quick
    Action projection and repeat the authorized physical playback/disconnect
    test.
 
@@ -72,6 +74,8 @@ plane.
 - `CAPY-AUDIO-000`: complete.
 - `CAPY-AUDIO-001A0`: complete and pushed in commit `4065618`.
 - `CAPY-AUDIO-001A1`: complete locally. The supervisor proves child process and
-  TCP-listener lifecycle only. Upstream v0.3.4 exposes no machine-readable peer
-  status, so Android receiver disconnect is not inferred from human logs and
-  remains an explicit `001A2` design/acceptance issue.
+  TCP-listener lifecycle only.
+- `CAPY-AUDIO-001A2A`: complete locally. Windows IP Helper reports only
+  established rows owned by the supervised process and explicit port; no
+  addresses or log prose enter the result. This proves receiver TCP transport,
+  not negotiation, UDP PCM, `AudioTrack` or audibility.

@@ -130,6 +130,10 @@ Progress:
   reaped with typed early-exit/timeout behavior. The upstream CLI exposes no
   machine-readable Android peer state; disconnect must not be inferred from
   ordinary logs and remains open for `001A2`.
+- `CAPY-AUDIO-001A2A` complete locally: a Windows-only bounded IP Helper query
+  observes established TCP rows owned by the supervised PID and explicit port,
+  without retaining addresses or parsing logs. It is labeled receiver transport
+  presence, not playback health. Runtime Route binding is next.
 
 Explicit non-scope: vendoring upstream source, a CapyIO Android app, virtual
 render endpoint, microphone, codec rewrite, production pairing/encryption or

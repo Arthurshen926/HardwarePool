@@ -35,9 +35,11 @@ fn main() {
 
     let bind = value(&args, "--bind=").expect("fixture requires explicit bind");
     let listener = TcpListener::bind(bind).expect("fixture listener");
+    let mut connections = Vec::new();
     for connection in listener.incoming() {
-        if connection.is_err() {
-            break;
+        match connection {
+            Ok(connection) => connections.push(connection),
+            Err(_) => break,
         }
     }
 }

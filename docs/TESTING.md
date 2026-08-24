@@ -135,6 +135,13 @@ and confirms no process/listener remains. Listener readiness is not receiver
 presence; v0.3.4 has no machine-readable peer-status API and tests never parse
 ordinary log prose into lifecycle state.
 
+Windows-only owner-table tests then prove that the short-lived readiness
+connection is not retained as a receiver, a process-owned established peer is
+observed, peer close becomes disconnected and stopped supervision becomes
+unknown/not-running. The test filters by PID and port and never asserts or
+retains peer addresses. This is transport-presence evidence, not Audio Share
+negotiation or playback evidence.
+
 ## Sidecar smoke test
 
 Adapter Host launches repository-built mock binaries, performs initialize,

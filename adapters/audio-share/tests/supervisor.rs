@@ -1,12 +1,12 @@
 use std::{
-    net::{IpAddr, Ipv4Addr, TcpListener},
+    net::{IpAddr, Ipv4Addr, TcpListener, TcpStream},
     path::PathBuf,
     time::Duration,
 };
 
 use capyio_audio_share_adapter::{
     AudioEncoding, AudioShareConfig, AudioShareError, AudioShareSupervisor, ProbeLimits,
-    SupervisorLimits, SupervisorStatus,
+    ReceiverTcpPresence, SupervisorLimits, SupervisorStatus,
 };
 
 const DEFAULT_ENDPOINT: &str = "fixture-default";
@@ -114,6 +114,58 @@ fn long_running_output_is_drained_with_bounded_retention() {
     let output = stopped.output.expect("output summary");
     assert_eq!(output.stdout_retained_bytes, 128);
     assert!(output.stdout_overflowed);
+}
+
+#[cfg(windows)]
+#[test]
+fn windows_owner_table_tracks_only_established_process_owned_peer_transport() {
+    let mut supervisor = supervisor(DEFAULT_ENDPOINT, 4096);
+    supervisor.start().expect("start fixture server");
+    assert_eq!(
+        supervisor.receiver_tcp_presence().expect("owner table"),
+        ReceiverTcpPresence::Disconnected,
+        "the short-lived readiness probe must not count as a receiver"
+    );
+
+    let peer = TcpStream::connect(supervisor.config().bind_address()).expect("fixture peer");
+    let deadline = std::time::Instant::now() + Duration::from_secs(2);
+    loop {
+        if matches!(
+            supervisor.receiver_tcp_presence().expect("owner table"),
+            ReceiverTcpPresence::Established {
+                connection_count: 1..
+            }
+        ) {
+            break;
+        }
+        assert!(
+            std::time::Instant::now() < deadline,
+            "peer never became established"
+        );
+        std::thread::sleep(Duration::from_millis(10));
+    }
+
+    drop(peer);
+    let deadline = std::time::Instant::now() + Duration::from_secs(2);
+    loop {
+        if supervisor.receiver_tcp_presence().expect("owner table")
+            == ReceiverTcpPresence::Disconnected
+        {
+            break;
+        }
+        assert!(
+            std::time::Instant::now() < deadline,
+            "peer never disconnected"
+        );
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    supervisor.stop().expect("stop fixture");
+    assert_eq!(
+        supervisor
+            .receiver_tcp_presence()
+            .expect("stopped presence"),
+        ReceiverTcpPresence::SupervisorNotRunning
+    );
 }
 
 #[test]

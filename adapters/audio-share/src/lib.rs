@@ -16,8 +16,10 @@ use std::{
 
 use thiserror::Error;
 
+mod peer_presence;
 mod supervisor;
 
+pub use peer_presence::ReceiverTcpPresence;
 pub use supervisor::{
     AudioShareSupervisor, ProcessExitReport, ProcessOutputSummary, SupervisorLimits,
     SupervisorStartReport, SupervisorStatus, SupervisorStopReport,
@@ -651,6 +653,12 @@ pub enum AudioShareError {
     SupervisorExitedBeforeReady { exit_code: Option<i32> },
     #[error("Audio Share TCP listener did not become ready before the startup deadline")]
     SupervisorStartupTimedOut,
+    #[error("Windows TCP owner table query failed with code {code}")]
+    PeerTableQueryFailed { code: u32 },
+    #[error("Windows TCP owner table exceeded the {limit} byte safety bound")]
+    PeerTableTooLarge { limit: usize },
+    #[error("Windows TCP owner table returned an invalid bounded layout")]
+    InvalidPeerTableLayout,
 }
 
 impl fmt::Debug for AudioShareProbe<SystemProbeCommandRunner> {

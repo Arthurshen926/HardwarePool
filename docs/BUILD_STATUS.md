@@ -195,3 +195,9 @@ on loopback, observed it running, stopped it and confirmed zero remaining
 listeners/processes. This is server-process evidence only: upstream v0.3.4 has
 no machine-readable Android peer state, so receiver loss is not yet a Runtime
 Problem and human logs are not used as lifecycle authority.
+
+`CAPY-AUDIO-001A2A` adds a Windows-only, bounded `GetExtendedTcpTable` query.
+The test proves readiness self-connect is excluded, an established process-owned
+peer is detected, disconnect clears presence and stopped supervision reports
+not running. The result contains a count only and is deliberately weaker than
+protocol negotiation, UDP delivery or audible playback.

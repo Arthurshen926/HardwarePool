@@ -7,7 +7,8 @@ use std::{
 
 use crate::{
     AudioShareConfig, AudioShareError, AudioShareProbe, BoundedRead, DEFAULT_PROBE_OUTPUT_LIMIT,
-    ProbeLimits, configure_hidden_process, join_reader, read_bounded,
+    ProbeLimits, ReceiverTcpPresence, configure_hidden_process, join_reader,
+    peer_presence::receiver_tcp_presence, read_bounded,
 };
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -213,6 +214,13 @@ impl AudioShareSupervisor {
                 process_id: running.child.id(),
             }),
         }
+    }
+
+    pub fn receiver_tcp_presence(&mut self) -> Result<ReceiverTcpPresence, AudioShareError> {
+        let SupervisorStatus::Running { process_id } = self.status()? else {
+            return Ok(ReceiverTcpPresence::SupervisorNotRunning);
+        };
+        receiver_tcp_presence(process_id, self.config.bind_address())
     }
 
     pub fn stop(&mut self) -> Result<SupervisorStopReport, AudioShareError> {
