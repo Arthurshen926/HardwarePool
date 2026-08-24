@@ -37,6 +37,10 @@ Microphone/camera/screen capture never starts silently.
 Production paths require mutual authentication, authenticated encryption,
 Session/Route/epoch binding, replay windows, fresh keys and version binding.
 The current Mock/Sidecar loop is local test behavior, not a secure network.
+The Gate 5 SensorServer `ws://` protocol Adapter is likewise restricted to an
+explicitly approved trusted lab. A Tailscale address can protect overlay transit
+but does not supply CapyIO Capability authorization, application identity,
+message replay protection or downgrade binding.
 
 ### Adapter process abuse
 

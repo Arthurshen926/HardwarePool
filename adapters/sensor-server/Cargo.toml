@@ -1,0 +1,15 @@
+[package]
+name = "capyio-sensor-server-adapter"
+description = "Bounded SensorServer protocol mapping for the CapyIO IMU Source Adapter."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish = false
+
+[dependencies]
+capyio-core = { path = "../../crates/capyio-core" }
+capyio-data-plane = { path = "../../crates/capyio-data-plane" }
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true

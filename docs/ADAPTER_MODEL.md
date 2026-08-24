@@ -103,6 +103,13 @@ The control channel never carries continuous audio, video, display frames or
 high-rate sensor payloads. A Mock Adapter may send a small finite test sample,
 which must be labeled a smoke-test channel rather than a production data plane.
 
+The Gate 5 SensorServer integration is an external-service protocol Adapter.
+The independently installed Android app retains its WebSocket/JSON data plane;
+CapyIO-authored code bounds and maps that documented message shape into an IMU
+StandardPort. No upstream source or binary is linked or imported. WebSocket
+connection lifecycle remains outside the parser/pairing contract and plain
+`ws://` is a trusted-local-lab mechanism, not production transport security.
+
 ## Failure isolation
 
 Adapter Host owns child process handles, stdin/stdout/stderr tasks, deadlines

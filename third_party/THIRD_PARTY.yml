@@ -20,11 +20,22 @@ planned_integrations:
     integration_mode: planned_sidecar
     source_imported: false
   - id: sensor-server
-    upstream_repository: null
-    pinned_revision: null
-    license: pending_verification
-    integration_mode: planned_sidecar
+    upstream_repository: https://github.com/UmerCodez/SensorServer
+    pinned_revision: 5ae401780d99debcabb8dc259256c2652dada0a6
+    license: GPL-3.0-only
+    integration_mode: external_service_protocol_adapter
     source_imported: false
+    binary_imported: false
+    imported_paths: []
+    local_modifications: []
+    protocol:
+      transport: WebSocket
+      message_format: bounded JSON
+      documented_endpoint: /sensor/connect?type=<android-sensor-string-type>
+    distribution_note: >-
+      CapyIO does not vendor, link, repackage or distribute SensorServer in this
+      slice. A user-installed unmodified app is an external GPL-3.0-only
+      service. Distribution and legal review remain required before bundling.
   - id: viiper
     upstream_repository: null
     pinned_revision: null
@@ -43,4 +54,3 @@ planned_integrations:
     license: pending_verification
     integration_mode: planned_composite_sidecar
     source_imported: false
-

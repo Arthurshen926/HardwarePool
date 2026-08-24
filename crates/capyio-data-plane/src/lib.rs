@@ -179,6 +179,14 @@ pub struct ImuSensorMetadataV1 {
     pub android_sensor_type: Option<u32>,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ImuComponentTimestampsV1 {
+    pub acceleration_nanos: u64,
+    pub angular_velocity_nanos: u64,
+    pub magnetic_field_nanos: Option<u64>,
+}
+
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ImuSampleV1 {
@@ -190,6 +198,8 @@ pub struct ImuSampleV1 {
     pub accuracy: ImuAccuracy,
     pub calibration: ImuCalibration,
     pub sensor: ImuSensorMetadataV1,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub component_timestamps: Option<ImuComponentTimestampsV1>,
 }
 
 impl ImuSampleV1 {
@@ -221,6 +231,27 @@ impl DataPayload for ImuSampleV1 {
                 return Err(DataPlaneError::InvalidPayload(format!(
                     "{label} must contain 1..={MAX_SENSOR_TEXT_BYTES} bytes"
                 )));
+            }
+        }
+        if let Some(timestamps) = self.component_timestamps {
+            if timestamps.acceleration_nanos == 0 || timestamps.angular_velocity_nanos == 0 {
+                return Err(DataPlaneError::InvalidPayload(
+                    "required IMU component timestamps must be positive".to_owned(),
+                ));
+            }
+            if timestamps
+                .magnetic_field_nanos
+                .is_some_and(|value| value == 0)
+            {
+                return Err(DataPlaneError::InvalidPayload(
+                    "magnetic-field component timestamp must be positive".to_owned(),
+                ));
+            }
+            if self.magnetic_field.is_some() != timestamps.magnetic_field_nanos.is_some() {
+                return Err(DataPlaneError::InvalidPayload(
+                    "magnetic-field value and component timestamp must be present together"
+                        .to_owned(),
+                ));
             }
         }
         Ok(())

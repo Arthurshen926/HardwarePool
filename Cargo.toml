@@ -11,6 +11,7 @@ members = [
     "crates/capyio-adapter-host",
     "adapters/mock-source",
     "adapters/mock-sink",
+    "adapters/sensor-server",
     "apps/capyio-node",
     "apps/desktop/src-tauri",
     "xtask",
@@ -24,6 +25,7 @@ default-members = [
     "crates/capyio-testkit",
     "crates/capyio-adapter-sdk",
     "crates/capyio-adapter-host",
+    "adapters/sensor-server",
     "apps/capyio-node",
     "xtask",
 ]

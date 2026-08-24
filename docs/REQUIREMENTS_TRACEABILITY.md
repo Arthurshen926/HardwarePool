@@ -1,6 +1,6 @@
 # CapyIO Requirements Traceability
 
-> Updated: 2026-08-24 for `CAPY-IMU-001A`.
+> Updated: 2026-08-24 for `CAPY-IMU-001B0`.
 >
 > Scope: the 84 normative Requirement IDs in `PRODUCT_REQUIREMENTS.md`.
 
@@ -59,7 +59,7 @@ hardware, networking, security or performance behavior has run.
 | `FR-ADAPTER-002` | verified | Gate 3 | Manifest model/schema tests cover InProcess, Sidecar, ExternalService and DriverBacked declarations. |
 | `FR-ADAPTER-003` | verified | Gate 2 | Adapter descriptors, Runtime snapshots and UI expose state, health and owned Capabilities/Routes. |
 | `FR-ADAPTER-004` | verified | Gate 3 | Adapter Host crash-isolation test scopes failure to owned Capabilities/Routes. |
-| `FR-ADAPTER-005` | verified | Gate 3 | Core backend/interoperability validation and `ADAPTER_MODEL.md` constrain AdapterManaged Routes. |
+| `FR-ADAPTER-005` | verified | Gate 3 | Core backend/interoperability validation constrains AdapterManaged Routes; the SensorServer external-protocol boundary has separate mapping tests and provenance. |
 | `FR-ADAPTER-006` | verified | Gate 3 | Committed manifest schema, Rust validation tests and `cargo xtask validate-manifests`. |
 | `FR-CAP-001` | verified | Gate 2 | Capability descriptor validation covers class, owner, availability, permission and metadata. |
 | `FR-CAP-002` | verified | Gate 2 | Catalog validation rejects routable Capabilities without valid Ports. |
@@ -70,7 +70,7 @@ hardware, networking, security or performance behavior has run.
 | `FR-PORT-001` | verified | Gate 2 | PortDirection enum and Route direction-rejection tests. |
 | `FR-PORT-002` | verified | Gate 2 | Port descriptor validation and protocol round trips cover Profile, formats, QoS, clock, availability and permission. |
 | `FR-PORT-003` | verified | Gate 2 | ProfileId is transport/platform-neutral and Core dependency validation guards the boundary. |
-| `FR-PORT-004` | verified | Gate 5 | `capyio-data-plane` IMU envelope and fixture tests preserve timestamps, sequence, units, frame, accuracy and calibration. |
+| `FR-PORT-004` | verified | Gate 5 | IMU fixture and SensorServer pairing tests preserve envelope plus per-component timestamps, sequence, units, frame, accuracy and calibration. |
 | `FR-PORT-005` | verified | Gate 2 | Profile-major compatibility and unknown/zero protocol enum rejection tests. |
 | `FR-ROUTE-001` | verified | Gate 2 | Route constructor requires exactly one Source PortRef and one Sink PortRef. |
 | `FR-ROUTE-002` | verified | Gate 2 | Direction, Profile, format, QoS and interoperability rejection tests. |
@@ -120,7 +120,7 @@ hardware, networking, security or performance behavior has run.
 | `NFR-MAINT-001` | verified | Gate 3 | PR #10 passed exact-head Windows/Linux/macOS Rust/Adapter, UI, repository and Windows Tauri hosted checks. |
 | `NFR-MAINT-002` | verified | Gate 3 | Cargo dependency boundaries, unit tests and `scripts/validate_repository.py`. |
 | `NFR-MAINT-003` | verified | Gate 3 | ADRs, compatibility documentation and protocol/Core tests cover foundation public changes. |
-| `NFR-MAINT-004` | planned | Gate 5 | First SensorServer integration provenance, license, imported-path and risk record. |
+| `NFR-MAINT-004` | verified | Gate 5 | Validator-checked SensorServer repository, pinned commit, GPL-3.0-only external-service mode, empty imported paths and distribution risk record. |
 | `NFR-MAINT-005` | verified | Gate 1 | `xtask` commands are non-privileged; AGENTS and offline rules exclude deployment operations. |
 
 ## Updating this report

@@ -78,6 +78,8 @@ descriptors rather than dominating Core.
 
 - typed `StreamId`, positive stream epoch and monotonic sequence;
 - source and receiver timestamps plus a named clock domain;
+- optional acceleration, angular-velocity and magnetic-field component source
+  timestamps for Adapters that combine asynchronous sensors;
 - acceleration in metres per second squared;
 - angular velocity in radians per second;
 - optional magnetic field in microtesla;
@@ -90,6 +92,18 @@ epochs, duplicates, late samples and per-consumer overflow are observable and
 are not repaired by changing timestamps. The committed fixture uses
 `android.sensor.elapsed_realtime` only as a semantic clock-domain label; it was
 not captured from the connected phone.
+
+Adding optional component timestamps is an append-only v1 semantic extension.
+Older fixtures omit the field and retain their existing meaning. When present,
+required component timestamps are positive; a magnetic-field timestamp and
+value appear together. The combined envelope source timestamp is the maximum of
+the included components, while each original timestamp remains available.
+
+The first SensorServer mapping uses the Android `SensorEvent` elapsed-realtime
+clock, accepts documented accuracy values 0–3, preserves the device coordinate
+frame and marks calibration `Raw` because the external service does not declare
+a calibration state. Pairing within a configured skew is not sensor fusion and
+does not imply synchronized sampling.
 
 ## Unknown semantics
 

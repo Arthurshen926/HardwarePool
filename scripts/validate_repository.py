@@ -32,6 +32,7 @@ REQUIRED_FILES = [
     "docs/plans/TEMPLATE.md",
     "crates/capyio-core/src/lib.rs",
     "crates/capyio-data-plane/src/lib.rs",
+    "adapters/sensor-server/src/lib.rs",
     "crates/capyio-audio/src/lib.rs",
     "crates/capyio-runtime/src/lib.rs",
     "crates/capyio-protocol/src/lib.rs",
@@ -39,6 +40,8 @@ REQUIRED_FILES = [
     "protocol/proto/capyio/v1/capability.proto",
     "protocol/proto/capyio/v1/control.proto",
     "fixtures/imu/imu_samples_v1.jsonl",
+    "fixtures/sensor-server/accelerometer.json",
+    "fixtures/sensor-server/gyroscope.json",
     "apps/desktop/package.json",
     "apps/desktop/src/App.vue",
     "apps/desktop/src-tauri/tauri.conf.json",
@@ -470,6 +473,33 @@ def validate_architecture_dependencies() -> None:
         fail("root Cargo metadata contains an unresolved repository placeholder")
 
 
+def validate_sensor_server_provenance() -> None:
+    provenance = (ROOT / "third_party/THIRD_PARTY.yml").read_text(encoding="utf-8")
+    required = [
+        "upstream_repository: https://github.com/UmerCodez/SensorServer",
+        "pinned_revision: 5ae401780d99debcabb8dc259256c2652dada0a6",
+        "license: GPL-3.0-only",
+        "integration_mode: external_service_protocol_adapter",
+        "source_imported: false",
+        "binary_imported: false",
+        "imported_paths: []",
+    ]
+    missing = [entry for entry in required if entry not in provenance]
+    if missing:
+        fail(f"SensorServer provenance is incomplete: {missing}")
+
+    manifest = (ROOT / "adapters/sensor-server/Cargo.toml").read_text(
+        encoding="utf-8"
+    ).lower()
+    forbidden_transport = ["tungstenite", "tokio", "websocket", "reqwest"]
+    present = [name for name in forbidden_transport if name in manifest]
+    if present:
+        fail(
+            "CAPY-IMU-001B0 parser crate contains an unreviewed transport dependency: "
+            f"{present}"
+        )
+
+
 def workflow_has_pull_request_branch(text: str, expected: str) -> bool:
     lines = text.splitlines()
     for index, line in enumerate(lines):
@@ -608,6 +638,7 @@ def main() -> None:
     requirement_count = validate_requirement_ids()
     validate_proto_field_numbers()
     validate_architecture_dependencies()
+    validate_sensor_server_provenance()
     validate_hosted_ci_contract()
     validate_current_foundation_labels()
     validate_local_markdown_links()

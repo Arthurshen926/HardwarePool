@@ -1,6 +1,6 @@
 # CapyIO Build Status
 
-> Updated: 2026-08-24 during `CAPY-IMU-001A`.
+> Updated: 2026-08-24 during `CAPY-IMU-001B0`.
 
 ## Verified baseline
 
@@ -80,12 +80,30 @@ Windows Tauri check/build passed. A real read-only vivo inventory also passed;
 the ignored artifact is sanitized and explicitly says no APK, permission change
 or live CapyIO stream. Exact evidence is in `docs/CAPY_IMU_001A_REPORT.md`.
 
+## CAPY-IMU-001B0 SensorServer contract
+
+The active slice has started the first real-Adapter boundary without opening a
+network connection or claiming phone data:
+
+- upstream SensorServer commit and GPL-3.0-only external-service provenance are
+  recorded with no source or binary import;
+- its documented JSON message is bounded and strictly parsed;
+- asynchronous accelerometer/gyroscope readings pair deterministically with
+  explicit skew, replacement, regression and sequence-exhaustion behavior;
+- original component timestamps survive in the IMU Profile.
+
+Full workspace format/check/Clippy, 88 Rust tests, repository validation,
+manifests, Adapter Smoke, fixture replay, frontend typecheck/build and
+`cargo xtask ci` passed. Exact evidence is in
+`docs/CAPY_IMU_001B0_REPORT.md`.
+
 ## Not built or tested
 
 - Android application/APK or live phone payload path;
 - Android permissions/foreground services;
 - real microphone, speaker, camera, IMU or input data path;
 - Windows virtual devices, driver, WDK or isolated-VM driver test;
-- production transport, pairing, encryption, third-party Adapter or performance.
+- production transport, pairing, encryption, live third-party Adapter transport
+  or performance.
 
 These absences are expected and must not be reported as working functionality.

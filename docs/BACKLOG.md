@@ -85,6 +85,18 @@ Acceptance:
 4. stopping either Route does not stop the other;
 5. disconnect creates explicit gaps/Problems rather than silent timestamp repair.
 
+Implementation slices:
+
+- `CAPY-IMU-001B0` (complete): pin upstream provenance and implement bounded
+  SensorServer JSON parsing plus deterministic accelerometer/gyroscope pairing;
+- `CAPY-IMU-001B1` (next): add a reviewed WebSocket client dependency and local mock
+  server tests, without a phone;
+- `CAPY-IMU-001B2`: reconnect wireless ADB, install/start the externally
+  maintained app only under the existing device authorization, and retain live
+  Panel/Recorder evidence;
+- `CAPY-IMU-001B3`: project live state into the desktop Runtime/UI and close the
+  remaining Gate 5 lifecycle/timing evidence.
+
 ## Later small tasks
 
 - `CAPY-GAMEPAD-001`: DSU projection from recorded IMU fixture.

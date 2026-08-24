@@ -70,6 +70,23 @@ Frontend uses `corepack pnpm typecheck` and `corepack pnpm build`.
 These tests require no phone and make no SensorServer, APK, network or physical
 timing claim.
 
+## SensorServer mapping contract tests
+
+- the pinned upstream three-field JSON shape maps exact finite axes, timestamp
+  and Android accuracy values;
+- empty, oversized, malformed, unknown-field, wrong-axis-count, zero-timestamp
+  and unknown-accuracy messages fail explicitly;
+- accelerometer and gyroscope readings pair in either arrival order only inside
+  a configured skew bound;
+- each required reading is consumed once; replacing an unpaired sample is
+  observable and a later in-skew sample recovers;
+- timestamp regression and sequence exhaustion fail closed;
+- optional fresh magnetic-field data and every component timestamp remain in
+  the IMU Profile output.
+
+These tests use recorded synthetic JSON and no WebSocket implementation, phone,
+APK or network connection.
+
 ## Deterministic integration tests
 
 Fixtures use HP OmniBook Ultra Flip 14 and vivo X200 Pro mini with no environment

@@ -33,10 +33,21 @@ counter; it never silently evicts an older accepted envelope.
 
 `capyio.motion.imu-samples/1` preserves SI acceleration and angular velocity,
 optional microtesla magnetic field, Android device coordinates, accuracy,
-calibration and bounded sensor metadata. The committed JSONL fixture is parsed
+calibration, bounded sensor metadata and optional per-component source
+timestamps. Per-component timestamps are necessary when an Adapter pairs
+asynchronous accelerometer and gyroscope readings; the envelope timestamp is
+the maximum included source timestamp, not a replacement for the originals.
+The committed JSONL fixture is parsed
 with line/record limits and replayed to a numeric Panel plus a bounded JSONL
 Recorder. This path is deterministic test/demo evidence, not live phone data or
 a network decoder.
+
+The SensorServer protocol Adapter enforces a 4 KiB message bound before JSON
+decode, exactly three finite axes, known Android accuracy values, positive and
+strictly increasing per-sensor timestamps, a fixed pairing-skew limit and
+one-time consumption of each required component. Replaced unpaired readings and
+excessive skew are explicit outcomes. This is mapping behavior only; it opens no
+socket and makes no reconnect, authentication or physical-timing claim.
 
 ## 4. Audio frame semantics
 
