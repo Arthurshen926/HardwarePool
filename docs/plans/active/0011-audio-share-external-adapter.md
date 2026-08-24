@@ -84,3 +84,11 @@ plane.
   activation on three consecutive receiver samples, reports receiver/process
   failures as typed `Offline` Problems, advances explicit retry epochs and
   preserves unrelated active IMU Route state.
+- `CAPY-AUDIO-001A3`: complete locally. The schema-v1 generic
+  Quick Action exposes truthful configured/blocked and Route lifecycle states,
+  finite start/retry/stop operations and bounded Problems. Trusted host
+  environment owns executable/network/endpoint configuration, and a host worker
+  polls independently of the WebView. The physical lab passed Active epoch 1,
+  disconnect/Offline epoch 2, retry Active epoch 3 and explicit stop; a separate
+  run delivered a Windows system WAV to a 48 kHz stereo Android Track with
+  non-zero written frames.

@@ -138,8 +138,14 @@ Progress:
   `AdapterManaged` Runtime Route, requires three consecutive receiver samples
   for activation, reports receiver/process failures as typed `Offline`
   Problems, advances retry epochs, stops explicitly and leaves active IMU state
-  unchanged. Generic Quick Action projection and the repeated physical lab run
-  are next.
+  unchanged.
+- `CAPY-AUDIO-001A3` complete locally: a schema-v1 generic
+  Quick Action projects the physical Route, exposes finite start/retry/stop
+  operations, keeps executable/network/endpoint configuration in the host, and
+  is polled by a host-owned worker rather than the WebView. The authorized lab
+  passed Active epoch 1, disconnect/Offline epoch 2, retry Active epoch 3 and
+  explicit stop, while Android reported a 48 kHz stereo Track with non-zero
+  written frames.
 
 Explicit non-scope: vendoring upstream source, a CapyIO Android app, virtual
 render endpoint, microphone, codec rewrite, production pairing/encryption or

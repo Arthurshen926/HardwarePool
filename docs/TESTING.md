@@ -150,6 +150,14 @@ verify retry advances the epoch, and prove that audio failure leaves an already
 active IMU Route unchanged. The fake proves orchestration only; the adapter
 fixture tests remain the evidence for real child/TCP observation behavior.
 
+Quick Action tests assert schema version 1, a truthful blocked state when host
+configuration is absent, finite operations derived from Route state, rejection
+of unknown request fields (including an attempted executable path), and matching
+Browser Mock/Tauri TypeScript contracts. The Tauri host owns a 250 ms poll loop;
+the WebView refresh only observes the projection and is not lifecycle authority.
+A separately ignored physical test composes the real supervisor and Runtime
+Route and waits for active, disconnect, later-epoch retry, active and stopped.
+
 ## Sidecar smoke test
 
 Adapter Host launches repository-built mock binaries, performs initialize,

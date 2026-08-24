@@ -29,24 +29,36 @@ use tauri::State;
 
 pub mod audio_share_runtime;
 mod physical_imu_runtime;
+mod quick_actions;
 
 use physical_imu_runtime::PhysicalImuRoute;
+use quick_actions::{AudioShareQuickAction, InvokeQuickActionRequest, UiQuickAction};
 
 struct AppState {
     lab: Arc<Mutex<DemoLab>>,
     physical_imu: PhysicalImuRoute,
     live_imu: Arc<Mutex<UiLiveImu>>,
     live_imu_controller: Mutex<Option<LiveImuController>>,
+    audio_share: Arc<Mutex<AudioShareQuickAction>>,
+    audio_worker: AudioQuickActionWorker,
 }
 
 impl Drop for AppState {
     fn drop(&mut self) {
-        let Ok(controller) = self.live_imu_controller.get_mut() else {
-            return;
-        };
-        if let Some(controller) = controller.take() {
+        if let Ok(controller) = self.live_imu_controller.get_mut()
+            && let Some(controller) = controller.take()
+        {
             controller.stop.store(true, Ordering::Release);
             let _ = controller.worker.join();
+        }
+        self.audio_worker.stop.store(true, Ordering::Release);
+        if let Some(worker) = self.audio_worker.worker.take() {
+            let _ = worker.join();
+        }
+        if let Ok(mut audio_share) = self.audio_share.lock()
+            && let Ok(mut lab) = self.lab.lock()
+        {
+            audio_share.shutdown(&mut lab.runtime);
         }
     }
 }
@@ -54,6 +66,11 @@ impl Drop for AppState {
 struct LiveImuController {
     stop: Arc<AtomicBool>,
     worker: JoinHandle<()>,
+}
+
+struct AudioQuickActionWorker {
+    stop: Arc<AtomicBool>,
+    worker: Option<JoinHandle<()>>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -239,6 +256,16 @@ fn get_snapshot(state: State<'_, AppState>) -> Result<UiSnapshot, String> {
 #[tauri::command]
 fn set_route(request: SetRouteRequest, state: State<'_, AppState>) -> Result<UiSnapshot, String> {
     let route_id = RouteId::from_str(&request.route_id).map_err(|_| "invalid Route ID")?;
+    if state
+        .audio_share
+        .lock()
+        .map_err(|_| "Audio Share state lock poisoned")?
+        .owns_route(route_id)
+    {
+        return Err(
+            "use the versioned Quick Action to control the physical speaker Route".to_owned(),
+        );
+    }
     let mut lab = state.lab.lock().map_err(|_| "demo state lock poisoned")?;
     lab.set_route_active(route_id, request.active, unix_time_ms()?)
         .map_err(|error| error.to_string())?;
@@ -247,6 +274,16 @@ fn set_route(request: SetRouteRequest, state: State<'_, AppState>) -> Result<UiS
 
 #[tauri::command]
 fn reset_demo(state: State<'_, AppState>) -> Result<UiSnapshot, String> {
+    if state
+        .audio_share
+        .lock()
+        .map_err(|_| "Audio Share state lock poisoned")?
+        .is_configured()
+    {
+        return Err(
+            "restart the desktop host to reset a configured physical speaker Route".to_owned(),
+        );
+    }
     if state
         .live_imu_controller
         .lock()
@@ -260,6 +297,29 @@ fn reset_demo(state: State<'_, AppState>) -> Result<UiSnapshot, String> {
     let session_id = lab.session_id;
     PhysicalImuRoute::install(&mut lab.runtime, session_id)?;
     Ok(to_ui_snapshot(&lab))
+}
+
+#[tauri::command]
+fn get_quick_actions(state: State<'_, AppState>) -> Result<Vec<UiQuickAction>, String> {
+    let audio_share = state
+        .audio_share
+        .lock()
+        .map_err(|_| "Audio Share state lock poisoned")?;
+    let lab = state.lab.lock().map_err(|_| "demo state lock poisoned")?;
+    Ok(vec![audio_share.dto(&lab.runtime)?])
+}
+
+#[tauri::command]
+fn invoke_quick_action(
+    request: InvokeQuickActionRequest,
+    state: State<'_, AppState>,
+) -> Result<UiQuickAction, String> {
+    let mut audio_share = state
+        .audio_share
+        .lock()
+        .map_err(|_| "Audio Share state lock poisoned")?;
+    let mut lab = state.lab.lock().map_err(|_| "demo state lock poisoned")?;
+    audio_share.invoke(&mut lab.runtime, request, unix_time_ms()?)
 }
 
 #[tauri::command]
@@ -573,12 +633,36 @@ pub fn run() {
     let physical_imu = PhysicalImuRoute::install(&mut lab.runtime, session_id)
         .expect("valid physical IMU Runtime catalog");
     let live_imu = UiLiveImu::idle(physical_imu, &lab.runtime).expect("valid physical IMU Route");
+    let audio_share = Arc::new(Mutex::new(AudioShareQuickAction::install(
+        &mut lab.runtime,
+        session_id,
+    )));
+    let lab = Arc::new(Mutex::new(lab));
+    let audio_stop = Arc::new(AtomicBool::new(false));
+    let worker_stop = Arc::clone(&audio_stop);
+    let worker_audio_share = Arc::clone(&audio_share);
+    let worker_lab = Arc::clone(&lab);
+    let audio_worker = thread::spawn(move || {
+        while !worker_stop.load(Ordering::Acquire) {
+            if let (Ok(mut audio_share), Ok(mut lab)) =
+                (worker_audio_share.lock(), worker_lab.lock())
+            {
+                audio_share.poll(&mut lab.runtime);
+            }
+            thread::sleep(Duration::from_millis(250));
+        }
+    });
     tauri::Builder::default()
         .manage(AppState {
-            lab: Arc::new(Mutex::new(lab)),
+            lab,
             physical_imu,
             live_imu: Arc::new(Mutex::new(live_imu)),
             live_imu_controller: Mutex::new(None),
+            audio_share,
+            audio_worker: AudioQuickActionWorker {
+                stop: audio_stop,
+                worker: Some(audio_worker),
+            },
         })
         .invoke_handler(tauri::generate_handler![
             get_snapshot,
@@ -586,7 +670,9 @@ pub fn run() {
             reset_demo,
             get_live_imu,
             start_live_imu,
-            stop_live_imu
+            stop_live_imu,
+            get_quick_actions,
+            invoke_quick_action
         ])
         .run(tauri::generate_context!())
         .expect("run CapyIO Tauri application");

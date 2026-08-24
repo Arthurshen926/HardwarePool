@@ -34,10 +34,12 @@ implementation scope automatically.
   the physical path to the Tauri UI and the desktop Node's single Runtime with
   explicit Problem, retry epoch and stop evidence. Hosted exact-head evidence
   remains a merge prerequisite rather than a missing Gate 5 behavior.
-- Gate 7 is the next authorized product slice, beginning with an unmodified
-  Audio Share provenance/behavior spike followed by one external
-  AdapterManaged Windows-system-mix to Android-speaker Route. Gates 4, 6 and
-  8–15 remain roadmap only.
+- Gate 7 initial vertical slice is complete locally: the pinned Audio Share
+  process is supervised and projected as one Runtime-owned AdapterManaged
+  Quick Action; physical transport, Android PCM submission, disconnect, retry
+  epoch and stop evidence pass. Gate 7 remains open for subjective audibility,
+  background/audio-focus and longer-duration evidence. Gates 4, 6 and 8–15
+  remain roadmap only.
 
 ## Public-alpha proof bar
 

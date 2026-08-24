@@ -160,6 +160,10 @@ Dependency rules:
   `Problem`/`Offline` transitions. The polling cadence and retry decision remain
   explicit host policy, and unrelated Routes are never mutated as a side
   effect.
+- The versioned Quick Action projection exposes only a stable action ID,
+  lifecycle state, evidence label and finite start/retry/stop operations. The
+  executable path, endpoint ID and bind address remain trusted host
+  configuration. A host-owned worker polls independently of the WebView.
 - Testkit is never a production dependency of Core/Protocol/Runtime/Adapter SDK.
 - Drivers communicate through minimal validated contracts, never Rust memory
   layout or network/wire messages.

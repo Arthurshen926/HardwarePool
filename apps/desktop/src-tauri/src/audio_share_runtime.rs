@@ -161,6 +161,10 @@ impl<P: AudioShareProcessBoundary> AudioShareRouteController<P> {
         self.route.route_id
     }
 
+    pub fn route_state(&self, runtime: &NodeRuntime) -> Result<RouteState, String> {
+        self.route.state(runtime)
+    }
+
     fn poll_running(&mut self, runtime: &mut NodeRuntime) -> Result<(), String> {
         match self.process.receiver_presence() {
             Ok(ReceiverTcpPresence::Established { connection_count }) if connection_count > 0 => {
@@ -464,9 +468,18 @@ fn string_error(error: impl std::fmt::Display) -> String {
 
 #[cfg(test)]
 mod tests {
-    use std::collections::VecDeque;
+    use std::{
+        collections::VecDeque,
+        net::IpAddr,
+        path::PathBuf,
+        thread,
+        time::{Duration, Instant},
+    };
 
-    use capyio_audio_share_adapter::{ProcessExitReport, ProcessOutputSummary};
+    use capyio_audio_share_adapter::{
+        AudioEncoding, AudioShareConfig, AudioShareSupervisor, ProbeLimits, ProcessExitReport,
+        ProcessOutputSummary, SupervisorLimits,
+    };
     use capyio_testkit::DemoLab;
 
     use super::*;
@@ -706,5 +719,112 @@ mod tests {
                 .route(parse_id(ROUTE_ID).expect("Route ID"))
                 .is_err()
         );
+    }
+
+    #[test]
+    #[ignore = "requires the authorized physical Audio Share Windows/Android lab"]
+    fn physical_audio_share_receiver_disconnect_retry_and_stop() {
+        let executable = std::env::var_os("CAPYIO_AUDIO_SHARE_EXE")
+            .map(PathBuf::from)
+            .expect("set CAPYIO_AUDIO_SHARE_EXE to the hash-verified v0.3.4 CLI");
+        let bind_ip = std::env::var("CAPYIO_AUDIO_SHARE_BIND_IP")
+            .expect("set CAPYIO_AUDIO_SHARE_BIND_IP")
+            .parse::<IpAddr>()
+            .expect("bind IP literal");
+        let port = std::env::var("CAPYIO_AUDIO_SHARE_PORT")
+            .expect("set CAPYIO_AUDIO_SHARE_PORT")
+            .parse::<u16>()
+            .expect("non-zero port");
+        let endpoint =
+            std::env::var("CAPYIO_AUDIO_SHARE_ENDPOINT").expect("set CAPYIO_AUDIO_SHARE_ENDPOINT");
+        let config = AudioShareConfig::new(
+            executable,
+            bind_ip,
+            port,
+            endpoint,
+            AudioEncoding::S16,
+            2,
+            48_000,
+        )
+        .expect("physical lab configuration");
+        let supervisor =
+            AudioShareSupervisor::new(config, ProbeLimits::default(), SupervisorLimits::default())
+                .expect("supervisor");
+        let mut lab = DemoLab::new().expect("demo Runtime");
+        let imu_route = lab.routes.phone_imu_to_gamepad;
+        lab.set_route_active(imu_route, true, 1)
+            .expect("independent IMU Route");
+        let session_id = lab.session_id;
+        let mut controller = AudioShareRouteController::install(
+            &mut lab.runtime,
+            session_id,
+            supervisor,
+            DEFAULT_STABLE_RECEIVER_POLLS,
+        )
+        .expect("physical audio Route");
+        let first_epoch = controller.start(&mut lab.runtime, 2).expect("start server");
+        eprintln!("CAPYIO_PHYSICAL_AUDIO_WAITING_FOR_RECEIVER");
+        wait_for_state(
+            &mut controller,
+            &mut lab.runtime,
+            RouteState::Active,
+            Duration::from_secs(60),
+        );
+        eprintln!("CAPYIO_PHYSICAL_AUDIO_ACTIVE epoch={first_epoch}");
+        wait_for_state(
+            &mut controller,
+            &mut lab.runtime,
+            RouteState::Offline,
+            Duration::from_secs(60),
+        );
+        let offline_epoch = controller
+            .status(&lab.runtime)
+            .expect("offline status")
+            .route_epoch;
+        assert!(offline_epoch > first_epoch);
+        eprintln!("CAPYIO_PHYSICAL_AUDIO_OFFLINE epoch={offline_epoch}");
+        let retry_epoch = controller.start(&mut lab.runtime, 3).expect("retry server");
+        assert!(retry_epoch > offline_epoch);
+        eprintln!("CAPYIO_PHYSICAL_AUDIO_WAITING_FOR_RETRY_RECEIVER epoch={retry_epoch}");
+        wait_for_state(
+            &mut controller,
+            &mut lab.runtime,
+            RouteState::Active,
+            Duration::from_secs(60),
+        );
+        assert_eq!(
+            lab.runtime.route(imu_route).expect("IMU Route").state,
+            RouteState::Active
+        );
+        controller.stop(&mut lab.runtime).expect("explicit stop");
+        assert_eq!(
+            controller
+                .status(&lab.runtime)
+                .expect("stopped")
+                .route_state,
+            RouteState::Stopped
+        );
+        eprintln!("CAPYIO_PHYSICAL_AUDIO_COMPLETE");
+    }
+
+    fn wait_for_state<P: AudioShareProcessBoundary>(
+        controller: &mut AudioShareRouteController<P>,
+        runtime: &mut NodeRuntime,
+        expected: RouteState,
+        timeout: Duration,
+    ) {
+        let deadline = Instant::now() + timeout;
+        loop {
+            let status = controller.poll(runtime).expect("physical poll");
+            if status.route_state == expected {
+                return;
+            }
+            assert!(
+                Instant::now() < deadline,
+                "timed out waiting for {expected:?}, current {:?}",
+                status.route_state
+            );
+            thread::sleep(Duration::from_millis(250));
+        }
     }
 }

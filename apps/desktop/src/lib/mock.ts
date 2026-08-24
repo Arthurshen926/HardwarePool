@@ -3,7 +3,9 @@ import type {
   RouteState,
   UiEvent,
   UiLiveImu,
+  QuickActionOperation,
   UiPort,
+  UiQuickAction,
   UiRoute,
   UiSnapshot,
 } from "./types";
@@ -145,12 +147,39 @@ export class BrowserMockCapyIOApi implements CapyIOApi {
     return unsupportedLiveImu();
   }
 
+  async getQuickActions(): Promise<UiQuickAction[]> {
+    return [unsupportedAudioQuickAction()];
+  }
+
+  async invokeQuickAction(_actionId: string, _operation: QuickActionOperation): Promise<UiQuickAction> {
+    throw new Error("Physical Quick Actions require the Tauri desktop backend.");
+  }
+
   private pushEvent(summary: string): void {
     const event: UiEvent = { sequence: this.nextSequence, summary };
     this.nextSequence += 1;
     this.snapshot.events.push(event);
     this.snapshot.events = this.snapshot.events.slice(-20);
   }
+}
+
+function unsupportedAudioQuickAction(): UiQuickAction {
+  return {
+    schemaVersion: 1,
+    id: "capyio.quick-action.remote-speaker",
+    kind: "route_control",
+    title: "将电脑声音发送到手机",
+    summary: "Browser Mock 不启动外部进程",
+    status: "blocked",
+    simulated: true,
+    routeId: null,
+    routeState: null,
+    routeEpoch: null,
+    availableOperations: [],
+    evidenceLevel: "not_started",
+    problemCode: "CAPY.UI.BROWSER_MOCK",
+    problem: "请使用配置了 Audio Share 的 Tauri 桌面宿主。",
+  };
 }
 
 function unsupportedLiveImu(): UiLiveImu {

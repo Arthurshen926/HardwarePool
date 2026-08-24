@@ -588,6 +588,12 @@ a:focus-visible {
   margin-top: 22px;
 }
 
+.quick-action-card__buttons {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.6rem;
+}
+
 .capability-card__qos-label {
   display: block;
   margin-bottom: 8px;

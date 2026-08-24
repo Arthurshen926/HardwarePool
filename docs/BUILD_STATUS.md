@@ -212,3 +212,14 @@ epoch, explicit stop terminates the Route/process boundary, and tests prove an
 active IMU Route is unchanged by audio failure. The controller is not yet wired
 to a desktop Quick Action, and TCP presence remains weaker than playback
 health.
+
+`CAPY-AUDIO-001A3` adds a generic schema-v1 Quick Action for the physical
+speaker Route. It exposes only lifecycle/evidence state and finite
+start/retry/stop operations; executable path, bind address, port and endpoint ID
+remain host environment configuration. A Tauri-owned 250 ms worker performs
+receiver polling independently of WebView refresh. Browser Mock uses the same
+DTO and remains visibly blocked/simulated. The authorized physical lab passed
+Active epoch 1, disconnect/Offline epoch 2, retry Active epoch 3 and explicit
+stop with no remaining Windows process/listener. A Windows system WAV produced
+non-zero written frames on the app-owned 48 kHz stereo Android Track. Subjective
+audibility, background/focus and long-duration quality remain unverified.
