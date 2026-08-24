@@ -19,7 +19,7 @@ jobs:
       - uses: dtolnay/rust-toolchain@master
         with:
           toolchain: 1.97.1
-      - uses: pnpm/setup@v1
+      - uses: pnpm/setup@v2
         with:
           version: 11.5.3
           runtime: node@24
