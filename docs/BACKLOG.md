@@ -96,9 +96,10 @@ Implementation slices:
   Panel/Recorder plus disconnect evidence;
 - `CAPY-IMU-001B3A` (complete): project the bounded physical stream into a narrow
   Tauri numeric panel with visible failure/recovery/stop state;
-- `CAPY-IMU-001B3B` (next): bind the Adapter to real Node Runtime Route/Problem
-  lifecycle, advance epochs across reconnect and close the remaining Gate 5
-  timing/lifecycle evidence.
+- `CAPY-IMU-001B3B` (complete): bind the Adapter to the desktop's single real
+  Node Runtime Route/Problem lifecycle, advance epochs across retry, and prove
+  physical activation plus explicit stop. Evidence is in
+  `docs/CAPY_IMU_001B3B_REPORT.md`.
 
 ## Later small tasks
 

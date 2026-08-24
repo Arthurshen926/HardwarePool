@@ -1,7 +1,8 @@
 # CapyIO Port Profiles
 
-> Status: initial registry; IMU v1 has deterministic fixture/replay semantics,
-> while live hardware and production transport remain unimplemented.
+> Status: initial registry; IMU v1 has deterministic fixture/replay semantics
+> and an authorized SensorServer physical-lab path. Production transport remains
+> unimplemented.
 
 ## Identity and versioning
 

@@ -156,6 +156,15 @@ desktop Rust physical test remains ignored by default and requires explicit
 `CAPYIO_LIVE_IMU_IP` and `CAPYIO_LIVE_IMU_PORT` environment variables. Normal CI
 does not require a phone or a reachable private endpoint.
 
+`CAPY-IMU-001B3B` binds that worker to the same `NodeRuntime` that owns the
+desktop Node. Loopback tests assert the staged Route lifecycle, retained
+disconnect Problem, fresh retry epoch and explicit stop without a phone. The
+ignored physical test asserts real paired samples drive the Route to `Active`
+and shutdown reaches `Stopped`. The authorized lab run also confirmed that a
+stale phone listener produces `Offline` rather than a false success, then
+succeeds after the service is restarted. Private addresses are not retained in
+repository evidence.
+
 ## Data and timing quality
 
 Signal tests measure latency, clipping, gaps, discontinuities, loss/repeat and

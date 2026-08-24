@@ -23,7 +23,7 @@ const remoteNode = computed(() => snapshot.value?.nodes.find((node) => !node.loc
 const activeCount = computed(() => snapshot.value?.routes.filter((route) => route.active).length ?? 0);
 const recentEvents = computed(() => [...(snapshot.value?.events ?? [])].reverse());
 const liveImuRunning = computed(() => liveImu.value?.status === "connecting" || liveImu.value?.status === "active");
-const liveImuTone = computed(() => liveImu.value?.status === "active" ? "success" : liveImu.value?.status === "failed" ? "danger" : "warning");
+const liveImuTone = computed(() => liveImu.value?.status === "active" ? "success" : ["failed", "offline"].includes(liveImu.value?.status ?? "") ? "danger" : "warning");
 
 async function load(): Promise<void> {
   loading.value = true;
@@ -131,7 +131,7 @@ onUnmounted(() => { if (livePoll) clearInterval(livePoll); });
         <div>
           <p class="eyebrow">Physical IMU lab · trusted LAN only</p>
           <h2 id="imu-live-title">Android 实时加速度与角速度</h2>
-          <p>{{ liveImu.profile }} · epoch {{ liveImu.streamEpoch }}<template v-if="liveImu.sequence !== null"> · sequence {{ liveImu.sequence }}</template></p>
+          <p>{{ liveImu.profile }} · Runtime {{ liveImu.routeState }} · epoch {{ liveImu.streamEpoch }}<template v-if="liveImu.sequence !== null"> · sequence {{ liveImu.sequence }}</template></p>
         </div>
         <StatusPill :tone="liveImuTone" :label="liveImu.status" />
       </header>
@@ -141,7 +141,7 @@ onUnmounted(() => { if (livePoll) clearInterval(livePoll); });
         <button class="primary-button" type="submit" :disabled="liveImuBusy || liveImuRunning || liveImu.status === 'unsupported' || !liveImuIp.trim()">连接</button>
         <button class="ghost-button" type="button" :disabled="liveImuBusy || !liveImuRunning" @click="stopLiveImu">停止</button>
       </form>
-      <p v-if="liveImu.problem" class="error-banner" role="status">{{ liveImu.problem }}</p>
+      <p v-if="liveImu.problem" class="error-banner" role="status"><strong v-if="liveImu.problemCode">{{ liveImu.problemCode }} · </strong>{{ liveImu.problem }}</p>
       <div class="imu-lab__grid">
         <div>
           <h3>Live Numeric Panel</h3>
@@ -153,6 +153,7 @@ onUnmounted(() => { if (livePoll) clearInterval(livePoll); });
           <p class="imu-lab__detail">Angular velocity: {{ liveImu.angularVelocity ? `${liveImu.angularVelocity.x.toFixed(3)}, ${liveImu.angularVelocity.y.toFixed(3)}, ${liveImu.angularVelocity.z.toFixed(3)}` : "—" }} rad/s</p>
         </div>
         <dl class="imu-lab__sinks">
+          <div><dt>Runtime Route</dt><dd><StatusPill :tone="liveImuTone" :label="liveImu.routeState" /><span>{{ liveImu.routeId }}</span></dd></div>
           <div><dt>Connection</dt><dd><StatusPill :tone="liveImuTone" :label="liveImu.status" /><span>{{ liveImu.endpoint ?? "未配置" }}</span></dd></div>
           <div><dt>Live samples</dt><dd><span>{{ liveImu.receivedSamples }} received · {{ liveImu.clockDomainId ?? "no clock yet" }}</span></dd></div>
           <div><dt>Evidence boundary</dt><dd><span>真实手机数据；明文 ws:// 仅限可信局域网实验，不代表生产安全。</span></dd></div>

@@ -89,11 +89,13 @@ export interface UiImuFixture {
   recorderRouteState: "active";
 }
 
-export type LiveImuStatus = "idle" | "connecting" | "active" | "stopped" | "failed" | "unsupported";
+export type LiveImuStatus = "idle" | "connecting" | "active" | "offline" | "stopped" | "failed" | "unsupported";
 
 export interface UiLiveImu {
   status: LiveImuStatus;
   simulated: boolean;
+  routeId: string;
+  routeState: RouteState;
   endpoint: string | null;
   profile: "capyio.motion.imu-samples/1";
   streamEpoch: number;
@@ -103,6 +105,7 @@ export interface UiLiveImu {
   acceleration: UiVector3 | null;
   angularVelocity: UiVector3 | null;
   receivedSamples: number;
+  problemCode: string | null;
   problem: string | null;
 }
 

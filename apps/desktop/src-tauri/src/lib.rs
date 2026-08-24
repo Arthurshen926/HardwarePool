@@ -27,8 +27,13 @@ use capyio_testkit::DemoLab;
 use serde::{Deserialize, Serialize};
 use tauri::State;
 
+mod physical_imu_runtime;
+
+use physical_imu_runtime::PhysicalImuRoute;
+
 struct AppState {
-    lab: Mutex<DemoLab>,
+    lab: Arc<Mutex<DemoLab>>,
+    physical_imu: PhysicalImuRoute,
     live_imu: Arc<Mutex<UiLiveImu>>,
     live_imu_controller: Mutex<Option<LiveImuController>>,
 }
@@ -62,6 +67,8 @@ struct StartLiveImuRequest {
 struct UiLiveImu {
     status: &'static str,
     simulated: bool,
+    route_id: String,
+    route_state: &'static str,
     endpoint: Option<String>,
     profile: &'static str,
     stream_epoch: u64,
@@ -71,14 +78,20 @@ struct UiLiveImu {
     acceleration: Option<UiVector3>,
     angular_velocity: Option<UiVector3>,
     received_samples: u64,
+    problem_code: Option<String>,
     problem: Option<String>,
 }
 
 impl UiLiveImu {
-    fn idle() -> Self {
-        Self {
+    fn idle(
+        route: PhysicalImuRoute,
+        runtime: &capyio_runtime::NodeRuntime,
+    ) -> Result<Self, String> {
+        Ok(Self {
             status: "idle",
             simulated: false,
+            route_id: route.route_id().to_string(),
+            route_state: route_state_label(route.route_state(runtime)?),
             endpoint: None,
             profile: "capyio.motion.imu-samples/1",
             stream_epoch: 0,
@@ -88,8 +101,9 @@ impl UiLiveImu {
             acceleration: None,
             angular_velocity: None,
             received_samples: 0,
+            problem_code: None,
             problem: None,
-        }
+        })
     }
 }
 
@@ -232,8 +246,18 @@ fn set_route(request: SetRouteRequest, state: State<'_, AppState>) -> Result<UiS
 
 #[tauri::command]
 fn reset_demo(state: State<'_, AppState>) -> Result<UiSnapshot, String> {
+    if state
+        .live_imu_controller
+        .lock()
+        .map_err(|_| "live IMU controller lock poisoned")?
+        .is_some()
+    {
+        return Err("stop the physical IMU Route before resetting the demo".to_owned());
+    }
     let mut lab = state.lab.lock().map_err(|_| "demo state lock poisoned")?;
     *lab = DemoLab::new().map_err(|error| error.to_string())?;
+    let session_id = lab.session_id;
+    PhysicalImuRoute::install(&mut lab.runtime, session_id)?;
     Ok(to_ui_snapshot(&lab))
 }
 
@@ -274,15 +298,26 @@ fn start_live_imu(
     if controller.is_some() {
         return Err("live IMU lab is already running".to_owned());
     }
-    let epoch = {
+    let (epoch, route_id) = {
+        let mut lab = state
+            .lab
+            .lock()
+            .map_err(|_| "physical IMU Runtime lock poisoned".to_owned())?;
+        let epoch = state
+            .physical_imu
+            .begin_start(&mut lab.runtime, unix_time_ms()?)?;
+        (epoch, state.physical_imu.route_id().to_string())
+    };
+    {
         let mut snapshot = state
             .live_imu
             .lock()
             .map_err(|_| "live IMU state lock poisoned".to_owned())?;
-        let epoch = snapshot.stream_epoch.saturating_add(1).max(1);
         *snapshot = UiLiveImu {
             status: "connecting",
             simulated: false,
+            route_id,
+            route_state: "starting",
             endpoint: Some(endpoint.address().to_string()),
             profile: "capyio.motion.imu-samples/1",
             stream_epoch: epoch,
@@ -292,14 +327,18 @@ fn start_live_imu(
             acceleration: None,
             angular_velocity: None,
             received_samples: 0,
+            problem_code: None,
             problem: None,
         };
-        epoch
-    };
+    }
     let stop = Arc::new(AtomicBool::new(false));
     let worker_stop = Arc::clone(&stop);
     let shared = Arc::clone(&state.live_imu);
-    let worker = thread::spawn(move || run_live_imu(endpoint, epoch, &worker_stop, &shared));
+    let runtime = Arc::clone(&state.lab);
+    let route = state.physical_imu;
+    let worker = thread::spawn(move || {
+        run_live_imu(endpoint, epoch, &worker_stop, &shared, &runtime, route)
+    });
     *controller = Some(LiveImuController { stop, worker });
     state
         .live_imu
@@ -322,13 +361,24 @@ fn stop_live_imu(state: State<'_, AppState>) -> Result<UiLiveImu, String> {
             .join()
             .map_err(|_| "live IMU worker panicked".to_owned())?;
     }
+    let (route_state, route_epoch) = {
+        let mut lab = state
+            .lab
+            .lock()
+            .map_err(|_| "physical IMU Runtime lock poisoned".to_owned())?;
+        state.physical_imu.stop(&mut lab.runtime)?;
+        (
+            state.physical_imu.route_state(&lab.runtime)?,
+            state.physical_imu.route_epoch(&lab.runtime)?,
+        )
+    };
     let mut snapshot = state
         .live_imu
         .lock()
         .map_err(|_| "live IMU state lock poisoned".to_owned())?;
-    if snapshot.status != "failed" {
-        snapshot.status = "stopped";
-    }
+    snapshot.status = "stopped";
+    snapshot.route_state = route_state_label(route_state);
+    snapshot.stream_epoch = route_epoch;
     Ok(snapshot.clone())
 }
 
@@ -337,15 +387,42 @@ fn run_live_imu(
     epoch: u64,
     stop: &Arc<AtomicBool>,
     shared: &Arc<Mutex<UiLiveImu>>,
+    runtime: &Arc<Mutex<DemoLab>>,
+    route: PhysicalImuRoute,
 ) {
-    if let Err(problem) = run_live_imu_inner(endpoint, epoch, stop, shared) {
+    if let Err(problem) = run_live_imu_inner(endpoint, epoch, stop, shared, runtime, route) {
         stop.store(true, Ordering::Release);
+        let runtime_update = runtime
+            .lock()
+            .map_err(|_| "physical IMU Runtime lock poisoned".to_owned())
+            .and_then(|mut lab| {
+                route.report_offline(&mut lab.runtime, problem.clone())?;
+                let retained = route.latest_problem(&lab.runtime);
+                Ok((
+                    route.route_state(&lab.runtime)?,
+                    route.route_epoch(&lab.runtime)?,
+                    retained,
+                ))
+            });
         if let Ok(mut snapshot) = shared.lock() {
-            snapshot.status = "failed";
-            snapshot.problem = Some(problem);
+            match runtime_update {
+                Ok((route_state, route_epoch, retained)) => {
+                    snapshot.status = "offline";
+                    snapshot.route_state = route_state_label(route_state);
+                    snapshot.stream_epoch = route_epoch;
+                    snapshot.problem_code = retained.as_ref().map(|item| item.code.clone());
+                    snapshot.problem = retained
+                        .and_then(|item| item.technical_detail)
+                        .or(Some(problem));
+                }
+                Err(runtime_error) => {
+                    snapshot.status = "failed";
+                    snapshot.route_state = "failed";
+                    snapshot.problem_code = Some("CAPY.RUNTIME.IMU_LIFECYCLE".to_owned());
+                    snapshot.problem = Some(runtime_error);
+                }
+            }
         }
-    } else if let Ok(mut snapshot) = shared.lock() {
-        snapshot.status = "stopped";
     }
 }
 
@@ -354,6 +431,8 @@ fn run_live_imu_inner(
     epoch: u64,
     stop: &Arc<AtomicBool>,
     shared: &Arc<Mutex<UiLiveImu>>,
+    runtime: &Arc<Mutex<DemoLab>>,
+    route: PhysicalImuRoute,
 ) -> Result<(), String> {
     let config =
         SensorServerConnectionConfig::new(Duration::from_secs(5), Duration::from_millis(500))
@@ -395,10 +474,22 @@ fn run_live_imu_inner(
         };
         match event {
             LiveWorkerEvent::Connected(SensorKind::Gyroscope) => {
-                shared
+                let (route_state, route_epoch) = {
+                    let mut lab = runtime
+                        .lock()
+                        .map_err(|_| "physical IMU Runtime lock poisoned".to_owned())?;
+                    route.activate(&mut lab.runtime)?;
+                    (
+                        route.route_state(&lab.runtime)?,
+                        route.route_epoch(&lab.runtime)?,
+                    )
+                };
+                let mut snapshot = shared
                     .lock()
-                    .map_err(|_| "live IMU state lock poisoned".to_owned())?
-                    .status = "active";
+                    .map_err(|_| "live IMU state lock poisoned".to_owned())?;
+                snapshot.status = "active";
+                snapshot.route_state = route_state_label(route_state);
+                snapshot.stream_epoch = route_epoch;
             }
             LiveWorkerEvent::Connected(_) => {}
             LiveWorkerEvent::Reading(reading) => {
@@ -476,11 +567,16 @@ fn read_live_sensor(
 }
 
 pub fn run() {
-    let lab = DemoLab::new().expect("valid deterministic demo lab");
+    let mut lab = DemoLab::new().expect("valid deterministic demo lab");
+    let session_id = lab.session_id;
+    let physical_imu = PhysicalImuRoute::install(&mut lab.runtime, session_id)
+        .expect("valid physical IMU Runtime catalog");
+    let live_imu = UiLiveImu::idle(physical_imu, &lab.runtime).expect("valid physical IMU Route");
     tauri::Builder::default()
         .manage(AppState {
-            lab: Mutex::new(lab),
-            live_imu: Arc::new(Mutex::new(UiLiveImu::idle())),
+            lab: Arc::new(Mutex::new(lab)),
+            physical_imu,
+            live_imu: Arc::new(Mutex::new(live_imu)),
             live_imu_controller: Mutex::new(None),
         })
         .invoke_handler(tauri::generate_handler![
@@ -530,6 +626,7 @@ fn to_ui_snapshot(lab: &DemoLab) -> UiSnapshot {
     let routes = snapshot
         .routes
         .iter()
+        .filter(|route| lab.routes.all().contains(&route.id))
         .map(|route| route_to_ui(route, &snapshot.local_node, &snapshot.peers))
         .collect();
     let events = snapshot
@@ -764,16 +861,161 @@ fn unix_time_ms() -> Result<u64, String> {
 
 #[cfg(test)]
 mod tests {
+    use std::net::{Ipv4Addr, TcpListener};
+
+    use tungstenite::{Message, accept};
+
     use super::*;
+
+    fn physical_lab() -> (DemoLab, PhysicalImuRoute) {
+        let mut lab = DemoLab::new().expect("demo Runtime fixture");
+        let session_id = lab.session_id;
+        let route = PhysicalImuRoute::install(&mut lab.runtime, session_id)
+            .expect("physical Route fixture");
+        (lab, route)
+    }
 
     #[test]
     fn idle_live_imu_dto_is_explicitly_real_but_inactive() {
-        let snapshot = UiLiveImu::idle();
+        let (lab, route) = physical_lab();
+        let snapshot = UiLiveImu::idle(route, &lab.runtime).expect("idle DTO");
         assert_eq!(snapshot.status, "idle");
         assert!(!snapshot.simulated);
+        assert_eq!(snapshot.route_state, "draft");
         assert_eq!(snapshot.stream_epoch, 0);
         assert!(snapshot.acceleration.is_none());
         assert!(snapshot.problem.is_none());
+    }
+
+    #[test]
+    fn loopback_worker_drives_runtime_active_and_stopped_states() {
+        let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).expect("loopback listener");
+        let address = listener.local_addr().expect("loopback address");
+        let server = thread::spawn(move || {
+            let (accelerometer_stream, _) = listener.accept().expect("accelerometer connection");
+            let mut accelerometer = accept(accelerometer_stream).expect("accelerometer handshake");
+            let (gyroscope_stream, _) = listener.accept().expect("gyroscope connection");
+            let mut gyroscope = accept(gyroscope_stream).expect("gyroscope handshake");
+            for index in 0..12_u64 {
+                let timestamp = 1_000_000_000 + index * 10_000_000;
+                if accelerometer
+                    .send(Message::Text(
+                        serde_json::json!({
+                            "accuracy": 3,
+                            "timestamp": timestamp,
+                            "values": [0.1 + index as f64, 0.2, 9.8]
+                        })
+                        .to_string()
+                        .into(),
+                    ))
+                    .is_err()
+                {
+                    break;
+                }
+                if gyroscope
+                    .send(Message::Text(
+                        serde_json::json!({
+                            "accuracy": 3,
+                            "timestamp": timestamp + 1_000,
+                            "values": [0.01, 0.02 + index as f64, 0.03]
+                        })
+                        .to_string()
+                        .into(),
+                    ))
+                    .is_err()
+                {
+                    break;
+                }
+                thread::sleep(Duration::from_millis(5));
+            }
+        });
+        let endpoint = SensorServerEndpoint::new(address.ip(), address.port()).expect("endpoint");
+        let (mut lab, route) = physical_lab();
+        let epoch = route
+            .begin_start(&mut lab.runtime, 1)
+            .expect("begin physical Route");
+        let route_runtime = Arc::new(Mutex::new(lab));
+        let stop = Arc::new(AtomicBool::new(false));
+        let shared = Arc::new(Mutex::new(
+            UiLiveImu::idle(route, &route_runtime.lock().expect("Runtime lock").runtime)
+                .expect("idle DTO"),
+        ));
+        let worker_stop = Arc::clone(&stop);
+        let worker_shared = Arc::clone(&shared);
+        let worker_runtime = Arc::clone(&route_runtime);
+        let worker = thread::spawn(move || {
+            run_live_imu(
+                endpoint,
+                epoch,
+                &worker_stop,
+                &worker_shared,
+                &worker_runtime,
+                route,
+            )
+        });
+        let deadline = Instant::now() + Duration::from_secs(5);
+        loop {
+            let received = shared.lock().expect("state lock").received_samples;
+            if received >= 4 {
+                break;
+            }
+            assert!(Instant::now() < deadline, "loopback worker timed out");
+            thread::sleep(Duration::from_millis(10));
+        }
+        assert_eq!(
+            route.route_state(&route_runtime.lock().expect("Runtime lock").runtime),
+            Ok(RouteState::Active)
+        );
+        stop.store(true, Ordering::Release);
+        worker.join().expect("worker joins");
+        route
+            .stop(&mut route_runtime.lock().expect("Runtime lock").runtime)
+            .expect("stop Route");
+        assert_eq!(
+            route.route_state(&route_runtime.lock().expect("Runtime lock").runtime),
+            Ok(RouteState::Stopped)
+        );
+        server.join().expect("server joins");
+    }
+
+    #[test]
+    fn loopback_connect_failure_offlines_route_and_retry_advances_epoch() {
+        let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).expect("loopback listener");
+        let address = listener.local_addr().expect("loopback address");
+        drop(listener);
+        let endpoint = SensorServerEndpoint::new(address.ip(), address.port()).expect("endpoint");
+        let (mut lab, route) = physical_lab();
+        let first_epoch = route
+            .begin_start(&mut lab.runtime, 1)
+            .expect("begin physical Route");
+        let route_runtime = Arc::new(Mutex::new(lab));
+        let shared = Arc::new(Mutex::new(
+            UiLiveImu::idle(route, &route_runtime.lock().expect("Runtime lock").runtime)
+                .expect("idle DTO"),
+        ));
+        run_live_imu(
+            endpoint,
+            first_epoch,
+            &Arc::new(AtomicBool::new(false)),
+            &shared,
+            &route_runtime,
+            route,
+        );
+        let snapshot = shared.lock().expect("state lock").clone();
+        assert_eq!(snapshot.status, "offline");
+        assert_eq!(snapshot.route_state, "offline");
+        assert_eq!(
+            snapshot.problem_code.as_deref(),
+            Some("CAPY.IMU.SENSORSERVER_DISCONNECTED")
+        );
+        let offline_epoch = route
+            .route_epoch(&route_runtime.lock().expect("Runtime lock").runtime)
+            .expect("offline epoch");
+        assert!(offline_epoch > first_epoch);
+        let retry_epoch = route
+            .begin_start(&mut route_runtime.lock().expect("Runtime lock").runtime, 2)
+            .expect("retry Route");
+        assert!(retry_epoch > offline_epoch);
     }
 
     #[test]
@@ -788,12 +1030,30 @@ mod tests {
             .parse::<u16>()
             .expect("CAPYIO_LIVE_IMU_PORT must be a valid port");
         let endpoint = SensorServerEndpoint::new(ip, port).expect("valid physical endpoint");
+        let (mut lab, route) = physical_lab();
+        let epoch = route
+            .begin_start(&mut lab.runtime, 1)
+            .expect("begin physical Route");
+        let route_runtime = Arc::new(Mutex::new(lab));
         let stop = Arc::new(AtomicBool::new(false));
-        let shared = Arc::new(Mutex::new(UiLiveImu::idle()));
-        shared.lock().expect("state lock").stream_epoch = 1;
+        let shared = Arc::new(Mutex::new(
+            UiLiveImu::idle(route, &route_runtime.lock().expect("Runtime lock").runtime)
+                .expect("idle DTO"),
+        ));
+        shared.lock().expect("state lock").stream_epoch = epoch;
         let worker_stop = Arc::clone(&stop);
         let worker_shared = Arc::clone(&shared);
-        let worker = thread::spawn(move || run_live_imu(endpoint, 1, &worker_stop, &worker_shared));
+        let worker_runtime = Arc::clone(&route_runtime);
+        let worker = thread::spawn(move || {
+            run_live_imu(
+                endpoint,
+                epoch,
+                &worker_stop,
+                &worker_shared,
+                &worker_runtime,
+                route,
+            )
+        });
         let deadline = Instant::now() + Duration::from_secs(10);
         loop {
             let snapshot = shared.lock().expect("state lock").clone();
@@ -804,7 +1064,7 @@ mod tests {
                 assert!(snapshot.problem.is_none());
                 break;
             }
-            assert_ne!(snapshot.status, "failed", "{:?}", snapshot.problem);
+            assert_ne!(snapshot.status, "offline", "{:?}", snapshot.problem);
             assert!(
                 Instant::now() < deadline,
                 "physical DTO did not receive four samples"
@@ -813,6 +1073,12 @@ mod tests {
         }
         stop.store(true, Ordering::Release);
         worker.join().expect("live worker joins");
-        assert_eq!(shared.lock().expect("state lock").status, "stopped");
+        route
+            .stop(&mut route_runtime.lock().expect("Runtime lock").runtime)
+            .expect("stop physical Route");
+        assert_eq!(
+            route.route_state(&route_runtime.lock().expect("Runtime lock").runtime),
+            Ok(RouteState::Stopped)
+        );
     }
 }

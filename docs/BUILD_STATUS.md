@@ -1,6 +1,6 @@
 # CapyIO Build Status
 
-> Updated: 2026-08-24 during `CAPY-IMU-001B3A`.
+> Updated: 2026-08-24 during `CAPY-IMU-001B3B`.
 
 ## Verified baseline
 
@@ -142,6 +142,19 @@ stopped explicitly while retaining a 226-sample final snapshot. The physical
 endpoint is not committed. Exact evidence and the production-Runtime boundary
 are in `docs/CAPY_IMU_001B3A_REPORT.md`.
 
+## CAPY-IMU-001B3B Runtime-owned physical IMU Route
+
+Complete as a local physical-lab slice. The SensorServer ExternalService
+Adapter, Android IMU Source, Windows Panel Sink and `ExternalProtocol` Route are
+registered in the desktop Node's single `NodeRuntime`. Staged commands expose
+Draft/Prepared/Starting/Active/Offline/Stopped, retain a retryable disconnect
+Problem and advance the epoch before retry.
+
+Loopback success and failure tests cover activation, disconnect, retry and
+thread shutdown. The ignored physical test passed against the authorized phone
+after a stale SensorServer listener was restarted. Exact evidence and limits
+are in `docs/CAPY_IMU_001B3B_REPORT.md`.
+
 ## Not built or tested
 
 - CapyIO-owned Android application/APK;
@@ -151,7 +164,8 @@ are in `docs/CAPY_IMU_001B3A_REPORT.md`.
 - production transport, pairing, encryption, live third-party Adapter transport
   or performance.
 
-The physical SensorServer lab transport is tested, but it is not production
-transport and is not yet owned by a long-lived Node Runtime Route.
+The physical SensorServer lab transport is owned by the desktop process's real
+Node Runtime Route, but it is not production transport or a long-lived headless
+Node service.
 
 These absences are expected and must not be reported as working functionality.

@@ -157,6 +157,8 @@ function unsupportedLiveImu(): UiLiveImu {
   return {
     status: "unsupported",
     simulated: true,
+    routeId: "00000000-0000-4000-8000-000000000000",
+    routeState: "draft",
     endpoint: null,
     profile: "capyio.motion.imu-samples/1",
     streamEpoch: 0,
@@ -166,6 +168,7 @@ function unsupportedLiveImu(): UiLiveImu {
     acceleration: null,
     angularVelocity: null,
     receivedSamples: 0,
+    problemCode: null,
     problem: "Browser Mock 不会访问真实网络或传感器。",
   };
 }

@@ -549,7 +549,9 @@ where
 
 #[cfg(test)]
 mod tests {
-    use capyio_core::{CapabilityId, CoreError, RouteState};
+    use capyio_core::{
+        CapabilityId, CoreError, Problem, ProblemCategory, ProblemId, ProblemSeverity, RouteState,
+    };
 
     use super::*;
 
@@ -573,6 +575,84 @@ mod tests {
         let second = DemoLab::new().expect("second lab");
         assert_eq!(first.session_id, second.session_id);
         assert_eq!(first.routes, second.routes);
+    }
+
+    #[test]
+    fn staged_runtime_route_commands_retain_problem_and_advance_retry_epoch() {
+        let mut lab = DemoLab::new().expect("demo lab");
+        let route_id = lab.routes.phone_imu_to_gamepad;
+        lab.runtime
+            .authorize_route(route_id, None)
+            .expect("authorize Route");
+        lab.runtime
+            .prepare_route(
+                route_id,
+                Some(FormatDescriptor::new("imu-si-f32-le")),
+                QosMode::Measurement,
+                1,
+            )
+            .expect("prepare Route");
+        lab.runtime
+            .begin_route_start(route_id, 1)
+            .expect("begin start");
+        let first_epoch = lab.runtime.route(route_id).expect("Route").epoch;
+        assert_eq!(first_epoch, 1);
+        lab.runtime
+            .activate_route(route_id)
+            .expect("activate Route");
+
+        let problem = Problem {
+            id: ProblemId::new(),
+            code: "CAPY.IMU.SOURCE_DISCONNECTED".to_owned(),
+            category: ProblemCategory::Transport,
+            severity: ProblemSeverity::Error,
+            retryable: true,
+            related_node: Some(parse_id(ANDROID_NODE_ID)),
+            related_adapter: Some(parse_id(ANDROID_HARDWARE_ADAPTER_ID)),
+            related_route: Some(route_id),
+            human_message: "The physical IMU source disconnected".to_owned(),
+            technical_detail: Some("bounded test disconnect".to_owned()),
+        };
+        let problem_id = problem.id;
+        lab.runtime
+            .report_route_offline(route_id, problem)
+            .expect("offline Route");
+        let offline = lab.runtime.route(route_id).expect("offline Route");
+        assert_eq!(offline.state, RouteState::Offline);
+        assert!(offline.epoch > first_epoch);
+        assert!(offline.diagnostic_ids.contains(&problem_id));
+        let offline_epoch = offline.epoch;
+
+        lab.runtime
+            .recover_route(route_id, 2)
+            .expect("recover Route");
+        lab.runtime
+            .begin_route_start(route_id, 2)
+            .expect("retry Route");
+        lab.runtime
+            .activate_route(route_id)
+            .expect("reactivate Route");
+        assert!(lab.runtime.route(route_id).expect("retried Route").epoch > offline_epoch);
+        lab.runtime.begin_route_stop(route_id).expect("begin stop");
+        lab.runtime.stop_route(route_id).expect("stop Route");
+
+        let snapshot = lab.runtime.snapshot();
+        assert_eq!(
+            snapshot
+                .routes
+                .iter()
+                .find(|route| route.id == route_id)
+                .expect("snapshot Route")
+                .state,
+            RouteState::Stopped
+        );
+        assert!(snapshot.problems.iter().any(|item| item.id == problem_id));
+        assert!(
+            snapshot
+                .events
+                .windows(2)
+                .all(|pair| pair[0].sequence < pair[1].sequence)
+        );
     }
 
     #[test]

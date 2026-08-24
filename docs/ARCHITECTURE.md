@@ -67,12 +67,20 @@ Protobuf, codecs, drivers or concrete network transport.
 ### Runtime
 
 - owns the local catalog and peer catalogs;
+- atomically registers Adapter instances with their initial Capability catalog;
 - reconciles catalog replacements against persisted Routes, invalidating only
   Routes whose endpoint contract is removed or changed;
 - sequences commands, operation completions and events;
 - owns Route/Adapter lifecycle orchestration;
 - applies bounded retention;
 - exposes snapshots to UI/CLI/management API.
+
+Asynchronous Adapter callbacks complete Route work through staged Runtime
+commands (`authorize`, `prepare`, `begin_start`, `activate`, `offline`,
+`recover`, `begin_stop`, `stop`). They never mutate a cloned Core Route or use
+UI status strings as lifecycle authority. An offline completion retains a
+structured Route-related Problem and invalidates the current epoch; an explicit
+retry always starts with a later epoch.
 
 Platform and child-process callbacks return typed completions through opaque
 operation IDs; they never mutate Core state from arbitrary threads.

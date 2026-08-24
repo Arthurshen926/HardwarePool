@@ -26,3 +26,6 @@ capyio-testkit = { path = "../../../crates/capyio-testkit" }
 serde.workspace = true
 serde_json.workspace = true
 tauri = { version = "2.11.2", features = [] }
+
+[dev-dependencies]
+tungstenite.workspace = true

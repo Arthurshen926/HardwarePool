@@ -92,6 +92,12 @@ return does not restart them: recovery/restart remains an explicit command and
 uses a later epoch. Metadata-only changes refresh the catalog without changing
 Route lifecycle state.
 
+Adapter/platform completion is staged through Runtime commands. Successful
+connection changes `Starting` to `Active`; a transport loss retains a retryable
+Problem, changes the Route to `Offline` and advances its epoch. Recovery is
+explicit and `begin_start` advances the epoch again, so late samples from the
+failed attempt cannot enter the retried stream.
+
 ## Session
 
 A Session is the trust, catalog and control relationship between two Nodes. It

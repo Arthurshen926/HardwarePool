@@ -1,6 +1,6 @@
 # CapyIO Requirements Traceability
 
-> Updated: 2026-08-24 for `CAPY-IMU-001B3A`.
+> Updated: 2026-08-24 for `CAPY-IMU-001B3B`.
 >
 > Scope: the 84 normative Requirement IDs in `PRODUCT_REQUIREMENTS.md`.
 
@@ -54,7 +54,7 @@ hardware, networking, security or performance behavior has run.
 | `FR-NODE-005` | planned | Gate 14 | Pairing and explicit authorization tests for unknown/offline Nodes. |
 | `FR-SESSION-001` | verified | Gate 2 | Typed Session model and protocol session round-trip coverage. |
 | `FR-SESSION-002` | planned | Gate 14 | Expiring, independently revocable Capability/Route authorization. |
-| `FR-SESSION-003` | planned | Gate 14 | Authenticated reconnect and stale-epoch replay rejection. |
+| `FR-SESSION-003` | planned | Gate 14 | B3B proves explicit local recovery advances the Route epoch; authenticated reconnect and wire-level stale-epoch replay rejection remain Gate 14. |
 | `FR-ADAPTER-001` | verified | Gate 2 | Catalog validation and Core tests enforce Adapter ownership for Capabilities. |
 | `FR-ADAPTER-002` | verified | Gate 3 | Manifest model/schema tests cover InProcess, Sidecar, ExternalService and DriverBacked declarations. |
 | `FR-ADAPTER-003` | verified | Gate 2 | Adapter descriptors, Runtime snapshots and UI expose state, health and owned Capabilities/Routes. |
@@ -74,14 +74,14 @@ hardware, networking, security or performance behavior has run.
 | `FR-PORT-005` | verified | Gate 2 | Profile-major compatibility and unknown/zero protocol enum rejection tests. |
 | `FR-ROUTE-001` | verified | Gate 2 | Route constructor requires exactly one Source PortRef and one Sink PortRef. |
 | `FR-ROUTE-002` | verified | Gate 2 | Direction, Profile, format, QoS and interoperability rejection tests. |
-| `FR-ROUTE-003` | verified | Gate 2 | Route state enum and lifecycle transition tests cover all eight states. |
-| `FR-ROUTE-004` | verified | Gate 2 | Invalid transitions return typed Core errors in Route tests. |
+| `FR-ROUTE-003` | verified | Gate 2 | Route tests cover all eight states; B3B Adapter completions exercise staged Starting/Active/Offline/recovery/Stopping/Stopped in Runtime. |
+| `FR-ROUTE-004` | verified | Gate 2 | Invalid transitions return typed Core errors; B3B platform callbacks mutate lifecycle only through Runtime commands. |
 | `FR-ROUTE-005` | verified | Gate 2 | Runtime multi-Route tests prove independent stop/failure behavior. |
 | `FR-ROUTE-006` | verified | Gate 2 | Deterministic fixture activates opposite-direction Routes simultaneously. |
 | `FR-ROUTE-007` | verified | Gate 2 | RouteBackend enum is explicit; backend support/interoperability rejection is tested. |
 | `FR-ROUTE-008` | verified | Gate 2 | Route descriptor/snapshot round trips retain format, QoS, authorization, diagnostics and epoch. |
-| `FR-DIAG-001` | verified | Gate 2 | Problem descriptor validation and protocol round-trip tests cover stable structured fields. |
-| `FR-DIAG-002` | verified | Gate 2 | Runtime tests assert bounded, monotonically sequenced event retention. |
+| `FR-DIAG-001` | verified | Gate 2 | Problem validation/protocol tests plus B3B retain stable Route-related SensorServer disconnect diagnostics. |
+| `FR-DIAG-002` | verified | Gate 2 | Runtime tests assert bounded monotonic events; B3B projects Route state, epoch and Problem code to the Tauri DTO. |
 | `FR-DIAG-003` | verified | Gate 3 | Adapter Host tests exercise bounded/truncated stderr retention. |
 | `FR-DIAG-004` | verified | Gate 3 | Sidecar stdout/stderr separation tests and repository secret scanning; finite sample data stays test-only. |
 | `FR-PROTO-001` | verified | Gate 2 | `capyio.v1` Envelope constants and binary round-trip/version tests. |
@@ -111,8 +111,8 @@ hardware, networking, security or performance behavior has run.
 | `NFR-SEC-005` | verified | Gate 1 | PRD, Security Model, Build Status and UI explicitly label the foundation insecure/mock. |
 | `NFR-STAB-001` | planned | Gate 8 | Real system-audio endpoint disconnect/restart evidence in an approved target. |
 | `NFR-STAB-002` | verified | Gate 3 | Bounded Runtime events, RPC messages/correlations, line readers and stderr retention tests. |
-| `NFR-STAB-003` | verified | Gate 3 | Runtime catalog replacement tests invalidate dependent Route epochs and exercise recovery. |
-| `NFR-STAB-004` | verified | Gate 3 | Scoped Adapter failure and unrelated Route/catalog update tests. |
+| `NFR-STAB-003` | verified | Gate 3 | Catalog tests and B3B disconnect/retry tests invalidate failed epochs and require explicit recovery with a later epoch. |
+| `NFR-STAB-004` | verified | Gate 3 | Scoped Adapter failure, unrelated Route isolation and B3B explicit worker stop/join tests. |
 | `NFR-STAB-005` | verified | Gate 1 | Testing/evidence rules and Build Status prohibit unrun soak/hardware claims. |
 | `NFR-RT-001` | planned | Gate 7 | First real-time audio callback audit and stress evidence. |
 | `NFR-RT-002` | planned | Gate 7 | Fixed-capacity callback-path data structures and overflow tests. |
