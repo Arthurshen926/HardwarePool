@@ -92,3 +92,8 @@ plane.
   disconnect/Offline epoch 2, retry Active epoch 3 and explicit stop; a separate
   run delivered a Windows system WAV to a 48 kHz stereo Android Track with
   non-zero written frames.
+- An authorized audible repeat established the Android TCP/UDP peer, advanced
+  the active 48 kHz stereo Track from zero to 2,421,542 server frames across six
+  system WAV plays, and was clearly heard by the user beside the phone. Cleanup
+  left no process/listener. The result is one audible functional case, not a
+  latency, quality, background or soak claim.

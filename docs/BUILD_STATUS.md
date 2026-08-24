@@ -221,5 +221,10 @@ receiver polling independently of WebView refresh. Browser Mock uses the same
 DTO and remains visibly blocked/simulated. The authorized physical lab passed
 Active epoch 1, disconnect/Offline epoch 2, retry Active epoch 3 and explicit
 stop with no remaining Windows process/listener. A Windows system WAV produced
-non-zero written frames on the app-owned 48 kHz stereo Android Track. Subjective
-audibility, background/focus and long-duration quality remain unverified.
+non-zero written frames on the app-owned 48 kHz stereo Android Track. A later
+authorized repeat advanced that Track from zero to 2,421,542 server frames, and
+the user beside the receiver clearly heard phone playback. This confirms one
+audible case only; background/focus, latency and long-duration quality remain
+unverified. The Quick Action labels this initial path as system-audio mirroring,
+not a CapyIO virtual speaker, because the selected Windows endpoint may continue
+to play locally.

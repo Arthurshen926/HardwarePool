@@ -54,10 +54,22 @@ so that diagnostic run correctly failed rather than being counted as another
 lifecycle pass. The first run is the retained lifecycle pass; the second adds
 PCM-to-AudioTrack evidence only.
 
+A later authorized repeat used the already firewall-approved copy of the same
+hash-verified CLI. The Android receiver established TCP and UDP peer state, and
+six consecutive system WAV plays advanced the active 48 kHz stereo Track from
+zero to `0x24F326` server frames (2,421,542 frames). The Track was routed to the
+Android speaker with zero-dB track gain. The user beside the receiver clearly
+heard the phone playback. Explicit disconnect and process shutdown left no
+listener on the configured port. A same-hash CLI launched from a different
+temporary path could listen locally but did not accept the phone until the
+previously firewall-approved executable path was used; Windows firewall access
+is therefore treated as path-specific lab configuration, not binary-hash
+authorization.
+
 ## Limits
 
-TCP presence still does not authenticate the peer. Android Track submission is
-not proof that a person heard sound, so subjective audibility is not claimed.
-Background/lock, audio focus, protected-content behavior, latency, long-duration
-quality and production pairing/encryption remain Gate 7 work. No upstream
-binary or APK is stored or distributed by CapyIO.
+TCP presence still does not authenticate the peer. Subjective audibility is
+confirmed only for the repeat case above; it is not a latency, quality or soak
+claim. Background/lock, audio focus, protected-content behavior, latency,
+long-duration quality and production pairing/encryption remain Gate 7 work. No
+upstream binary or APK is stored or distributed by CapyIO.

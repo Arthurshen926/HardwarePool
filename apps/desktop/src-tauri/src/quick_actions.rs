@@ -131,8 +131,8 @@ impl AudioShareQuickAction {
                 schema_version: QUICK_ACTION_SCHEMA_VERSION,
                 id: AUDIO_SHARE_ACTION_ID,
                 kind: "route_control",
-                title: "将电脑声音发送到手机",
-                summary: "Audio Share 外部进程 · 宿主尚未配置",
+                title: "将电脑声音镜像到手机",
+                summary: "系统音频镜像 · 非虚拟扬声器 · 宿主尚未配置",
                 status: "blocked",
                 simulated: false,
                 route_id: None,
@@ -150,8 +150,8 @@ impl AudioShareQuickAction {
             schema_version: QUICK_ACTION_SCHEMA_VERSION,
             id: AUDIO_SHARE_ACTION_ID,
             kind: "route_control",
-            title: "将电脑声音发送到手机",
-            summary: "Windows 系统播放 → Android 扬声器",
+            title: "将电脑声音镜像到手机",
+            summary: "Windows 系统音频镜像 → Android 扬声器 · 电脑端仍可能播放",
             status: action_status(status.route_state),
             simulated: false,
             route_id: Some(controller.route_id().to_string()),
@@ -274,6 +274,8 @@ mod tests {
         let dto = action.dto(&lab.runtime).expect("blocked DTO");
         assert_eq!(dto.schema_version, QUICK_ACTION_SCHEMA_VERSION);
         assert_eq!(dto.id, AUDIO_SHARE_ACTION_ID);
+        assert_eq!(dto.title, "将电脑声音镜像到手机");
+        assert!(dto.summary.contains("非虚拟扬声器"));
         assert_eq!(dto.status, "blocked");
         assert!(!dto.simulated);
         assert!(dto.route_id.is_none());

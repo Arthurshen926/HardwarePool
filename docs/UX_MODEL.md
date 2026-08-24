@@ -53,8 +53,12 @@ UI distinguishes system Projection, system route/injection, standard API and
 Panel/Recorder fallbacks. It never claims a system-level device when only an
 application-local path exists.
 
+The initial Audio Share remote-speaker action is labeled as system-audio
+mirroring. It captures an existing Windows render endpoint, so the desktop may
+continue to play locally; it is not presented as a CapyIO-created virtual
+speaker or exclusive output route.
+
 ## Runtime ownership
 
 Closing or refreshing UI does not define the lifecycle of an active Node or
 mobile service. UI reads snapshots and submits intent through a narrow local API.
-
