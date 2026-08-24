@@ -21,6 +21,7 @@ tauri-build = { version = "2.6.2", features = [] }
 capyio-core = { path = "../../../crates/capyio-core" }
 capyio-data-plane = { path = "../../../crates/capyio-data-plane" }
 capyio-runtime = { path = "../../../crates/capyio-runtime" }
+capyio-sensor-server-adapter = { path = "../../../adapters/sensor-server" }
 capyio-testkit = { path = "../../../crates/capyio-testkit" }
 serde.workspace = true
 serde_json.workspace = true

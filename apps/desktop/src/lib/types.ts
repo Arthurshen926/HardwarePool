@@ -89,6 +89,23 @@ export interface UiImuFixture {
   recorderRouteState: "active";
 }
 
+export type LiveImuStatus = "idle" | "connecting" | "active" | "stopped" | "failed" | "unsupported";
+
+export interface UiLiveImu {
+  status: LiveImuStatus;
+  simulated: boolean;
+  endpoint: string | null;
+  profile: "capyio.motion.imu-samples/1";
+  streamEpoch: number;
+  sequence: number | null;
+  sourceTimestampNanos: number | null;
+  clockDomainId: string | null;
+  acceleration: UiVector3 | null;
+  angularVelocity: UiVector3 | null;
+  receivedSamples: number;
+  problem: string | null;
+}
+
 export interface UiSnapshot {
   backendMode: BackendMode;
   schemaVersion: 3;
@@ -105,4 +122,7 @@ export interface CapyIOApi {
   getSnapshot(): Promise<UiSnapshot>;
   setRoute(routeId: string, active: boolean): Promise<UiSnapshot>;
   resetDemo(): Promise<UiSnapshot>;
+  getLiveImu(): Promise<UiLiveImu>;
+  startLiveImu(ip: string, port: number): Promise<UiLiveImu>;
+  stopLiveImu(): Promise<UiLiveImu>;
 }

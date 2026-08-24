@@ -289,6 +289,43 @@ a:focus-visible {
   margin-top: 20px;
 }
 
+.imu-live {
+  border-color: rgba(20, 112, 89, 0.24);
+  background: linear-gradient(145deg, rgba(238, 250, 246, 0.94), rgba(255, 255, 255, 0.82));
+}
+
+.imu-live__controls {
+  display: grid;
+  grid-template-columns: minmax(220px, 1fr) 120px auto auto;
+  gap: 12px;
+  align-items: end;
+  margin-top: 22px;
+}
+
+.imu-live__controls label {
+  display: grid;
+  gap: 7px;
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.imu-live__controls input {
+  min-width: 0;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  color: var(--ink);
+  background: rgba(255, 255, 255, 0.86);
+  font: inherit;
+  font-size: 13px;
+}
+
+.imu-live__controls input:focus-visible {
+  outline: 3px solid rgba(25, 112, 91, 0.18);
+  border-color: var(--accent);
+}
+
 .imu-lab__header {
   display: flex;
   gap: 24px;
@@ -855,6 +892,10 @@ button:disabled {
   .hero-panel__summary,
   .capability-card__facts,
   .metric-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .imu-live__controls {
     grid-template-columns: 1fr;
   }
 

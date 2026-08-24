@@ -148,6 +148,14 @@ counts, zero silent sequence repair, a second clean connection after graceful
 close, and an explicit client failure when the phone service stops. Physical
 addresses, pairing codes and raw device identifiers are not committed.
 
+The authorized `CAPY-IMU-001B3A` desktop run additionally exercises the Tauri
+start/read/stop DTO boundary. Acceptance requires a visible typed failure, a
+later successful connection with changing numeric vectors and monotonically
+growing sample count, and a stopped state that retains the last snapshot. The
+desktop Rust physical test remains ignored by default and requires explicit
+`CAPYIO_LIVE_IMU_IP` and `CAPYIO_LIVE_IMU_PORT` environment variables. Normal CI
+does not require a phone or a reachable private endpoint.
+
 ## Data and timing quality
 
 Signal tests measure latency, clipping, gaps, discontinuities, loss/repeat and

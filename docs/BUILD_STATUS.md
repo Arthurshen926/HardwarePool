@@ -1,6 +1,6 @@
 # CapyIO Build Status
 
-> Updated: 2026-08-24 during `CAPY-IMU-001B0`.
+> Updated: 2026-08-24 during `CAPY-IMU-001B3A`.
 
 ## Verified baseline
 
@@ -128,6 +128,20 @@ client explicitly with code 4004. Exact bounded evidence and remaining limits
 are in `docs/CAPY_IMU_001B2_REPORT.md`. Full workspace format/check/Clippy, 96
 Rust tests and the remaining `cargo xtask ci` gates passed.
 
+## CAPY-IMU-001B3A Windows Tauri physical panel
+
+Complete as a bounded desktop-lab slice. Narrow Tauri commands now start, read
+and stop a host-owned SensorServer worker without exposing arbitrary networking
+to the WebView. The panel renders live acceleration and angular velocity plus
+epoch, sequence, clock and sample count, and visibly distinguishes idle,
+connecting, active, failed and stopped states.
+
+An authorized physical UI run first surfaced a real handshake timeout, then
+recovered after the phone service restarted, grew beyond 100 samples and
+stopped explicitly while retaining a 226-sample final snapshot. The physical
+endpoint is not committed. Exact evidence and the production-Runtime boundary
+are in `docs/CAPY_IMU_001B3A_REPORT.md`.
+
 ## Not built or tested
 
 - CapyIO-owned Android application/APK;
@@ -136,5 +150,8 @@ Rust tests and the remaining `cargo xtask ci` gates passed.
 - Windows virtual devices, driver, WDK or isolated-VM driver test;
 - production transport, pairing, encryption, live third-party Adapter transport
   or performance.
+
+The physical SensorServer lab transport is tested, but it is not production
+transport and is not yet owned by a long-lived Node Runtime Route.
 
 These absences are expected and must not be reported as working functionality.

@@ -1,6 +1,6 @@
 # CapyIO Requirements Traceability
 
-> Updated: 2026-08-24 for `CAPY-IMU-001B1`.
+> Updated: 2026-08-24 for `CAPY-IMU-001B3A`.
 >
 > Scope: the 84 normative Requirement IDs in `PRODUCT_REQUIREMENTS.md`.
 
@@ -70,7 +70,7 @@ hardware, networking, security or performance behavior has run.
 | `FR-PORT-001` | verified | Gate 2 | PortDirection enum and Route direction-rejection tests. |
 | `FR-PORT-002` | verified | Gate 2 | Port descriptor validation and protocol round trips cover Profile, formats, QoS, clock, availability and permission. |
 | `FR-PORT-003` | verified | Gate 2 | ProfileId is transport/platform-neutral and Core dependency validation guards the boundary. |
-| `FR-PORT-004` | verified | Gate 5 | IMU fixture and SensorServer pairing tests preserve envelope plus per-component timestamps, sequence, units, frame, accuracy and calibration. |
+| `FR-PORT-004` | verified | Gate 5 | IMU fixture, SensorServer pairing tests and the physical Tauri panel preserve envelope plus per-component timestamps, sequence, units, frame, accuracy and calibration. |
 | `FR-PORT-005` | verified | Gate 2 | Profile-major compatibility and unknown/zero protocol enum rejection tests. |
 | `FR-ROUTE-001` | verified | Gate 2 | Route constructor requires exactly one Source PortRef and one Sink PortRef. |
 | `FR-ROUTE-002` | verified | Gate 2 | Direction, Profile, format, QoS and interoperability rejection tests. |
@@ -107,7 +107,7 @@ hardware, networking, security or performance behavior has run.
 | `NFR-SEC-001` | planned | Gate 14 | Mutual authentication, encryption, replay defense and downgrade binding. |
 | `NFR-SEC-002` | planned | Gate 14 | Time-bound per-Capability/Route grant and immediate revoke tests. |
 | `NFR-SEC-003` | verified | Gate 1 | Architecture/driver boundary docs and offline Core/driver dependency rules. |
-| `NFR-SEC-004` | verified | Gate 2 | Narrow Tauri command surface/CSP and repository rule excluding shell/updater permissions. |
+| `NFR-SEC-004` | verified | Gate 2 | Narrow Tauri command surface/CSP and repository rule exclude shell/updater and arbitrary networking; the physical lab accepts only a typed IP literal and port. |
 | `NFR-SEC-005` | verified | Gate 1 | PRD, Security Model, Build Status and UI explicitly label the foundation insecure/mock. |
 | `NFR-STAB-001` | planned | Gate 8 | Real system-audio endpoint disconnect/restart evidence in an approved target. |
 | `NFR-STAB-002` | verified | Gate 3 | Bounded Runtime events, RPC messages/correlations, line readers and stderr retention tests. |

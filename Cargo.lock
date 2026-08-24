@@ -351,6 +351,7 @@ dependencies = [
  "capyio-core",
  "capyio-data-plane",
  "capyio-runtime",
+ "capyio-sensor-server-adapter",
  "capyio-testkit",
  "serde",
  "serde_json",

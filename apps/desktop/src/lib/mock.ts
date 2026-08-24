@@ -2,6 +2,7 @@ import type {
   CapyIOApi,
   RouteState,
   UiEvent,
+  UiLiveImu,
   UiPort,
   UiRoute,
   UiSnapshot,
@@ -132,10 +133,39 @@ export class BrowserMockCapyIOApi implements CapyIOApi {
     return structuredClone(this.snapshot);
   }
 
+  async getLiveImu(): Promise<UiLiveImu> {
+    return unsupportedLiveImu();
+  }
+
+  async startLiveImu(): Promise<UiLiveImu> {
+    throw new Error("Live IMU requires the Tauri desktop backend.");
+  }
+
+  async stopLiveImu(): Promise<UiLiveImu> {
+    return unsupportedLiveImu();
+  }
+
   private pushEvent(summary: string): void {
     const event: UiEvent = { sequence: this.nextSequence, summary };
     this.nextSequence += 1;
     this.snapshot.events.push(event);
     this.snapshot.events = this.snapshot.events.slice(-20);
   }
+}
+
+function unsupportedLiveImu(): UiLiveImu {
+  return {
+    status: "unsupported",
+    simulated: true,
+    endpoint: null,
+    profile: "capyio.motion.imu-samples/1",
+    streamEpoch: 0,
+    sequence: null,
+    sourceTimestampNanos: null,
+    clockDomainId: null,
+    acceleration: null,
+    angularVelocity: null,
+    receivedSamples: 0,
+    problem: "Browser Mock 不会访问真实网络或传感器。",
+  };
 }

@@ -1,7 +1,13 @@
 use std::{
+    net::IpAddr,
     str::FromStr,
-    sync::Mutex,
-    time::{SystemTime, UNIX_EPOCH},
+    sync::{
+        Arc, Mutex,
+        atomic::{AtomicBool, Ordering},
+        mpsc::{self, SyncSender},
+    },
+    thread::{self, JoinHandle},
+    time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
 
 use capyio_core::{
@@ -12,12 +18,86 @@ use capyio_data_plane::{
     BoundedFanout, BoundedJsonlRecorder, ImuSampleV1, NumericImuPanel, RecorderOutcome,
     parse_imu_fixture_jsonl,
 };
+use capyio_sensor_server_adapter::{
+    AssembleOutcome, SensorKind, SensorServerConnectionConfig, SensorServerEndpoint,
+    SensorServerImuAssembler, SensorServerReadOutcome, SensorServerReading,
+    SensorServerWebSocketClient,
+};
 use capyio_testkit::DemoLab;
 use serde::{Deserialize, Serialize};
 use tauri::State;
 
 struct AppState {
     lab: Mutex<DemoLab>,
+    live_imu: Arc<Mutex<UiLiveImu>>,
+    live_imu_controller: Mutex<Option<LiveImuController>>,
+}
+
+impl Drop for AppState {
+    fn drop(&mut self) {
+        let Ok(controller) = self.live_imu_controller.get_mut() else {
+            return;
+        };
+        if let Some(controller) = controller.take() {
+            controller.stop.store(true, Ordering::Release);
+            let _ = controller.worker.join();
+        }
+    }
+}
+
+struct LiveImuController {
+    stop: Arc<AtomicBool>,
+    worker: JoinHandle<()>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct StartLiveImuRequest {
+    ip: String,
+    port: u16,
+}
+
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct UiLiveImu {
+    status: &'static str,
+    simulated: bool,
+    endpoint: Option<String>,
+    profile: &'static str,
+    stream_epoch: u64,
+    sequence: Option<u64>,
+    source_timestamp_nanos: Option<u64>,
+    clock_domain_id: Option<String>,
+    acceleration: Option<UiVector3>,
+    angular_velocity: Option<UiVector3>,
+    received_samples: u64,
+    problem: Option<String>,
+}
+
+impl UiLiveImu {
+    fn idle() -> Self {
+        Self {
+            status: "idle",
+            simulated: false,
+            endpoint: None,
+            profile: "capyio.motion.imu-samples/1",
+            stream_epoch: 0,
+            sequence: None,
+            source_timestamp_nanos: None,
+            clock_domain_id: None,
+            acceleration: None,
+            angular_velocity: None,
+            received_samples: 0,
+            problem: None,
+        }
+    }
+}
+
+#[derive(Debug)]
+enum LiveWorkerEvent {
+    Connected(SensorKind),
+    Reading(SensorServerReading),
+    Failed { kind: SensorKind, detail: String },
 }
 
 #[derive(Debug, Deserialize)]
@@ -128,7 +208,7 @@ struct UiImuFixture {
     recorder_route_state: &'static str,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Clone, Debug, Serialize)]
 struct UiVector3 {
     x: f64,
     y: f64,
@@ -157,16 +237,259 @@ fn reset_demo(state: State<'_, AppState>) -> Result<UiSnapshot, String> {
     Ok(to_ui_snapshot(&lab))
 }
 
+#[tauri::command]
+fn get_live_imu(state: State<'_, AppState>) -> Result<UiLiveImu, String> {
+    state
+        .live_imu
+        .lock()
+        .map_err(|_| "live IMU state lock poisoned".to_owned())
+        .map(|snapshot| snapshot.clone())
+}
+
+#[tauri::command]
+fn start_live_imu(
+    request: StartLiveImuRequest,
+    state: State<'_, AppState>,
+) -> Result<UiLiveImu, String> {
+    let ip = request
+        .ip
+        .parse::<IpAddr>()
+        .map_err(|_| "live IMU endpoint must be an IP literal".to_owned())?;
+    let endpoint =
+        SensorServerEndpoint::new(ip, request.port).map_err(|error| error.to_string())?;
+    let mut controller = state
+        .live_imu_controller
+        .lock()
+        .map_err(|_| "live IMU controller lock poisoned".to_owned())?;
+    if controller
+        .as_ref()
+        .is_some_and(|controller| controller.worker.is_finished())
+    {
+        let finished = controller.take().expect("checked as present");
+        finished
+            .worker
+            .join()
+            .map_err(|_| "live IMU worker panicked".to_owned())?;
+    }
+    if controller.is_some() {
+        return Err("live IMU lab is already running".to_owned());
+    }
+    let epoch = {
+        let mut snapshot = state
+            .live_imu
+            .lock()
+            .map_err(|_| "live IMU state lock poisoned".to_owned())?;
+        let epoch = snapshot.stream_epoch.saturating_add(1).max(1);
+        *snapshot = UiLiveImu {
+            status: "connecting",
+            simulated: false,
+            endpoint: Some(endpoint.address().to_string()),
+            profile: "capyio.motion.imu-samples/1",
+            stream_epoch: epoch,
+            sequence: None,
+            source_timestamp_nanos: None,
+            clock_domain_id: None,
+            acceleration: None,
+            angular_velocity: None,
+            received_samples: 0,
+            problem: None,
+        };
+        epoch
+    };
+    let stop = Arc::new(AtomicBool::new(false));
+    let worker_stop = Arc::clone(&stop);
+    let shared = Arc::clone(&state.live_imu);
+    let worker = thread::spawn(move || run_live_imu(endpoint, epoch, &worker_stop, &shared));
+    *controller = Some(LiveImuController { stop, worker });
+    state
+        .live_imu
+        .lock()
+        .map_err(|_| "live IMU state lock poisoned".to_owned())
+        .map(|snapshot| snapshot.clone())
+}
+
+#[tauri::command]
+fn stop_live_imu(state: State<'_, AppState>) -> Result<UiLiveImu, String> {
+    let controller = state
+        .live_imu_controller
+        .lock()
+        .map_err(|_| "live IMU controller lock poisoned".to_owned())?
+        .take();
+    if let Some(controller) = controller {
+        controller.stop.store(true, Ordering::Release);
+        controller
+            .worker
+            .join()
+            .map_err(|_| "live IMU worker panicked".to_owned())?;
+    }
+    let mut snapshot = state
+        .live_imu
+        .lock()
+        .map_err(|_| "live IMU state lock poisoned".to_owned())?;
+    if snapshot.status != "failed" {
+        snapshot.status = "stopped";
+    }
+    Ok(snapshot.clone())
+}
+
+fn run_live_imu(
+    endpoint: SensorServerEndpoint,
+    epoch: u64,
+    stop: &Arc<AtomicBool>,
+    shared: &Arc<Mutex<UiLiveImu>>,
+) {
+    if let Err(problem) = run_live_imu_inner(endpoint, epoch, stop, shared) {
+        stop.store(true, Ordering::Release);
+        if let Ok(mut snapshot) = shared.lock() {
+            snapshot.status = "failed";
+            snapshot.problem = Some(problem);
+        }
+    } else if let Ok(mut snapshot) = shared.lock() {
+        snapshot.status = "stopped";
+    }
+}
+
+fn run_live_imu_inner(
+    endpoint: SensorServerEndpoint,
+    epoch: u64,
+    stop: &Arc<AtomicBool>,
+    shared: &Arc<Mutex<UiLiveImu>>,
+) -> Result<(), String> {
+    let config =
+        SensorServerConnectionConfig::new(Duration::from_secs(5), Duration::from_millis(500))
+            .map_err(|error| error.to_string())?;
+    let (sender, receiver) = mpsc::sync_channel(256);
+    let accelerometer = spawn_live_reader(
+        endpoint,
+        SensorKind::Accelerometer,
+        config,
+        sender.clone(),
+        Arc::clone(stop),
+    );
+    match receiver
+        .recv_timeout(Duration::from_secs(10))
+        .map_err(|error| format!("accelerometer connection timed out: {error}"))?
+    {
+        LiveWorkerEvent::Connected(SensorKind::Accelerometer) => {}
+        LiveWorkerEvent::Failed { kind, detail } => {
+            return Err(format!("{kind:?} reader failed: {detail}"));
+        }
+        event => return Err(format!("unexpected initial live IMU event: {event:?}")),
+    }
+    let gyroscope = spawn_live_reader(
+        endpoint,
+        SensorKind::Gyroscope,
+        config,
+        sender,
+        Arc::clone(stop),
+    );
+    let mut assembler =
+        SensorServerImuAssembler::new(capyio_core::StreamId::new(), epoch, 1_000_000_000, 0)
+            .map_err(|error| error.to_string())?;
+    let started = Instant::now();
+    while !stop.load(Ordering::Acquire) {
+        let event = match receiver.recv_timeout(Duration::from_secs(1)) {
+            Ok(event) => event,
+            Err(mpsc::RecvTimeoutError::Timeout) => continue,
+            Err(error) => return Err(format!("live IMU event channel failed: {error}")),
+        };
+        match event {
+            LiveWorkerEvent::Connected(SensorKind::Gyroscope) => {
+                shared
+                    .lock()
+                    .map_err(|_| "live IMU state lock poisoned".to_owned())?
+                    .status = "active";
+            }
+            LiveWorkerEvent::Connected(_) => {}
+            LiveWorkerEvent::Reading(reading) => {
+                let receive_timestamp_nanos = u64::try_from(started.elapsed().as_nanos())
+                    .unwrap_or(u64::MAX)
+                    .saturating_add(1);
+                if let AssembleOutcome::Emitted { envelope, .. } = assembler
+                    .ingest(reading, receive_timestamp_nanos)
+                    .map_err(|error| error.to_string())?
+                {
+                    let mut snapshot = shared
+                        .lock()
+                        .map_err(|_| "live IMU state lock poisoned".to_owned())?;
+                    snapshot.sequence = Some(envelope.sequence);
+                    snapshot.source_timestamp_nanos = Some(envelope.source_timestamp_nanos);
+                    snapshot.clock_domain_id = Some(envelope.clock_domain_id.clone());
+                    snapshot.acceleration = Some(vector3(envelope.payload.acceleration));
+                    snapshot.angular_velocity = Some(vector3(envelope.payload.angular_velocity));
+                    snapshot.received_samples = snapshot.received_samples.saturating_add(1);
+                }
+            }
+            LiveWorkerEvent::Failed { kind, detail } => {
+                return Err(format!("{kind:?} reader failed: {detail}"));
+            }
+        }
+    }
+    stop.store(true, Ordering::Release);
+    accelerometer
+        .join()
+        .map_err(|_| "accelerometer reader thread panicked".to_owned())?;
+    gyroscope
+        .join()
+        .map_err(|_| "gyroscope reader thread panicked".to_owned())?;
+    Ok(())
+}
+
+fn spawn_live_reader(
+    endpoint: SensorServerEndpoint,
+    kind: SensorKind,
+    config: SensorServerConnectionConfig,
+    sender: SyncSender<LiveWorkerEvent>,
+    stop: Arc<AtomicBool>,
+) -> JoinHandle<()> {
+    thread::spawn(move || {
+        if let Err(detail) = read_live_sensor(endpoint, kind, config, &sender, &stop) {
+            let _ = sender.try_send(LiveWorkerEvent::Failed { kind, detail });
+        }
+    })
+}
+
+fn read_live_sensor(
+    endpoint: SensorServerEndpoint,
+    kind: SensorKind,
+    config: SensorServerConnectionConfig,
+    sender: &SyncSender<LiveWorkerEvent>,
+    stop: &AtomicBool,
+) -> Result<(), String> {
+    let mut client = SensorServerWebSocketClient::connect(endpoint, kind, config)
+        .map_err(|error| error.to_string())?;
+    sender
+        .try_send(LiveWorkerEvent::Connected(kind))
+        .map_err(|error| error.to_string())?;
+    while !stop.load(Ordering::Acquire) {
+        match client.read().map_err(|error| error.to_string())? {
+            SensorServerReadOutcome::Reading(reading) => sender
+                .try_send(LiveWorkerEvent::Reading(reading))
+                .map_err(|error| error.to_string())?,
+            SensorServerReadOutcome::TimedOut | SensorServerReadOutcome::ControlHandled(_) => {}
+            SensorServerReadOutcome::Closed { code } => {
+                return Err(format!("connection closed with code {code:?}"));
+            }
+        }
+    }
+    client.close().map_err(|error| error.to_string())
+}
+
 pub fn run() {
     let lab = DemoLab::new().expect("valid deterministic demo lab");
     tauri::Builder::default()
         .manage(AppState {
             lab: Mutex::new(lab),
+            live_imu: Arc::new(Mutex::new(UiLiveImu::idle())),
+            live_imu_controller: Mutex::new(None),
         })
         .invoke_handler(tauri::generate_handler![
             get_snapshot,
             set_route,
-            reset_demo
+            reset_demo,
+            get_live_imu,
+            start_live_imu,
+            stop_live_imu
         ])
         .run(tauri::generate_context!())
         .expect("run CapyIO Tauri application");
@@ -227,8 +550,7 @@ fn to_ui_snapshot(lab: &DemoLab) -> UiSnapshot {
         adapters,
         events,
         warnings: vec![
-            "Tauri Demo 使用确定性 Rust Runtime；没有访问真实摄像头、麦克风、传感器、网络或驱动。"
-                .to_owned(),
+            "Tauri Demo 的 Route/授权/指标仍为确定性数据；只有显式启动的 Physical IMU Lab 会访问一个经校验的 IP 端点。".to_owned(),
             "四条 Route 的授权、指标与系统投影状态均为模拟数据。".to_owned(),
         ],
         imu_fixture: build_imu_fixture(),
@@ -438,4 +760,59 @@ fn unix_time_ms() -> Result<u64, String> {
         .duration_since(UNIX_EPOCH)
         .map_err(|_| "system clock is before UNIX epoch".to_owned())?;
     u64::try_from(elapsed.as_millis()).map_err(|_| "system time is out of range".to_owned())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn idle_live_imu_dto_is_explicitly_real_but_inactive() {
+        let snapshot = UiLiveImu::idle();
+        assert_eq!(snapshot.status, "idle");
+        assert!(!snapshot.simulated);
+        assert_eq!(snapshot.stream_epoch, 0);
+        assert!(snapshot.acceleration.is_none());
+        assert!(snapshot.problem.is_none());
+    }
+
+    #[test]
+    #[ignore = "requires explicitly configured physical SensorServer lab"]
+    fn physical_live_imu_worker_updates_the_tauri_dto_and_stops_cleanly() {
+        let ip = std::env::var("CAPYIO_LIVE_IMU_IP")
+            .expect("CAPYIO_LIVE_IMU_IP must name the authorized physical lab")
+            .parse::<IpAddr>()
+            .expect("CAPYIO_LIVE_IMU_IP must be an IP literal");
+        let port = std::env::var("CAPYIO_LIVE_IMU_PORT")
+            .expect("CAPYIO_LIVE_IMU_PORT must name the authorized physical lab")
+            .parse::<u16>()
+            .expect("CAPYIO_LIVE_IMU_PORT must be a valid port");
+        let endpoint = SensorServerEndpoint::new(ip, port).expect("valid physical endpoint");
+        let stop = Arc::new(AtomicBool::new(false));
+        let shared = Arc::new(Mutex::new(UiLiveImu::idle()));
+        shared.lock().expect("state lock").stream_epoch = 1;
+        let worker_stop = Arc::clone(&stop);
+        let worker_shared = Arc::clone(&shared);
+        let worker = thread::spawn(move || run_live_imu(endpoint, 1, &worker_stop, &worker_shared));
+        let deadline = Instant::now() + Duration::from_secs(10);
+        loop {
+            let snapshot = shared.lock().expect("state lock").clone();
+            if snapshot.received_samples >= 4 {
+                assert_eq!(snapshot.status, "active");
+                assert!(snapshot.acceleration.is_some());
+                assert!(snapshot.angular_velocity.is_some());
+                assert!(snapshot.problem.is_none());
+                break;
+            }
+            assert_ne!(snapshot.status, "failed", "{:?}", snapshot.problem);
+            assert!(
+                Instant::now() < deadline,
+                "physical DTO did not receive four samples"
+            );
+            thread::sleep(Duration::from_millis(100));
+        }
+        stop.store(true, Ordering::Release);
+        worker.join().expect("live worker joins");
+        assert_eq!(shared.lock().expect("state lock").status, "stopped");
+    }
 }

@@ -1,7 +1,7 @@
 import { invoke } from "@tauri-apps/api/core";
 
 import { BrowserMockCapyIOApi } from "./mock";
-import type { CapyIOApi, UiSnapshot } from "./types";
+import type { CapyIOApi, UiLiveImu, UiSnapshot } from "./types";
 
 class TauriCapyIOApi implements CapyIOApi {
   getSnapshot(): Promise<UiSnapshot> {
@@ -16,6 +16,18 @@ class TauriCapyIOApi implements CapyIOApi {
 
   resetDemo(): Promise<UiSnapshot> {
     return invoke<UiSnapshot>("reset_demo");
+  }
+
+  getLiveImu(): Promise<UiLiveImu> {
+    return invoke<UiLiveImu>("get_live_imu");
+  }
+
+  startLiveImu(ip: string, port: number): Promise<UiLiveImu> {
+    return invoke<UiLiveImu>("start_live_imu", { request: { ip, port } });
+  }
+
+  stopLiveImu(): Promise<UiLiveImu> {
+    return invoke<UiLiveImu>("stop_live_imu");
   }
 }
 
