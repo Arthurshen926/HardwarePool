@@ -32,6 +32,13 @@ planned_integrations:
       transport: WebSocket
       message_format: bounded JSON
       documented_endpoint: /sensor/connect?type=<android-sensor-string-type>
+    client_dependency:
+      name: tungstenite
+      version: 0.30.0
+      license: MIT OR Apache-2.0
+      enabled_features: [handshake]
+      disabled_features: [default, native-tls, rustls, url]
+      upstream_repository: https://github.com/snapview/tungstenite-rs
     distribution_note: >-
       CapyIO does not vendor, link, repackage or distribute SensorServer in this
       slice. A user-installed unmodified app is an external GPL-3.0-only

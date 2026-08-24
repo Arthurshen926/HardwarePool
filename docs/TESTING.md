@@ -87,6 +87,22 @@ timing claim.
 These tests use recorded synthetic JSON and no WebSocket implementation, phone,
 APK or network connection.
 
+## SensorServer WebSocket contract tests
+
+- endpoint construction accepts only typed IP addresses, non-zero ports and
+  fixed per-sensor paths;
+- a loopback RFC 6455 server proves exact text-message mapping;
+- ping/pong, close code and socket timeout have distinct outcomes;
+- malformed JSON, binary data and messages above 4 KiB do not reach the IMU
+  consumer;
+- an HTTP upgrade response exceeding Tungstenite's 64 KiB handshake attack
+  limit fails the connection;
+- dependency validation pins Tungstenite 0.30.0 to `handshake` only and rejects
+  async/TLS additions in this slice.
+
+These loopback tests open only an ephemeral local port. They do not connect to
+the phone, install an APK or claim production authentication.
+
 ## Deterministic integration tests
 
 Fixtures use HP OmniBook Ultra Flip 14 and vivo X200 Pro mini with no environment

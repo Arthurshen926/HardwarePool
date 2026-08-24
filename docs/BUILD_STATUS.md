@@ -97,6 +97,25 @@ manifests, Adapter Smoke, fixture replay, frontend typecheck/build and
 `cargo xtask ci` passed. Exact evidence is in
 `docs/CAPY_IMU_001B0_REPORT.md`.
 
+## CAPY-IMU-001B1 bounded WebSocket client
+
+The active slice adds the first concrete local-lab transport inside the
+SensorServer Adapter:
+
+- user-approved Tungstenite 0.30.0, handshake-only, with no Tokio or TLS stack;
+- IP-literal endpoint and fixed Android sensor paths;
+- TCP connect/read/write deadlines and 4 KiB frame/message bounds;
+- typed text/control/close/timeout/error outcomes;
+- loopback mock-server tests for success and abnormal frames.
+
+Complete locally. Seven WebSocket loopback tests cover the fixed endpoint,
+valid text, ping/pong, close, timeout, malformed/binary/oversized messages and
+oversized handshake behavior. Together with the nine parser/pairing tests, the
+SensorServer Adapter has 16 contract tests. Full workspace format/check/Clippy,
+95 Rust tests, repository validation, manifests, Adapter Smoke, fixture replay,
+frontend typecheck/build and `cargo xtask ci` passed. Exact evidence is in
+`docs/CAPY_IMU_001B1_REPORT.md`.
+
 ## Not built or tested
 
 - Android application/APK or live phone payload path;

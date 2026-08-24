@@ -1,8 +1,10 @@
 # SensorServer protocol Adapter
 
-`CAPY-IMU-001B0` implements only the bounded protocol-message parser and the
+`CAPY-IMU-001B0` implements the bounded protocol-message parser and the
 accelerometer/gyroscope pairing policy for the first real IMU Source Adapter.
-It does not yet open a socket or access a phone.
+`CAPY-IMU-001B1` adds a synchronous worker-owned WebSocket client with an
+IP-literal endpoint, fixed sensor paths, connect/read/write deadlines and 4 KiB
+frame/message limits.
 
 The upstream external service is
 [UmerCodez/SensorServer](https://github.com/UmerCodez/SensorServer), pinned for
@@ -17,6 +19,12 @@ Android string sensor type as trusted configuration, bounds every JSON message,
 requires exactly three finite axes, preserves Android elapsed-realtime source
 timestamps and rejects timestamp regression.
 
-Network/WebSocket connection, authentication, reconnect, APK installation and
-physical-device claims remain follow-up work. Plain `ws://` is permitted only
-in an explicitly labeled trusted local lab and is not production security.
+The client uses `tungstenite` 0.30.0 with only its handshake feature; no async
+executor or TLS stack is enabled. Local mock-server tests cover valid text,
+malformed/binary/oversized data, ping/pong, close, timeout and oversized
+handshake behavior.
+
+Physical SensorServer connection, automatic reconnect/epoch orchestration, APK
+installation and live data claims remain follow-up work. Plain `ws://` is
+permitted only in an explicitly labeled trusted local lab and is not production
+security.

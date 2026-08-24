@@ -13,3 +13,4 @@ capyio-data-plane = { path = "../../crates/capyio-data-plane" }
 serde.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true
+tungstenite.workspace = true

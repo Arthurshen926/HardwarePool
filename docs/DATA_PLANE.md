@@ -46,8 +46,15 @@ The SensorServer protocol Adapter enforces a 4 KiB message bound before JSON
 decode, exactly three finite axes, known Android accuracy values, positive and
 strictly increasing per-sensor timestamps, a fixed pairing-skew limit and
 one-time consumption of each required component. Replaced unpaired readings and
-excessive skew are explicit outcomes. This is mapping behavior only; it opens no
+excessive skew are explicit outcomes. This parser/pairing behavior opens no
 socket and makes no reconnect, authentication or physical-timing claim.
+
+The next Adapter layer uses a synchronous Tungstenite worker connection. It
+accepts only IP-literal local-lab endpoints and fixed SensorServer paths, applies
+connect/read/write deadlines, limits frames/messages to 4 KiB and keeps JSON
+mapping outside the WebSocket implementation. Ping/pong/close never become IMU
+payloads. A connection timeout is retryable by caller policy; close/capacity and
+other terminal errors require a fresh client and later a new stream epoch.
 
 ## 4. Audio frame semantics
 

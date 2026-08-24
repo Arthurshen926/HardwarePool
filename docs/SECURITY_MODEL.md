@@ -42,6 +42,11 @@ explicitly approved trusted lab. A Tailscale address can protect overlay transit
 but does not supply CapyIO Capability authorization, application identity,
 message replay protection or downgrade binding.
 
+The SensorServer lab client rejects DNS names, arbitrary paths, credentials,
+redirects, binary sensor payloads and frames/messages above 4 KiB. TCP and
+WebSocket operations have deadlines. These controls limit attack surface but do
+not authenticate the external app or authorize a Capability.
+
 ### Adapter process abuse
 
 Versioned manifests, allow-listed entrypoints, bounded NDJSON, correlation

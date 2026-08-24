@@ -1,6 +1,6 @@
 # CapyIO Requirements Traceability
 
-> Updated: 2026-08-24 for `CAPY-IMU-001B0`.
+> Updated: 2026-08-24 for `CAPY-IMU-001B1`.
 >
 > Scope: the 84 normative Requirement IDs in `PRODUCT_REQUIREMENTS.md`.
 
@@ -118,7 +118,7 @@ hardware, networking, security or performance behavior has run.
 | `NFR-RT-002` | planned | Gate 7 | Fixed-capacity callback-path data structures and overflow tests. |
 | `NFR-RT-003` | planned | Gate 7 | Clock-domain timestamps and user-mode recovery/resampling evidence. |
 | `NFR-MAINT-001` | verified | Gate 3 | PR #10 passed exact-head Windows/Linux/macOS Rust/Adapter, UI, repository and Windows Tauri hosted checks. |
-| `NFR-MAINT-002` | verified | Gate 3 | Cargo dependency boundaries, unit tests and `scripts/validate_repository.py`. |
+| `NFR-MAINT-002` | verified | Gate 3 | Cargo dependency boundaries and validator rules include the minimal SensorServer Tungstenite feature set. |
 | `NFR-MAINT-003` | verified | Gate 3 | ADRs, compatibility documentation and protocol/Core tests cover foundation public changes. |
 | `NFR-MAINT-004` | verified | Gate 5 | Validator-checked SensorServer repository, pinned commit, GPL-3.0-only external-service mode, empty imported paths and distribution risk record. |
 | `NFR-MAINT-005` | verified | Gate 1 | `xtask` commands are non-privileged; AGENTS and offline rules exclude deployment operations. |

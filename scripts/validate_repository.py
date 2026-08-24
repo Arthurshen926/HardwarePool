@@ -491,11 +491,19 @@ def validate_sensor_server_provenance() -> None:
     manifest = (ROOT / "adapters/sensor-server/Cargo.toml").read_text(
         encoding="utf-8"
     ).lower()
-    forbidden_transport = ["tungstenite", "tokio", "websocket", "reqwest"]
+    required_dependency = (
+        'tungstenite.workspace = true' in manifest
+        and 'tungstenite = { version = "0.30.0", default-features = false, '
+        'features = ["handshake"] }'
+        in (ROOT / "Cargo.toml").read_text(encoding="utf-8").lower()
+    )
+    if not required_dependency:
+        fail("SensorServer must use the reviewed minimal tungstenite 0.30.0 dependency")
+    forbidden_transport = ["tokio", "native-tls", "rustls", "reqwest"]
     present = [name for name in forbidden_transport if name in manifest]
     if present:
         fail(
-            "CAPY-IMU-001B0 parser crate contains an unreviewed transport dependency: "
+            "SensorServer Adapter contains an unreviewed transport/TLS dependency: "
             f"{present}"
         )
 
