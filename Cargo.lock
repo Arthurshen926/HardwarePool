@@ -356,6 +356,7 @@ dependencies = [
 name = "capyio-desktop"
 version = "0.1.0"
 dependencies = [
+ "capyio-audio-share-adapter",
  "capyio-core",
  "capyio-data-plane",
  "capyio-runtime",

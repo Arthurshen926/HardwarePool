@@ -79,3 +79,8 @@ plane.
   established rows owned by the supervised process and explicit port; no
   addresses or log prose enter the result. This proves receiver TCP transport,
   not negotiation, UDP PCM, `AudioTrack` or audibility.
+- `CAPY-AUDIO-001A2B`: complete locally. A desktop composition controller binds
+  the process boundary to one Runtime-owned `AdapterManaged` Route, gates
+  activation on three consecutive receiver samples, reports receiver/process
+  failures as typed `Offline` Problems, advances explicit retry epochs and
+  preserves unrelated active IMU Route state.

@@ -154,6 +154,12 @@ Dependency rules:
 - Its initial Windows host may observe process-owned established TCP state via
   IP Helper. That platform signal is transport presence only and never imports
   peer addresses, Windows structs or lifecycle decisions into Core.
+- The desktop composition layer maps that bounded process signal onto one
+  Runtime-owned `AdapterManaged` Route. Consecutive receiver observations are
+  required before activation; receiver loss and child exit submit typed
+  `Problem`/`Offline` transitions. The polling cadence and retry decision remain
+  explicit host policy, and unrelated Routes are never mutated as a side
+  effect.
 - Testkit is never a production dependency of Core/Protocol/Runtime/Adapter SDK.
 - Drivers communicate through minimal validated contracts, never Rust memory
   layout or network/wire messages.

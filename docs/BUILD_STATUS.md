@@ -180,12 +180,12 @@ started a second peer. Android `AudioFlinger` reported a matching app-owned
 `AudioTrack` with frames written. No person was beside the phone, so subjective
 audibility/quality is not claimed.
 
-The repository now contains only CapyIO-authored configuration and probe code:
+The repository contains only CapyIO-authored configuration, probe, supervision
+and Runtime-composition code:
 explicit IP/port/endpoint/PCM arguments, direct no-shell execution, bounded
-stdout/stderr/deadlines and strict v0.3.4 endpoint parsing. Seven default tests
-and one ignored real-CLI probe pass. The server supervisor, Runtime speaker
-Route, disconnect Problem/retry epoch and generic Quick Action remain active
-work; no upstream binary or APK is committed or distributed.
+stdout/stderr/deadlines and strict v0.3.4 endpoint parsing. No upstream binary
+or APK is committed or distributed. Generic Quick Action exposure and renewed
+authorized physical playback/disconnect evidence remain active work.
 
 `CAPY-AUDIO-001A1` additionally implements direct child startup, explicit TCP
 listener readiness, bounded output draining, typed early exit/startup timeout,
@@ -193,11 +193,22 @@ polling, idempotent stop and synchronous process reaping. Three fixture-backed
 supervisor tests pass. An ignored real-CLI run also started the verified release
 on loopback, observed it running, stopped it and confirmed zero remaining
 listeners/processes. This is server-process evidence only: upstream v0.3.4 has
-no machine-readable Android peer state, so receiver loss is not yet a Runtime
-Problem and human logs are not used as lifecycle authority.
+no machine-readable Android peer state, so this slice did not infer receiver
+loss and human logs are not used as lifecycle authority. The later `001A2A/B`
+slices add owner-scoped transport observation and Runtime mapping.
 
 `CAPY-AUDIO-001A2A` adds a Windows-only, bounded `GetExtendedTcpTable` query.
 The test proves readiness self-connect is excluded, an established process-owned
 peer is detected, disconnect clears presence and stopped supervision reports
 not running. The result contains a count only and is deliberately weaker than
 protocol negotiation, UDP delivery or audible playback.
+
+`CAPY-AUDIO-001A2B` binds the supervised process boundary to one real
+Runtime-owned `AdapterManaged` Route. Three consecutive established receiver
+samples are required for activation; an absence resets the starting counter,
+and loss after activation, process exit or process-start failure creates a
+stable Route-related Problem and `Offline`. Explicit retry advances the Route
+epoch, explicit stop terminates the Route/process boundary, and tests prove an
+active IMU Route is unchanged by audio failure. The controller is not yet wired
+to a desktop Quick Action, and TCP presence remains weaker than playback
+health.

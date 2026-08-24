@@ -142,6 +142,14 @@ unknown/not-running. The test filters by PID and port and never asserts or
 retains peer addresses. This is transport-presence evidence, not Audio Share
 negotiation or playback evidence.
 
+Hardware-free desktop composition tests bind a fake process boundary to a real
+`NodeRuntime` `AdapterManaged` Route. They require three consecutive established
+receiver samples before `Active`, reset the counter on an intervening absence,
+map receiver loss, child exit and process-start failure to typed Route Problems,
+verify retry advances the epoch, and prove that audio failure leaves an already
+active IMU Route unchanged. The fake proves orchestration only; the adapter
+fixture tests remain the evidence for real child/TCP observation behavior.
+
 ## Sidecar smoke test
 
 Adapter Host launches repository-built mock binaries, performs initialize,

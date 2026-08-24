@@ -1,0 +1,710 @@
+use std::{
+    collections::{BTreeMap, BTreeSet},
+    str::FromStr,
+};
+
+use capyio_audio_share_adapter::{AudioShareSupervisor, ReceiverTcpPresence, SupervisorStatus};
+use capyio_core::{
+    AdapterDeploymentMode, AdapterHealth, AdapterInstanceDescriptor, AdapterInstanceId,
+    AdapterState, Availability, CapabilityClass, CapabilityDescriptor, FormatDescriptor,
+    InteroperabilityMode, NodeId, PermissionRequirement, PortDescriptor, PortDirection, PortRef,
+    Problem, ProblemCategory, ProblemId, ProblemSeverity, ProfileId, QosMode, RouteBackend,
+    RouteId, RouteState, SessionId,
+};
+use capyio_runtime::NodeRuntime;
+use capyio_testkit::{ANDROID_NODE_ID, WINDOWS_NODE_ID};
+
+const WINDOWS_ADAPTER_ID: &str = "00000000-0000-4000-8000-00000000c011";
+const ANDROID_ADAPTER_ID: &str = "00000000-0000-4000-8000-00000000c021";
+const WINDOWS_CAPABILITY_ID: &str = "00000000-0000-4000-8000-00000000c101";
+const ANDROID_CAPABILITY_ID: &str = "00000000-0000-4000-8000-00000000c201";
+const WINDOWS_PORT_ID: &str = "00000000-0000-4000-8000-00000000c111";
+const ANDROID_PORT_ID: &str = "00000000-0000-4000-8000-00000000c211";
+const ROUTE_ID: &str = "00000000-0000-4000-8000-00000000c911";
+const AUDIO_FORMAT: &str = "pcm-s16le-48000-stereo";
+
+pub const DEFAULT_STABLE_RECEIVER_POLLS: u8 = 3;
+
+pub trait AudioShareProcessBoundary {
+    fn start(&mut self) -> Result<(), String>;
+    fn status(&mut self) -> Result<SupervisorStatus, String>;
+    fn receiver_presence(&mut self) -> Result<ReceiverTcpPresence, String>;
+    fn stop(&mut self) -> Result<(), String>;
+}
+
+impl AudioShareProcessBoundary for AudioShareSupervisor {
+    fn start(&mut self) -> Result<(), String> {
+        AudioShareSupervisor::start(self)
+            .map(|_| ())
+            .map_err(|error| error.to_string())
+    }
+
+    fn status(&mut self) -> Result<SupervisorStatus, String> {
+        AudioShareSupervisor::status(self).map_err(|error| error.to_string())
+    }
+
+    fn receiver_presence(&mut self) -> Result<ReceiverTcpPresence, String> {
+        AudioShareSupervisor::receiver_tcp_presence(self).map_err(|error| error.to_string())
+    }
+
+    fn stop(&mut self) -> Result<(), String> {
+        AudioShareSupervisor::stop(self)
+            .map(|_| ())
+            .map_err(|error| error.to_string())
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct AudioShareRouteStatus {
+    pub route_state: RouteState,
+    pub route_epoch: u64,
+    pub stable_receiver_polls: u8,
+}
+
+pub struct AudioShareRouteController<P> {
+    process: P,
+    route: AudioShareRoute,
+    required_receiver_polls: u8,
+    stable_receiver_polls: u8,
+}
+
+impl<P: AudioShareProcessBoundary> AudioShareRouteController<P> {
+    pub fn install(
+        runtime: &mut NodeRuntime,
+        session_id: SessionId,
+        process: P,
+        required_receiver_polls: u8,
+    ) -> Result<Self, String> {
+        if required_receiver_polls == 0 {
+            return Err("stable receiver poll threshold must be positive".to_owned());
+        }
+        Ok(Self {
+            process,
+            route: AudioShareRoute::install(runtime, session_id)?,
+            required_receiver_polls,
+            stable_receiver_polls: 0,
+        })
+    }
+
+    pub fn start(&mut self, runtime: &mut NodeRuntime, now_ms: u64) -> Result<u64, String> {
+        let epoch = self.route.begin_start(runtime, now_ms)?;
+        self.stable_receiver_polls = 0;
+        if !matches!(self.process.status(), Ok(SupervisorStatus::Running { .. }))
+            && let Err(detail) = self.process.start()
+        {
+            self.route.report_offline(
+                runtime,
+                "CAPY.AUDIO_SHARE.PROCESS_START_FAILED",
+                "Audio Share could not start",
+                detail.clone(),
+            )?;
+            return Err(format!("Audio Share process start failed: {detail}"));
+        }
+        Ok(epoch)
+    }
+
+    pub fn poll(&mut self, runtime: &mut NodeRuntime) -> Result<AudioShareRouteStatus, String> {
+        let route_state = self.route.state(runtime)?;
+        if !matches!(route_state, RouteState::Starting | RouteState::Active) {
+            return self.status(runtime);
+        }
+
+        match self.process.status() {
+            Ok(SupervisorStatus::Running { .. }) => self.poll_running(runtime)?,
+            Ok(SupervisorStatus::Exited(report)) => {
+                self.stable_receiver_polls = 0;
+                self.route.report_offline(
+                    runtime,
+                    "CAPY.AUDIO_SHARE.PROCESS_EXITED",
+                    "Audio Share stopped unexpectedly",
+                    format!("Audio Share exited with code {:?}", report.exit_code),
+                )?;
+            }
+            Ok(SupervisorStatus::Stopped) => {
+                self.stable_receiver_polls = 0;
+                self.route.report_offline(
+                    runtime,
+                    "CAPY.AUDIO_SHARE.PROCESS_STOPPED",
+                    "Audio Share is not running",
+                    "the supervised process is stopped".to_owned(),
+                )?;
+            }
+            Err(detail) => {
+                self.stable_receiver_polls = 0;
+                self.route.report_offline(
+                    runtime,
+                    "CAPY.AUDIO_SHARE.PROCESS_STATUS_FAILED",
+                    "Audio Share process status is unavailable",
+                    detail,
+                )?;
+            }
+        }
+        self.status(runtime)
+    }
+
+    pub fn stop(&mut self, runtime: &mut NodeRuntime) -> Result<(), String> {
+        let process_result = self.process.stop();
+        self.stable_receiver_polls = 0;
+        self.route.stop(runtime)?;
+        process_result
+    }
+
+    pub fn status(&self, runtime: &NodeRuntime) -> Result<AudioShareRouteStatus, String> {
+        Ok(AudioShareRouteStatus {
+            route_state: self.route.state(runtime)?,
+            route_epoch: self.route.epoch(runtime)?,
+            stable_receiver_polls: self.stable_receiver_polls,
+        })
+    }
+
+    pub const fn route_id(&self) -> RouteId {
+        self.route.route_id
+    }
+
+    fn poll_running(&mut self, runtime: &mut NodeRuntime) -> Result<(), String> {
+        match self.process.receiver_presence() {
+            Ok(ReceiverTcpPresence::Established { connection_count }) if connection_count > 0 => {
+                self.stable_receiver_polls = self
+                    .stable_receiver_polls
+                    .saturating_add(1)
+                    .min(self.required_receiver_polls);
+                if self.stable_receiver_polls == self.required_receiver_polls
+                    && self.route.state(runtime)? == RouteState::Starting
+                {
+                    self.route.activate(runtime)?;
+                }
+            }
+            Ok(ReceiverTcpPresence::Disconnected) => {
+                self.receiver_absent(runtime, "the receiver TCP connection is absent")?;
+            }
+            Ok(ReceiverTcpPresence::SupervisorNotRunning) => {
+                self.receiver_absent(runtime, "the supervisor stopped during receiver polling")?;
+            }
+            Ok(ReceiverTcpPresence::UnsupportedPlatform) => {
+                self.stable_receiver_polls = 0;
+                self.route.report_offline(
+                    runtime,
+                    "CAPY.AUDIO_SHARE.RECEIVER_OBSERVATION_UNSUPPORTED",
+                    "Audio Share receiver observation is unsupported",
+                    "the current platform cannot query owner-scoped TCP state".to_owned(),
+                )?;
+            }
+            Err(detail) => {
+                self.stable_receiver_polls = 0;
+                self.route.report_offline(
+                    runtime,
+                    "CAPY.AUDIO_SHARE.RECEIVER_OBSERVATION_FAILED",
+                    "Audio Share receiver observation failed",
+                    detail,
+                )?;
+            }
+            Ok(ReceiverTcpPresence::Established { .. }) => {
+                self.receiver_absent(runtime, "the receiver connection count is zero")?;
+            }
+        }
+        Ok(())
+    }
+
+    fn receiver_absent(&mut self, runtime: &mut NodeRuntime, detail: &str) -> Result<(), String> {
+        self.stable_receiver_polls = 0;
+        if self.route.state(runtime)? == RouteState::Active {
+            self.route.report_offline(
+                runtime,
+                "CAPY.AUDIO_SHARE.RECEIVER_TCP_LOST",
+                "The Audio Share receiver disconnected",
+                detail.to_owned(),
+            )?;
+        }
+        Ok(())
+    }
+}
+
+#[derive(Clone, Copy)]
+struct AudioShareRoute {
+    route_id: RouteId,
+    android_node_id: NodeId,
+    android_adapter_id: AdapterInstanceId,
+}
+
+impl AudioShareRoute {
+    fn install(runtime: &mut NodeRuntime, session_id: SessionId) -> Result<Self, String> {
+        let windows_node_id = parse_id(WINDOWS_NODE_ID)?;
+        let android_node_id = parse_id(ANDROID_NODE_ID)?;
+        let windows_adapter_id = parse_id(WINDOWS_ADAPTER_ID)?;
+        let android_adapter_id = parse_id(ANDROID_ADAPTER_ID)?;
+        runtime
+            .register_adapter_catalog(
+                windows_node_id,
+                adapter(
+                    windows_adapter_id,
+                    "capyio.audio-share.windows",
+                    "Audio Share Windows Server",
+                ),
+                vec![capability(CapabilitySpec {
+                    adapter_id: windows_adapter_id,
+                    capability_id: WINDOWS_CAPABILITY_ID,
+                    capability_name: "Windows System Audio for Audio Share",
+                    class: CapabilityClass::Custom("system_audio_capture".to_owned()),
+                    port_id: WINDOWS_PORT_ID,
+                    port_name: "Audio Share PCM Source",
+                    direction: PortDirection::Source,
+                })?],
+            )
+            .map_err(|error| error.to_string())?;
+        runtime
+            .register_adapter_catalog(
+                android_node_id,
+                adapter(
+                    android_adapter_id,
+                    "capyio.audio-share.android",
+                    "Audio Share Android Receiver",
+                ),
+                vec![capability(CapabilitySpec {
+                    adapter_id: android_adapter_id,
+                    capability_id: ANDROID_CAPABILITY_ID,
+                    capability_name: "Android Speaker via Audio Share",
+                    class: CapabilityClass::Speaker,
+                    port_id: ANDROID_PORT_ID,
+                    port_name: "Audio Share Speaker Sink",
+                    direction: PortDirection::Sink,
+                })?],
+            )
+            .map_err(|error| error.to_string())?;
+        let route_id = parse_id(ROUTE_ID)?;
+        runtime
+            .create_route_with_id(
+                route_id,
+                session_id,
+                port_ref(windows_node_id, WINDOWS_CAPABILITY_ID, WINDOWS_PORT_ID)?,
+                port_ref(android_node_id, ANDROID_CAPABILITY_ID, ANDROID_PORT_ID)?,
+                RouteBackend::AdapterManaged,
+            )
+            .map_err(|error| error.to_string())?;
+        Ok(Self {
+            route_id,
+            android_node_id,
+            android_adapter_id,
+        })
+    }
+
+    fn begin_start(self, runtime: &mut NodeRuntime, now_ms: u64) -> Result<u64, String> {
+        match self.state(runtime)? {
+            RouteState::Draft => {
+                runtime
+                    .authorize_route(self.route_id, None)
+                    .map_err(string_error)?;
+                runtime
+                    .prepare_route(
+                        self.route_id,
+                        Some(FormatDescriptor::new(AUDIO_FORMAT)),
+                        QosMode::Interactive,
+                        now_ms,
+                    )
+                    .map_err(string_error)?;
+            }
+            RouteState::Stopped => runtime
+                .prepare_route(
+                    self.route_id,
+                    Some(FormatDescriptor::new(AUDIO_FORMAT)),
+                    QosMode::Interactive,
+                    now_ms,
+                )
+                .map_err(string_error)?,
+            RouteState::Offline => runtime
+                .recover_route(self.route_id, now_ms)
+                .map_err(string_error)?,
+            RouteState::Prepared => {}
+            state => return Err(format!("Audio Share Route cannot start from {state:?}")),
+        }
+        runtime
+            .begin_route_start(self.route_id, now_ms)
+            .map_err(string_error)?;
+        self.epoch(runtime)
+    }
+
+    fn activate(self, runtime: &mut NodeRuntime) -> Result<(), String> {
+        runtime.activate_route(self.route_id).map_err(string_error)
+    }
+
+    fn report_offline(
+        self,
+        runtime: &mut NodeRuntime,
+        code: &str,
+        message: &str,
+        detail: String,
+    ) -> Result<(), String> {
+        runtime
+            .report_route_offline(
+                self.route_id,
+                Problem {
+                    id: ProblemId::new(),
+                    code: code.to_owned(),
+                    category: ProblemCategory::Transport,
+                    severity: ProblemSeverity::Error,
+                    retryable: true,
+                    related_node: Some(self.android_node_id),
+                    related_adapter: Some(self.android_adapter_id),
+                    related_route: Some(self.route_id),
+                    human_message: message.to_owned(),
+                    technical_detail: Some(detail.chars().take(1024).collect()),
+                },
+            )
+            .map_err(string_error)
+    }
+
+    fn stop(self, runtime: &mut NodeRuntime) -> Result<(), String> {
+        match self.state(runtime)? {
+            RouteState::Prepared
+            | RouteState::Starting
+            | RouteState::Active
+            | RouteState::Offline => {
+                runtime
+                    .begin_route_stop(self.route_id)
+                    .map_err(string_error)?;
+                runtime.stop_route(self.route_id).map_err(string_error)
+            }
+            RouteState::Stopping => runtime.stop_route(self.route_id).map_err(string_error),
+            RouteState::Draft | RouteState::Stopped => Ok(()),
+            RouteState::Failed => Err("failed Audio Share Route cannot be stopped".to_owned()),
+        }
+    }
+
+    fn state(self, runtime: &NodeRuntime) -> Result<RouteState, String> {
+        runtime
+            .route(self.route_id)
+            .map(|route| route.state)
+            .map_err(string_error)
+    }
+
+    fn epoch(self, runtime: &NodeRuntime) -> Result<u64, String> {
+        runtime
+            .route(self.route_id)
+            .map(|route| route.epoch)
+            .map_err(string_error)
+    }
+}
+
+fn adapter(
+    id: AdapterInstanceId,
+    adapter_type: &str,
+    display_name: &str,
+) -> AdapterInstanceDescriptor {
+    AdapterInstanceDescriptor {
+        id,
+        adapter_type: adapter_type.to_owned(),
+        display_name: display_name.to_owned(),
+        deployment_mode: AdapterDeploymentMode::ExternalService,
+        version: env!("CARGO_PKG_VERSION").to_owned(),
+        state: AdapterState::Ready,
+        health: AdapterHealth::Healthy,
+        owned_capabilities: BTreeSet::new(),
+        supported_route_modes: BTreeSet::from([RouteBackend::AdapterManaged]),
+    }
+}
+
+struct CapabilitySpec<'a> {
+    adapter_id: AdapterInstanceId,
+    capability_id: &'a str,
+    capability_name: &'a str,
+    class: CapabilityClass,
+    port_id: &'a str,
+    port_name: &'a str,
+    direction: PortDirection,
+}
+
+fn capability(spec: CapabilitySpec<'_>) -> Result<CapabilityDescriptor, String> {
+    let capability_id = parse_id(spec.capability_id)?;
+    let port_id = parse_id(spec.port_id)?;
+    Ok(CapabilityDescriptor {
+        id: capability_id,
+        adapter_instance_id: spec.adapter_id,
+        display_name: spec.capability_name.to_owned(),
+        class: spec.class,
+        availability: Availability::Available,
+        permission_requirement: PermissionRequirement::None,
+        metadata: BTreeMap::new(),
+        ports: BTreeMap::from([(
+            port_id,
+            PortDescriptor {
+                id: port_id,
+                capability_id,
+                display_name: spec.port_name.to_owned(),
+                direction: spec.direction,
+                profile: ProfileId::audio_frames_v1(),
+                schema_id: None,
+                formats: vec![FormatDescriptor::new(AUDIO_FORMAT)],
+                qos_modes: BTreeSet::from([QosMode::Interactive]),
+                clock_domain: Some("audio-share.process".to_owned()),
+                availability: Availability::Available,
+                permission_requirement: PermissionRequirement::None,
+                interoperability_mode: InteroperabilityMode::AdapterManaged,
+            },
+        )]),
+    })
+}
+
+fn port_ref(node_id: NodeId, capability_id: &str, port_id: &str) -> Result<PortRef, String> {
+    Ok(PortRef {
+        node_id,
+        capability_id: parse_id(capability_id)?,
+        port_id: parse_id(port_id)?,
+    })
+}
+
+fn parse_id<T: FromStr>(value: &str) -> Result<T, String>
+where
+    T::Err: std::fmt::Display,
+{
+    value.parse::<T>().map_err(|error| error.to_string())
+}
+
+fn string_error(error: impl std::fmt::Display) -> String {
+    error.to_string()
+}
+
+#[cfg(test)]
+mod tests {
+    use std::collections::VecDeque;
+
+    use capyio_audio_share_adapter::{ProcessExitReport, ProcessOutputSummary};
+    use capyio_testkit::DemoLab;
+
+    use super::*;
+
+    #[derive(Default)]
+    struct FakeProcess {
+        running: bool,
+        presences: VecDeque<ReceiverTcpPresence>,
+        exit: Option<ProcessExitReport>,
+        start_error: Option<String>,
+        starts: u32,
+        stops: u32,
+    }
+
+    impl FakeProcess {
+        fn with_presences(presences: impl IntoIterator<Item = ReceiverTcpPresence>) -> Self {
+            Self {
+                presences: presences.into_iter().collect(),
+                ..Self::default()
+            }
+        }
+    }
+
+    impl AudioShareProcessBoundary for FakeProcess {
+        fn start(&mut self) -> Result<(), String> {
+            if let Some(error) = self.start_error.clone() {
+                return Err(error);
+            }
+            self.running = true;
+            self.exit = None;
+            self.starts += 1;
+            Ok(())
+        }
+
+        fn status(&mut self) -> Result<SupervisorStatus, String> {
+            if let Some(exit) = self.exit {
+                Ok(SupervisorStatus::Exited(exit))
+            } else if self.running {
+                Ok(SupervisorStatus::Running { process_id: 42 })
+            } else {
+                Ok(SupervisorStatus::Stopped)
+            }
+        }
+
+        fn receiver_presence(&mut self) -> Result<ReceiverTcpPresence, String> {
+            Ok(self
+                .presences
+                .pop_front()
+                .unwrap_or(ReceiverTcpPresence::Disconnected))
+        }
+
+        fn stop(&mut self) -> Result<(), String> {
+            self.running = false;
+            self.stops += 1;
+            Ok(())
+        }
+    }
+
+    fn established() -> ReceiverTcpPresence {
+        ReceiverTcpPresence::Established {
+            connection_count: 1,
+        }
+    }
+
+    #[test]
+    fn stable_receiver_presence_activates_then_loss_offlines_only_audio_route() {
+        let mut lab = DemoLab::new().expect("demo Runtime");
+        let imu_route = lab.routes.phone_imu_to_gamepad;
+        lab.set_route_active(imu_route, true, 1)
+            .expect("activate IMU Route");
+        let process = FakeProcess::with_presences([
+            established(),
+            ReceiverTcpPresence::Disconnected,
+            established(),
+            established(),
+            established(),
+            ReceiverTcpPresence::Disconnected,
+        ]);
+        let session_id = lab.session_id;
+        let mut controller = AudioShareRouteController::install(
+            &mut lab.runtime,
+            session_id,
+            process,
+            DEFAULT_STABLE_RECEIVER_POLLS,
+        )
+        .expect("install Audio Share Route");
+        let first_epoch = controller.start(&mut lab.runtime, 2).expect("start audio");
+
+        for expected in [1, 0, 1, 2] {
+            let status = controller.poll(&mut lab.runtime).expect("poll receiver");
+            assert_eq!(status.route_state, RouteState::Starting);
+            assert_eq!(status.stable_receiver_polls, expected);
+        }
+        assert_eq!(
+            controller
+                .poll(&mut lab.runtime)
+                .expect("stable receiver")
+                .route_state,
+            RouteState::Active
+        );
+        let offline = controller.poll(&mut lab.runtime).expect("receiver loss");
+        assert_eq!(offline.route_state, RouteState::Offline);
+        assert!(offline.route_epoch > first_epoch);
+        assert_eq!(
+            lab.runtime.route(imu_route).expect("IMU Route").state,
+            RouteState::Active
+        );
+        assert!(lab.runtime.snapshot().problems.iter().any(|problem| {
+            problem.code == "CAPY.AUDIO_SHARE.RECEIVER_TCP_LOST"
+                && problem.related_route == Some(controller.route_id())
+        }));
+    }
+
+    #[test]
+    fn explicit_retry_advances_epoch_and_stop_is_terminal() {
+        let mut lab = DemoLab::new().expect("demo Runtime");
+        let process = FakeProcess::with_presences([
+            established(),
+            established(),
+            established(),
+            ReceiverTcpPresence::Disconnected,
+            established(),
+            established(),
+            established(),
+        ]);
+        let session_id = lab.session_id;
+        let mut controller =
+            AudioShareRouteController::install(&mut lab.runtime, session_id, process, 3)
+                .expect("install Route");
+        let first_epoch = controller.start(&mut lab.runtime, 1).expect("first start");
+        for _ in 0..3 {
+            controller.poll(&mut lab.runtime).expect("activation poll");
+        }
+        controller.poll(&mut lab.runtime).expect("disconnect poll");
+        let offline_epoch = controller
+            .status(&lab.runtime)
+            .expect("offline")
+            .route_epoch;
+        assert!(offline_epoch > first_epoch);
+        let retry_epoch = controller.start(&mut lab.runtime, 2).expect("retry");
+        assert!(retry_epoch > offline_epoch);
+        for _ in 0..3 {
+            controller.poll(&mut lab.runtime).expect("retry poll");
+        }
+        assert_eq!(
+            controller.status(&lab.runtime).expect("active").route_state,
+            RouteState::Active
+        );
+        controller.stop(&mut lab.runtime).expect("stop");
+        assert_eq!(
+            controller
+                .status(&lab.runtime)
+                .expect("stopped")
+                .route_state,
+            RouteState::Stopped
+        );
+        assert!(!controller.process.running);
+        assert_eq!(controller.process.starts, 1);
+        assert_eq!(controller.process.stops, 1);
+    }
+
+    #[test]
+    fn child_exit_offlines_route_with_typed_problem() {
+        let mut lab = DemoLab::new().expect("demo Runtime");
+        let process = FakeProcess::with_presences([]);
+        let session_id = lab.session_id;
+        let mut controller =
+            AudioShareRouteController::install(&mut lab.runtime, session_id, process, 1)
+                .expect("install Route");
+        controller.start(&mut lab.runtime, 1).expect("start");
+        controller.process.exit = Some(ProcessExitReport {
+            exit_code: Some(23),
+            output: ProcessOutputSummary {
+                stdout_retained_bytes: 0,
+                stderr_retained_bytes: 0,
+                stdout_overflowed: false,
+                stderr_overflowed: false,
+            },
+        });
+        assert_eq!(
+            controller
+                .poll(&mut lab.runtime)
+                .expect("exit poll")
+                .route_state,
+            RouteState::Offline
+        );
+        assert!(lab.runtime.snapshot().problems.iter().any(|problem| {
+            problem.code == "CAPY.AUDIO_SHARE.PROCESS_EXITED"
+                && problem
+                    .technical_detail
+                    .as_deref()
+                    .is_some_and(|detail| detail.contains("23"))
+        }));
+    }
+
+    #[test]
+    fn process_start_failure_offlines_route_with_typed_problem() {
+        let mut lab = DemoLab::new().expect("demo Runtime");
+        let process = FakeProcess {
+            start_error: Some("fixture spawn denied".to_owned()),
+            ..FakeProcess::default()
+        };
+        let session_id = lab.session_id;
+        let mut controller =
+            AudioShareRouteController::install(&mut lab.runtime, session_id, process, 1)
+                .expect("install Route");
+        let error = controller
+            .start(&mut lab.runtime, 1)
+            .expect_err("start must fail");
+        assert!(error.contains("fixture spawn denied"));
+        assert_eq!(
+            controller
+                .status(&lab.runtime)
+                .expect("offline")
+                .route_state,
+            RouteState::Offline
+        );
+        assert!(lab.runtime.snapshot().problems.iter().any(|problem| {
+            problem.code == "CAPY.AUDIO_SHARE.PROCESS_START_FAILED"
+                && problem.related_route == Some(controller.route_id())
+        }));
+    }
+
+    #[test]
+    fn zero_stability_threshold_is_rejected_before_catalog_mutation() {
+        let mut lab = DemoLab::new().expect("demo Runtime");
+        let session_id = lab.session_id;
+        let result = AudioShareRouteController::install(
+            &mut lab.runtime,
+            session_id,
+            FakeProcess::default(),
+            0,
+        );
+        assert!(result.is_err());
+        assert!(
+            lab.runtime
+                .route(parse_id(ROUTE_ID).expect("Route ID"))
+                .is_err()
+        );
+    }
+}

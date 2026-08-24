@@ -133,7 +133,13 @@ Progress:
 - `CAPY-AUDIO-001A2A` complete locally: a Windows-only bounded IP Helper query
   observes established TCP rows owned by the supervised PID and explicit port,
   without retaining addresses or parsing logs. It is labeled receiver transport
-  presence, not playback health. Runtime Route binding is next.
+  presence, not playback health.
+- `CAPY-AUDIO-001A2B` complete locally: the desktop composition layer owns one
+  `AdapterManaged` Runtime Route, requires three consecutive receiver samples
+  for activation, reports receiver/process failures as typed `Offline`
+  Problems, advances retry epochs, stops explicitly and leaves active IMU state
+  unchanged. Generic Quick Action projection and the repeated physical lab run
+  are next.
 
 Explicit non-scope: vendoring upstream source, a CapyIO Android app, virtual
 render endpoint, microphone, codec rewrite, production pairing/encryption or

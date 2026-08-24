@@ -27,6 +27,7 @@ use capyio_testkit::DemoLab;
 use serde::{Deserialize, Serialize};
 use tauri::State;
 
+pub mod audio_share_runtime;
 mod physical_imu_runtime;
 
 use physical_imu_runtime::PhysicalImuRoute;
