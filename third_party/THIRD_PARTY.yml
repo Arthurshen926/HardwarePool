@@ -8,11 +8,35 @@ planned_integrations:
     integration_mode: planned_sidecar
     source_imported: false
   - id: audio-share
-    upstream_repository: null
-    pinned_revision: null
-    license: pending_verification
-    integration_mode: planned_sidecar
+    upstream_repository: https://github.com/mkckr0/audio-share
+    pinned_revision: 342751fe675367483170b002ec6054e243966dc0
+    pinned_release: v0.3.4
+    license: Apache-2.0
+    integration_mode: external_process_adapter_managed
     source_imported: false
+    binary_imported: false
+    imported_paths: []
+    local_modifications: []
+    release_artifacts:
+      windows_x86_64_zip:
+        sha256: d73ea0dc2e16e4cfcc52ae370a0f06ebaf9ac0a1f2b9b069e03b0c107cb37bc1
+        distributed_by_capyio: false
+        authenticode_signed: false
+      android_apk:
+        package: io.github.mkckr0.audio_share_app
+        version_code: 3004
+        sha256: 77cc93d32a3e6b6117b9c202ff5be69082ea5711087c23e6877cef5ac4a471b4
+        distributed_by_capyio: false
+    private_contract:
+      negotiation: TCP
+      audio_payload: UDP PCM
+      default_port: 65530
+      capyio_route_backend: AdapterManaged
+    distribution_note: >-
+      CapyIO does not vendor, link, repackage or distribute Audio Share in this
+      slice. Tests use a user-supplied, hash-verified unmodified release. The
+      unsigned Windows executable and Android lifecycle behavior require
+      further review before any public packaging.
   - id: vcamdroid
     upstream_repository: null
     pinned_revision: null

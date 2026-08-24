@@ -1,0 +1,11 @@
+[package]
+name = "capyio-audio-share-adapter"
+description = "Bounded Audio Share external-process probe and configuration boundary."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish = false
+
+[dependencies]
+thiserror.workspace = true

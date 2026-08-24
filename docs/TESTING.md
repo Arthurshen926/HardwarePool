@@ -110,6 +110,22 @@ or hardware reads. Tests register both catalogs, open a Session, prepare/start
 opposite-direction Routes, stop one, simulate Adapter/peer loss and assert
 ordered bounded events/snapshots.
 
+## Audio Share external-process probe tests
+
+- configuration requires an explicit IP address, non-zero port, bounded
+  enumerated endpoint ID, encoding, channel count and sample rate;
+- server arguments are direct process arguments and never a shell string;
+- pinned version and endpoint-list parsing enforce output, line, count, ID and
+  name bounds, reject duplicates/mismatched totals and tolerate lossy device
+  display names without weakening ASCII structure parsing;
+- a fake runner covers unsupported versions and missing configured endpoints;
+- an ignored test probes a separately supplied, hash-verified v0.3.4 CLI and is
+  never required by hosted CI.
+
+These tests do not start the audio server or send PCM. Process supervision,
+receiver-loss/Route behavior and physical playback remain separate later
+acceptance steps.
+
 ## Sidecar smoke test
 
 Adapter Host launches repository-built mock binaries, performs initialize,

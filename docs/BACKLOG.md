@@ -115,6 +115,17 @@ Problem and `Offline`; retry with a fresh epoch; stop without changing the IMU
 Route; keep PCM and ordinary logs outside Sidecar stdout; expose the workflow
 through a generic Quick Action projection rather than `UiLiveSpeaker`.
 
+Progress:
+
+- `CAPY-AUDIO-000` complete: v0.3.4 provenance/hashes/license and unmodified
+  Windows/Android lab behavior are recorded. TCP negotiation, UDP PCM delivery,
+  Android `AudioTrack`, heartbeat, close and a second clean start were observed;
+  subjective audible quality remains unclaimed without a listener beside the
+  phone.
+- `CAPY-AUDIO-001A0` complete locally: bounded direct-process version/endpoint
+  probing and explicit bind/endpoint/PCM configuration are implemented with no
+  new production dependency. Runtime process supervision is the next slice.
+
 Explicit non-scope: vendoring upstream source, a CapyIO Android app, virtual
 render endpoint, microphone, codec rewrite, production pairing/encryption or
 automatic retry policy.

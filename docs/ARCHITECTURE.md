@@ -134,6 +134,9 @@ capyio-runtime
 capyio-data-plane
    ^
    +--- SensorServer protocol Adapter (bounded mapping; transport separate)
+
+Audio Share process Adapter
+   +--- pinned external as-cmd process (AdapterManaged TCP/UDP PCM)
 ```
 
 Dependency rules:
@@ -145,6 +148,9 @@ Dependency rules:
 - Adapter Host owns process I/O and does not enter Core.
 - Profile-specific Adapters may depend on `capyio-data-plane`; the data-plane
   crate never depends on an Adapter or concrete transport.
+- The Audio Share Adapter validates and supervises a pinned external executable;
+  its TCP/UDP PCM contract does not become a Core, Protocol or StandardPort
+  dependency.
 - Testkit is never a production dependency of Core/Protocol/Runtime/Adapter SDK.
 - Drivers communicate through minimal validated contracts, never Rust memory
   layout or network/wire messages.

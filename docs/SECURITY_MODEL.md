@@ -47,6 +47,14 @@ redirects, binary sensor payloads and frames/messages above 4 KiB. TCP and
 WebSocket operations have deadlines. These controls limit attack surface but do
 not authenticate the external app or authorize a Capability.
 
+The Audio Share lab likewise requires an explicit IP-literal bind address,
+non-zero port and enumerated playback endpoint; the CLI is launched directly,
+never through a shell. Probe output, lines and deadlines are bounded. These
+controls do not authenticate the Android receiver or secure Audio Share's
+private TCP/UDP protocol. The pinned upstream Windows release is not
+Authenticode signed and is neither bundled nor treated as trusted production
+software by CapyIO.
+
 ### Adapter process abuse
 
 Versioned manifests, allow-listed entrypoints, bounded NDJSON, correlation

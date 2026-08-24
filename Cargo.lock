@@ -325,6 +325,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "capyio-audio-share-adapter"
+version = "0.1.0"
+dependencies = [
+ "thiserror 2.0.20",
+]
+
+[[package]]
 name = "capyio-core"
 version = "0.1.0"
 dependencies = [

@@ -237,7 +237,10 @@ The product has two experiences:
 
 ## 9. Current non-goals
 
-- real MicYou, Audio Share, VCamdroid or VIIPER integration;
+- real MicYou, VCamdroid or VIIPER integration;
+- Audio Share source import, vendoring or redistribution; the only current
+  exception is the pinned, unmodified external-process remote-speaker Adapter
+  scoped by `CAPY-AUDIO-000/001A` and ADR 0025;
 - vendoring, repackaging or production deployment of SensorServer; the only
   current exception is the externally installed, local-lab IMU protocol Adapter
   scoped by `CAPY-IMU-001B` and ADR 0021;

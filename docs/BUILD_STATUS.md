@@ -1,6 +1,6 @@
 # CapyIO Build Status
 
-> Updated: 2026-08-24 during `CAPY-IMU-001B3B`.
+> Updated: 2026-08-24 during `CAPY-AUDIO-001A0`.
 
 ## Verified baseline
 
@@ -159,13 +159,30 @@ are in `docs/CAPY_IMU_001B3B_REPORT.md`.
 
 - CapyIO-owned Android application/APK;
 - automated Android permission or foreground-service management;
-- real microphone, speaker, camera or input data path;
+- CapyIO-owned microphone/speaker, camera or input data path;
 - Windows virtual devices, driver, WDK or isolated-VM driver test;
-- production transport, pairing, encryption, live third-party Adapter transport
-  or performance.
+- production transport, pairing, encryption, Runtime-owned live audio Adapter
+  transport or performance.
 
 The physical SensorServer lab transport is owned by the desktop process's real
 Node Runtime Route, but it is not production transport or a long-lived headless
 Node service.
 
 These absences are expected and must not be reported as working functionality.
+
+## CAPY-AUDIO-000/001A0 Audio Share boundary
+
+The pinned, unmodified Audio Share v0.3.4 release was verified against official
+SHA-256 files and Apache-2.0 provenance. On the separately authorized
+Windows/Android lab, the upstream system-loopback server negotiated float
+stereo PCM, delivered UDP payloads, maintained heartbeats, closed cleanly and
+started a second peer. Android `AudioFlinger` reported a matching app-owned
+`AudioTrack` with frames written. No person was beside the phone, so subjective
+audibility/quality is not claimed.
+
+The repository now contains only CapyIO-authored configuration and probe code:
+explicit IP/port/endpoint/PCM arguments, direct no-shell execution, bounded
+stdout/stderr/deadlines and strict v0.3.4 endpoint parsing. Seven default tests
+and one ignored real-CLI probe pass. The server supervisor, Runtime speaker
+Route, disconnect Problem/retry epoch and generic Quick Action remain active
+work; no upstream binary or APK is committed or distributed.
