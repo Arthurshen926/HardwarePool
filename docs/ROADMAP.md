@@ -28,14 +28,16 @@ implementation scope automatically.
 - Gates 0–3: complete locally; evidence is in `docs/GATE_0_3_REPORT.md` and the
   completed foundation plans. PR #10 also passed hosted Windows/Linux/macOS,
   Adapter, UI and Windows Tauri checks before merge commit `5f5b81f`.
-- Gate 5 groundwork: `CAPY-IMU-001A` is complete with deterministic bounded IMU
-  replay and read-only Android inventory. `CAPY-IMU-001B0` completed the bounded
-  SensorServer parser/pairing contract, `CAPY-IMU-001B1` completed the reviewed
-  WebSocket/mock-server path, and `CAPY-IMU-001B2` retained physical payload,
-  Panel/Recorder and disconnect evidence. Gate 5 remains open until Runtime/UI
-  integration and its lifecycle/timing evidence exists.
-- Gates 4 and 6–15 remain roadmap only; no implementation authorization is
-  implied.
+- Gate 5: complete locally. `CAPY-IMU-001A` proves deterministic bounded replay;
+  `CAPY-IMU-001B0..B2` prove the mapped SensorServer contract, bounded WebSocket
+  path and physical payload/Panel/Recorder/disconnect behavior; `B3A/B3B` bind
+  the physical path to the Tauri UI and the desktop Node's single Runtime with
+  explicit Problem, retry epoch and stop evidence. Hosted exact-head evidence
+  remains a merge prerequisite rather than a missing Gate 5 behavior.
+- Gate 7 is the next authorized product slice, beginning with an unmodified
+  Audio Share provenance/behavior spike followed by one external
+  AdapterManaged Windows-system-mix to Android-speaker Route. Gates 4, 6 and
+  8–15 remain roadmap only.
 
 ## Public-alpha proof bar
 

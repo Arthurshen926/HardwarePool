@@ -56,7 +56,7 @@ Completion evidence: `docs/CAPY_IMU_001A_REPORT.md` and completed plan
 Explicit non-scope: live phone payloads, SensorServer, APK install/permissions,
 network transport, gamepad/VIIPER, driver work and production security.
 
-## Active product slice
+## Completed product slice
 
 ### CAPY-IMU-001B — SensorServer IMU Source to Panel and Recorder
 
@@ -101,11 +101,28 @@ Implementation slices:
   physical activation plus explicit stop. Evidence is in
   `docs/CAPY_IMU_001B3B_REPORT.md`.
 
+## Active product slice
+
+### CAPY-AUDIO-000/001A — Audio Share remote-speaker spike and external Adapter
+
+Goal: first verify a pinned, unmodified Audio Share release on the authorized
+Windows/Android lab, then wrap its data plane as one AdapterManaged Route from
+Windows System Mix Source to Android Speaker Sink.
+
+Initial acceptance: probe and enumerate `as-cmd` endpoints; start/stop the
+server; retain real playback evidence; translate receiver loss to a structured
+Problem and `Offline`; retry with a fresh epoch; stop without changing the IMU
+Route; keep PCM and ordinary logs outside Sidecar stdout; expose the workflow
+through a generic Quick Action projection rather than `UiLiveSpeaker`.
+
+Explicit non-scope: vendoring upstream source, a CapyIO Android app, virtual
+render endpoint, microphone, codec rewrite, production pairing/encryption or
+automatic retry policy.
+
 ## Later small tasks
 
 - `CAPY-GAMEPAD-001`: DSU projection from recorded IMU fixture.
 - `CAPY-GAMEPAD-002`: VIIPER sidecar probe and license/build spike.
-- `CAPY-AUDIO-001`: Audio Share AdapterManaged Windows→Android path.
 - `CAPY-AUDIO-002`: MicYou AdapterManaged Android→Windows path.
 - `CAPY-CAMERA-001`: VCamdroid sidecar catalog/probe spike.
 - `CAPY-UX-001`: versioned Quick Action template schema.
