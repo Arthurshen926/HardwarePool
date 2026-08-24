@@ -3,8 +3,8 @@ use std::collections::{BTreeMap, VecDeque};
 use capyio_core::{
     AdapterHealth, AdapterInstanceDescriptor, AdapterInstanceId, AdapterState, AuthorizationState,
     CapabilityDescriptor, CoreError, NodeDescriptor, NodeId, OnlineState, PortDescriptor, PortRef,
-    Problem, ProblemCategory, ProblemId, ProblemSeverity, Route, RouteBackend, RouteEndpoint,
-    RouteId, RouteState, Session, SessionId, SessionState,
+    Problem, ProblemCategory, ProblemId, ProblemSeverity, QosMode, Route, RouteBackend,
+    RouteEndpoint, RouteId, RouteState, Session, SessionId, SessionState,
 };
 
 use crate::{
@@ -58,6 +58,35 @@ impl NodeRuntime {
         let peer_id = descriptor.id;
         self.peers.insert(peer_id, descriptor);
         self.emit(RuntimeEventKind::PeerRegistered { peer_id });
+        Ok(())
+    }
+
+    /// Atomically installs one Adapter and its initial Capability catalog on a
+    /// Node already owned by this Runtime.
+    pub fn register_adapter_catalog(
+        &mut self,
+        node_id: NodeId,
+        adapter: AdapterInstanceDescriptor,
+        capabilities: Vec<CapabilityDescriptor>,
+    ) -> Result<(), RuntimeError> {
+        let adapter_id = adapter.id;
+        let adapter_state = adapter.state;
+        let adapter_health = adapter.health;
+        let mut candidate = self.node(node_id)?.clone();
+        candidate.add_adapter(adapter)?;
+        candidate.replace_adapter_catalog(adapter_id, capabilities)?;
+        candidate.validate()?;
+        *self.node_mut(node_id)? = candidate;
+        self.emit(RuntimeEventKind::AdapterChanged {
+            node_id,
+            adapter_id,
+            state: adapter_state,
+            health: adapter_health,
+        });
+        self.emit(RuntimeEventKind::CatalogChanged {
+            node_id,
+            adapter_id,
+        });
         Ok(())
     }
 
@@ -223,6 +252,139 @@ impl NodeRuntime {
         }
         let state = route.state;
         self.emit(RuntimeEventKind::RouteChanged { route_id, state });
+        Ok(())
+    }
+
+    pub fn authorize_route(
+        &mut self,
+        route_id: RouteId,
+        expires_at_ms: Option<u64>,
+    ) -> Result<(), RuntimeError> {
+        let state = {
+            let route = self
+                .routes
+                .get_mut(&route_id)
+                .ok_or(RuntimeError::UnknownRoute(route_id))?;
+            route.authorize(expires_at_ms)?;
+            route.state
+        };
+        self.emit(RuntimeEventKind::RouteChanged { route_id, state });
+        Ok(())
+    }
+
+    pub fn prepare_route(
+        &mut self,
+        route_id: RouteId,
+        selected_format: Option<capyio_core::FormatDescriptor>,
+        selected_qos_mode: QosMode,
+        now_ms: u64,
+    ) -> Result<(), RuntimeError> {
+        self.reconcile_route_before_activation(route_id)?;
+        let route = self
+            .routes
+            .get_mut(&route_id)
+            .ok_or(RuntimeError::UnknownRoute(route_id))?;
+        route.prepare(selected_format, selected_qos_mode, now_ms)?;
+        self.emit(RuntimeEventKind::RouteChanged {
+            route_id,
+            state: RouteState::Prepared,
+        });
+        Ok(())
+    }
+
+    pub fn begin_route_start(
+        &mut self,
+        route_id: RouteId,
+        now_ms: u64,
+    ) -> Result<(), RuntimeError> {
+        self.reconcile_route_before_activation(route_id)?;
+        let route = self
+            .routes
+            .get_mut(&route_id)
+            .ok_or(RuntimeError::UnknownRoute(route_id))?;
+        route.begin_start(now_ms)?;
+        self.emit(RuntimeEventKind::RouteChanged {
+            route_id,
+            state: RouteState::Starting,
+        });
+        Ok(())
+    }
+
+    pub fn activate_route(&mut self, route_id: RouteId) -> Result<(), RuntimeError> {
+        let route = self
+            .routes
+            .get_mut(&route_id)
+            .ok_or(RuntimeError::UnknownRoute(route_id))?;
+        route.mark_active()?;
+        self.emit(RuntimeEventKind::RouteChanged {
+            route_id,
+            state: RouteState::Active,
+        });
+        Ok(())
+    }
+
+    pub fn begin_route_stop(&mut self, route_id: RouteId) -> Result<(), RuntimeError> {
+        let route = self
+            .routes
+            .get_mut(&route_id)
+            .ok_or(RuntimeError::UnknownRoute(route_id))?;
+        route.begin_stop()?;
+        self.emit(RuntimeEventKind::RouteChanged {
+            route_id,
+            state: RouteState::Stopping,
+        });
+        Ok(())
+    }
+
+    pub fn stop_route(&mut self, route_id: RouteId) -> Result<(), RuntimeError> {
+        let route = self
+            .routes
+            .get_mut(&route_id)
+            .ok_or(RuntimeError::UnknownRoute(route_id))?;
+        route.mark_stopped()?;
+        self.emit(RuntimeEventKind::RouteChanged {
+            route_id,
+            state: RouteState::Stopped,
+        });
+        Ok(())
+    }
+
+    pub fn recover_route(&mut self, route_id: RouteId, now_ms: u64) -> Result<(), RuntimeError> {
+        self.reconcile_route_before_activation(route_id)?;
+        let route = self
+            .routes
+            .get_mut(&route_id)
+            .ok_or(RuntimeError::UnknownRoute(route_id))?;
+        route.recover(now_ms)?;
+        self.emit(RuntimeEventKind::RouteChanged {
+            route_id,
+            state: RouteState::Prepared,
+        });
+        Ok(())
+    }
+
+    pub fn report_route_offline(
+        &mut self,
+        route_id: RouteId,
+        problem: Problem,
+    ) -> Result<(), RuntimeError> {
+        problem.validate()?;
+        if problem.related_route != Some(route_id) {
+            return Err(CoreError::InvalidProblem(
+                "Runtime Route Problem must reference the affected Route".to_owned(),
+            )
+            .into());
+        }
+        let problem_id = problem.id;
+        self.routes
+            .get_mut(&route_id)
+            .ok_or(RuntimeError::UnknownRoute(route_id))?
+            .mark_offline_with_problem(problem_id)?;
+        self.push_problem(problem)?;
+        self.emit(RuntimeEventKind::RouteChanged {
+            route_id,
+            state: RouteState::Offline,
+        });
         Ok(())
     }
 

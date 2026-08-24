@@ -67,12 +67,20 @@ Protobuf, codecs, drivers or concrete network transport.
 ### Runtime
 
 - owns the local catalog and peer catalogs;
+- atomically registers Adapter instances with their initial Capability catalog;
 - reconciles catalog replacements against persisted Routes, invalidating only
   Routes whose endpoint contract is removed or changed;
 - sequences commands, operation completions and events;
 - owns Route/Adapter lifecycle orchestration;
 - applies bounded retention;
 - exposes snapshots to UI/CLI/management API.
+
+Asynchronous Adapter callbacks complete Route work through staged Runtime
+commands (`authorize`, `prepare`, `begin_start`, `activate`, `offline`,
+`recover`, `begin_stop`, `stop`). They never mutate a cloned Core Route or use
+UI status strings as lifecycle authority. An offline completion retains a
+structured Route-related Problem and invalidates the current epoch; an explicit
+retry always starts with a later epoch.
 
 Platform and child-process callbacks return typed completions through opaque
 operation IDs; they never mutate Core state from arbitrary threads.
@@ -108,6 +116,7 @@ power.
 ```text
 capyio-core
    ^
+   +--- capyio-data-plane
    +--- capyio-audio
    +--- capyio-protocol
    +--- capyio-runtime
@@ -121,6 +130,10 @@ capyio-runtime
    +--- capyio-testkit
    +--- capyio-node
    +--- capyio-desktop Tauri host
+
+capyio-data-plane
+   ^
+   +--- SensorServer protocol Adapter (bounded mapping; transport separate)
 ```
 
 Dependency rules:
@@ -130,6 +143,8 @@ Dependency rules:
 - Runtime may depend on Core but not Tauri or platform SDKs.
 - Adapter SDK DTOs may depend on Core value types but never on Runtime internals.
 - Adapter Host owns process I/O and does not enter Core.
+- Profile-specific Adapters may depend on `capyio-data-plane`; the data-plane
+  crate never depends on an Adapter or concrete transport.
 - Testkit is never a production dependency of Core/Protocol/Runtime/Adapter SDK.
 - Drivers communicate through minimal validated contracts, never Rust memory
   layout or network/wire messages.

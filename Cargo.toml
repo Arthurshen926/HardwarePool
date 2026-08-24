@@ -2,6 +2,7 @@
 resolver = "2"
 members = [
     "crates/capyio-core",
+    "crates/capyio-data-plane",
     "crates/capyio-audio",
     "crates/capyio-protocol",
     "crates/capyio-runtime",
@@ -10,18 +11,21 @@ members = [
     "crates/capyio-adapter-host",
     "adapters/mock-source",
     "adapters/mock-sink",
+    "adapters/sensor-server",
     "apps/capyio-node",
     "apps/desktop/src-tauri",
     "xtask",
 ]
 default-members = [
     "crates/capyio-core",
+    "crates/capyio-data-plane",
     "crates/capyio-audio",
     "crates/capyio-protocol",
     "crates/capyio-runtime",
     "crates/capyio-testkit",
     "crates/capyio-adapter-sdk",
     "crates/capyio-adapter-host",
+    "adapters/sensor-server",
     "apps/capyio-node",
     "xtask",
 ]
@@ -44,6 +48,7 @@ serde_json = "1.0"
 thiserror = "2.0"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
+tungstenite = { version = "0.30.0", default-features = false, features = ["handshake"] }
 uuid = { version = "1.18", features = ["serde", "v4"] }
 
 [profile.release]

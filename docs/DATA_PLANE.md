@@ -1,12 +1,69 @@
-# Audio Data-Plane Bootstrap
+# CapyIO Data-Plane Bootstrap
 
-> Status: semantic foundation; no network binding selected
+> Status: bounded semantic foundation; no production network binding selected
 
 ## 1. Purpose
 
-`capyio-audio` provides transport-independent primitives used after a transport has authenticated, bounded and decoded an audio frame. It does not open sockets, choose a codec, access a hardware device or run inside the Windows driver.
+`capyio-data-plane` provides bounded, transport-independent StandardPort
+envelopes, per-consumer queues and fan-out used after a transport has
+authenticated and decoded data. `capyio-audio` retains audio-specific frame,
+reordering and drift primitives. Neither crate opens sockets, accesses hardware
+or runs inside a Windows driver.
 
-## 2. Audio frame semantics
+The semantic envelope is not a public wire layout. It carries Profile identity,
+typed stream identity, stream epoch, sequence, source/receive timestamps, clock
+domain and a validated bounded payload. A concrete transport still owns
+framing, authentication, replay defense, rate limits and MTU policy.
+
+## 2. StandardPort queue and fan-out semantics
+
+`BoundedEnvelopeQueue` binds one Profile, StreamId and epoch to a fixed
+capacity. Push outcomes explicitly distinguish accepted data, preceding gaps,
+duplicates, late samples, wrong streams, stale/future epochs and full queues.
+An epoch advances only through an explicit operation, which clears retained
+data and resets sequence tracking. Timestamps are never rewritten to conceal a
+gap or restart.
+
+`BoundedFanout` gives each consumer its own queue and lifecycle state. A full or
+stopped Recorder cannot block or mutate a Panel queue. Overflow rejects the
+incoming envelope for that consumer and increments a saturating diagnostic
+counter; it never silently evicts an older accepted envelope.
+
+## 3. Fixture-first IMU specialization
+
+`capyio.motion.imu-samples/1` preserves SI acceleration and angular velocity,
+optional microtesla magnetic field, Android device coordinates, accuracy,
+calibration, bounded sensor metadata and optional per-component source
+timestamps. Per-component timestamps are necessary when an Adapter pairs
+asynchronous accelerometer and gyroscope readings; the envelope timestamp is
+the maximum included source timestamp, not a replacement for the originals.
+The committed JSONL fixture is parsed
+with line/record limits and replayed to a numeric Panel plus a bounded JSONL
+Recorder. This path is deterministic test/demo evidence, not live phone data or
+a network decoder.
+
+The SensorServer protocol Adapter enforces a 4 KiB message bound before JSON
+decode, exactly three finite axes, known Android accuracy values, positive and
+strictly increasing per-sensor timestamps, a fixed pairing-skew limit and
+one-time consumption of each required component. Replaced unpaired readings and
+excessive skew are explicit outcomes. This parser/pairing behavior opens no
+socket and makes no reconnect, authentication or physical-timing claim.
+
+The next Adapter layer uses a synchronous Tungstenite worker connection. It
+accepts only IP-literal local-lab endpoints and fixed SensorServer paths, applies
+connect/read/write deadlines, limits frames/messages to 4 KiB and keeps JSON
+mapping outside the WebSocket implementation. Ping/pong/close never become IMU
+payloads. A connection timeout is retryable by caller policy; close/capacity and
+other terminal errors require a fresh client and later a new stream epoch.
+
+The physical-lab command composes two such clients with the deterministic
+assembler and bounded fan-out. It waits for the accelerometer handshake before
+starting the gyroscope worker, publishes each emitted envelope independently to
+a numeric Panel and JSONL Recorder, and sends WebSocket Close before successful
+exit. It is a bounded lab consumer, not Runtime reconnect policy or a public
+wire protocol.
+
+## 4. Audio frame semantics
 
 Every decoded frame contains:
 
@@ -27,7 +84,7 @@ sample_count × channel_count × bytes_per_sample
 
 The bootstrap code rejects zero-sample frames, arithmetic overflow, payload-size mismatch and payloads over the conservative one-megabyte semantic limit. A concrete transport must impose a smaller MTU/fragmentation policy where appropriate.
 
-## 3. Reordering and loss
+## 5. Reordering and loss
 
 `ReorderBuffer` is bound to exactly one `stream_id` and one `stream_epoch`. It has a fixed frame capacity and accepts only sequences inside the current reorder window.
 
@@ -45,7 +102,7 @@ The queue never silently evicts an earlier frame. A caller may wait for its jitt
 
 This container is intended for a worker/network thread. It is not the final lock-free platform audio-callback ring.
 
-## 4. Clock drift
+## 6. Clock drift
 
 `ClockDriftEstimator` correlates source sample index with receiver monotonic time and reports:
 
@@ -55,7 +112,7 @@ This container is intended for a worker/network thread. It is not the final lock
 
 It establishes a measurable baseline for later dynamic resampling. Production work still needs robust filtering, window rotation, outlier handling and integration with buffer-fill control.
 
-## 5. Deferred wire encoding
+## 7. Deferred wire encoding
 
 The semantic frame is not itself the public binary wire layout. A transport ADR must define:
 

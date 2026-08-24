@@ -36,14 +36,29 @@ In scope:
 
 Completion evidence: `docs/FOUNDATION_HARDENING_REPORT.md` and completed plan
 `docs/plans/completed/0004-capyio-foundation-hardening.md`. All local gates
-passed. Hosted CI is separately pending until a pushed PR head runs.
+passed. PR #10 then passed repository, UI, Windows/Linux/macOS Rust/Adapter and
+Windows Tauri hosted checks before merge commit `5f5b81f`.
 
 Explicit non-scope: StandardPort payload transport, SensorServer, Android/phone,
 drivers, production security, third-party source and physical-device tests.
 
-## Next product slice (do not implement in foundation task)
+## Completed product groundwork
 
-### CAPY-IMU-001 — SensorServer IMU Source to Panel and Recorder
+### CAPY-IMU-001A — Fixture-first bounded StandardPort path
+
+Goal: establish generic bounded StandardPort semantics, deterministic IMU
+replay, independent numeric Panel/JSONL Recorder sinks and safe Android lab
+inventory before importing SensorServer or installing an APK.
+
+Completion evidence: `docs/CAPY_IMU_001A_REPORT.md` and completed plan
+`docs/plans/completed/0005-fixture-first-imu-standard-path.md`.
+
+Explicit non-scope: live phone payloads, SensorServer, APK install/permissions,
+network transport, gamepad/VIIPER, driver work and production security.
+
+## Completed product slice
+
+### CAPY-IMU-001B — SensorServer IMU Source to Panel and Recorder
 
 Goal: prove one real StandardPort path with a low-risk phone sensor before
 system-driver work.
@@ -70,11 +85,44 @@ Acceptance:
 4. stopping either Route does not stop the other;
 5. disconnect creates explicit gaps/Problems rather than silent timestamp repair.
 
+Implementation slices:
+
+- `CAPY-IMU-001B0` (complete): pin upstream provenance and implement bounded
+  SensorServer JSON parsing plus deterministic accelerometer/gyroscope pairing;
+- `CAPY-IMU-001B1` (complete): add a reviewed WebSocket client dependency and local
+  mock-server tests, without a phone;
+- `CAPY-IMU-001B2` (complete): use the reconnected wireless ADB target, install/start
+  the externally maintained app under device authorization, and retain live
+  Panel/Recorder plus disconnect evidence;
+- `CAPY-IMU-001B3A` (complete): project the bounded physical stream into a narrow
+  Tauri numeric panel with visible failure/recovery/stop state;
+- `CAPY-IMU-001B3B` (complete): bind the Adapter to the desktop's single real
+  Node Runtime Route/Problem lifecycle, advance epochs across retry, and prove
+  physical activation plus explicit stop. Evidence is in
+  `docs/CAPY_IMU_001B3B_REPORT.md`.
+
+## Active product slice
+
+### CAPY-AUDIO-000/001A — Audio Share remote-speaker spike and external Adapter
+
+Goal: first verify a pinned, unmodified Audio Share release on the authorized
+Windows/Android lab, then wrap its data plane as one AdapterManaged Route from
+Windows System Mix Source to Android Speaker Sink.
+
+Initial acceptance: probe and enumerate `as-cmd` endpoints; start/stop the
+server; retain real playback evidence; translate receiver loss to a structured
+Problem and `Offline`; retry with a fresh epoch; stop without changing the IMU
+Route; keep PCM and ordinary logs outside Sidecar stdout; expose the workflow
+through a generic Quick Action projection rather than `UiLiveSpeaker`.
+
+Explicit non-scope: vendoring upstream source, a CapyIO Android app, virtual
+render endpoint, microphone, codec rewrite, production pairing/encryption or
+automatic retry policy.
+
 ## Later small tasks
 
 - `CAPY-GAMEPAD-001`: DSU projection from recorded IMU fixture.
 - `CAPY-GAMEPAD-002`: VIIPER sidecar probe and license/build spike.
-- `CAPY-AUDIO-001`: Audio Share AdapterManaged Windows→Android path.
 - `CAPY-AUDIO-002`: MicYou AdapterManaged Android→Windows path.
 - `CAPY-CAMERA-001`: VCamdroid sidecar catalog/probe spike.
 - `CAPY-UX-001`: versioned Quick Action template schema.

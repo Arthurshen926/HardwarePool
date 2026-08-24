@@ -1,40 +1,44 @@
 {
   "backendMode": "browser_mock",
-  "schemaVersion": 1,
-  "projectVersion": "0.1.0-bootstrap",
-  "localNodeName": "HP OmniBook Ultra Flip 14",
-  "peers": [
+  "schemaVersion": 3,
+  "projectVersion": "0.1.0",
+  "nodes": [
+    {
+      "id": "00000000-0000-4000-8000-000000000001",
+      "displayName": "HP OmniBook Ultra Flip 14",
+      "platform": "windows",
+      "platformVersion": "Windows fixture",
+      "online": true,
+      "local": true,
+      "capabilityCount": 6
+    },
     {
       "id": "00000000-0000-4000-8000-000000000002",
       "displayName": "vivo X200 Pro mini",
       "platform": "android",
-      "platformVersion": "Build not inventoried",
-      "online": true
+      "platformVersion": "Android fixture",
+      "online": true,
+      "local": false,
+      "capabilityCount": 6
     }
   ],
-  "capabilities": [
-    {
-      "id": "00000000-0000-4000-8000-000000000101",
-      "displayName": "Internal Microphone",
-      "kind": "audio_capture",
-      "profile": "capyio.audio.capture/1",
-      "permissionRequirement": "foreground_service",
-      "availability": "permission_required",
-      "projectionKind": "system_capture_endpoint",
-      "bindingState": "not_mapped",
-      "active": false,
-      "formatSummary": "48 kHz · PCM i16 LE · Mono · 10 ms",
-      "qosModes": ["voice_interactive", "raw_lan"],
-      "metrics": {
-        "estimatedLatencyMs": null,
-        "packetLossPercent": null,
-        "bufferFillMs": null,
-        "underruns": 0,
-        "overruns": 0,
-        "simulated": true
-      }
-    }
-  ],
+  "routes": [],
+  "adapters": [],
   "events": [],
-  "warnings": ["Example only; no real audio path is active."]
+  "warnings": ["Example only; no real hardware path is active."],
+  "imuFixture": {
+    "mode": "deterministic_fixture",
+    "simulated": true,
+    "profile": "capyio.motion.imu-samples/1",
+    "sequence": 5,
+    "sourceTimestampNanos": 1050000000,
+    "clockDomainId": "android.sensor.elapsed_realtime",
+    "acceleration": { "x": 0.1, "y": 0.03, "z": 9.75 },
+    "angularVelocity": { "x": 0.003, "y": 0.001, "z": 0.0 },
+    "panelReceived": 6,
+    "panelMissingSequences": 0,
+    "recorderRecords": 6,
+    "panelRouteState": "active",
+    "recorderRouteState": "active"
+  }
 }

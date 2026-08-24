@@ -2,6 +2,7 @@ import type {
   CapyIOApi,
   RouteState,
   UiEvent,
+  UiLiveImu,
   UiPort,
   UiRoute,
   UiSnapshot,
@@ -54,7 +55,7 @@ function route(
 function initialSnapshot(): UiSnapshot {
   return {
     backendMode: "browser_mock",
-    schemaVersion: 2,
+    schemaVersion: 3,
     projectVersion: "0.1.0",
     nodes: [
       { id: "00000000-0000-4000-8000-000000000001", displayName: WINDOWS, platform: "windows", platformVersion: "Windows fixture", online: true, local: true, capabilityCount: 6 },
@@ -79,6 +80,21 @@ function initialSnapshot(): UiSnapshot {
       "Browser Mock：状态、授权和指标是确定性演示数据，不代表真实硬件访问。",
       "当前没有真实网络、Android 节点、Windows 虚拟设备或驱动。",
     ],
+    imuFixture: {
+      mode: "deterministic_fixture",
+      simulated: true,
+      profile: "capyio.motion.imu-samples/1",
+      sequence: 5,
+      sourceTimestampNanos: 1_050_000_000,
+      clockDomainId: "android.sensor.elapsed_realtime",
+      acceleration: { x: 0.1, y: 0.03, z: 9.75 },
+      angularVelocity: { x: 0.003, y: 0.001, z: 0 },
+      panelReceived: 6,
+      panelMissingSequences: 0,
+      recorderRecords: 6,
+      panelRouteState: "active",
+      recorderRouteState: "active",
+    },
   };
 }
 
@@ -117,10 +133,42 @@ export class BrowserMockCapyIOApi implements CapyIOApi {
     return structuredClone(this.snapshot);
   }
 
+  async getLiveImu(): Promise<UiLiveImu> {
+    return unsupportedLiveImu();
+  }
+
+  async startLiveImu(): Promise<UiLiveImu> {
+    throw new Error("Live IMU requires the Tauri desktop backend.");
+  }
+
+  async stopLiveImu(): Promise<UiLiveImu> {
+    return unsupportedLiveImu();
+  }
+
   private pushEvent(summary: string): void {
     const event: UiEvent = { sequence: this.nextSequence, summary };
     this.nextSequence += 1;
     this.snapshot.events.push(event);
     this.snapshot.events = this.snapshot.events.slice(-20);
   }
+}
+
+function unsupportedLiveImu(): UiLiveImu {
+  return {
+    status: "unsupported",
+    simulated: true,
+    routeId: "00000000-0000-4000-8000-000000000000",
+    routeState: "draft",
+    endpoint: null,
+    profile: "capyio.motion.imu-samples/1",
+    streamEpoch: 0,
+    sequence: null,
+    sourceTimestampNanos: null,
+    clockDomainId: null,
+    acceleration: null,
+    angularVelocity: null,
+    receivedSamples: 0,
+    problemCode: null,
+    problem: "Browser Mock 不会访问真实网络或传感器。",
+  };
 }

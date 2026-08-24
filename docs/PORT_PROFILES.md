@@ -1,6 +1,8 @@
 # CapyIO Port Profiles
 
-> Status: initial registry; only foundation validation and Mock data exist.
+> Status: initial registry; IMU v1 has deterministic fixture/replay semantics
+> and an authorized SensorServer physical-lab path. Production transport remains
+> unimplemented.
 
 ## Identity and versioning
 
@@ -71,9 +73,41 @@ PCM and audio callback rules are retained in `docs/AUDIO_PROFILE.md` and
 `docs/DATA_PLANE.md`. Audio types live in `capyio-audio` or Profile-specific
 descriptors rather than dominating Core.
 
+## IMU samples v1
+
+`capyio.motion.imu-samples/1` uses a StandardPort `DataEnvelope` with:
+
+- typed `StreamId`, positive stream epoch and monotonic sequence;
+- source and receiver timestamps plus a named clock domain;
+- optional acceleration, angular-velocity and magnetic-field component source
+  timestamps for Adapters that combine asynchronous sensors;
+- acceleration in metres per second squared;
+- angular velocity in radians per second;
+- optional magnetic field in microtesla;
+- Android device coordinates (X right, Y up, Z out of the screen);
+- explicit accuracy and calibration state;
+- bounded sensor name/vendor/version/type metadata.
+
+Unknown major versions or required enum semantics are rejected. Gaps, stale
+epochs, duplicates, late samples and per-consumer overflow are observable and
+are not repaired by changing timestamps. The committed fixture uses
+`android.sensor.elapsed_realtime` only as a semantic clock-domain label; it was
+not captured from the connected phone.
+
+Adding optional component timestamps is an append-only v1 semantic extension.
+Older fixtures omit the field and retain their existing meaning. When present,
+required component timestamps are positive; a magnetic-field timestamp and
+value appear together. The combined envelope source timestamp is the maximum of
+the included components, while each original timestamp remains available.
+
+The first SensorServer mapping uses the Android `SensorEvent` elapsed-realtime
+clock, accepts documented accuracy values 0–3, preserves the device coordinate
+frame and marks calibration `Raw` because the external service does not declare
+a calibration state. Pairing within a configured skew is not sensor fusion and
+does not imply synchronized sampling.
+
 ## Unknown semantics
 
 Unknown optional metadata may be preserved as opaque data. Unknown direction,
 required Profile major, enum or required format semantics cause explicit
 rejection.
-

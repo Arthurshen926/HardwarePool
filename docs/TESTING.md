@@ -21,6 +21,10 @@ cargo xtask validate-manifests
 cargo xtask adapter-smoke
 cargo xtask ci
 cargo xtask demo
+cargo xtask imu-demo
+cargo xtask android-doctor --serial <explicit-serial>
+cargo xtask android-baseline --serial <explicit-serial>
+cargo xtask android-collect --serial <explicit-serial>
 ```
 
 Frontend uses `corepack pnpm typecheck` and `corepack pnpm build`.
@@ -50,6 +54,55 @@ Frontend uses `corepack pnpm typecheck` and `corepack pnpm build`.
   traceability covers every normative PRD ID;
 - deterministic UI snapshot with four Routes.
 
+## Fixture-first IMU tests
+
+- committed JSONL envelopes validate Profile, timestamps, clock domain, epoch,
+  sequence, SI units, coordinate frame, accuracy, calibration and sensor data;
+- Panel and Recorder consume independent bounded queues from one fan-out;
+- a full/stopped Recorder does not block Panel progress;
+- gaps, duplicates, late samples, wrong streams, stale/future epochs, sequence
+  exhaustion and recorder bounds have explicit regression tests;
+- `cargo xtask imu-demo` replays the same compiled fixture through the headless
+  node and emits numeric Panel plus JSONL Recorder evidence;
+- the desktop Browser Mock and Tauri backend expose the same schema-v3 fixture
+  summary and label it as simulated rather than live phone data.
+
+These tests require no phone and make no SensorServer, APK, network or physical
+timing claim.
+
+## SensorServer mapping contract tests
+
+- the pinned upstream three-field JSON shape maps exact finite axes, timestamp
+  and Android accuracy values;
+- empty, oversized, malformed, unknown-field, wrong-axis-count, zero-timestamp
+  and unknown-accuracy messages fail explicitly;
+- accelerometer and gyroscope readings pair in either arrival order only inside
+  a configured skew bound;
+- each required reading is consumed once; replacing an unpaired sample is
+  observable and a later in-skew sample recovers;
+- timestamp regression and sequence exhaustion fail closed;
+- optional fresh magnetic-field data and every component timestamp remain in
+  the IMU Profile output.
+
+These tests use recorded synthetic JSON and no WebSocket implementation, phone,
+APK or network connection.
+
+## SensorServer WebSocket contract tests
+
+- endpoint construction accepts only typed IP addresses, non-zero ports and
+  fixed per-sensor paths;
+- a loopback RFC 6455 server proves exact text-message mapping;
+- ping/pong, close code and socket timeout have distinct outcomes;
+- malformed JSON, binary data and messages above 4 KiB do not reach the IMU
+  consumer;
+- an HTTP upgrade response exceeding Tungstenite's 64 KiB handshake attack
+  limit fails the connection;
+- dependency validation pins Tungstenite 0.30.0 to `handshake` only and rejects
+  async/TLS additions in this slice.
+
+These loopback tests open only an ephemeral local port. They do not connect to
+the phone, install an APK or claim production authentication.
+
 ## Deterministic integration tests
 
 Fixtures use HP OmniBook Ultra Flip 14 and vivo X200 Pro mini with no environment
@@ -77,6 +130,40 @@ contract, data plane or performance test.
   Verifier in an isolated VM/dedicated target;
 - end to end: IMU Panel/Recorder, audio both directions, camera, gamepad,
   independent Routes, disconnect/reconnect and clock epochs.
+
+## Android read-only lab commands
+
+Android commands require `--serial`; target order is never inferred. They use
+an allow-list of `adb devices`, `getprop`, `wm size` and `dumpsys
+sensorservice`, impose a four-megabyte process-output bound, and retain only
+model/build-version plus bounded sensor-list fields. `android-baseline` prints
+sanitized JSON; `android-collect` writes it only below ignored
+`test-results/android/<run-id>/`. Neither command installs an APK, grants a
+permission, starts a service or changes settings.
+
+The separately authorized physical `CAPY-IMU-001B2` run used the fixed upstream
+SensorServer v7.2.1 binary after its published SHA-256 matched. Live evidence
+requires paired source timestamps, sequential envelopes, equal Panel/Recorder
+counts, zero silent sequence repair, a second clean connection after graceful
+close, and an explicit client failure when the phone service stops. Physical
+addresses, pairing codes and raw device identifiers are not committed.
+
+The authorized `CAPY-IMU-001B3A` desktop run additionally exercises the Tauri
+start/read/stop DTO boundary. Acceptance requires a visible typed failure, a
+later successful connection with changing numeric vectors and monotonically
+growing sample count, and a stopped state that retains the last snapshot. The
+desktop Rust physical test remains ignored by default and requires explicit
+`CAPYIO_LIVE_IMU_IP` and `CAPYIO_LIVE_IMU_PORT` environment variables. Normal CI
+does not require a phone or a reachable private endpoint.
+
+`CAPY-IMU-001B3B` binds that worker to the same `NodeRuntime` that owns the
+desktop Node. Loopback tests assert the staged Route lifecycle, retained
+disconnect Problem, fresh retry epoch and explicit stop without a phone. The
+ignored physical test asserts real paired samples drive the Route to `Active`
+and shutdown reaches `Stopped`. The authorized lab run also confirmed that a
+stale phone listener produces `Offline` rather than a false success, then
+succeeds after the service is restarted. Private addresses are not retained in
+repository evidence.
 
 ## Data and timing quality
 

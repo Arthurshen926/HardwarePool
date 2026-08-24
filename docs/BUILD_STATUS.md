@@ -1,6 +1,6 @@
 # CapyIO Build Status
 
-> Updated: 2026-08-24 during `CAPY-FOUNDATION-002`.
+> Updated: 2026-08-24 during `CAPY-IMU-001B3B`.
 
 ## Verified baseline
 
@@ -56,17 +56,116 @@ format/check/Clippy, 70 workspace tests, docs, two manifests, Adapter Smoke,
 check/build. Exact command and test-count evidence is retained in
 `docs/FOUNDATION_HARDENING_REPORT.md`.
 
-Hosted results for this exact head are pending until the branch is pushed and
-GitHub Actions completes; workflow configuration is not reported as a hosted
-pass. Linux/macOS native Tauri packaging is an explicit current skip, while
-their Rust/Adapter and web UI jobs remain required.
+PR #10 passed repository, UI, Windows/Linux/macOS Rust/Adapter and Windows
+Tauri exact-head checks before merge commit `5f5b81f`. Linux/macOS native Tauri
+packaging remains an explicit skip; their Rust/Adapter jobs did pass.
+
+## CAPY-IMU-001A fixture-first path
+
+The active branch adds a real in-process semantic data path, not a live phone
+transport:
+
+- bounded Profile/stream/epoch/sequence/timestamp envelopes;
+- explicit gap, duplicate, late, wrong-stream, stale/future-epoch and full
+  outcomes;
+- independent per-consumer queues and lifecycle for Panel and Recorder;
+- deterministic `capyio.motion.imu-samples/1` JSONL fixture with SI units,
+  coordinate frame, accuracy, calibration and sensor metadata;
+- headless replay plus shared Browser/Tauri numeric Panel and Recorder summary;
+- safe Android doctor/baseline/collect commands requiring an explicit serial.
+
+Full workspace format/check/Clippy, 79 Rust tests, repository validation,
+headless replay, `cargo xtask ci`, frozen frontend install/typecheck/build and
+Windows Tauri check/build passed. A real read-only vivo inventory also passed;
+the ignored artifact is sanitized and explicitly says no APK, permission change
+or live CapyIO stream. Exact evidence is in `docs/CAPY_IMU_001A_REPORT.md`.
+
+## CAPY-IMU-001B0 SensorServer contract
+
+The active slice has started the first real-Adapter boundary without opening a
+network connection or claiming phone data:
+
+- upstream SensorServer commit and GPL-3.0-only external-service provenance are
+  recorded with no source or binary import;
+- its documented JSON message is bounded and strictly parsed;
+- asynchronous accelerometer/gyroscope readings pair deterministically with
+  explicit skew, replacement, regression and sequence-exhaustion behavior;
+- original component timestamps survive in the IMU Profile.
+
+Full workspace format/check/Clippy, 88 Rust tests, repository validation,
+manifests, Adapter Smoke, fixture replay, frontend typecheck/build and
+`cargo xtask ci` passed. Exact evidence is in
+`docs/CAPY_IMU_001B0_REPORT.md`.
+
+## CAPY-IMU-001B1 bounded WebSocket client
+
+The active slice adds the first concrete local-lab transport inside the
+SensorServer Adapter:
+
+- user-approved Tungstenite 0.30.0, handshake-only, with no Tokio or TLS stack;
+- IP-literal endpoint and fixed Android sensor paths;
+- TCP connect/read/write deadlines and 4 KiB frame/message bounds;
+- typed text/control/close/timeout/error outcomes;
+- loopback mock-server tests for success and abnormal frames.
+
+Complete locally. Seven WebSocket loopback tests cover the fixed endpoint,
+valid text, ping/pong, close, timeout, malformed/binary/oversized messages and
+oversized handshake behavior. Together with the nine parser/pairing tests, the
+SensorServer Adapter has 16 contract tests. Full workspace format/check/Clippy,
+95 Rust tests, repository validation, manifests, Adapter Smoke, fixture replay,
+frontend typecheck/build and `cargo xtask ci` passed. Exact evidence is in
+`docs/CAPY_IMU_001B1_REPORT.md`.
+
+## CAPY-IMU-001B2 physical SensorServer lab
+
+Complete on the authorized Android/Windows lab pair. The official SensorServer
+v7.2.1 APK matched its published SHA-256 and fixed upstream revision before
+installation. The live command produced paired accelerometer/gyroscope
+StandardPort envelopes, delivered the same eight-sample run to an independent
+numeric Panel and JSONL Recorder with zero missing sequences, then repeated the
+run without restarting the service. A physical service stop closed the active
+client explicitly with code 4004. Exact bounded evidence and remaining limits
+are in `docs/CAPY_IMU_001B2_REPORT.md`. Full workspace format/check/Clippy, 96
+Rust tests and the remaining `cargo xtask ci` gates passed.
+
+## CAPY-IMU-001B3A Windows Tauri physical panel
+
+Complete as a bounded desktop-lab slice. Narrow Tauri commands now start, read
+and stop a host-owned SensorServer worker without exposing arbitrary networking
+to the WebView. The panel renders live acceleration and angular velocity plus
+epoch, sequence, clock and sample count, and visibly distinguishes idle,
+connecting, active, failed and stopped states.
+
+An authorized physical UI run first surfaced a real handshake timeout, then
+recovered after the phone service restarted, grew beyond 100 samples and
+stopped explicitly while retaining a 226-sample final snapshot. The physical
+endpoint is not committed. Exact evidence and the production-Runtime boundary
+are in `docs/CAPY_IMU_001B3A_REPORT.md`.
+
+## CAPY-IMU-001B3B Runtime-owned physical IMU Route
+
+Complete as a local physical-lab slice. The SensorServer ExternalService
+Adapter, Android IMU Source, Windows Panel Sink and `ExternalProtocol` Route are
+registered in the desktop Node's single `NodeRuntime`. Staged commands expose
+Draft/Prepared/Starting/Active/Offline/Stopped, retain a retryable disconnect
+Problem and advance the epoch before retry.
+
+Loopback success and failure tests cover activation, disconnect, retry and
+thread shutdown. The ignored physical test passed against the authorized phone
+after a stale SensorServer listener was restarted. Exact evidence and limits
+are in `docs/CAPY_IMU_001B3B_REPORT.md`.
 
 ## Not built or tested
 
-- Android application/APK or phone;
-- Android permissions/foreground services;
-- real microphone, speaker, camera, IMU or input data path;
+- CapyIO-owned Android application/APK;
+- automated Android permission or foreground-service management;
+- real microphone, speaker, camera or input data path;
 - Windows virtual devices, driver, WDK or isolated-VM driver test;
-- production transport, pairing, encryption, third-party Adapter or performance.
+- production transport, pairing, encryption, live third-party Adapter transport
+  or performance.
+
+The physical SensorServer lab transport is owned by the desktop process's real
+Node Runtime Route, but it is not production transport or a long-lived headless
+Node service.
 
 These absences are expected and must not be reported as working functionality.

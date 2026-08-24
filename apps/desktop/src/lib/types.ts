@@ -67,19 +67,65 @@ export interface UiEvent {
   summary: string;
 }
 
+export interface UiVector3 {
+  x: number;
+  y: number;
+  z: number;
+}
+
+export interface UiImuFixture {
+  mode: "deterministic_fixture";
+  simulated: true;
+  profile: "capyio.motion.imu-samples/1";
+  sequence: number;
+  sourceTimestampNanos: number;
+  clockDomainId: string;
+  acceleration: UiVector3;
+  angularVelocity: UiVector3;
+  panelReceived: number;
+  panelMissingSequences: number;
+  recorderRecords: number;
+  panelRouteState: "active";
+  recorderRouteState: "active";
+}
+
+export type LiveImuStatus = "idle" | "connecting" | "active" | "offline" | "stopped" | "failed" | "unsupported";
+
+export interface UiLiveImu {
+  status: LiveImuStatus;
+  simulated: boolean;
+  routeId: string;
+  routeState: RouteState;
+  endpoint: string | null;
+  profile: "capyio.motion.imu-samples/1";
+  streamEpoch: number;
+  sequence: number | null;
+  sourceTimestampNanos: number | null;
+  clockDomainId: string | null;
+  acceleration: UiVector3 | null;
+  angularVelocity: UiVector3 | null;
+  receivedSamples: number;
+  problemCode: string | null;
+  problem: string | null;
+}
+
 export interface UiSnapshot {
   backendMode: BackendMode;
-  schemaVersion: 2;
+  schemaVersion: 3;
   projectVersion: string;
   nodes: UiNode[];
   routes: UiRoute[];
   adapters: UiAdapter[];
   events: UiEvent[];
   warnings: string[];
+  imuFixture: UiImuFixture;
 }
 
 export interface CapyIOApi {
   getSnapshot(): Promise<UiSnapshot>;
   setRoute(routeId: string, active: boolean): Promise<UiSnapshot>;
   resetDemo(): Promise<UiSnapshot>;
+  getLiveImu(): Promise<UiLiveImu>;
+  startLiveImu(ip: string, port: number): Promise<UiLiveImu>;
+  stopLiveImu(): Promise<UiLiveImu>;
 }

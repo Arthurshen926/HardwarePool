@@ -31,12 +31,17 @@ REQUIRED_FILES = [
     "docs/REQUIREMENTS_TRACEABILITY.md",
     "docs/plans/TEMPLATE.md",
     "crates/capyio-core/src/lib.rs",
+    "crates/capyio-data-plane/src/lib.rs",
+    "adapters/sensor-server/src/lib.rs",
     "crates/capyio-audio/src/lib.rs",
     "crates/capyio-runtime/src/lib.rs",
     "crates/capyio-protocol/src/lib.rs",
     "protocol/proto/capyio/v1/common.proto",
     "protocol/proto/capyio/v1/capability.proto",
     "protocol/proto/capyio/v1/control.proto",
+    "fixtures/imu/imu_samples_v1.jsonl",
+    "fixtures/sensor-server/accelerometer.json",
+    "fixtures/sensor-server/gyroscope.json",
     "apps/desktop/package.json",
     "apps/desktop/src/App.vue",
     "apps/desktop/src-tauri/tauri.conf.json",
@@ -59,6 +64,7 @@ GATE_EVIDENCE_ROW_RE = re.compile(
 )
 TARGET_GATE_RE = re.compile(r"^Gate(?:s)?\s+(?P<first>\d+)(?:[\-–](?P<last>\d+))?$")
 FOUNDATION_ACCEPTANCE_IDS = {f"G0-3-{number:02d}" for number in range(1, 10)}
+ACTIVE_IMPLEMENTATION_GATES = {5}
 
 JSON_FILES = [
     "package.json",
@@ -322,7 +328,11 @@ def validate_traceability_report(requirement_ids: set[str]) -> None:
                 f"foundation Requirement {requirement_id} must be implemented or verified, "
                 f"not {status}"
             )
-        if first_gate >= 4 and status != "planned":
+        if (
+            first_gate >= 4
+            and first_gate not in ACTIVE_IMPLEMENTATION_GATES
+            and status != "planned"
+        ):
             fail(f"future Requirement {requirement_id} must be planned, not {status}")
         if not evidence or evidence in {"-", "—"}:
             fail(f"traceability evidence is empty for {requirement_id}")
@@ -435,6 +445,19 @@ def validate_architecture_dependencies() -> None:
     if violations:
         fail(f"Core manifest contains forbidden platform/mechanism dependencies: {violations}")
 
+    data_plane_manifest = (ROOT / "crates/capyio-data-plane/Cargo.toml").read_text(
+        encoding="utf-8"
+    )
+    data_plane_forbidden = ["tauri", "tokio", "windows", "android", "quinn", "webrtc"]
+    data_plane_violations = [
+        name for name in data_plane_forbidden if name in data_plane_manifest.lower()
+    ]
+    if data_plane_violations:
+        fail(
+            "Data-plane manifest contains forbidden platform/transport dependencies: "
+            f"{data_plane_violations}"
+        )
+
     driver_text = "\n".join(
         path.read_text(encoding="utf-8").lower()
         for path in (ROOT / "drivers/windows-audio").rglob("*")
@@ -448,6 +471,41 @@ def validate_architecture_dependencies() -> None:
     root_manifest = (ROOT / "Cargo.toml").read_text(encoding="utf-8")
     if "your-org" in root_manifest or "example.com" in root_manifest:
         fail("root Cargo metadata contains an unresolved repository placeholder")
+
+
+def validate_sensor_server_provenance() -> None:
+    provenance = (ROOT / "third_party/THIRD_PARTY.yml").read_text(encoding="utf-8")
+    required = [
+        "upstream_repository: https://github.com/UmerCodez/SensorServer",
+        "pinned_revision: 5ae401780d99debcabb8dc259256c2652dada0a6",
+        "license: GPL-3.0-only",
+        "integration_mode: external_service_protocol_adapter",
+        "source_imported: false",
+        "binary_imported: false",
+        "imported_paths: []",
+    ]
+    missing = [entry for entry in required if entry not in provenance]
+    if missing:
+        fail(f"SensorServer provenance is incomplete: {missing}")
+
+    manifest = (ROOT / "adapters/sensor-server/Cargo.toml").read_text(
+        encoding="utf-8"
+    ).lower()
+    required_dependency = (
+        'tungstenite.workspace = true' in manifest
+        and 'tungstenite = { version = "0.30.0", default-features = false, '
+        'features = ["handshake"] }'
+        in (ROOT / "Cargo.toml").read_text(encoding="utf-8").lower()
+    )
+    if not required_dependency:
+        fail("SensorServer must use the reviewed minimal tungstenite 0.30.0 dependency")
+    forbidden_transport = ["tokio", "native-tls", "rustls", "reqwest"]
+    present = [name for name in forbidden_transport if name in manifest]
+    if present:
+        fail(
+            "SensorServer Adapter contains an unreviewed transport/TLS dependency: "
+            f"{present}"
+        )
 
 
 def workflow_has_pull_request_branch(text: str, expected: str) -> bool:
@@ -499,6 +557,7 @@ def validate_hosted_ci_contract() -> None:
         "cargo xtask validate-docs",
         "cargo xtask validate-manifests",
         "cargo xtask adapter-smoke",
+        "cargo xtask imu-demo",
     ]:
         if command not in core:
             fail(f"Rust/Adapter matrix is missing merge-gate command: {command}")
@@ -587,6 +646,7 @@ def main() -> None:
     requirement_count = validate_requirement_ids()
     validate_proto_field_numbers()
     validate_architecture_dependencies()
+    validate_sensor_server_provenance()
     validate_hosted_ci_contract()
     validate_current_foundation_labels()
     validate_local_markdown_links()
