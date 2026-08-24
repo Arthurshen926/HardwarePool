@@ -30,9 +30,10 @@ implementation scope automatically.
   Adapter, UI and Windows Tauri checks before merge commit `5f5b81f`.
 - Gate 5 groundwork: `CAPY-IMU-001A` is complete with deterministic bounded IMU
   replay and read-only Android inventory. `CAPY-IMU-001B0` completed the bounded
-  SensorServer parser/pairing contract and `CAPY-IMU-001B1` completed the reviewed
-  WebSocket/mock-server path. Gate 5 remains open until physical payload,
-  Runtime/UI and lifecycle evidence exists.
+  SensorServer parser/pairing contract, `CAPY-IMU-001B1` completed the reviewed
+  WebSocket/mock-server path, and `CAPY-IMU-001B2` retained physical payload,
+  Panel/Recorder and disconnect evidence. Gate 5 remains open until Runtime/UI
+  integration and its lifecycle/timing evidence exists.
 - Gates 4 and 6–15 remain roadmap only; no implementation authorization is
   implied.
 

@@ -275,6 +275,18 @@ impl SensorServerWebSocketClient {
     pub const fn state(&self) -> SensorServerClientState {
         self.state
     }
+
+    pub fn close(&mut self) -> Result<(), SensorServerError> {
+        if self.state != SensorServerClientState::Open {
+            return Err(SensorServerError::ClientNotOpen { state: self.state });
+        }
+        if let Err(error) = self.socket.close(None) {
+            self.state = SensorServerClientState::Failed;
+            return Err(SensorServerError::WebSocketControlFailed(error.to_string()));
+        }
+        self.state = SensorServerClientState::Closed;
+        Ok(())
+    }
 }
 
 fn is_timeout(error: &io::Error) -> bool {

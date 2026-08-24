@@ -91,10 +91,10 @@ Implementation slices:
   SensorServer JSON parsing plus deterministic accelerometer/gyroscope pairing;
 - `CAPY-IMU-001B1` (complete): add a reviewed WebSocket client dependency and local
   mock-server tests, without a phone;
-- `CAPY-IMU-001B2` (next): use the reconnected wireless ADB target, install/start the externally
-  maintained app only under the existing device authorization, and retain live
-  Panel/Recorder evidence;
-- `CAPY-IMU-001B3`: project live state into the desktop Runtime/UI and close the
+- `CAPY-IMU-001B2` (complete): use the reconnected wireless ADB target, install/start
+  the externally maintained app under device authorization, and retain live
+  Panel/Recorder plus disconnect evidence;
+- `CAPY-IMU-001B3` (next): project live state into the desktop Runtime/UI and close the
   remaining Gate 5 lifecycle/timing evidence.
 
 ## Later small tasks

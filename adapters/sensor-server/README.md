@@ -24,7 +24,16 @@ executor or TLS stack is enabled. Local mock-server tests cover valid text,
 malformed/binary/oversized data, ping/pong, close, timeout and oversized
 handshake behavior.
 
-Physical SensorServer connection, automatic reconnect/epoch orchestration, APK
-installation and live data claims remain follow-up work. Plain `ws://` is
-permitted only in an explicitly labeled trusted local lab and is not production
-security.
+`CAPY-IMU-001B2` adds the bounded `sensor-server-live` lab command. It opens
+separate accelerometer and gyroscope workers, pairs readings, fans the same
+StandardPort envelopes out to an independent numeric Panel and JSONL Recorder,
+and closes both WebSockets before exit. Run it as:
+
+```text
+cargo run -p capyio-sensor-server-adapter --bin sensor-server-live -- <ip> <port> [sample-count]
+```
+
+The physical lab path was verified with an unmodified upstream v7.2.1 APK.
+Automatic retry/epoch orchestration and desktop UI integration remain follow-up
+work. Plain `ws://` is permitted only in an explicitly labeled trusted local
+lab and is not production security.

@@ -147,6 +147,28 @@ fn close_code_is_explicit_and_reply_is_flushed() {
 }
 
 #[test]
+fn caller_close_is_sent_and_prevents_client_reuse() {
+    let (endpoint, server) = spawn_mock_server(|mut socket| {
+        assert!(matches!(socket.read(), Ok(Message::Close(None))));
+    });
+    let mut client = SensorServerWebSocketClient::connect(
+        endpoint,
+        SensorKind::Accelerometer,
+        config(Duration::from_secs(2)),
+    )
+    .unwrap();
+    client.close().unwrap();
+    assert_eq!(client.state(), SensorServerClientState::Closed);
+    assert_eq!(
+        client.close(),
+        Err(SensorServerError::ClientNotOpen {
+            state: SensorServerClientState::Closed
+        })
+    );
+    server.join().unwrap();
+}
+
+#[test]
 fn binary_and_oversized_text_are_rejected_before_sensor_mapping() {
     let (binary_endpoint, binary_server) = spawn_mock_server(|mut socket| {
         socket.send(Message::Binary(vec![0, 1, 2].into())).unwrap();

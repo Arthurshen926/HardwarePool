@@ -56,6 +56,13 @@ mapping outside the WebSocket implementation. Ping/pong/close never become IMU
 payloads. A connection timeout is retryable by caller policy; close/capacity and
 other terminal errors require a fresh client and later a new stream epoch.
 
+The physical-lab command composes two such clients with the deterministic
+assembler and bounded fan-out. It waits for the accelerometer handshake before
+starting the gyroscope worker, publishes each emitted envelope independently to
+a numeric Panel and JSONL Recorder, and sends WebSocket Close before successful
+exit. It is a bounded lab consumer, not Runtime reconnect policy or a public
+wire protocol.
+
 ## 4. Audio frame semantics
 
 Every decoded frame contains:

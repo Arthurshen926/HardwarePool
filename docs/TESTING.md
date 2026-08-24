@@ -141,6 +141,13 @@ sanitized JSON; `android-collect` writes it only below ignored
 `test-results/android/<run-id>/`. Neither command installs an APK, grants a
 permission, starts a service or changes settings.
 
+The separately authorized physical `CAPY-IMU-001B2` run used the fixed upstream
+SensorServer v7.2.1 binary after its published SHA-256 matched. Live evidence
+requires paired source timestamps, sequential envelopes, equal Panel/Recorder
+counts, zero silent sequence repair, a second clean connection after graceful
+close, and an explicit client failure when the phone service stops. Physical
+addresses, pairing codes and raw device identifiers are not committed.
+
 ## Data and timing quality
 
 Signal tests measure latency, clipping, gaps, discontinuities, loss/repeat and

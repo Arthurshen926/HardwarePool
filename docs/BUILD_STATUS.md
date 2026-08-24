@@ -116,11 +116,23 @@ SensorServer Adapter has 16 contract tests. Full workspace format/check/Clippy,
 frontend typecheck/build and `cargo xtask ci` passed. Exact evidence is in
 `docs/CAPY_IMU_001B1_REPORT.md`.
 
+## CAPY-IMU-001B2 physical SensorServer lab
+
+Complete on the authorized Android/Windows lab pair. The official SensorServer
+v7.2.1 APK matched its published SHA-256 and fixed upstream revision before
+installation. The live command produced paired accelerometer/gyroscope
+StandardPort envelopes, delivered the same eight-sample run to an independent
+numeric Panel and JSONL Recorder with zero missing sequences, then repeated the
+run without restarting the service. A physical service stop closed the active
+client explicitly with code 4004. Exact bounded evidence and remaining limits
+are in `docs/CAPY_IMU_001B2_REPORT.md`. Full workspace format/check/Clippy, 96
+Rust tests and the remaining `cargo xtask ci` gates passed.
+
 ## Not built or tested
 
-- Android application/APK or live phone payload path;
-- Android permissions/foreground services;
-- real microphone, speaker, camera, IMU or input data path;
+- CapyIO-owned Android application/APK;
+- automated Android permission or foreground-service management;
+- real microphone, speaker, camera or input data path;
 - Windows virtual devices, driver, WDK or isolated-VM driver test;
 - production transport, pairing, encryption, live third-party Adapter transport
   or performance.
