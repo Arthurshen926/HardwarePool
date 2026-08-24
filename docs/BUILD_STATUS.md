@@ -1,6 +1,6 @@
 # CapyIO Build Status
 
-> Updated: 2026-08-24 during `CAPY-AUDIO-001A0`.
+> Updated: 2026-08-24 during `CAPY-AUDIO-001A1`.
 
 ## Verified baseline
 
@@ -186,3 +186,12 @@ stdout/stderr/deadlines and strict v0.3.4 endpoint parsing. Seven default tests
 and one ignored real-CLI probe pass. The server supervisor, Runtime speaker
 Route, disconnect Problem/retry epoch and generic Quick Action remain active
 work; no upstream binary or APK is committed or distributed.
+
+`CAPY-AUDIO-001A1` additionally implements direct child startup, explicit TCP
+listener readiness, bounded output draining, typed early exit/startup timeout,
+polling, idempotent stop and synchronous process reaping. Three fixture-backed
+supervisor tests pass. An ignored real-CLI run also started the verified release
+on loopback, observed it running, stopped it and confirmed zero remaining
+listeners/processes. This is server-process evidence only: upstream v0.3.4 has
+no machine-readable Android peer state, so receiver loss is not yet a Runtime
+Problem and human logs are not used as lifecycle authority.

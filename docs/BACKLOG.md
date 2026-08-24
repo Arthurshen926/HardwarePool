@@ -125,6 +125,11 @@ Progress:
 - `CAPY-AUDIO-001A0` complete locally: bounded direct-process version/endpoint
   probing and explicit bind/endpoint/PCM configuration are implemented with no
   new production dependency. Runtime process supervision is the next slice.
+- `CAPY-AUDIO-001A1` complete locally: the child is probed, started directly,
+  checked for TCP-listener readiness, boundedly drained, polled, stopped and
+  reaped with typed early-exit/timeout behavior. The upstream CLI exposes no
+  machine-readable Android peer state; disconnect must not be inferred from
+  ordinary logs and remains open for `001A2`.
 
 Explicit non-scope: vendoring upstream source, a CapyIO Android app, virtual
 render endpoint, microphone, codec rewrite, production pairing/encryption or

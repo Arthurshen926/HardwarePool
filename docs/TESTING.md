@@ -122,9 +122,18 @@ ordered bounded events/snapshots.
 - an ignored test probes a separately supplied, hash-verified v0.3.4 CLI and is
   never required by hosted CI.
 
-These tests do not start the audio server or send PCM. Process supervision,
-receiver-loss/Route behavior and physical playback remain separate later
+The probe tests above do not start the audio server or send PCM. Process
+supervision, receiver-loss/Route behavior and physical playback are separate
 acceptance steps.
+
+The next supervisor tests use a repository-built fixture executable to prove
+TCP-listener readiness, running/early-exit state, startup timeout, bounded
+continuous output, explicit kill/reap, idempotent stop and Drop cleanup. A
+separately ignored test briefly starts the hash-verified real Windows CLI on an
+explicit loopback port, verifies it remains running after readiness, then stops
+and confirms no process/listener remains. Listener readiness is not receiver
+presence; v0.3.4 has no machine-readable peer-status API and tests never parse
+ordinary log prose into lifecycle state.
 
 ## Sidecar smoke test
 

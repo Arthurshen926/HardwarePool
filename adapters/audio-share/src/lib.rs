@@ -16,6 +16,13 @@ use std::{
 
 use thiserror::Error;
 
+mod supervisor;
+
+pub use supervisor::{
+    AudioShareSupervisor, ProcessExitReport, ProcessOutputSummary, SupervisorLimits,
+    SupervisorStartReport, SupervisorStatus, SupervisorStopReport,
+};
+
 pub const PINNED_AUDIO_SHARE_VERSION: &str = "0.3.4";
 pub const DEFAULT_PROBE_OUTPUT_LIMIT: usize = 64 * 1024;
 pub const DEFAULT_PROBE_LINE_LIMIT: usize = 1024;
@@ -313,7 +320,7 @@ impl ProbeCommandRunner for SystemProbeCommandRunner {
 }
 
 #[cfg(windows)]
-fn configure_hidden_process(command: &mut Command) {
+pub(crate) fn configure_hidden_process(command: &mut Command) {
     use std::os::windows::process::CommandExt;
 
     const CREATE_NO_WINDOW: u32 = 0x0800_0000;
@@ -321,15 +328,15 @@ fn configure_hidden_process(command: &mut Command) {
 }
 
 #[cfg(not(windows))]
-fn configure_hidden_process(_command: &mut Command) {}
+pub(crate) fn configure_hidden_process(_command: &mut Command) {}
 
 #[derive(Debug)]
-struct BoundedRead {
-    bytes: Vec<u8>,
-    overflowed: bool,
+pub(crate) struct BoundedRead {
+    pub(crate) bytes: Vec<u8>,
+    pub(crate) overflowed: bool,
 }
 
-fn read_bounded(mut reader: impl Read, limit: usize) -> io::Result<BoundedRead> {
+pub(crate) fn read_bounded(mut reader: impl Read, limit: usize) -> io::Result<BoundedRead> {
     let mut bytes = Vec::with_capacity(limit.min(4096));
     let mut overflowed = false;
     let mut chunk = [0_u8; 4096];
@@ -346,7 +353,7 @@ fn read_bounded(mut reader: impl Read, limit: usize) -> io::Result<BoundedRead> 
     Ok(BoundedRead { bytes, overflowed })
 }
 
-fn join_reader(
+pub(crate) fn join_reader(
     reader: thread::JoinHandle<io::Result<BoundedRead>>,
     stream: &'static str,
 ) -> Result<BoundedRead, AudioShareError> {
@@ -634,6 +641,16 @@ pub enum AudioShareError {
     NoPlaybackEndpoints,
     #[error("configured Audio Share endpoint is not present")]
     ConfiguredEndpointMissing { endpoint_id: String },
+    #[error("Audio Share supervisor is already running")]
+    SupervisorAlreadyRunning,
+    #[error("Audio Share supervisor startup deadline is invalid")]
+    InvalidSupervisorStartupDeadline,
+    #[error("Audio Share supervisor output limit is invalid")]
+    InvalidSupervisorOutputLimit,
+    #[error("Audio Share process exited before its TCP listener became ready")]
+    SupervisorExitedBeforeReady { exit_code: Option<i32> },
+    #[error("Audio Share TCP listener did not become ready before the startup deadline")]
+    SupervisorStartupTimedOut,
 }
 
 impl fmt::Debug for AudioShareProbe<SystemProbeCommandRunner> {
