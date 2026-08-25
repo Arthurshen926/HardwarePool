@@ -35,7 +35,7 @@ path is compiled and contract-tested but was not counted as another audible
 physical run; the prior `001A3` report retains the audible and lifecycle
 evidence.
 
-## Remaining Gate 7 work
+## Remaining Gate 7A work
 
 - longer background and secure-lock behavior;
 - audio-focus interruption and recovery;

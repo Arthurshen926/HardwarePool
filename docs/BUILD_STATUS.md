@@ -1,6 +1,6 @@
 # CapyIO Build Status
 
-> Updated: 2026-08-24 during `CAPY-AUDIO-001A1`.
+> Updated: 2026-08-25 during `CAPY-AUDIO-001B0`.
 
 ## Verified baseline
 
@@ -257,3 +257,19 @@ invalidate tokens. Selection intentionally lasts only for the current desktop
 run. Desktop unit tests cover token/request/name bounds and inactive/active
 process replacement; the hash-verified CLI real probe passed against the
 current Windows inventory.
+
+## CAPY-AUDIO-001B0 dedicated virtual-speaker start
+
+The product target now explicitly includes an independent Windows `CapyIO
+Speaker` render endpoint. ADR 0027 splits the proven mirror transport (7A) from
+the driver-backed projection (7B). The first path will use a minimal
+SysVAD-derived WaveRT endpoint and standard user-mode WASAPI loopback capture;
+networking remains outside the driver.
+
+Microsoft Windows-driver-samples is pinned at revision
+`717778a20ba4dd2440fe609f69153a1f8a64f597`; its repository license is MS-PL.
+No upstream source has been imported. The current x64 daily host is Windows
+build 26200.8875 with Visual Studio Build Tools 17.14 and Windows SDK
+10.0.26100.0, but WDK build integration/InfVerif is absent. Hyper-V services are
+running, while the current account cannot enumerate VMs. No driver tool,
+installation, signing, boot/security setting or VM mutation was performed.

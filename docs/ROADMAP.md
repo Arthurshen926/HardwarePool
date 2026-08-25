@@ -13,7 +13,8 @@ implementation scope automatically.
 | 4 — product UX | versioned Quick Actions, Workspace pages and built-in Panel registry | dynamic plugin market | accessible Route Builder, task templates, persisted layout tests | exposing internals to ordinary users |
 | 5 — standard IMU path | SensorServer Source, `motion.imu-samples/1`, IMU Panel and initial Recorder | system gamepad | vivo manual data evidence, timing metadata, mock/record replay | Android sensor timestamp/permission variance |
 | 6 — gamepad | IMU/touch to DSU and VIIPER, haptics feedback | universal USB classes | emulator/game recognition plus reverse feedback; driver work only in approved target | virtual-input distribution and licensing |
-| 7 — remote speaker | Windows/Linux system mix to Android speaker through Audio Share AdapterManaged Route | dedicated virtual render endpoint | real playback, disconnect/background/focus evidence | latency, protected audio and mobile lifecycle |
+| 7A — remote-speaker transport | Windows system mix to Android speaker through Audio Share AdapterManaged Route | production installer/security | real playback, disconnect/background/focus evidence | latency, protected audio and mobile lifecycle |
+| 7B — Windows virtual speaker | independent `CapyIO Speaker` render endpoint feeding the 7A transport | driver installation on the daily host | unmodified SysVAD build in isolated VM, dedicated endpoint enumeration, exclusive-route playback, restart/uninstall and failure evidence | WDK, signing, kernel stability and distribution |
 | 8 — remote microphone | MicYou engine to Windows system microphone Quick Action | new audio stack from scratch | ordinary-app recording, permission/revoke/lock tests | virtual audio packaging/signing |
 | 9 — camera | VCamdroid to preview and Windows virtual camera | rewritten codec/FFmpeg stack | resolution/rotation/disconnect and ordinary-app enumeration evidence | upstream C++/FFmpeg/Softcam maintenance |
 | 10 — input and mirror | scrcpy composite, keyboard/pointer Adapters, screen mirror | extended display | independent input/display Routes and platform fallback tests | platform injection restrictions |
@@ -34,14 +35,18 @@ implementation scope automatically.
   the physical path to the Tauri UI and the desktop Node's single Runtime with
   explicit Problem, retry epoch and stop evidence. Hosted exact-head evidence
   remains a merge prerequisite rather than a missing Gate 5 behavior.
-- Gate 7 initial vertical slice is complete locally: the pinned Audio Share
+- Gate 7A initial vertical slice is complete locally: the pinned Audio Share
   process is supervised and projected as one Runtime-owned AdapterManaged
   Quick Action; physical transport, Android PCM submission, disconnect, retry
   epoch, stop and one user-confirmed audible case pass. The Quick Action also
-  supports safe session-local playback-endpoint reselection. Gate 7 remains
+  supports safe session-local playback-endpoint reselection. Gate 7A remains
   open for longer background/audio-focus, latency and soak evidence. Gates 4,
   6 and 8–15
   remain roadmap only.
+- Gate 7B is now active by explicit product decision. The intended endpoint is
+  an independent `CapyIO Speaker`, not a renamed mirror of the current physical
+  output. SysVAD provenance is pinned, but driver source/build/install evidence
+  waits for an identified isolated Windows target.
 
 ## Public-alpha proof bar
 

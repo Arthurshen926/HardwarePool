@@ -4,7 +4,7 @@ This table separates architecture intent from evidence.
 
 | Platform | Foundation Core | Current host/UI evidence | Real Adapters | System Projection evidence |
 |---|---|---|---|---|
-| Windows | CI target/intended | local Rust workspace and Tauri build | none | none; driver docs only |
+| Windows | CI target/intended | local Rust workspace and Tauri build | Audio Share external-process lab | `CapyIO Speaker` planned; SysVAD provenance pinned, no driver source/build/install yet |
 | Android | shared model intended | no APK/device run | none | ordinary-app limitations documented |
 | Linux | hosted Core/UI CI history | no current local platform run | none | none |
 | macOS | hosted Core CI history | no current local platform run | none | none |

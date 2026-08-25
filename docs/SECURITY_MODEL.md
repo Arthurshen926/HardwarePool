@@ -91,6 +91,11 @@ No network, DNS, pairing, crypto negotiation, JSON/Protobuf, codecs or reconnect
 logic in drivers. Kernel IPC is fixed/bounded and validated. Driver tests and
 Verifier run only in an isolated approved target.
 
+The first `CapyIO Speaker` path uses the standard Windows render/loopback model
+so PCM remains observable in user mode without a new custom render-ring IPC.
+Any later custom driver IPC must be justified by retained measurements and must
+retain the same fixed-size, versioned and fail-silent boundary.
+
 ### Denial of service and stale state
 
 Bound message/queue/event/log sizes, rate/deadline limits, disconnect cleanup,

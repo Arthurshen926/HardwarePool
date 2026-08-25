@@ -63,6 +63,12 @@ by display name while the Route is inactive. Selection applies to the current
 desktop process only; users must stop the mirror before changing endpoints.
 Raw platform endpoint identifiers are never displayed or accepted by the UI.
 
+The final Windows workflow targets a separate system render device named
+`CapyIO Speaker`. Applications may choose it without changing where unrelated
+desktop audio plays. Until Gate 7B has isolated-VM enumeration and end-to-end
+evidence, the existing Quick Action continues to label itself as mirror mode
+and must not imply that the virtual endpoint is already installed.
+
 ## Runtime ownership
 
 Closing or refreshing UI does not define the lifecycle of an active Node or

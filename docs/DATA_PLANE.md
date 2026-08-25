@@ -125,4 +125,8 @@ The semantic frame is not itself the public binary wire layout. A transport ADR 
 - maximum packet and aggregate rates;
 - fuzz and golden-fixture strategy.
 
-The Windows kernel driver never receives this network frame. The user-mode Broker converts validated decoded PCM into the smaller driver IPC contract.
+The Windows kernel driver never receives this network frame. For a virtual
+render endpoint, the preferred first path is user-mode WASAPI loopback capture,
+so no custom driver PCM IPC is required. A smaller versioned driver IPC remains
+available only for projection directions or status that standard Windows APIs
+cannot satisfy.

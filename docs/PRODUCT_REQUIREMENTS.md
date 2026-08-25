@@ -1,6 +1,6 @@
 # CapyIO Product Requirements
 
-> Version: v0.4-pre-alpha
+> Version: v0.5-pre-alpha
 > Status: normative active-development baseline
 > Working name: CapyIO — Cross-device I/O Capability Fabric
 > License baseline: Apache-2.0
@@ -244,7 +244,10 @@ The product has two experiences:
 - vendoring, repackaging or production deployment of SensorServer; the only
   current exception is the externally installed, local-lab IMU protocol Adapter
   scoped by `CAPY-IMU-001B` and ADR 0021;
-- Windows virtual audio/camera/display/HID implementation or installation;
+- Windows virtual camera/display/HID implementation or installation;
+- Windows virtual-audio installation on the daily-development host; the
+  dedicated `CapyIO Speaker` implementation is authorized only through ADR
+  0027 and an identified isolated VM or dedicated test installation;
 - unapproved Android permission, foreground-service, APK or physical-device
   operations; every approved lab action remains target-specific and retained as
   evidence;

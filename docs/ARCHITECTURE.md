@@ -1,6 +1,6 @@
 # CapyIO Architecture
 
-> Version: 0.3-pre-alpha
+> Version: 0.4-pre-alpha
 > Status: normative for the CapyIO foundation
 
 ## 1. Architecture objective
@@ -263,6 +263,13 @@ Any future Windows driver is minimal: endpoint/PCM or fixed IPC surface only.
 Networking, DNS, pairing, encryption, JSON/Protobuf, codecs, reconnect and user
 configuration remain in user mode. Driver build/install/test requires an
 isolated VM or dedicated Windows installation.
+
+The dedicated remote-speaker projection is a render endpoint named `CapyIO
+Speaker`. Windows applications render into it, and the first user-mode path
+captures that endpoint through standard WASAPI loopback before sending audio
+through the existing Adapter-managed transport. This keeps network and mobile
+lifecycle logic out of the driver and avoids a custom kernel PCM IPC for the
+render direction unless retained measurements later prove it necessary.
 
 ## 12. Android boundary
 

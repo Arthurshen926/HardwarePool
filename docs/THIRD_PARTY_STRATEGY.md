@@ -30,6 +30,12 @@ current lab uses only a user-supplied, hash-verified artifact and makes no
 distribution claim. A README, protocol mapping or physical lab run does not
 imply endorsement or production security.
 
+Microsoft SysVAD is the reviewed starting point for the dedicated Windows
+virtual-speaker work. The official Windows-driver-samples revision and MS-PL
+license are recorded, but no source or binary is imported. The unchanged sample
+must build and enumerate in an isolated target before a minimal derivative is
+selected for import.
+
 ## License boundary
 
 The repository remains Apache-2.0 for the foundation. GPL or otherwise

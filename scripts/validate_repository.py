@@ -463,7 +463,15 @@ def validate_architecture_dependencies() -> None:
         for path in (ROOT / "drivers/windows-audio").rglob("*")
         if path.is_file()
     )
-    required_driver_rules = ["network", "protobuf", "json", "codec"]
+    required_driver_rules = [
+        "network",
+        "protobuf",
+        "json",
+        "codec",
+        "capyio speaker",
+        "wasapi",
+        "isolated",
+    ]
     missing_rules = [rule for rule in required_driver_rules if rule not in driver_text]
     if missing_rules:
         fail(f"Windows driver boundary docs lack rules: {missing_rules}")
@@ -505,6 +513,34 @@ def validate_sensor_server_provenance() -> None:
         fail(
             "SensorServer Adapter contains an unreviewed transport/TLS dependency: "
             f"{present}"
+        )
+
+
+def validate_sysvad_provenance() -> None:
+    provenance = (ROOT / "third_party/THIRD_PARTY.yml").read_text(encoding="utf-8")
+    required = [
+        "id: microsoft-sysvad",
+        "upstream_repository: https://github.com/microsoft/Windows-driver-samples",
+        "pinned_revision: 717778a20ba4dd2440fe609f69153a1f8a64f597",
+        "upstream_path: audio/sysvad",
+        "license: MS-PL",
+        "integration_mode: planned_driver_derivative",
+        "source_imported: false",
+        "binary_imported: false",
+    ]
+    missing = [entry for entry in required if entry not in provenance]
+    if missing:
+        fail(f"Microsoft SysVAD provenance is incomplete: {missing}")
+
+    imported_driver_sources = [
+        path
+        for path in (ROOT / "drivers/windows-audio").rglob("*")
+        if path.is_file() and path.suffix.lower() in {".c", ".cpp", ".inx", ".vcxproj"}
+    ]
+    if imported_driver_sources:
+        fail(
+            "Windows driver source appeared before the SysVAD provenance record "
+            "was advanced from source_imported: false"
         )
 
 
@@ -647,6 +683,7 @@ def main() -> None:
     validate_proto_field_numbers()
     validate_architecture_dependencies()
     validate_sensor_server_provenance()
+    validate_sysvad_provenance()
     validate_hosted_ci_contract()
     validate_current_foundation_labels()
     validate_local_markdown_links()

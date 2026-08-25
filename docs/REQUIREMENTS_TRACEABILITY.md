@@ -39,7 +39,7 @@ hardware, networking, security or performance behavior has run.
 | Requirement ID | Status | Target Gate | Evidence or planned proof |
 |---|---|---|---|
 | `FR-SCEN-001` | planned | Gate 8 | MicYou phone microphone to desktop/system-microphone evidence. |
-| `FR-SCEN-002` | planned | Gate 7 | Small-slice evidence already retains Windows system-mix to Android playback, user-confirmed audibility, disconnect/retry/stop and safe current-endpoint reselection; the complete requirement remains planned until broader background/focus/performance acceptance closes. |
+| `FR-SCEN-002` | planned | Gate 7 | Gate 7A retains system-mix playback, user-confirmed audibility, disconnect/retry/stop and endpoint reselection; Gate 7B now requires a separately enumerated `CapyIO Speaker` plus isolated-VM and background/focus/performance evidence. |
 | `FR-SCEN-003` | planned | Gate 6 | Gamepad input plus independent reverse-haptics Routes. |
 | `FR-SCEN-004` | planned | Gate 9 | Camera preview and Windows virtual-camera evidence. |
 | `FR-SCEN-005` | planned | Gates 10–11 | Mirror evidence at Gate 10 and separate extended-display evidence at Gate 11. |

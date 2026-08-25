@@ -2,6 +2,9 @@
 
 Status: accepted
 
+Render-path amendment: ADR 0027 prefers standard WASAPI loopback for `CapyIO
+Speaker`; the custom PCM IPC remains a fallback rather than a Gate 7B default.
+
 ## Context
 
 Windows system-level audio endpoints require driver work, while networking, protocols, codecs and reconnect logic are complex and process untrusted input.

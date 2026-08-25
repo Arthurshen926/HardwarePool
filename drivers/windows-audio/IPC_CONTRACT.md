@@ -1,11 +1,16 @@
 # Broker ↔ Windows Audio Driver IPC Contract
 
-> Status: design constraint, not a frozen binary ABI  
+> Status: deferred fallback design, not a frozen binary ABI
 > Version: bootstrap-0
 
 ## 1. Purpose
 
-The IPC surface transfers bounded PCM blocks and minimal endpoint state between the Windows user-mode Broker and the virtual audio driver. It does not carry CapyIO network messages or Core objects.
+The IPC surface would transfer bounded PCM blocks and minimal endpoint state
+between the Windows user-mode Broker and the virtual audio driver. It does not
+carry CapyIO network messages or Core objects. ADR 0027 selects standard WASAPI
+loopback for the first `CapyIO Speaker` render path, so `ATTACH_RENDER_RING` is
+not implemented unless measurements later show that standard capture is
+insufficient.
 
 ## 2. Design constraints
 

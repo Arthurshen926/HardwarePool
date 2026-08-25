@@ -158,9 +158,22 @@ Progress:
   replaces configuration only while the Route is inactive. Raw endpoint IDs
   and executable paths never enter the WebView; selection is session-local.
 
-Explicit non-scope: vendoring upstream source, a CapyIO Android app, virtual
-render endpoint, microphone, codec rewrite, production pairing/encryption or
-automatic retry policy.
+Explicit `001A` non-scope: vendoring upstream source, a CapyIO Android app,
+virtual render endpoint, microphone, codec rewrite, production
+pairing/encryption or automatic retry policy. The newly authorized virtual
+endpoint is isolated in `001B` rather than retrofitted into the proven transport
+slice.
+
+### CAPY-AUDIO-001B — Dedicated Windows `CapyIO Speaker`
+
+Goal: expose a real Windows render endpoint that applications can select
+independently of the physical/RDP output, then capture only that endpoint in
+user mode and feed the proven Android speaker transport.
+
+`CAPY-AUDIO-001B0` is active: ADR 0027 resolves the former Gate 7 non-goal,
+pins the official Microsoft SysVAD source/license without importing it, records
+the current host's build-tool gap, and requires an isolated target before any
+driver build/install action. Plan: `docs/plans/active/0012-windows-virtual-speaker.md`.
 
 ## Later small tasks
 
@@ -170,7 +183,8 @@ automatic retry policy.
 - `CAPY-CAMERA-001`: VCamdroid sidecar catalog/probe spike.
 - `CAPY-UX-001`: versioned Quick Action template schema.
 - `CAPY-SEC-001`: authenticated control-channel design spike.
-- `CAPY-DRIVER-001`: provision isolated Windows driver test VM; no driver code.
+- `CAPY-DRIVER-001`: provision the isolated Windows driver VM required by
+  `CAPY-AUDIO-001B0`.
 
 ## Task safety checklist
 

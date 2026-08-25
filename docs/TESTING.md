@@ -200,6 +200,13 @@ contract, data plane or performance test.
 - end to end: IMU Panel/Recorder, audio both directions, camera, gamepad,
   independent Routes, disconnect/reconnect and clock epochs.
 
+Gate 7B first proves an unchanged pinned SysVAD build and install in an
+identified isolated VM. It then requires `CapyIO Speaker` enumeration, explicit
+application selection, user-mode WASAPI loopback capture, silence on the
+ordinary physical/RDP endpoint, audio-service/reboot survival and clean
+uninstall. Repository validation prevents driver source from appearing while
+the SysVAD record still declares `source_imported: false`.
+
 ## Android read-only lab commands
 
 Android commands require `--serial`; target order is never inferred. They use
