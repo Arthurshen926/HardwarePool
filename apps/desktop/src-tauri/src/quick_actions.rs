@@ -1,7 +1,8 @@
-use std::{env, net::IpAddr, path::PathBuf};
+use std::{collections::BTreeMap, env, net::IpAddr, path::PathBuf};
 
 use capyio_audio_share_adapter::{
-    AudioEncoding, AudioShareConfig, AudioShareSupervisor, ProbeLimits, SupervisorLimits,
+    AudioEncoding, AudioShareConfig, AudioShareProbe, AudioShareSupervisor, ProbeLimits,
+    SupervisorLimits,
 };
 use capyio_core::{Problem, RouteId, RouteState, SessionId};
 use capyio_runtime::NodeRuntime;
@@ -34,6 +35,33 @@ pub struct InvokeQuickActionRequest {
     pub operation: QuickActionOperation,
 }
 
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct SelectAudioEndpointRequest {
+    pub action_id: String,
+    pub selection_token: String,
+}
+
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct UiAudioEndpointChoice {
+    pub selection_token: String,
+    pub display_name: String,
+    pub is_default: bool,
+    pub selected: bool,
+}
+
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct UiAudioEndpointCatalog {
+    pub schema_version: u8,
+    pub action_id: &'static str,
+    pub supported: bool,
+    pub can_select: bool,
+    pub choices: Vec<UiAudioEndpointChoice>,
+    pub problem: Option<String>,
+}
+
 #[derive(Clone, Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct UiQuickAction {
@@ -55,13 +83,17 @@ pub struct UiQuickAction {
 
 pub struct AudioShareQuickAction {
     controller: Option<AudioShareRouteController<AudioShareSupervisor>>,
+    host_config: Option<TrustedAudioShareHostConfig>,
+    endpoint_selection: EndpointSelectionCache,
     configuration_problem: Option<String>,
     orchestration_problem: Option<String>,
 }
 
 impl AudioShareQuickAction {
     pub fn install(runtime: &mut NodeRuntime, session_id: SessionId) -> Self {
-        match configured_supervisor().and_then(|supervisor| {
+        let configured = TrustedAudioShareHostConfig::from_environment()
+            .and_then(|host| host.supervisor().map(|supervisor| (host, supervisor)));
+        match configured.and_then(|(host, supervisor)| {
             AudioShareRouteController::install(
                 runtime,
                 session_id,
@@ -69,14 +101,19 @@ impl AudioShareQuickAction {
                 DEFAULT_STABLE_RECEIVER_POLLS,
                 DEFAULT_RECEIVER_WAIT_POLLS,
             )
+            .map(|controller| (host, controller))
         }) {
-            Ok(controller) => Self {
+            Ok((host_config, controller)) => Self {
                 controller: Some(controller),
+                host_config: Some(host_config),
+                endpoint_selection: EndpointSelectionCache::default(),
                 configuration_problem: None,
                 orchestration_problem: None,
             },
             Err(problem) => Self {
                 controller: None,
+                host_config: None,
+                endpoint_selection: EndpointSelectionCache::default(),
                 configuration_problem: Some(bounded(problem)),
                 orchestration_problem: None,
             },
@@ -128,6 +165,101 @@ impl AudioShareQuickAction {
         self.dto(runtime)
     }
 
+    pub fn endpoint_selection_available(&self, runtime: &NodeRuntime) -> bool {
+        self.controller
+            .as_ref()
+            .and_then(|controller| controller.route_state(runtime).ok())
+            .is_some_and(endpoint_selection_allowed)
+    }
+
+    pub fn endpoint_catalog(&mut self, can_select: bool) -> UiAudioEndpointCatalog {
+        self.endpoint_selection.by_token.clear();
+        let Some(host_config) = self.host_config.as_ref() else {
+            return endpoint_catalog_problem(
+                false,
+                "Audio Share host configuration is unavailable",
+            );
+        };
+        if !can_select {
+            return endpoint_catalog_problem(
+                true,
+                "stop the Audio Share Route before scanning endpoints",
+            );
+        }
+        let probe = match AudioShareProbe::new(ProbeLimits::default()) {
+            Ok(probe) => probe,
+            Err(_) => return endpoint_scan_failed(),
+        };
+        let inventory = match probe.inventory(&host_config.executable) {
+            Ok(inventory) => inventory,
+            Err(_) => return endpoint_scan_failed(),
+        };
+        let Some(generation) = self.endpoint_selection.generation.checked_add(1) else {
+            return endpoint_catalog_problem(true, "endpoint selection generation exhausted");
+        };
+        self.endpoint_selection.generation = generation;
+        let choices = inventory
+            .endpoints
+            .into_iter()
+            .enumerate()
+            .map(|(index, endpoint)| {
+                let selection_token = format!("audio-endpoint-{generation}-{index}");
+                self.endpoint_selection
+                    .by_token
+                    .insert(selection_token.clone(), endpoint.id.clone());
+                UiAudioEndpointChoice {
+                    selection_token,
+                    display_name: sanitized_endpoint_name(&endpoint.name),
+                    is_default: endpoint.is_default,
+                    selected: endpoint.id == host_config.endpoint_id,
+                }
+            })
+            .collect();
+        UiAudioEndpointCatalog {
+            schema_version: 1,
+            action_id: AUDIO_SHARE_ACTION_ID,
+            supported: true,
+            can_select,
+            choices,
+            problem: None,
+        }
+    }
+
+    pub fn select_endpoint(
+        &mut self,
+        runtime: &NodeRuntime,
+        request: SelectAudioEndpointRequest,
+    ) -> Result<UiQuickAction, String> {
+        if request.action_id != AUDIO_SHARE_ACTION_ID {
+            return Err("unknown Quick Action".to_owned());
+        }
+        validate_selection_token(&request.selection_token)?;
+        let endpoint_id = self
+            .endpoint_selection
+            .by_token
+            .get(&request.selection_token)
+            .cloned()
+            .ok_or_else(|| {
+                "refresh the endpoint list and choose an enumerated endpoint".to_owned()
+            })?;
+        let host_config = self
+            .host_config
+            .as_ref()
+            .ok_or_else(|| "Audio Share host configuration is unavailable".to_owned())?;
+        let supervisor = host_config.supervisor_for(endpoint_id.clone())?;
+        self.controller
+            .as_mut()
+            .ok_or_else(|| "Audio Share host configuration is unavailable".to_owned())?
+            .replace_process(runtime, supervisor)?;
+        self.host_config
+            .as_mut()
+            .expect("configured controller retains host configuration")
+            .endpoint_id = endpoint_id;
+        self.endpoint_selection.by_token.clear();
+        self.orchestration_problem = None;
+        self.dto(runtime)
+    }
+
     pub fn dto(&self, runtime: &NodeRuntime) -> Result<UiQuickAction, String> {
         let Some(controller) = self.controller.as_ref() else {
             return Ok(UiQuickAction {
@@ -148,7 +280,9 @@ impl AudioShareQuickAction {
             });
         };
         let status = controller.status(runtime)?;
-        let problem = latest_problem(runtime, controller.route_id());
+        let problem = matches!(status.route_state, RouteState::Offline | RouteState::Failed)
+            .then(|| latest_problem(runtime, controller.route_id()))
+            .flatten();
         Ok(UiQuickAction {
             schema_version: QUICK_ACTION_SCHEMA_VERSION,
             id: AUDIO_SHARE_ACTION_ID,
@@ -181,27 +315,102 @@ impl AudioShareQuickAction {
     }
 }
 
-fn configured_supervisor() -> Result<AudioShareSupervisor, String> {
-    let executable = required_env_path(ENV_EXE)?;
-    let bind_ip = required_env(ENV_BIND_IP)?
-        .parse::<IpAddr>()
-        .map_err(|_| format!("{ENV_BIND_IP} must be an IP literal"))?;
-    let port = required_env(ENV_PORT)?
-        .parse::<u16>()
-        .map_err(|_| format!("{ENV_PORT} must be a non-zero u16"))?;
-    let endpoint = required_env(ENV_ENDPOINT)?;
-    let config = AudioShareConfig::new(
-        executable,
-        bind_ip,
-        port,
-        endpoint,
-        AudioEncoding::S16,
-        2,
-        48_000,
+#[derive(Clone)]
+struct TrustedAudioShareHostConfig {
+    executable: PathBuf,
+    bind_ip: IpAddr,
+    port: u16,
+    endpoint_id: String,
+}
+
+impl TrustedAudioShareHostConfig {
+    fn from_environment() -> Result<Self, String> {
+        Ok(Self {
+            executable: required_env_path(ENV_EXE)?,
+            bind_ip: required_env(ENV_BIND_IP)?
+                .parse::<IpAddr>()
+                .map_err(|_| format!("{ENV_BIND_IP} must be an IP literal"))?,
+            port: required_env(ENV_PORT)?
+                .parse::<u16>()
+                .map_err(|_| format!("{ENV_PORT} must be a non-zero u16"))?,
+            endpoint_id: required_env(ENV_ENDPOINT)?,
+        })
+    }
+
+    fn supervisor(&self) -> Result<AudioShareSupervisor, String> {
+        self.supervisor_for(self.endpoint_id.clone())
+    }
+
+    fn supervisor_for(&self, endpoint_id: String) -> Result<AudioShareSupervisor, String> {
+        let config = AudioShareConfig::new(
+            self.executable.clone(),
+            self.bind_ip,
+            self.port,
+            endpoint_id,
+            AudioEncoding::S16,
+            2,
+            48_000,
+        )
+        .map_err(|error| error.to_string())?;
+        AudioShareSupervisor::new(config, ProbeLimits::default(), SupervisorLimits::default())
+            .map_err(|error| error.to_string())
+    }
+}
+
+#[derive(Default)]
+struct EndpointSelectionCache {
+    generation: u64,
+    by_token: BTreeMap<String, String>,
+}
+
+fn endpoint_selection_allowed(state: RouteState) -> bool {
+    matches!(
+        state,
+        RouteState::Draft | RouteState::Prepared | RouteState::Stopped | RouteState::Offline
     )
-    .map_err(|error| error.to_string())?;
-    AudioShareSupervisor::new(config, ProbeLimits::default(), SupervisorLimits::default())
-        .map_err(|error| error.to_string())
+}
+
+fn validate_selection_token(token: &str) -> Result<(), String> {
+    if token.is_empty()
+        || token.len() > 64
+        || !token
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || byte == b'-')
+    {
+        return Err("invalid endpoint selection token".to_owned());
+    }
+    Ok(())
+}
+
+fn endpoint_catalog_problem(supported: bool, problem: &str) -> UiAudioEndpointCatalog {
+    UiAudioEndpointCatalog {
+        schema_version: 1,
+        action_id: AUDIO_SHARE_ACTION_ID,
+        supported,
+        can_select: false,
+        choices: Vec::new(),
+        problem: Some(bounded(problem.to_owned())),
+    }
+}
+
+fn endpoint_scan_failed() -> UiAudioEndpointCatalog {
+    endpoint_catalog_problem(
+        true,
+        "Windows playback endpoint scan failed; check trusted host configuration",
+    )
+}
+
+fn sanitized_endpoint_name(name: &str) -> String {
+    name.chars()
+        .take(256)
+        .map(|character| {
+            if character.is_control() {
+                '\u{fffd}'
+            } else {
+                character
+            }
+        })
+        .collect()
 }
 
 fn required_env(name: &str) -> Result<String, String> {
@@ -271,6 +480,8 @@ mod tests {
         let lab = DemoLab::new().expect("demo Runtime");
         let action = AudioShareQuickAction {
             controller: None,
+            host_config: None,
+            endpoint_selection: EndpointSelectionCache::default(),
             configuration_problem: Some("fixture host configuration missing".to_owned()),
             orchestration_problem: None,
         };
@@ -303,5 +514,29 @@ mod tests {
             r#"{"actionId":"capyio.quick-action.remote-speaker","operation":"start","path":"untrusted.exe"}"#,
         );
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn endpoint_selection_request_rejects_unknown_fields() {
+        let result = serde_json::from_str::<SelectAudioEndpointRequest>(
+            r#"{"actionId":"capyio.quick-action.remote-speaker","selectionToken":"audio-endpoint-1-0","endpointId":"untrusted"}"#,
+        );
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn endpoint_selection_tokens_are_bounded_and_closed() {
+        assert!(validate_selection_token("audio-endpoint-1-0").is_ok());
+        assert!(validate_selection_token("").is_err());
+        assert!(validate_selection_token("../raw-endpoint-id").is_err());
+        assert!(validate_selection_token(&"a".repeat(65)).is_err());
+    }
+
+    #[test]
+    fn endpoint_names_are_bounded_and_control_characters_are_replaced() {
+        let sanitized = sanitized_endpoint_name(&format!("Remote\nAudio{}", "x".repeat(300)));
+        assert_eq!(sanitized.chars().count(), 256);
+        assert!(sanitized.contains('\u{fffd}'));
+        assert!(!sanitized.contains('\n'));
     }
 }

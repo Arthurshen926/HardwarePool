@@ -34,6 +34,8 @@ plane.
 6. `CAPY-AUDIO-001A3`: expose the Route through a generic versioned Quick
    Action projection and repeat the authorized physical playback/disconnect
    test.
+7. `CAPY-AUDIO-001A4`: enumerate and safely reselect a Windows playback endpoint
+   through host-owned opaque tokens without exposing raw endpoint IDs.
 
 ## Acceptance
 
@@ -110,3 +112,7 @@ plane.
 - Real ignored probes confirmed that the current RDP endpoint starts and reaps,
   while the disappeared former endpoint is rejected as
   `ConfiguredEndpointMissing` before spawn with supervisor state still stopped.
+- `CAPY-AUDIO-001A4`: complete locally. The desktop card exposes only bounded
+  endpoint names and one-generation opaque tokens. The host rejects arbitrary
+  or stale tokens and active-Route changes; selection is intentionally
+  session-local. The current real Windows inventory probe passed.

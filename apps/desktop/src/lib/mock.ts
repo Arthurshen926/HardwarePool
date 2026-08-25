@@ -2,6 +2,7 @@ import type {
   CapyIOApi,
   RouteState,
   UiEvent,
+  UiAudioEndpointCatalog,
   UiLiveImu,
   QuickActionOperation,
   UiPort,
@@ -153,6 +154,21 @@ export class BrowserMockCapyIOApi implements CapyIOApi {
 
   async invokeQuickAction(_actionId: string, _operation: QuickActionOperation): Promise<UiQuickAction> {
     throw new Error("Physical Quick Actions require the Tauri desktop backend.");
+  }
+
+  async getAudioEndpoints(): Promise<UiAudioEndpointCatalog> {
+    return {
+      schemaVersion: 1,
+      actionId: "capyio.quick-action.remote-speaker",
+      supported: false,
+      canSelect: false,
+      choices: [],
+      problem: "Windows 播放端点枚举需要 Tauri 桌面后端。",
+    };
+  }
+
+  async selectAudioEndpoint(_actionId: string, _selectionToken: string): Promise<UiQuickAction> {
+    throw new Error("Windows playback endpoint selection requires the Tauri desktop backend.");
   }
 
   private pushEvent(summary: string): void {

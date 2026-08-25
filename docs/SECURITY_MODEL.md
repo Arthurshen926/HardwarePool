@@ -61,6 +61,11 @@ host environment, while the versioned UI request is closed to unknown fields
 and permits only one stable action ID plus `start`, `retry` or `stop`.
 Start-time endpoint re-probing reports disappearance through a stable sanitized
 Problem and does not echo the configured endpoint ID into UI diagnostics.
+Endpoint reselection exposes only bounded display names and short-lived opaque
+tokens. The Tauri host accepts a bounded token only from its latest enumerated
+allow-list, rejects unknown/stale tokens and active-Route changes, and never
+accepts a raw endpoint ID from the WebView. Scan failures return a stable
+sanitized message rather than upstream stderr. The selection is not persisted.
 
 Windows receiver observation filters the OS TCP owner table by the supervised
 process ID, explicit local port and established state. It returns only a count,

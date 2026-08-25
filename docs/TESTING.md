@@ -170,6 +170,12 @@ configuration is absent, finite operations derived from Route state, rejection
 of unknown request fields (including an attempted executable path), and matching
 Browser Mock/Tauri TypeScript contracts. The Tauri host owns a 250 ms poll loop;
 the WebView refresh only observes the projection and is not lifecycle authority.
+A separate endpoint-selection contract rejects unknown request fields,
+unbounded or non-token input and active-Route process replacement. Display
+names are bounded and control characters replaced; inactive replacement is
+covered with a fake process boundary. The real ignored CLI probe confirms the
+current Windows endpoint inventory remains parseable, while raw IDs are not
+asserted or retained in repository evidence.
 A separately ignored physical test composes the real supervisor and Runtime
 Route and waits for active, disconnect, later-epoch retry, active and stopped.
 

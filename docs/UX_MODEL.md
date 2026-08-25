@@ -58,6 +58,11 @@ mirroring. It captures an existing Windows render endpoint, so the desktop may
 continue to play locally; it is not presented as a CapyIO-created virtual
 speaker or exclusive output route.
 
+The desktop card can rescan current Windows playback endpoints and select one
+by display name while the Route is inactive. Selection applies to the current
+desktop process only; users must stop the mirror before changing endpoints.
+Raw platform endpoint identifiers are never displayed or accepted by the UI.
+
 ## Runtime ownership
 
 Closing or refreshing UI does not define the lifecycle of an active Node or

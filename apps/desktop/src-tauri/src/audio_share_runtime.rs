@@ -199,6 +199,25 @@ impl<P: AudioShareProcessBoundary> AudioShareRouteController<P> {
         process_result
     }
 
+    pub fn replace_process(&mut self, runtime: &NodeRuntime, process: P) -> Result<(), String> {
+        match self.route.state(runtime)? {
+            RouteState::Draft
+            | RouteState::Prepared
+            | RouteState::Stopped
+            | RouteState::Offline => {}
+            state => {
+                return Err(format!(
+                    "Audio Share endpoint cannot change while Route is {state:?}"
+                ));
+            }
+        }
+        self.process.stop()?;
+        self.process = process;
+        self.stable_receiver_polls = 0;
+        self.receiver_wait_polls = 0;
+        Ok(())
+    }
+
     pub fn status(&self, runtime: &NodeRuntime) -> Result<AudioShareRouteStatus, String> {
         Ok(AudioShareRouteStatus {
             route_state: self.route.state(runtime)?,
@@ -977,6 +996,57 @@ mod tests {
                 .route(parse_id(ROUTE_ID).expect("Route ID"))
                 .is_err()
         );
+    }
+
+    #[test]
+    fn inactive_route_accepts_a_replacement_process() {
+        let mut lab = DemoLab::new().expect("demo Runtime");
+        let session_id = lab.session_id;
+        let mut controller = AudioShareRouteController::install(
+            &mut lab.runtime,
+            session_id,
+            FakeProcess::default(),
+            1,
+            DEFAULT_RECEIVER_WAIT_POLLS,
+        )
+        .expect("install Route");
+
+        controller
+            .replace_process(&lab.runtime, FakeProcess::with_presences([established()]))
+            .expect("replace inactive process");
+        controller
+            .start(&mut lab.runtime, 1)
+            .expect("start replacement");
+        assert_eq!(controller.process.starts, 1);
+        assert_eq!(
+            controller
+                .poll(&mut lab.runtime)
+                .expect("activate")
+                .route_state,
+            RouteState::Active
+        );
+    }
+
+    #[test]
+    fn active_route_rejects_process_replacement() {
+        let mut lab = DemoLab::new().expect("demo Runtime");
+        let session_id = lab.session_id;
+        let mut controller = AudioShareRouteController::install(
+            &mut lab.runtime,
+            session_id,
+            FakeProcess::with_presences([established()]),
+            1,
+            DEFAULT_RECEIVER_WAIT_POLLS,
+        )
+        .expect("install Route");
+        controller.start(&mut lab.runtime, 1).expect("start");
+        controller.poll(&mut lab.runtime).expect("activate");
+
+        let error = controller
+            .replace_process(&lab.runtime, FakeProcess::default())
+            .expect_err("active replacement must fail");
+        assert!(error.contains("Active"));
+        assert_eq!(controller.process.starts, 1);
     }
 
     #[test]

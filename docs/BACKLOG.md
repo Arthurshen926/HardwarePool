@@ -152,8 +152,11 @@ Progress:
   screen-off run retained TCP and advanced the Android Track; secure lock,
   longer background, audio focus, latency and soak remain open.
 - Endpoint drift now has a typed, sanitized start-time Problem. A later UX slice
-  still needs trusted-host selection from a freshly enumerated allow-list; the
-  WebView must never submit an arbitrary endpoint ID or executable path.
+  no longer strands the user on a stale host configuration.
+- `CAPY-AUDIO-001A4` complete locally: the desktop card rescans bounded endpoint
+  display names, selects through a fresh host-owned opaque-token allow-list and
+  replaces configuration only while the Route is inactive. Raw endpoint IDs
+  and executable paths never enter the WebView; selection is session-local.
 
 Explicit non-scope: vendoring upstream source, a CapyIO Android app, virtual
 render endpoint, microphone, codec rewrite, production pairing/encryption or

@@ -248,3 +248,12 @@ configuration and is not returned to the WebView.
 The hash-verified real CLI passed the current-endpoint start/listen/stop probe
 and rejected an explicitly stale former endpoint before spawn, leaving the
 supervisor stopped.
+
+`CAPY-AUDIO-001A4` adds trusted-host playback-endpoint reselection to the
+desktop Quick Action. The UI receives bounded names and per-scan opaque tokens;
+the Rust host resolves only its current token allow-list to raw IDs and rejects
+selection while the Route is active. Refresh and successful selection
+invalidate tokens. Selection intentionally lasts only for the current desktop
+run. Desktop unit tests cover token/request/name bounds and inactive/active
+process replacement; the hash-verified CLI real probe passed against the
+current Windows inventory.

@@ -175,6 +175,12 @@ Dependency rules:
   audio-service re-enumeration maps to a sanitized, retryable
   `CAPY.AUDIO_SHARE.ENDPOINT_UNAVAILABLE` Problem; raw endpoint IDs remain
   trusted host configuration and do not enter the WebView DTO.
+- The desktop may project the freshly enumerated endpoint display names through
+  short-lived opaque selection tokens. Only tokens in the host-owned current
+  generation map back to endpoint IDs; refresh and successful selection
+  invalidate the map. Selection replaces the supervised process configuration
+  only while the Route is inactive and is intentionally session-local until a
+  trusted persistence design exists.
 - Testkit is never a production dependency of Core/Protocol/Runtime/Adapter SDK.
 - Drivers communicate through minimal validated contracts, never Rust memory
   layout or network/wire messages.

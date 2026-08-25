@@ -32,7 +32,10 @@ mod physical_imu_runtime;
 mod quick_actions;
 
 use physical_imu_runtime::PhysicalImuRoute;
-use quick_actions::{AudioShareQuickAction, InvokeQuickActionRequest, UiQuickAction};
+use quick_actions::{
+    AudioShareQuickAction, InvokeQuickActionRequest, SelectAudioEndpointRequest,
+    UiAudioEndpointCatalog, UiQuickAction,
+};
 
 struct AppState {
     lab: Arc<Mutex<DemoLab>>,
@@ -320,6 +323,32 @@ fn invoke_quick_action(
         .map_err(|_| "Audio Share state lock poisoned")?;
     let mut lab = state.lab.lock().map_err(|_| "demo state lock poisoned")?;
     audio_share.invoke(&mut lab.runtime, request, unix_time_ms()?)
+}
+
+#[tauri::command]
+fn get_audio_endpoints(state: State<'_, AppState>) -> Result<UiAudioEndpointCatalog, String> {
+    let mut audio_share = state
+        .audio_share
+        .lock()
+        .map_err(|_| "Audio Share state lock poisoned")?;
+    let can_select = {
+        let lab = state.lab.lock().map_err(|_| "demo state lock poisoned")?;
+        audio_share.endpoint_selection_available(&lab.runtime)
+    };
+    Ok(audio_share.endpoint_catalog(can_select))
+}
+
+#[tauri::command]
+fn select_audio_endpoint(
+    request: SelectAudioEndpointRequest,
+    state: State<'_, AppState>,
+) -> Result<UiQuickAction, String> {
+    let mut audio_share = state
+        .audio_share
+        .lock()
+        .map_err(|_| "Audio Share state lock poisoned")?;
+    let lab = state.lab.lock().map_err(|_| "demo state lock poisoned")?;
+    audio_share.select_endpoint(&lab.runtime, request)
 }
 
 #[tauri::command]
@@ -672,7 +701,9 @@ pub fn run() {
             start_live_imu,
             stop_live_imu,
             get_quick_actions,
-            invoke_quick_action
+            invoke_quick_action,
+            get_audio_endpoints,
+            select_audio_endpoint
         ])
         .run(tauri::generate_context!())
         .expect("run CapyIO Tauri application");

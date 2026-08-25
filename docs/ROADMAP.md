@@ -37,8 +37,10 @@ implementation scope automatically.
 - Gate 7 initial vertical slice is complete locally: the pinned Audio Share
   process is supervised and projected as one Runtime-owned AdapterManaged
   Quick Action; physical transport, Android PCM submission, disconnect, retry
-  epoch and stop evidence pass. Gate 7 remains open for subjective audibility,
-  background/audio-focus and longer-duration evidence. Gates 4, 6 and 8–15
+  epoch, stop and one user-confirmed audible case pass. The Quick Action also
+  supports safe session-local playback-endpoint reselection. Gate 7 remains
+  open for longer background/audio-focus, latency and soak evidence. Gates 4,
+  6 and 8–15
   remain roadmap only.
 
 ## Public-alpha proof bar

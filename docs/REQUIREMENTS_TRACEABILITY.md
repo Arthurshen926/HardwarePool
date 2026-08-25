@@ -1,6 +1,6 @@
 # CapyIO Requirements Traceability
 
-> Updated: 2026-08-24 for `CAPY-IMU-001B3B`.
+> Updated: 2026-08-25 for `CAPY-AUDIO-001A4`.
 >
 > Scope: the 84 normative Requirement IDs in `PRODUCT_REQUIREMENTS.md`.
 
@@ -39,7 +39,7 @@ hardware, networking, security or performance behavior has run.
 | Requirement ID | Status | Target Gate | Evidence or planned proof |
 |---|---|---|---|
 | `FR-SCEN-001` | planned | Gate 8 | MicYou phone microphone to desktop/system-microphone evidence. |
-| `FR-SCEN-002` | planned | Gate 7 | Audio Share remote-speaker playback and lifecycle evidence. |
+| `FR-SCEN-002` | planned | Gate 7 | Small-slice evidence already retains Windows system-mix to Android playback, user-confirmed audibility, disconnect/retry/stop and safe current-endpoint reselection; the complete requirement remains planned until broader background/focus/performance acceptance closes. |
 | `FR-SCEN-003` | planned | Gate 6 | Gamepad input plus independent reverse-haptics Routes. |
 | `FR-SCEN-004` | planned | Gate 9 | Camera preview and Windows virtual-camera evidence. |
 | `FR-SCEN-005` | planned | Gates 10–11 | Mirror evidence at Gate 10 and separate extended-display evidence at Gate 11. |

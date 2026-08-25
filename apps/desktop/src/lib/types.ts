@@ -128,6 +128,22 @@ export interface UiQuickAction {
   problem: string | null;
 }
 
+export interface UiAudioEndpointChoice {
+  selectionToken: string;
+  displayName: string;
+  isDefault: boolean;
+  selected: boolean;
+}
+
+export interface UiAudioEndpointCatalog {
+  schemaVersion: 1;
+  actionId: string;
+  supported: boolean;
+  canSelect: boolean;
+  choices: UiAudioEndpointChoice[];
+  problem: string | null;
+}
+
 export interface UiSnapshot {
   backendMode: BackendMode;
   schemaVersion: 3;
@@ -149,4 +165,6 @@ export interface CapyIOApi {
   stopLiveImu(): Promise<UiLiveImu>;
   getQuickActions(): Promise<UiQuickAction[]>;
   invokeQuickAction(actionId: string, operation: QuickActionOperation): Promise<UiQuickAction>;
+  getAudioEndpoints(): Promise<UiAudioEndpointCatalog>;
+  selectAudioEndpoint(actionId: string, selectionToken: string): Promise<UiQuickAction>;
 }
