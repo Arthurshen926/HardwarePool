@@ -2,27 +2,47 @@
 
 Date: 2026-08-25
 
-Status: product/architecture realignment complete; isolated target access pending token refresh
+Status: product/architecture and candidate audit complete; isolated target access pending token refresh
 
 ## Outcome
 
 The Windows speaker target is now explicitly an independent system render
 device named `CapyIO Speaker`, not permanent mirror mode. ADR 0027 separates
 the proven Audio Share transport into Gate 7A and the driver-backed projection
-into Gate 7B.
+into Gate 7B. ADR 0028 corrects the original data-path assumption after source
+review showed that SysVAD loopback produces a synthetic tone.
 
 The chosen first architecture is:
 
 ```text
 Windows application
   -> CapyIO Speaker (minimal SysVAD-derived WaveRT endpoint)
-  -> user-mode WASAPI loopback
+  -> endpoint-associated render APO
+  -> bounded shared-memory/SPSC staging ring
+  -> user-mode Broker
   -> existing Audio Share Adapter-managed transport
   -> Android speaker
 ```
 
 This avoids adding networking or a custom PCM ring to the kernel driver. The
 existing trusted endpoint picker is reusable once `CapyIO Speaker` enumerates.
+
+The APO callback is limited to a preallocated, non-blocking copy/drop path. The
+exact shared-memory setup is still an isolated-target spike, not a proven ABI.
+
+## Candidate audit
+
+- SysVAD is retained for toolchain and endpoint-enumeration evidence, but its
+  synthetic loopback cannot validate real PCM.
+- VirtualDrivers/Virtual-Audio-Driver exposes endpoints but discards render PCM
+  by default (or writes a debug file) and returns capture silence. It has no
+  supported user-mode PCM boundary; the reviewed signed release also omits the
+  notices file present on current main.
+- Scream demonstrates a real render tap and bounded staging, but its WSK and
+  IVSHMEM kernel transports violate CapyIO's thin-driver boundary.
+
+No candidate source or binary was imported. Exact revisions and hashes are in
+`third_party/THIRD_PARTY.yml`.
 
 ## Provenance and local inventory
 
@@ -52,8 +72,8 @@ revision query succeeded through the user-provided Clash proxy at
 
 No WDK driver tool, driver install/remove, signing command, VM mutation,
 Secure Boot/BitLocker/test-signing/Verifier operation or source import occurred.
-Repository validation now requires the SysVAD revision/license record, the
-`CapyIO Speaker`/WASAPI/isolated-target boundary, and rejects driver source while
+Repository validation now requires the SysVAD and candidate revision/license
+records, the `CapyIO Speaker`/APO/bounded/isolated-target boundary, and rejects driver source while
 the provenance record remains `source_imported: false`.
 
 The source archive was downloaded and inspected only under the ignored

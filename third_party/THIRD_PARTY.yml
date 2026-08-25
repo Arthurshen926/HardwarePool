@@ -74,6 +74,51 @@ planned_integrations:
       No Microsoft source or binary is imported or distributed in this slice.
       Before any source import, preserve notices, add the MS-PL text and record
       exact imported paths and local modifications.
+  - id: virtualdrivers-virtual-audio-driver
+    upstream_repository: https://github.com/VirtualDrivers/Virtual-Audio-Driver
+    pinned_revision: bb34fba15faf569a6ae9bdea360bc1cf4821354e
+    reviewed_signed_release:
+      tag: 25.7.14
+      revision: 191d307c858cb7c2749bc849060849d2dac18d3b
+      archive_sha256: 24e07b8a4b82ec6fe136c079e73443a09a185d8cd17fbf03d9a7722992c4edff
+      third_party_notices_present: false
+    current_main_archive_sha256: aa505bcb85e892ce738771307a48c0974e82e8b52581c93eb320568787e5838a
+    license: MIT AND MS-PL
+    license_files:
+      license_sha256: 62ba3a5acc061d880d77b7046ed5d5df2b9be27caa3610d9976928b50c70e627
+      third_party_notices_sha256: 1c4ca89b2f9db1ba292c1ce56b91aafd8eb975b03d9f83dd4a482011ff612702
+    integration_mode: research_reference_only
+    source_imported: false
+    binary_imported: false
+    imported_paths: []
+    local_modifications: []
+    review_findings:
+      - enumerates a render speaker and capture microphone endpoint
+      - render PCM is discarded by default or sent to a debug kernel file path
+      - capture PCM is deterministic silence
+      - no supported user-mode PCM IPC or transport boundary was found
+    distribution_note: >-
+      Neither revision is imported or redistributed. The signed release is not
+      a functional CapyIO transport baseline and its missing notices file must
+      be resolved before any future redistribution review.
+  - id: scream
+    upstream_repository: https://github.com/duncanthrax/scream
+    pinned_revision: d789743c248b11d1df7e5ecc546b1bc60b90cd91
+    archive_sha256: 59dcd9889ba80d781745b3421facc7a5bdffefb77bf8543d606ac6abf0bc6ebdc
+    license: MS-PL
+    integration_mode: research_reference_only
+    source_imported: false
+    binary_imported: false
+    imported_paths: []
+    local_modifications: []
+    review_findings:
+      - taps real render PCM and uses bounded staging before transmission
+      - transmits from kernel mode through WSK or IVSHMEM
+      - kernel networking and transport policy are rejected by CapyIO invariants
+    distribution_note: >-
+      No Scream source or binary is imported or redistributed. The project is
+      retained only as fixed-revision design evidence for the PCM tap and
+      bounded staging; its kernel transport is not reusable in CapyIO.
   - id: vcamdroid
     upstream_repository: null
     pinned_revision: null

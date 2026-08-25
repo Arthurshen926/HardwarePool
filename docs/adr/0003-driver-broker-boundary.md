@@ -2,8 +2,9 @@
 
 Status: accepted
 
-Render-path amendment: ADR 0027 prefers standard WASAPI loopback for `CapyIO
-Speaker`; the custom PCM IPC remains a fallback rather than a Gate 7B default.
+Render-path amendment: ADR 0028 rejects synthetic SysVAD WASAPI loopback as
+real-PCM evidence and prefers a bounded user-mode render-APO-to-Broker bridge.
+The custom kernel PCM IPC remains a fallback rather than a Gate 7B default.
 
 ## Context
 

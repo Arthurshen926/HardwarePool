@@ -262,9 +262,10 @@ current Windows inventory.
 
 The product target now explicitly includes an independent Windows `CapyIO
 Speaker` render endpoint. ADR 0027 splits the proven mirror transport (7A) from
-the driver-backed projection (7B). The first path will use a minimal
-SysVAD-derived WaveRT endpoint and standard user-mode WASAPI loopback capture;
-networking remains outside the driver.
+the driver-backed projection (7B). Fixed-revision source review showed that
+SysVAD WASAPI loopback is synthetic, so ADR 0028 replaces that data path with a
+minimal WaveRT endpoint, endpoint-associated render APO, bounded staging ring
+and user-mode Broker. Networking remains outside both the driver and APO.
 
 Microsoft Windows-driver-samples is pinned at revision
 `717778a20ba4dd2440fe609f69153a1f8a64f597`; its repository license is MS-PL.

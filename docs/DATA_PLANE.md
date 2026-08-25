@@ -125,8 +125,9 @@ The semantic frame is not itself the public binary wire layout. A transport ADR 
 - maximum packet and aggregate rates;
 - fuzz and golden-fixture strategy.
 
-The Windows kernel driver never receives this network frame. For a virtual
-render endpoint, the preferred first path is user-mode WASAPI loopback capture,
-so no custom driver PCM IPC is required. A smaller versioned driver IPC remains
-available only for projection directions or status that standard Windows APIs
-cannot satisfy.
+The Windows kernel driver and render APO never receive this network frame. For
+a virtual render endpoint, the preferred first path is a bounded copy from the
+endpoint-associated render APO into a pre-opened shared-memory/SPSC staging
+ring consumed by the Broker. SysVAD WASAPI loopback is synthetic and cannot
+prove real render PCM. A smaller versioned driver IPC remains available only
+if isolated-target APO lifecycle or certification evidence fails.

@@ -265,11 +265,12 @@ configuration remain in user mode. Driver build/install/test requires an
 isolated VM or dedicated Windows installation.
 
 The dedicated remote-speaker projection is a render endpoint named `CapyIO
-Speaker`. Windows applications render into it, and the first user-mode path
-captures that endpoint through standard WASAPI loopback before sending audio
-through the existing Adapter-managed transport. This keeps network and mobile
-lifecycle logic out of the driver and avoids a custom kernel PCM IPC for the
-render direction unless retained measurements later prove it necessary.
+Speaker`. Windows applications render into it, and an endpoint-associated
+render APO copies real PCM into a preallocated bounded shared-memory/SPSC ring
+for the user-mode Broker and existing Adapter-managed transport. The APO
+real-time callback never blocks, allocates, performs file/network I/O or owns
+reconnect policy. SysVAD WASAPI loopback is synthetic and is not real-PCM
+evidence; a custom kernel PCM IPC remains a measured fallback only.
 
 ## 12. Android boundary
 

@@ -167,13 +167,15 @@ slice.
 ### CAPY-AUDIO-001B — Dedicated Windows `CapyIO Speaker`
 
 Goal: expose a real Windows render endpoint that applications can select
-independently of the physical/RDP output, then capture only that endpoint in
-user mode and feed the proven Android speaker transport.
+independently of the physical/RDP output, then bridge only that endpoint's real
+PCM through a bounded render APO/Broker path and feed the proven Android speaker transport.
 
-`CAPY-AUDIO-001B0` is active: ADR 0027 resolves the former Gate 7 non-goal,
-pins the official Microsoft SysVAD source/license without importing it, records
-the current host's build-tool gap, and requires an isolated target before any
-driver build/install action. Plan: `docs/plans/active/0012-windows-virtual-speaker.md`.
+`CAPY-AUDIO-001B0` is active: ADR 0027 resolves the former Gate 7 non-goal and
+ADR 0028 corrects the synthetic-loopback assumption after fixed-revision
+candidate review. SysVAD/candidate provenance is pinned without importing it,
+the current host's build-tool gap is recorded, and an isolated target is
+required before any driver/APO build or install action. Plan:
+`docs/plans/active/0012-windows-virtual-speaker.md`.
 
 ## Later small tasks
 

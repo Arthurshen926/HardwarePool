@@ -30,11 +30,14 @@ current lab uses only a user-supplied, hash-verified artifact and makes no
 distribution claim. A README, protocol mapping or physical lab run does not
 imply endorsement or production security.
 
-Microsoft SysVAD is the reviewed starting point for the dedicated Windows
-virtual-speaker work. The official Windows-driver-samples revision and MS-PL
-license are recorded, but no source or binary is imported. The unchanged sample
-must build and enumerate in an isolated target before a minimal derivative is
-selected for import.
+Microsoft SysVAD remains the reviewed toolchain and endpoint-enumeration
+starting point for the dedicated Windows virtual-speaker work. Its synthetic
+loopback is not a real-PCM implementation. VirtualDrivers/Virtual-Audio-Driver
+and Scream were reviewed at fixed revisions: the former lacks a supported
+user-mode PCM path, while the latter's kernel networking violates CapyIO's
+boundary. Exact revisions, hashes, licenses and findings are recorded, but no
+candidate source or binary is imported. ADR 0028 selects an endpoint-associated
+bounded render APO/Broker spike before a minimal derivative is selected.
 
 ## License boundary
 

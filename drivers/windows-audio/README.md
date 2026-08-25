@@ -14,7 +14,9 @@ Windows Audio Engine
         |
 CapyIOAudio.sys
         |
-standard WaveRT render + WASAPI loopback
+CapyIO render APO (real-time, user mode)
+        |
+bounded shared-memory/SPSC staging ring
         |
 CapyIO Broker (user mode)
         |
@@ -23,19 +25,22 @@ Core / protocol / transport / codec / network
 
 The driver is deliberately thin. It must not contain sockets, discovery,
 pairing, TLS, Protobuf, JSON, Opus, AOO, WebRTC, reconnect policy, UI, or user
-configuration. The first speaker slice prefers standard user-mode WASAPI
-loopback over a custom driver PCM ring. `IPC_CONTRACT.md` remains a deferred
-fallback for capabilities or status that standard Windows APIs cannot expose.
+configuration. The first speaker slice uses a render APO because SysVAD's
+WASAPI loopback is a synthetic tone, not the application's real render PCM.
+The APO may only copy into preallocated bounded staging and update counters;
+all transport behavior remains in the Broker. `IPC_CONTRACT.md` defines this
+user-mode bridge and retains a custom driver IPC as a deferred fallback.
 
 ## Intended milestones
 
 1. Build and install an unchanged SysVAD sample in a test VM.
-2. Prove one render and one capture endpoint can enumerate and survive restart/uninstall.
-3. Prove user-mode loopback captures only the dedicated render endpoint.
-4. Connect that endpoint to the existing Audio Share transport and prove the
+2. Prove the render endpoint can enumerate and survive restart/uninstall.
+3. Prove an endpoint-associated render APO receives real PCM and can copy it
+   into bounded staging without blocking the real-time callback.
+4. Connect the Broker side of that staging ring to the existing Audio Share transport and prove the
    physical/RDP endpoint remains silent.
-5. Define and fuzz a small Broker/driver IPC only if standard APIs are
-   insufficient.
+5. Exercise ring-full, Broker loss, format-epoch and restart behavior; activate
+   a small Broker/driver IPC only if the APO evidence fails.
 6. Run Driver Verifier and applicable HLK tests.
 7. Add signing and installer workflows only after functional stability.
 

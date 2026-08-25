@@ -14,7 +14,7 @@ implementation scope automatically.
 | 5 — standard IMU path | SensorServer Source, `motion.imu-samples/1`, IMU Panel and initial Recorder | system gamepad | vivo manual data evidence, timing metadata, mock/record replay | Android sensor timestamp/permission variance |
 | 6 — gamepad | IMU/touch to DSU and VIIPER, haptics feedback | universal USB classes | emulator/game recognition plus reverse feedback; driver work only in approved target | virtual-input distribution and licensing |
 | 7A — remote-speaker transport | Windows system mix to Android speaker through Audio Share AdapterManaged Route | production installer/security | real playback, disconnect/background/focus evidence | latency, protected audio and mobile lifecycle |
-| 7B — Windows virtual speaker | independent `CapyIO Speaker` render endpoint feeding the 7A transport | driver installation on the daily host | unmodified SysVAD build in isolated VM, dedicated endpoint enumeration, exclusive-route playback, restart/uninstall and failure evidence | WDK, signing, kernel stability and distribution |
+| 7B — Windows virtual speaker | independent `CapyIO Speaker` render endpoint feeding the 7A transport | driver installation on the daily host | unmodified SysVAD enumeration baseline plus bounded render-APO/Broker real-PCM bridge in an isolated VM, exclusive-route playback, restart/uninstall and failure evidence | WDK/APO packaging, signing, real-time safety and distribution |
 | 8 — remote microphone | MicYou engine to Windows system microphone Quick Action | new audio stack from scratch | ordinary-app recording, permission/revoke/lock tests | virtual audio packaging/signing |
 | 9 — camera | VCamdroid to preview and Windows virtual camera | rewritten codec/FFmpeg stack | resolution/rotation/disconnect and ordinary-app enumeration evidence | upstream C++/FFmpeg/Softcam maintenance |
 | 10 — input and mirror | scrcpy composite, keyboard/pointer Adapters, screen mirror | extended display | independent input/display Routes and platform fallback tests | platform injection restrictions |
@@ -45,8 +45,9 @@ implementation scope automatically.
   remain roadmap only.
 - Gate 7B is now active by explicit product decision. The intended endpoint is
   an independent `CapyIO Speaker`, not a renamed mirror of the current physical
-  output. SysVAD provenance is pinned, but driver source/build/install evidence
-  waits for an identified isolated Windows target.
+  output. SysVAD and audited-candidate provenance is pinned; ADR 0028 selects a
+  bounded render APO/Broker bridge, but driver/APO source, build and install
+  evidence waits for an identified isolated Windows target.
 
 ## Public-alpha proof bar
 

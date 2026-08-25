@@ -1,6 +1,11 @@
 # ADR 0027: Make a dedicated Windows virtual speaker the Gate 7B target
 
-Status: accepted
+Status: accepted; data-path decision superseded by ADR 0028
+
+ADR 0028 retains this ADR's dedicated-endpoint and isolated-target decisions,
+but replaces the WASAPI-loopback data path after fixed-revision source review
+showed that SysVAD loopback generates a synthetic tone rather than the real
+render stream.
 
 ## Context
 
@@ -29,10 +34,10 @@ Split the work into two evidence tracks:
 - Gate 7B adds a minimal SysVAD-derived Windows render endpoint named `CapyIO
   Speaker` and makes that endpoint the source selected by the 7A transport.
 
-The first data path uses Windows Audio Engine rendering plus standard user-mode
-WASAPI loopback capture. No network, pairing, codec, JSON/Protobuf or reconnect
-logic enters the driver. A custom render PCM IPC is deferred unless measured
-limitations of the standard loopback path justify it.
+The original first data path used Windows Audio Engine rendering plus standard
+user-mode WASAPI loopback capture. ADR 0028 supersedes that part of this
+decision with a bounded render-APO-to-Broker bridge. No network, pairing,
+codec, JSON/Protobuf or reconnect logic enters the driver or APO callback.
 
 All driver build, install, restart, uninstall, Verifier and signing experiments
 run only in an identified Hyper-V Generation 2 VM or dedicated installation.
@@ -47,9 +52,8 @@ The daily-development host is never a driver target.
 - A working unsigned/development driver is not a distributable feature;
   production signing, installer, upgrade/removal and recovery remain separate
   acceptance work.
-- If loopback capture cannot meet latency or stability targets, a later ADR may
-  activate the bounded driver IPC fallback without moving network policy into
-  kernel mode.
+- SysVAD loopback is synthetic and cannot prove real PCM transport. ADR 0028
+  selects an APO bridge first and retains bounded driver IPC as a fallback.
 
 ## Sources
 

@@ -246,8 +246,8 @@ The product has two experiences:
   scoped by `CAPY-IMU-001B` and ADR 0021;
 - Windows virtual camera/display/HID implementation or installation;
 - Windows virtual-audio installation on the daily-development host; the
-  dedicated `CapyIO Speaker` implementation is authorized only through ADR
-  0027 and an identified isolated VM or dedicated test installation;
+  dedicated `CapyIO Speaker` implementation is authorized only through ADRs
+  0027/0028 and an identified isolated VM or dedicated test installation;
 - unapproved Android permission, foreground-service, APK or physical-device
   operations; every approved lab action remains target-specific and retained as
   evidence;

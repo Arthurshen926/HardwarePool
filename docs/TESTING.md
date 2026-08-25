@@ -201,11 +201,14 @@ contract, data plane or performance test.
   independent Routes, disconnect/reconnect and clock epochs.
 
 Gate 7B first proves an unchanged pinned SysVAD build and install in an
-identified isolated VM. It then requires `CapyIO Speaker` enumeration, explicit
-application selection, user-mode WASAPI loopback capture, silence on the
-ordinary physical/RDP endpoint, audio-service/reboot survival and clean
-uninstall. Repository validation prevents driver source from appearing while
-the SysVAD record still declares `source_imported: false`.
+identified isolated VM as a toolchain/enumeration baseline; synthetic SysVAD
+WASAPI loopback is not real-PCM evidence. It then requires `CapyIO Speaker`
+enumeration, explicit application selection, endpoint-associated render APO
+PCM evidence, bounded ring-full/Broker-loss behavior, silence on the ordinary
+physical/RDP endpoint, audio-service/reboot survival and clean uninstall. The
+APO callback must have evidence of no blocking, allocation, file/network I/O
+or ordinary logging. Repository validation prevents driver source from
+appearing while the SysVAD record still declares `source_imported: false`.
 
 ## Android read-only lab commands
 
