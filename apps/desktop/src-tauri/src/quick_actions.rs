@@ -7,7 +7,9 @@ use capyio_core::{Problem, RouteId, RouteState, SessionId};
 use capyio_runtime::NodeRuntime;
 use serde::{Deserialize, Serialize};
 
-use crate::audio_share_runtime::{AudioShareRouteController, DEFAULT_STABLE_RECEIVER_POLLS};
+use crate::audio_share_runtime::{
+    AudioShareRouteController, DEFAULT_RECEIVER_WAIT_POLLS, DEFAULT_STABLE_RECEIVER_POLLS,
+};
 
 pub const QUICK_ACTION_SCHEMA_VERSION: u8 = 1;
 pub const AUDIO_SHARE_ACTION_ID: &str = "capyio.quick-action.remote-speaker";
@@ -65,6 +67,7 @@ impl AudioShareQuickAction {
                 session_id,
                 supervisor,
                 DEFAULT_STABLE_RECEIVER_POLLS,
+                DEFAULT_RECEIVER_WAIT_POLLS,
             )
         }) {
             Ok(controller) => Self {

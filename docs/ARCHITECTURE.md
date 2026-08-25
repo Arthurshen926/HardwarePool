@@ -151,6 +151,10 @@ Dependency rules:
 - The Audio Share Adapter validates and supervises a pinned external executable;
   its TCP/UDP PCM contract does not become a Core, Protocol or StandardPort
   dependency.
+- The v0.3.4 CLI may fall back from a requested PCM format to an endpoint's
+  default format. Its `AdapterManaged` Route therefore advertises an explicit
+  private-negotiated format rather than claiming the requested sample format as
+  an observed result.
 - Its initial Windows host may observe process-owned established TCP state via
   IP Helper. That platform signal is transport presence only and never imports
   peer addresses, Windows structs or lifecycle decisions into Core.
@@ -163,7 +167,9 @@ Dependency rules:
 - The versioned Quick Action projection exposes only a stable action ID,
   lifecycle state, evidence label and finite start/retry/stop operations. The
   executable path, endpoint ID and bind address remain trusted host
-  configuration. A host-owned worker polls independently of the WebView.
+  configuration. A host-owned worker polls independently of the WebView. A
+  bounded number of receiver-wait polls transitions a stuck start to a typed,
+  retryable `Offline` Problem and reaps the external process.
 - Testkit is never a production dependency of Core/Protocol/Runtime/Adapter SDK.
 - Drivers communicate through minimal validated contracts, never Rust memory
   layout or network/wire messages.

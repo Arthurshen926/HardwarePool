@@ -21,9 +21,10 @@ const ANDROID_CAPABILITY_ID: &str = "00000000-0000-4000-8000-00000000c201";
 const WINDOWS_PORT_ID: &str = "00000000-0000-4000-8000-00000000c111";
 const ANDROID_PORT_ID: &str = "00000000-0000-4000-8000-00000000c211";
 const ROUTE_ID: &str = "00000000-0000-4000-8000-00000000c911";
-const AUDIO_FORMAT: &str = "pcm-s16le-48000-stereo";
+const AUDIO_FORMAT: &str = "audio-share-v0.3.4-private-negotiated";
 
 pub const DEFAULT_STABLE_RECEIVER_POLLS: u8 = 3;
+pub const DEFAULT_RECEIVER_WAIT_POLLS: u16 = 120;
 
 pub trait AudioShareProcessBoundary {
     fn start(&mut self) -> Result<(), String>;
@@ -66,6 +67,8 @@ pub struct AudioShareRouteController<P> {
     route: AudioShareRoute,
     required_receiver_polls: u8,
     stable_receiver_polls: u8,
+    required_receiver_wait_polls: u16,
+    receiver_wait_polls: u16,
 }
 
 impl<P: AudioShareProcessBoundary> AudioShareRouteController<P> {
@@ -74,21 +77,30 @@ impl<P: AudioShareProcessBoundary> AudioShareRouteController<P> {
         session_id: SessionId,
         process: P,
         required_receiver_polls: u8,
+        required_receiver_wait_polls: u16,
     ) -> Result<Self, String> {
         if required_receiver_polls == 0 {
             return Err("stable receiver poll threshold must be positive".to_owned());
+        }
+        if required_receiver_wait_polls < u16::from(required_receiver_polls) {
+            return Err(
+                "receiver wait poll limit must cover the stable receiver threshold".to_owned(),
+            );
         }
         Ok(Self {
             process,
             route: AudioShareRoute::install(runtime, session_id)?,
             required_receiver_polls,
             stable_receiver_polls: 0,
+            required_receiver_wait_polls,
+            receiver_wait_polls: 0,
         })
     }
 
     pub fn start(&mut self, runtime: &mut NodeRuntime, now_ms: u64) -> Result<u64, String> {
         let epoch = self.route.begin_start(runtime, now_ms)?;
         self.stable_receiver_polls = 0;
+        self.receiver_wait_polls = 0;
         if !matches!(self.process.status(), Ok(SupervisorStatus::Running { .. }))
             && let Err(detail) = self.process.start()
         {
@@ -113,6 +125,7 @@ impl<P: AudioShareProcessBoundary> AudioShareRouteController<P> {
             Ok(SupervisorStatus::Running { .. }) => self.poll_running(runtime)?,
             Ok(SupervisorStatus::Exited(report)) => {
                 self.stable_receiver_polls = 0;
+                self.receiver_wait_polls = 0;
                 self.route.report_offline(
                     runtime,
                     "CAPY.AUDIO_SHARE.PROCESS_EXITED",
@@ -122,6 +135,7 @@ impl<P: AudioShareProcessBoundary> AudioShareRouteController<P> {
             }
             Ok(SupervisorStatus::Stopped) => {
                 self.stable_receiver_polls = 0;
+                self.receiver_wait_polls = 0;
                 self.route.report_offline(
                     runtime,
                     "CAPY.AUDIO_SHARE.PROCESS_STOPPED",
@@ -131,6 +145,7 @@ impl<P: AudioShareProcessBoundary> AudioShareRouteController<P> {
             }
             Err(detail) => {
                 self.stable_receiver_polls = 0;
+                self.receiver_wait_polls = 0;
                 self.route.report_offline(
                     runtime,
                     "CAPY.AUDIO_SHARE.PROCESS_STATUS_FAILED",
@@ -145,6 +160,7 @@ impl<P: AudioShareProcessBoundary> AudioShareRouteController<P> {
     pub fn stop(&mut self, runtime: &mut NodeRuntime) -> Result<(), String> {
         let process_result = self.process.stop();
         self.stable_receiver_polls = 0;
+        self.receiver_wait_polls = 0;
         self.route.stop(runtime)?;
         process_result
     }
@@ -176,6 +192,7 @@ impl<P: AudioShareProcessBoundary> AudioShareRouteController<P> {
                     && self.route.state(runtime)? == RouteState::Starting
                 {
                     self.route.activate(runtime)?;
+                    self.receiver_wait_polls = 0;
                 }
             }
             Ok(ReceiverTcpPresence::Disconnected) => {
@@ -186,6 +203,7 @@ impl<P: AudioShareProcessBoundary> AudioShareRouteController<P> {
             }
             Ok(ReceiverTcpPresence::UnsupportedPlatform) => {
                 self.stable_receiver_polls = 0;
+                self.receiver_wait_polls = 0;
                 self.route.report_offline(
                     runtime,
                     "CAPY.AUDIO_SHARE.RECEIVER_OBSERVATION_UNSUPPORTED",
@@ -195,6 +213,7 @@ impl<P: AudioShareProcessBoundary> AudioShareRouteController<P> {
             }
             Err(detail) => {
                 self.stable_receiver_polls = 0;
+                self.receiver_wait_polls = 0;
                 self.route.report_offline(
                     runtime,
                     "CAPY.AUDIO_SHARE.RECEIVER_OBSERVATION_FAILED",
@@ -204,6 +223,12 @@ impl<P: AudioShareProcessBoundary> AudioShareRouteController<P> {
             }
             Ok(ReceiverTcpPresence::Established { .. }) => {
                 self.receiver_absent(runtime, "the receiver connection count is zero")?;
+            }
+        }
+        if self.route.state(runtime)? == RouteState::Starting {
+            self.receiver_wait_polls = self.receiver_wait_polls.saturating_add(1);
+            if self.receiver_wait_polls >= self.required_receiver_wait_polls {
+                self.receiver_wait_exhausted(runtime)?;
             }
         }
         Ok(())
@@ -220,6 +245,26 @@ impl<P: AudioShareProcessBoundary> AudioShareRouteController<P> {
             )?;
         }
         Ok(())
+    }
+
+    fn receiver_wait_exhausted(&mut self, runtime: &mut NodeRuntime) -> Result<(), String> {
+        let stop_problem = self.process.stop().err();
+        self.stable_receiver_polls = 0;
+        self.receiver_wait_polls = 0;
+        let mut detail = format!(
+            "receiver was not stable after {} bounded host polls",
+            self.required_receiver_wait_polls
+        );
+        if let Some(problem) = stop_problem {
+            detail.push_str("; process cleanup reported: ");
+            detail.extend(problem.chars().take(512));
+        }
+        self.route.report_offline(
+            runtime,
+            "CAPY.AUDIO_SHARE.RECEIVER_WAIT_EXHAUSTED",
+            "The Audio Share receiver did not connect",
+            detail,
+        )
     }
 }
 
@@ -564,6 +609,7 @@ mod tests {
             session_id,
             process,
             DEFAULT_STABLE_RECEIVER_POLLS,
+            DEFAULT_RECEIVER_WAIT_POLLS,
         )
         .expect("install Audio Share Route");
         let first_epoch = controller.start(&mut lab.runtime, 2).expect("start audio");
@@ -594,6 +640,33 @@ mod tests {
     }
 
     #[test]
+    fn adapter_managed_route_does_not_claim_the_requested_pcm_format() {
+        let mut lab = DemoLab::new().expect("demo Runtime");
+        let session_id = lab.session_id;
+        let mut controller = AudioShareRouteController::install(
+            &mut lab.runtime,
+            session_id,
+            FakeProcess::default(),
+            1,
+            DEFAULT_RECEIVER_WAIT_POLLS,
+        )
+        .expect("install Route");
+        controller.start(&mut lab.runtime, 1).expect("start");
+        let route = lab
+            .runtime
+            .route(controller.route_id())
+            .expect("Audio Share Route");
+        assert_eq!(
+            route
+                .selected_format
+                .as_ref()
+                .map(|format| format.id.as_str()),
+            Some(AUDIO_FORMAT)
+        );
+        assert_ne!(AUDIO_FORMAT, "pcm-s16le-48000-stereo");
+    }
+
+    #[test]
     fn explicit_retry_advances_epoch_and_stop_is_terminal() {
         let mut lab = DemoLab::new().expect("demo Runtime");
         let process = FakeProcess::with_presences([
@@ -606,9 +679,14 @@ mod tests {
             established(),
         ]);
         let session_id = lab.session_id;
-        let mut controller =
-            AudioShareRouteController::install(&mut lab.runtime, session_id, process, 3)
-                .expect("install Route");
+        let mut controller = AudioShareRouteController::install(
+            &mut lab.runtime,
+            session_id,
+            process,
+            3,
+            DEFAULT_RECEIVER_WAIT_POLLS,
+        )
+        .expect("install Route");
         let first_epoch = controller.start(&mut lab.runtime, 1).expect("first start");
         for _ in 0..3 {
             controller.poll(&mut lab.runtime).expect("activation poll");
@@ -642,13 +720,80 @@ mod tests {
     }
 
     #[test]
+    fn receiver_wait_exhaustion_offlines_reaps_and_allows_later_retry() {
+        let mut lab = DemoLab::new().expect("demo Runtime");
+        let imu_route = lab.routes.phone_imu_to_gamepad;
+        lab.set_route_active(imu_route, true, 1)
+            .expect("activate IMU Route");
+        let session_id = lab.session_id;
+        let mut controller = AudioShareRouteController::install(
+            &mut lab.runtime,
+            session_id,
+            FakeProcess::default(),
+            2,
+            3,
+        )
+        .expect("install Route");
+        let first_epoch = controller.start(&mut lab.runtime, 2).expect("start");
+
+        for _ in 0..2 {
+            assert_eq!(
+                controller
+                    .poll(&mut lab.runtime)
+                    .expect("bounded receiver wait")
+                    .route_state,
+                RouteState::Starting
+            );
+        }
+        let offline = controller
+            .poll(&mut lab.runtime)
+            .expect("receiver wait exhaustion");
+        assert_eq!(offline.route_state, RouteState::Offline);
+        assert!(offline.route_epoch > first_epoch);
+        assert!(!controller.process.running);
+        assert_eq!(controller.process.stops, 1);
+        assert_eq!(
+            lab.runtime.route(imu_route).expect("IMU Route").state,
+            RouteState::Active
+        );
+        assert!(lab.runtime.snapshot().problems.iter().any(|problem| {
+            problem.code == "CAPY.AUDIO_SHARE.RECEIVER_WAIT_EXHAUSTED"
+                && problem.related_route == Some(controller.route_id())
+                && problem.retryable
+        }));
+
+        controller
+            .process
+            .presences
+            .extend([established(), established()]);
+        let retry_epoch = controller.start(&mut lab.runtime, 3).expect("retry");
+        assert!(retry_epoch > offline.route_epoch);
+        controller
+            .poll(&mut lab.runtime)
+            .expect("first stable poll");
+        assert_eq!(
+            controller
+                .poll(&mut lab.runtime)
+                .expect("second stable poll")
+                .route_state,
+            RouteState::Active
+        );
+        assert_eq!(controller.process.starts, 2);
+    }
+
+    #[test]
     fn child_exit_offlines_route_with_typed_problem() {
         let mut lab = DemoLab::new().expect("demo Runtime");
         let process = FakeProcess::with_presences([]);
         let session_id = lab.session_id;
-        let mut controller =
-            AudioShareRouteController::install(&mut lab.runtime, session_id, process, 1)
-                .expect("install Route");
+        let mut controller = AudioShareRouteController::install(
+            &mut lab.runtime,
+            session_id,
+            process,
+            1,
+            DEFAULT_RECEIVER_WAIT_POLLS,
+        )
+        .expect("install Route");
         controller.start(&mut lab.runtime, 1).expect("start");
         controller.process.exit = Some(ProcessExitReport {
             exit_code: Some(23),
@@ -683,9 +828,14 @@ mod tests {
             ..FakeProcess::default()
         };
         let session_id = lab.session_id;
-        let mut controller =
-            AudioShareRouteController::install(&mut lab.runtime, session_id, process, 1)
-                .expect("install Route");
+        let mut controller = AudioShareRouteController::install(
+            &mut lab.runtime,
+            session_id,
+            process,
+            1,
+            DEFAULT_RECEIVER_WAIT_POLLS,
+        )
+        .expect("install Route");
         let error = controller
             .start(&mut lab.runtime, 1)
             .expect_err("start must fail");
@@ -712,6 +862,26 @@ mod tests {
             session_id,
             FakeProcess::default(),
             0,
+            DEFAULT_RECEIVER_WAIT_POLLS,
+        );
+        assert!(result.is_err());
+        assert!(
+            lab.runtime
+                .route(parse_id(ROUTE_ID).expect("Route ID"))
+                .is_err()
+        );
+    }
+
+    #[test]
+    fn receiver_wait_limit_must_cover_stability_before_catalog_mutation() {
+        let mut lab = DemoLab::new().expect("demo Runtime");
+        let session_id = lab.session_id;
+        let result = AudioShareRouteController::install(
+            &mut lab.runtime,
+            session_id,
+            FakeProcess::default(),
+            3,
+            2,
         );
         assert!(result.is_err());
         assert!(
@@ -760,6 +930,7 @@ mod tests {
             session_id,
             supervisor,
             DEFAULT_STABLE_RECEIVER_POLLS,
+            DEFAULT_RECEIVER_WAIT_POLLS,
         )
         .expect("physical audio Route");
         let first_epoch = controller.start(&mut lab.runtime, 2).expect("start server");

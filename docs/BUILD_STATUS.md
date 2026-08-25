@@ -228,3 +228,13 @@ audible case only; background/focus, latency and long-duration quality remain
 unverified. The Quick Action labels this initial path as system-audio mirroring,
 not a CapyIO virtual speaker, because the selected Windows endpoint may continue
 to play locally.
+
+Post-`001A3` hardening bounds receiver startup at 120 host polls. Exhaustion
+reaps the external process, retains a retryable typed Problem and permits a
+later-epoch retry instead of leaving the Route in `Starting`. A Windows Remote
+Desktop physical repeat also demonstrated that v0.3.4 may fall back from the
+requested signed-16/48 kHz format to an endpoint's 44.1 kHz float default. The
+Route now truthfully declares `audio-share-v0.3.4-private-negotiated`. During a
+15-second phone screen-off interval, TCP stayed established and the Android
+Track advanced by 757,150 frames; secure-lock, longer background, focus,
+latency and soak behavior remain unverified.

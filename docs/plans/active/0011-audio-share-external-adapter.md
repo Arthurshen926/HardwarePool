@@ -97,3 +97,9 @@ plane.
   system WAV plays, and was clearly heard by the user beside the phone. Cleanup
   left no process/listener. The result is one audible functional case, not a
   latency, quality, background or soak claim.
+- Post-slice hardening bounds receiver startup at 120 host polls, reaps on
+  exhaustion and reports a retryable typed Problem. RDP endpoint testing showed
+  upstream format fallback, so the Route now declares a private-negotiated
+  format rather than fixed signed-16/48 kHz. A 15-second screen-off run retained
+  TCP and advanced the Android Track by 757,150 frames with clean shutdown;
+  secure lock, longer background, focus and soak remain open.

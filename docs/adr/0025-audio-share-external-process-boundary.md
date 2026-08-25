@@ -56,3 +56,15 @@ and UI retain typed lifecycle and diagnostics. The integration remains local
 lab/pre-alpha, cannot claim interoperability with unrelated audio Adapters, and
 requires later packaging, signing, security and long-duration mobile tests
 before public distribution.
+
+## 2026-08-25 clarification
+
+Physical testing under Windows Remote Desktop showed that v0.3.4 can accept an
+explicit 48 kHz signed-16 request yet fall back to the selected endpoint's 44.1
+kHz float default. The Adapter has no machine-readable API for the negotiated
+result, and ordinary log prose cannot become lifecycle or catalog authority.
+The Route format is therefore `audio-share-v0.3.4-private-negotiated`; requested
+CLI arguments remain bounded configuration but are not presented as observed
+PCM truth. The desktop host also bounds receiver-wait polling and reports a
+retryable offline Problem while reaping the process when that budget is
+exhausted.

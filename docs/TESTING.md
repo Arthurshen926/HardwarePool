@@ -146,9 +146,12 @@ Hardware-free desktop composition tests bind a fake process boundary to a real
 `NodeRuntime` `AdapterManaged` Route. They require three consecutive established
 receiver samples before `Active`, reset the counter on an intervening absence,
 map receiver loss, child exit and process-start failure to typed Route Problems,
-verify retry advances the epoch, and prove that audio failure leaves an already
-active IMU Route unchanged. The fake proves orchestration only; the adapter
-fixture tests remain the evidence for real child/TCP observation behavior.
+bound the initial receiver wait, reap the child on wait exhaustion, verify retry
+advances the epoch, and prove that audio failure leaves an already active IMU
+Route unchanged. They also assert that the AdapterManaged Route exposes a
+private-negotiated Audio Share format rather than claiming an unobserved PCM
+request. The fake proves orchestration only; the adapter fixture tests remain
+the evidence for real child/TCP observation behavior.
 
 Quick Action tests assert schema version 1, a truthful blocked state when host
 configuration is absent, finite operations derived from Route state, rejection

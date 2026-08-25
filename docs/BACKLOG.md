@@ -146,6 +146,11 @@ Progress:
   passed Active epoch 1, disconnect/Offline epoch 2, retry Active epoch 3 and
   explicit stop, while Android reported a 48 kHz stereo Track with non-zero
   written frames.
+- Post-`001A3` hardening bounds receiver startup, reaps and reports a retryable
+  Problem on exhaustion, and uses a private-negotiated Route format because the
+  upstream CLI can fall back to an endpoint default. A short physical
+  screen-off run retained TCP and advanced the Android Track; secure lock,
+  longer background, audio focus, latency and soak remain open.
 
 Explicit non-scope: vendoring upstream source, a CapyIO Android app, virtual
 render endpoint, microphone, codec rewrite, production pairing/encryption or

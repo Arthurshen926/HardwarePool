@@ -66,10 +66,25 @@ previously firewall-approved executable path was used; Windows firewall access
 is therefore treated as path-specific lab configuration, not binary-hash
 authorization.
 
+On 2026-08-25, a short screen-off repeat ran through the only endpoint exposed
+by the active Windows Remote Desktop session. Although the CLI was given the
+usual signed-16/48 kHz request, Audio Share fell back to that endpoint's 44.1
+kHz float default. The Android TCP session remained established while the
+device reported `mWakefulness=Asleep`, and the app-owned active Track advanced
+from 124,185 to 881,335 server frames over 15 seconds (delta 757,150). Shutdown
+again left no listener. This evidence caused the Runtime Route descriptor to be
+corrected from a fixed PCM claim to
+`audio-share-v0.3.4-private-negotiated`. Receiver startup is now also bounded:
+wait exhaustion reaps the child and produces the retryable
+`CAPY.AUDIO_SHARE.RECEIVER_WAIT_EXHAUSTED` Problem instead of remaining in
+`Starting` indefinitely.
+
 ## Limits
 
 TCP presence still does not authenticate the peer. Subjective audibility is
 confirmed only for the repeat case above; it is not a latency, quality or soak
-claim. Background/lock, audio focus, protected-content behavior, latency,
-long-duration quality and production pairing/encryption remain Gate 7 work. No
-upstream binary or APK is stored or distributed by CapyIO.
+claim. One 15-second screen-off interval has objective transport/frame evidence;
+secure-lock behavior, longer background operation, audio focus,
+protected-content behavior, latency, long-duration quality and production
+pairing/encryption remain Gate 7 work. No upstream binary or APK is stored or
+distributed by CapyIO.
