@@ -170,6 +170,11 @@ Dependency rules:
   configuration. A host-owned worker polls independently of the WebView. A
   bounded number of receiver-wait polls transitions a stuck start to a typed,
   retryable `Offline` Problem and reaps the external process.
+- Every Audio Share start re-probes the pinned CLI and current endpoint
+  inventory. A configured endpoint that disappeared after RDP, hot-plug or
+  audio-service re-enumeration maps to a sanitized, retryable
+  `CAPY.AUDIO_SHARE.ENDPOINT_UNAVAILABLE` Problem; raw endpoint IDs remain
+  trusted host configuration and do not enter the WebView DTO.
 - Testkit is never a production dependency of Core/Protocol/Runtime/Adapter SDK.
 - Drivers communicate through minimal validated contracts, never Rust memory
   layout or network/wire messages.

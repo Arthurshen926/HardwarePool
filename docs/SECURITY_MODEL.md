@@ -59,6 +59,8 @@ The desktop Quick Action never accepts an executable path, endpoint identifier,
 bind address or port from the WebView. Those values come only from the trusted
 host environment, while the versioned UI request is closed to unknown fields
 and permits only one stable action ID plus `start`, `retry` or `stop`.
+Start-time endpoint re-probing reports disappearance through a stable sanitized
+Problem and does not echo the configured endpoint ID into UI diagnostics.
 
 Windows receiver observation filters the OS TCP owner table by the supervised
 process ID, explicit local port and established state. It returns only a count,

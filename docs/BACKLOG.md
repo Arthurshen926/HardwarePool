@@ -151,6 +151,9 @@ Progress:
   upstream CLI can fall back to an endpoint default. A short physical
   screen-off run retained TCP and advanced the Android Track; secure lock,
   longer background, audio focus, latency and soak remain open.
+- Endpoint drift now has a typed, sanitized start-time Problem. A later UX slice
+  still needs trusted-host selection from a freshly enumerated allow-list; the
+  WebView must never submit an arbitrary endpoint ID or executable path.
 
 Explicit non-scope: vendoring upstream source, a CapyIO Android app, virtual
 render endpoint, microphone, codec rewrite, production pairing/encryption or

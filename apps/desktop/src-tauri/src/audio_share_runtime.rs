@@ -3,7 +3,9 @@ use std::{
     str::FromStr,
 };
 
-use capyio_audio_share_adapter::{AudioShareSupervisor, ReceiverTcpPresence, SupervisorStatus};
+use capyio_audio_share_adapter::{
+    AudioShareError, AudioShareSupervisor, ReceiverTcpPresence, SupervisorStatus,
+};
 use capyio_core::{
     AdapterDeploymentMode, AdapterHealth, AdapterInstanceDescriptor, AdapterInstanceId,
     AdapterState, Availability, CapabilityClass, CapabilityDescriptor, FormatDescriptor,
@@ -26,18 +28,35 @@ const AUDIO_FORMAT: &str = "audio-share-v0.3.4-private-negotiated";
 pub const DEFAULT_STABLE_RECEIVER_POLLS: u8 = 3;
 pub const DEFAULT_RECEIVER_WAIT_POLLS: u16 = 120;
 
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum AudioShareStartError {
+    ConfiguredEndpointUnavailable,
+    Other(String),
+}
+
+impl std::fmt::Display for AudioShareStartError {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::ConfiguredEndpointUnavailable => {
+                formatter.write_str("the configured playback endpoint is no longer enumerated")
+            }
+            Self::Other(detail) => formatter.write_str(detail),
+        }
+    }
+}
+
 pub trait AudioShareProcessBoundary {
-    fn start(&mut self) -> Result<(), String>;
+    fn start(&mut self) -> Result<(), AudioShareStartError>;
     fn status(&mut self) -> Result<SupervisorStatus, String>;
     fn receiver_presence(&mut self) -> Result<ReceiverTcpPresence, String>;
     fn stop(&mut self) -> Result<(), String>;
 }
 
 impl AudioShareProcessBoundary for AudioShareSupervisor {
-    fn start(&mut self) -> Result<(), String> {
+    fn start(&mut self) -> Result<(), AudioShareStartError> {
         AudioShareSupervisor::start(self)
             .map(|_| ())
-            .map_err(|error| error.to_string())
+            .map_err(map_supervisor_start_error)
     }
 
     fn status(&mut self) -> Result<SupervisorStatus, String> {
@@ -52,6 +71,14 @@ impl AudioShareProcessBoundary for AudioShareSupervisor {
         AudioShareSupervisor::stop(self)
             .map(|_| ())
             .map_err(|error| error.to_string())
+    }
+}
+
+fn map_supervisor_start_error(error: AudioShareError) -> AudioShareStartError {
+    if matches!(error, AudioShareError::ConfiguredEndpointMissing { .. }) {
+        AudioShareStartError::ConfiguredEndpointUnavailable
+    } else {
+        AudioShareStartError::Other(error.to_string())
     }
 }
 
@@ -102,14 +129,21 @@ impl<P: AudioShareProcessBoundary> AudioShareRouteController<P> {
         self.stable_receiver_polls = 0;
         self.receiver_wait_polls = 0;
         if !matches!(self.process.status(), Ok(SupervisorStatus::Running { .. }))
-            && let Err(detail) = self.process.start()
+            && let Err(problem) = self.process.start()
         {
-            self.route.report_offline(
-                runtime,
-                "CAPY.AUDIO_SHARE.PROCESS_START_FAILED",
-                "Audio Share could not start",
-                detail.clone(),
-            )?;
+            let (code, message) = match &problem {
+                AudioShareStartError::ConfiguredEndpointUnavailable => (
+                    "CAPY.AUDIO_SHARE.ENDPOINT_UNAVAILABLE",
+                    "The configured Windows playback endpoint is unavailable",
+                ),
+                AudioShareStartError::Other(_) => (
+                    "CAPY.AUDIO_SHARE.PROCESS_START_FAILED",
+                    "Audio Share could not start",
+                ),
+            };
+            let detail = problem.to_string();
+            self.route
+                .report_offline(runtime, code, message, detail.clone())?;
             return Err(format!("Audio Share process start failed: {detail}"));
         }
         Ok(epoch)
@@ -534,7 +568,7 @@ mod tests {
         running: bool,
         presences: VecDeque<ReceiverTcpPresence>,
         exit: Option<ProcessExitReport>,
-        start_error: Option<String>,
+        start_error: Option<AudioShareStartError>,
         starts: u32,
         stops: u32,
     }
@@ -549,7 +583,7 @@ mod tests {
     }
 
     impl AudioShareProcessBoundary for FakeProcess {
-        fn start(&mut self) -> Result<(), String> {
+        fn start(&mut self) -> Result<(), AudioShareStartError> {
             if let Some(error) = self.start_error.clone() {
                 return Err(error);
             }
@@ -824,7 +858,9 @@ mod tests {
     fn process_start_failure_offlines_route_with_typed_problem() {
         let mut lab = DemoLab::new().expect("demo Runtime");
         let process = FakeProcess {
-            start_error: Some("fixture spawn denied".to_owned()),
+            start_error: Some(AudioShareStartError::Other(
+                "fixture spawn denied".to_owned(),
+            )),
             ..FakeProcess::default()
         };
         let session_id = lab.session_id;
@@ -851,6 +887,58 @@ mod tests {
             problem.code == "CAPY.AUDIO_SHARE.PROCESS_START_FAILED"
                 && problem.related_route == Some(controller.route_id())
         }));
+    }
+
+    #[test]
+    fn stale_configured_endpoint_has_a_stable_sanitized_problem() {
+        let mut lab = DemoLab::new().expect("demo Runtime");
+        let session_id = lab.session_id;
+        let process = FakeProcess {
+            start_error: Some(AudioShareStartError::ConfiguredEndpointUnavailable),
+            ..FakeProcess::default()
+        };
+        let mut controller = AudioShareRouteController::install(
+            &mut lab.runtime,
+            session_id,
+            process,
+            1,
+            DEFAULT_RECEIVER_WAIT_POLLS,
+        )
+        .expect("install Route");
+
+        let error = controller
+            .start(&mut lab.runtime, 1)
+            .expect_err("stale endpoint must fail");
+        assert!(error.contains("no longer enumerated"));
+        assert_eq!(
+            controller
+                .status(&lab.runtime)
+                .expect("offline")
+                .route_state,
+            RouteState::Offline
+        );
+        let problem = lab
+            .runtime
+            .snapshot()
+            .problems
+            .into_iter()
+            .find(|problem| problem.related_route == Some(controller.route_id()))
+            .expect("endpoint Problem");
+        assert_eq!(problem.code, "CAPY.AUDIO_SHARE.ENDPOINT_UNAVAILABLE");
+        assert!(problem.retryable);
+        assert_eq!(
+            problem.technical_detail.as_deref(),
+            Some("the configured playback endpoint is no longer enumerated")
+        );
+    }
+
+    #[test]
+    fn concrete_missing_endpoint_error_maps_without_retaining_the_endpoint_id() {
+        let mapped = map_supervisor_start_error(AudioShareError::ConfiguredEndpointMissing {
+            endpoint_id: "sensitive-endpoint-id".to_owned(),
+        });
+        assert_eq!(mapped, AudioShareStartError::ConfiguredEndpointUnavailable);
+        assert!(!mapped.to_string().contains("sensitive-endpoint-id"));
     }
 
     #[test]

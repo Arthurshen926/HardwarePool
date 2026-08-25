@@ -209,3 +209,35 @@ fn supervises_real_user_supplied_audio_share_server() {
         SupervisorStatus::Stopped
     );
 }
+
+#[test]
+#[ignore = "probes a user-supplied CLI against an explicitly stale endpoint ID"]
+fn real_user_supplied_stale_endpoint_is_rejected_before_spawn() {
+    let executable = std::env::var_os("CAPYIO_AUDIO_SHARE_EXE")
+        .map(PathBuf::from)
+        .expect("set CAPYIO_AUDIO_SHARE_EXE explicitly");
+    let endpoint = std::env::var("CAPYIO_AUDIO_SHARE_STALE_ENDPOINT")
+        .expect("set CAPYIO_AUDIO_SHARE_STALE_ENDPOINT explicitly");
+    let config = AudioShareConfig::new(
+        executable,
+        IpAddr::V4(Ipv4Addr::LOCALHOST),
+        unused_loopback_port(),
+        endpoint,
+        AudioEncoding::F32,
+        2,
+        44_100,
+    )
+    .expect("stale-endpoint probe config");
+    let mut supervisor =
+        AudioShareSupervisor::new(config, ProbeLimits::default(), SupervisorLimits::default())
+            .expect("real supervisor");
+
+    assert!(matches!(
+        supervisor.start(),
+        Err(AudioShareError::ConfiguredEndpointMissing { .. })
+    ));
+    assert_eq!(
+        supervisor.status().expect("never-started status"),
+        SupervisorStatus::Stopped
+    );
+}

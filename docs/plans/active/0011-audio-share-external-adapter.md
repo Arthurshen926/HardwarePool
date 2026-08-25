@@ -103,3 +103,10 @@ plane.
   format rather than fixed signed-16/48 kHz. A 15-second screen-off run retained
   TCP and advanced the Android Track by 757,150 frames with clean shutdown;
   secure lock, longer background, focus and soak remain open.
+- Start-time inventory probing now maps a disappeared configured endpoint to
+  the sanitized, retryable `CAPY.AUDIO_SHARE.ENDPOINT_UNAVAILABLE` Problem.
+  The endpoint ID is neither parsed from logs nor returned to the WebView;
+  enumerated trusted-host reselection remains a later UX slice.
+- Real ignored probes confirmed that the current RDP endpoint starts and reaps,
+  while the disappeared former endpoint is rejected as
+  `ConfiguredEndpointMissing` before spawn with supervisor state still stopped.

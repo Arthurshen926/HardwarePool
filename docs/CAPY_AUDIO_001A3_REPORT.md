@@ -79,6 +79,19 @@ wait exhaustion reaps the child and produces the retryable
 `CAPY.AUDIO_SHARE.RECEIVER_WAIT_EXHAUSTED` Problem instead of remaining in
 `Starting` indefinitely.
 
+Start-time probing now preserves the endpoint-drift distinction in Runtime:
+the Adapter's concrete missing-endpoint error maps to the sanitized, retryable
+`CAPY.AUDIO_SHARE.ENDPOINT_UNAVAILABLE` Problem. It does not retain the raw
+endpoint ID or infer state from ordinary process logs. Other spawn/probe errors
+remain `CAPY.AUDIO_SHARE.PROCESS_START_FAILED`.
+
+The hash-verified real CLI passed both sides of this distinction on 2026-08-25:
+the currently enumerated RDP endpoint completed probe, start, listener readiness
+and stop/reap, while the disappeared former physical endpoint returned
+`ConfiguredEndpointMissing` before child spawn and left supervisor state
+stopped. Endpoint IDs and private addresses are not retained in repository
+evidence.
+
 ## Limits
 
 TCP presence still does not authenticate the peer. Subjective audibility is

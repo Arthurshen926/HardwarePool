@@ -126,6 +126,12 @@ The probe tests above do not start the audio server or send PCM. Process
 supervision, receiver-loss/Route behavior and physical playback are separate
 acceptance steps.
 
+A separately ignored real-CLI stale-endpoint test re-probes an explicitly
+supplied endpoint that is expected to be absent, requires the typed
+`ConfiguredEndpointMissing` result before child spawn and confirms supervisor
+state remains stopped. It complements, but never replaces, the ignored current
+endpoint start/listen/stop probe.
+
 The next supervisor tests use a repository-built fixture executable to prove
 TCP-listener readiness, running/early-exit state, startup timeout, bounded
 continuous output, explicit kill/reap, idempotent stop and Drop cleanup. A
@@ -152,6 +158,12 @@ Route unchanged. They also assert that the AdapterManaged Route exposes a
 private-negotiated Audio Share format rather than claiming an unobserved PCM
 request. The fake proves orchestration only; the adapter fixture tests remain
 the evidence for real child/TCP observation behavior.
+
+The desktop composition tests also map the Adapter's concrete
+`ConfiguredEndpointMissing` start error to the stable
+`CAPY.AUDIO_SHARE.ENDPOINT_UNAVAILABLE` Problem without retaining the endpoint
+ID. Other start failures remain `PROCESS_START_FAILED`; no ordinary CLI log
+text is parsed to distinguish them.
 
 Quick Action tests assert schema version 1, a truthful blocked state when host
 configuration is absent, finite operations derived from Route state, rejection

@@ -238,3 +238,13 @@ Route now truthfully declares `audio-share-v0.3.4-private-negotiated`. During a
 15-second phone screen-off interval, TCP stayed established and the Android
 Track advanced by 757,150 frames; secure-lock, longer background, focus,
 latency and soak behavior remain unverified.
+
+Audio Share start now re-probes the current endpoint inventory. Endpoint drift
+caused by RDP, hot-plug or audio-service re-enumeration produces the sanitized,
+retryable `CAPY.AUDIO_SHARE.ENDPOINT_UNAVAILABLE` Route Problem rather than a
+generic process-start failure. The raw endpoint ID remains trusted host
+configuration and is not returned to the WebView.
+
+The hash-verified real CLI passed the current-endpoint start/listen/stop probe
+and rejected an explicitly stale former endpoint before spawn, leaving the
+supervisor stopped.
