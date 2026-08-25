@@ -49,12 +49,17 @@ without playing through the physical or Remote Desktop output.
 
 - official upstream pinned at
   `717778a20ba4dd2440fe609f69153a1f8a64f597`, MS-PL, no source imported;
+- fixed archive SHA-256 is
+  `C05B09BB89C929B4E736B54209CD2B4B9B2A382D4D4820F5F9755C0389F7D38A`;
 - daily host: x64 Windows build 26200.8875, Visual Studio Build Tools 17.14,
   Windows SDK 10.0.26100.0;
-- WDK MSBuild integration and InfVerif are not present;
-- Hyper-V VM Management is running, but the current account cannot enumerate
-  VMs and therefore cannot verify an exact isolated target.
+- WDK MSBuild integration, InfVerif and the upstream-required v142/ATL/Spectre
+  component set are not yet accepted as installed;
+- `arthu` has been added to `Hyper-V Administrators`, but the current login
+  token must be refreshed by signing out and back in before VM enumeration.
 
 No driver tools were executed and no driver, VM, signing, boot or security state
-was changed. Progress beyond `001B0` requires access to one exact isolated VM;
-the daily host is not an acceptable substitute.
+was changed. The upstream archive and Microsoft-signed WDK bootstrapper are
+verified in ignored local cache only. Progress beyond `001B0` requires a fresh
+login token, one exact isolated VM and a completed compile toolchain; the daily
+host is not an acceptable driver target.

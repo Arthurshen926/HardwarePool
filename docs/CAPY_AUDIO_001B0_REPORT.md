@@ -2,7 +2,7 @@
 
 Date: 2026-08-25
 
-Status: product/architecture realignment complete; isolated target access open
+Status: product/architecture realignment complete; isolated target access pending token refresh
 
 ## Outcome
 
@@ -29,12 +29,20 @@ existing trusted endpoint picker is reusable once `CapyIO Speaker` enumerates.
 - Microsoft Windows-driver-samples pinned at
   `717778a20ba4dd2440fe609f69153a1f8a64f597`;
 - upstream path `audio/sysvad`, license MS-PL;
+- official fixed-revision archive SHA-256
+  `C05B09BB89C929B4E736B54209CD2B4B9B2A382D4D4820F5F9755C0389F7D38A`;
+- extracted upstream `LICENSE` SHA-256
+  `07639618C7B94AB9953CC61715F6325877E1854DCA611ED9B1BD54497CF5E93A`;
 - no upstream source or binary imported;
 - daily host: x64 Windows build 26200.8875;
 - Visual Studio Build Tools 17.14 and Windows SDK 10.0.26100.0 present;
 - WDK MSBuild integration and InfVerif not found;
-- Hyper-V VM Management is running, but the current account lacks permission
-  to enumerate VMs.
+- upstream build metadata requires the WDK, v142 x64 tools, ATL and Spectre
+  libraries; an attempted toolchain install did not complete, so none of these
+  components is accepted as available evidence;
+- `DESKTOP-AT8EVE9\arthu` is a member of the built-in `Hyper-V Administrators`
+  group, but the current login token does not yet contain group SID
+  `S-1-5-32-578`.
 
 The first direct GitHub query timed out without a proxy; the read-only pinned
 revision query succeeded through the user-provided Clash proxy at
@@ -48,8 +56,17 @@ Repository validation now requires the SysVAD revision/license record, the
 `CapyIO Speaker`/WASAPI/isolated-target boundary, and rejects driver source while
 the provenance record remains `source_imported: false`.
 
+The source archive was downloaded and inspected only under the ignored
+`.agent-cache` directory. The Microsoft-signed WDK 26100.6584 bootstrapper was
+also cached and verified (SHA-256
+`ED82C46BD98E0F1D07FD6E5075900E42AEDC3FA5E68C06A8764B3DC5303CFF1B`), but
+was not executed. A Visual Studio component modification was stopped after its
+log showed channel access failure; the proxy-assisted retry was cancelled at
+UAC. The repository therefore records the toolchain as incomplete.
+
 ## Open prerequisite
 
-`CAPY-AUDIO-001B1` requires one exact Hyper-V Generation 2 VM or dedicated
-Windows installation with snapshot/recovery planning. The daily host cannot be
-used as a substitute.
+Sign out of Windows and sign back in before enumerating Hyper-V. Then
+`CAPY-AUDIO-001B1` requires one exact Generation 2 VM or dedicated Windows
+installation with snapshot/recovery planning. The daily host cannot be used as
+a substitute.
