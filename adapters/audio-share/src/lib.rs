@@ -18,11 +18,16 @@ use thiserror::Error;
 
 mod peer_presence;
 mod supervisor;
+mod transport;
 
 pub use peer_presence::ReceiverTcpPresence;
 pub use supervisor::{
     AudioShareSupervisor, ProcessExitReport, ProcessOutputSummary, SupervisorLimits,
     SupervisorStartReport, SupervisorStatus, SupervisorStopReport,
+};
+pub use transport::{
+    AudioSharePrivateFormat, AudioShareTransport, AudioShareTransportConfig,
+    AudioShareTransportError, AudioShareTransportSender,
 };
 
 pub const PINNED_AUDIO_SHARE_VERSION: &str = "0.3.4";

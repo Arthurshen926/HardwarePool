@@ -1,6 +1,7 @@
 # CapyIO Data-Plane Bootstrap
 
-> Status: bounded semantic foundation; no production network binding selected
+> Status: bounded semantic foundation; no production network binding selected;
+> one AdapterManaged Audio Share compatibility binding exists for trusted labs
 
 ## 1. Purpose
 
@@ -14,6 +15,11 @@ The semantic envelope is not a public wire layout. It carries Profile identity,
 typed stream identity, stream epoch, sequence, source/receive timestamps, clock
 domain and a validated bounded payload. A concrete transport still owns
 framing, authentication, replay defense, rate limits and MTU policy.
+
+ADR 0030's Audio Share-compatible TCP/UDP sender is a deliberately private
+`AdapterManaged` bridge to the pinned Android receiver. It strips CapyIO frame
+metadata because the upstream protocol cannot carry it and therefore is not a
+StandardPort implementation or a candidate production binding.
 
 ## 2. StandardPort queue and fan-out semantics
 

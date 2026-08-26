@@ -12,11 +12,28 @@ planned_integrations:
     pinned_revision: 342751fe675367483170b002ec6054e243966dc0
     pinned_release: v0.3.4
     license: Apache-2.0
-    integration_mode: external_process_adapter_managed
+    integration_mode: external_process_and_compatible_private_transport
     source_imported: false
     binary_imported: false
     imported_paths: []
     local_modifications: []
+    fixed_revision_protocol_review:
+      archive_sha256: 2cb8b9347ae5f1288b206955f0d8c69717e5d7236e19304510524d2edbdfce64
+      reviewed_paths:
+        - docs/protocol.md
+        - protos/client.proto
+        - server-core/src/network_manager.hpp
+        - server-core/src/network_manager.cpp
+        - server-core/src/audio_manager.hpp
+        - server-core/src/audio_manager.cpp
+        - server-core/src/win32/audio_manager_impl.hpp
+        - server-core/src/win32/audio_manager_impl.cpp
+        - android-app/app/src/main/java/io/github/mkckr0/audio_share_app/service/NetClient.kt
+        - android-app/app/src/main/java/io/github/mkckr0/audio_share_app/service/NetworkIO.kt
+        - android-app/app/src/main/java/io/github/mkckr0/audio_share_app/service/AudioPlayer.kt
+      upstream_source_imported: false
+      upstream_schema_imported: false
+      purpose: verify the pinned private wire contract and absence of external PCM injection
     release_artifacts:
       windows_x86_64_zip:
         sha256: d73ea0dc2e16e4cfcc52ae370a0f06ebaf9ac0a1f2b9b069e03b0c107cb37bc1
@@ -46,6 +63,15 @@ planned_integrations:
         - localized PowerShell or netstat output
         - hand-written Windows FFI
         - upstream log parsing
+    private_transport_dependency:
+      name: prost
+      version: 0.14.4
+      license: MIT OR Apache-2.0
+      upstream_repository: https://github.com/tokio-rs/prost
+      purpose: encode the bounded pinned AudioFormat message without importing generated upstream code
+      alternatives_rejected:
+        - hand-written Protobuf varint encoding
+        - importing upstream generated C++ or Kotlin sources
     distribution_note: >-
       CapyIO does not vendor, link, repackage or distribute Audio Share in this
       slice. Tests use a user-supplied, hash-verified unmodified release. The
