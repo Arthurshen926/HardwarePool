@@ -261,8 +261,10 @@ every level. Android/iOS limitations are reported honestly.
 
 Any future Windows driver is minimal: endpoint/PCM or fixed IPC surface only.
 Networking, DNS, pairing, encryption, JSON/Protobuf, codecs, reconnect and user
-configuration remain in user mode. Driver build/install/test requires an
-isolated VM or dedicated Windows installation.
+configuration remain in user mode. Driver build/install/test defaults to an
+isolated VM or dedicated Windows installation. ADR 0029 allows one identified
+local-lab exception with recorded recovery posture, exact-package approval and
+rollback evidence; it does not relax the driver boundary.
 
 The dedicated remote-speaker projection is a render endpoint named `CapyIO
 Speaker`. Windows applications render into it, and an endpoint-associated

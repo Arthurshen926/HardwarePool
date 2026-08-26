@@ -4,9 +4,11 @@ These rules override less specific repository instructions for this directory.
 
 ## Absolute boundaries
 
-- Never install or remove a driver unless the human has approved the exact isolated target.
+- Never install or remove a driver unless the human has approved the exact target and package.
 - Never run `bcdedit`, `verifier`, `pnputil`, `devcon`, `signtool`, or alter Secure Boot/BitLocker without explicit approval.
-- The daily-development Windows installation is not a test target.
+- The daily-development Windows installation is not a test target by default.
+  ADR 0029 permits only the identified `DESKTOP-AT8EVE9` Gate 7B lab exception
+  after the required recovery and rollback preflight passes.
 - Do not copy third-party sample code until its license and resulting distribution obligations are recorded.
 - Driver code must not link network, TLS, Protobuf, JSON, codec, UI, database, or auto-update libraries.
 - All externally supplied sizes, offsets, versions and operation codes must be validated before use.

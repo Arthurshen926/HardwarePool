@@ -90,5 +90,8 @@ Never perform these without explicit human approval and a verified target:
 - publish a package, release, tag, commit, push or pull request;
 - delete user data or reset a physical device.
 
-Driver tests target an isolated VM or dedicated test installation, never the
-daily-development Windows host.
+Driver tests default to an isolated VM or dedicated test installation. ADR 0029
+permits the identified `DESKTOP-AT8EVE9` host as a Gate 7B controlled local-lab
+exception only after its recovery posture, exact package and rollback command
+have been recorded. Driver deployment/removal and every boot/security-policy
+change still require separate explicit human approval.

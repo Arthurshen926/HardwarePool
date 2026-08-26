@@ -1,8 +1,9 @@
 # CAPY-AUDIO-001B0 Report
 
-Date: 2026-08-25
+Date: 2026-08-26
 
-Status: product/architecture and candidate audit complete; isolated target provisioning in progress
+Status: architecture/candidate audit complete; local compile baseline proven;
+controlled deployment preflight pending
 
 ## Outcome
 
@@ -20,7 +21,7 @@ Windows application
   -> endpoint-associated render APO
   -> bounded shared-memory/SPSC staging ring
   -> user-mode Broker
-  -> existing Audio Share Adapter-managed transport
+  -> Audio Share-compatible user-mode transport ingest (B2T decision pending)
   -> Android speaker
 ```
 
@@ -28,7 +29,10 @@ This avoids adding networking or a custom PCM ring to the kernel driver. The
 existing trusted endpoint picker is reusable once `CapyIO Speaker` enumerates.
 
 The APO callback is limited to a preallocated, non-blocking copy/drop path. The
-exact shared-memory setup is still an isolated-target spike, not a proven ABI.
+exact shared-memory setup is still a lab spike, not a proven ABI. The current
+external `as-cmd` process captures a Windows endpoint and has no supported
+Broker PCM-injection interface, so B2T must resolve that ingest contract before
+the architecture can claim APO-to-phone delivery.
 
 ## Candidate audit
 
@@ -54,12 +58,19 @@ No candidate source or binary was imported. Exact revisions and hashes are in
 - extracted upstream `LICENSE` SHA-256
   `07639618C7B94AB9953CC61715F6325877E1854DCA611ED9B1BD54497CF5E93A`;
 - no upstream source or binary imported;
-- daily host: x64 Windows build 26200.8875;
-- Visual Studio Build Tools 17.14 and Windows SDK 10.0.26100.0 present;
-- WDK MSBuild integration and InfVerif not found;
-- upstream build metadata requires the WDK, v142 x64 tools, ATL and Spectre
-  libraries; an attempted toolchain install did not complete, so none of these
-  components is accepted as available evidence;
+- identified local host: `DESKTOP-AT8EVE9`, AMD64 Windows build 26200.9168;
+- Visual Studio Build Tools 17.14, Windows SDK 10.0.26100.0 and WDK
+  10.0.26100.6584 present;
+- WDK MSBuild integration and x64 InfVerif execute locally;
+- the pinned WIL submodule revision is
+  `3c00e7f1d8cf9930bbb8e5be3ef0df65c84e8928`; its ignored-cache archive
+  SHA-256 is
+  `0E4974FF5F74B2AFBE95E8F85DDC6B7329ADF5718A228D54E4B21DA132A1A13E`;
+- existing v142 ATL plus WIL produced x64 Release `SwapAPO.dll` with SHA-256
+  `87447A0C5796093561E4B1DC4A531969A19E8B7FED3D82E2CA74BDADE0E8347C`;
+- the full solution still requires current-toolset ATL/Spectre, a deliberate
+  signing-disabled compile configuration and reconciliation of the upstream
+  base INF with current InfVerif `/w` rules. The APO and extension INFs pass;
 - `DESKTOP-AT8EVE9\arthu` is a member of the built-in `Hyper-V Administrators`
   group, and the refreshed login token contains group SID `S-1-5-32-578`;
 - `CapyIO-DriverLab` is an identified Hyper-V Generation 2 target at
@@ -70,8 +81,8 @@ No candidate source or binary was imported. Exact revisions and hashes are in
   `7B4AC87391B659F7724229682B642256289A1C00504056249F0F12029157D3D2`,
   matching Microsoft's published `Enterprise Eval x64 Eval ZH-CN DVD9`
   value;
-- Windows guest installation has begun, but first boot, baseline checkpoint
-  and toolchain evidence are still pending.
+- Windows guest installation reached OOBE but did not produce a stable first
+  boot, baseline checkpoint or usable recovery target.
 
 The first direct GitHub query timed out without a proxy; the read-only pinned
 revision query succeeded through the user-provided Clash proxy at
@@ -79,24 +90,24 @@ revision query succeeded through the user-provided Clash proxy at
 
 ## Safety and validation
 
-No WDK driver tool, driver install/remove, signing command,
-BitLocker/test-signing/Verifier operation or source import occurred. VM creation,
-Secure Boot/vTPM configuration and guest OS installation are confined to the
-identified `CapyIO-DriverLab` target.
+WDK compile and InfVerif tools ran locally. No driver install/remove, signing
+command, BitLocker/test-signing/Verifier operation or repository source import
+occurred. VM creation, Secure Boot/vTPM configuration and guest OS installation
+remain confined to the identified `CapyIO-DriverLab` target.
 Repository validation now requires the SysVAD and candidate revision/license
 records, the `CapyIO Speaker`/APO/bounded/isolated-target boundary, and rejects
 driver source while the provenance record remains `source_imported: false`.
 
 The source archive was downloaded and inspected only under the ignored
 `.agent-cache` directory. The Microsoft-signed WDK 26100.6584 bootstrapper was
-also cached and verified (SHA-256
-`ED82C46BD98E0F1D07FD6E5075900E42AEDC3FA5E68C06A8764B3DC5303CFF1B`), but
-was not executed. A Visual Studio component modification was stopped after its
-log showed channel access failure; the proxy-assisted retry was cancelled at
-UAC. The repository therefore records the toolchain as incomplete.
+cached, verified and installed (SHA-256
+`ED82C46BD98E0F1D07FD6E5075900E42AEDC3FA5E68C06A8764B3DC5303CFF1B`). Current
+v143 ATL/Spectre component modification remains blocked at UAC. The v142-based
+APO compile is evidence only and is not a production configuration.
 
 ## Open prerequisite
 
-Complete Windows first boot in `CapyIO-DriverLab`, detach the installer ISO,
-create and retain a clean baseline checkpoint, then install the pinned guest
-toolchain for `CAPY-AUDIO-001B1`. The daily host cannot be used as a substitute.
+Run the ADR 0029 elevated recovery audit for `DESKTOP-AT8EVE9`, retain exact
+package/rollback evidence and obtain package-specific approval before B2
+deployment. In parallel, complete B2T by proving a supported Broker PCM ingest
+into the Android transport with a simulated producer before connecting the APO.

@@ -245,9 +245,10 @@ The product has two experiences:
   current exception is the externally installed, local-lab IMU protocol Adapter
   scoped by `CAPY-IMU-001B` and ADR 0021;
 - Windows virtual camera/display/HID implementation or installation;
-- Windows virtual-audio installation on the daily-development host; the
-  dedicated `CapyIO Speaker` implementation is authorized only through ADRs
-  0027/0028 and an identified isolated VM or dedicated test installation;
+- uncontrolled Windows virtual-audio installation on a daily-development host;
+  ADRs 0027–0029 permit the dedicated `CapyIO Speaker` only in an identified
+  isolated target or the explicitly approved `DESKTOP-AT8EVE9` local lab after
+  recovery, exact-package and rollback preflight evidence;
 - unapproved Android permission, foreground-service, APK or physical-device
   operations; every approved lab action remains target-specific and retained as
   evidence;

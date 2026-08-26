@@ -88,8 +88,11 @@ arbitrary shell/filesystem/updater plugin in the foundation.
 ### Kernel compromise
 
 No network, DNS, pairing, crypto negotiation, JSON/Protobuf, codecs or reconnect
-logic in drivers. Kernel IPC is fixed/bounded and validated. Driver tests and
-Verifier run only in an isolated approved target.
+logic in drivers. Kernel IPC is fixed/bounded and validated. Driver tests
+default to an isolated approved target. ADR 0029 permits bounded Gate 7B
+install/enumeration/playback/uninstall checks on the identified local lab after
+recovery and rollback preflight. Driver Verifier and boot/security-policy
+changes remain separately approved high-risk actions.
 
 The first `CapyIO Speaker` path uses the standard Windows render/loopback model
 so PCM remains observable in user mode without a new custom render-ring IPC.

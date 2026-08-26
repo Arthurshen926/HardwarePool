@@ -1,6 +1,6 @@
 # CAPY-AUDIO-001B — Dedicated Windows virtual speaker
 
-Status: active; isolated target provisioned, guest/toolchain installation pending
+Status: active; local compile baseline proven, deployment recovery preflight pending
 
 Owner: Codex
 
@@ -19,16 +19,22 @@ without playing through the physical or Remote Desktop output.
 
 1. `CAPY-AUDIO-001B0`: resolve scope through ADRs 0027/0028, pin SysVAD and
    candidate provenance, audit real-PCM paths, inventory tools and identify an isolated target.
-2. `CAPY-AUDIO-001B1`: build the pinned, unchanged SysVAD sample inside the
-   isolated target and retain WDK/SDK/MSVC/build evidence.
-3. `CAPY-AUDIO-001B2`: install the signed test package in that target, prove
+2. `CAPY-AUDIO-001B1`: build the pinned, unchanged SysVAD sample on the local
+   toolchain and retain WDK/SDK/MSVC/build evidence.
+3. `CAPY-AUDIO-001B2`: install the signed test package in an approved target,
+   including the ADR 0029 local lab only after recovery preflight, and prove
    endpoint enumeration, playback meter, reboot/restart and clean uninstall.
-4. `CAPY-AUDIO-001B3`: import the minimal reviewed Microsoft endpoint/APO paths
+4. `CAPY-AUDIO-001B2T`: prove how Broker-owned PCM enters the Android transport.
+   The current `as-cmd` process captures an endpoint and exposes no supported
+   PCM-injection API, so audit a minimal pinned Audio Share server/transport
+   slice or reject it before claiming APO-to-phone integration. Use a simulated
+   bounded PCM producer before a driver/APO dependency.
+5. `CAPY-AUDIO-001B3`: import the minimal reviewed Microsoft endpoint/APO paths
    with MS-PL notices, assign CapyIO-owned identifiers/friendly name, implement
    the bounded APO staging spike and remove unrelated endpoints/features.
-5. `CAPY-AUDIO-001B4`: select `CapyIO Speaker` through the existing trusted-host
+6. `CAPY-AUDIO-001B4`: select `CapyIO Speaker` through the existing trusted-host
    picker, prove the APO/Broker bridge reaches Android, and prove the ordinary output remains silent.
-6. `CAPY-AUDIO-001B5`: exercise Broker/receiver loss, audio-service restart,
+7. `CAPY-AUDIO-001B5`: exercise Broker/receiver loss, audio-service restart,
    endpoint disable/enable, upgrade/uninstall and scoped Driver Verifier.
 
 ## Acceptance
@@ -41,7 +47,7 @@ without playing through the physical or Remote Desktop output.
 - the driver contains no network, protocol, codec or UI logic;
 - the APO real-time callback performs no blocking, allocation, file I/O,
   network I/O or ordinary logging and has bounded ring-full behavior;
-- build/install/remove and failure evidence identifies the exact isolated
+- build/install/remove and failure evidence identifies the exact approved
   target and toolchain;
 - imported Microsoft paths, notices, license and CapyIO modifications are
   recorded before source enters the repository.
@@ -55,8 +61,8 @@ without playing through the physical or Remote Desktop output.
 - fixed-revision review rejects SysVAD loopback as real-PCM evidence, rejects
   VirtualDrivers as a functional transport baseline and retains Scream only as
   research evidence; ADR 0028 selects the bounded render APO spike;
-- daily host: x64 Windows build 26200.8875, Visual Studio Build Tools 17.14,
-  Windows SDK 10.0.26100.0;
+- local host: `DESKTOP-AT8EVE9`, x64 Windows build 26200.9168, Visual Studio
+  Build Tools 17.14, Windows SDK 10.0.26100.0 and WDK 10.0.26100.6584;
 - isolated target `CapyIO-DriverLab` now exists as a Hyper-V Generation 2 VM
   under `F:\CapyIO-DriverLab\vm`, with 8 vCPU, 4–16 GiB dynamic memory, a
   96 GiB dynamic VHDX, Secure Boot and vTPM enabled;
@@ -64,16 +70,20 @@ without playing through the physical or Remote Desktop output.
   bytes and SHA-256
   `7B4AC87391B659F7724229682B642256289A1C00504056249F0F12029157D3D2`,
   matching Microsoft's published hash list;
-- the guest installation has started, but completed first boot, snapshot and
-  WDK evidence have not yet been retained;
-- WDK MSBuild integration, InfVerif and the upstream-required v142/ATL/Spectre
-  component set are not yet accepted as installed;
+- the guest installation reached OOBE but did not complete a stable first boot
+  or baseline checkpoint;
+- local WDK MSBuild integration and InfVerif are installed. The pinned SysVAD
+  `EndpointsCommon` target compiled and the pinned WIL submodule plus existing
+  v142 ATL produced an x64 Release `SwapAPO.dll`. The full solution still needs
+  current-toolset ATL/Spectre, signing-disabled build configuration and current
+  INF-rule reconciliation;
 - the refreshed `arthu` login token contains the `Hyper-V Administrators` SID
   and can enumerate/manage the exact lab VM.
 
-No driver tools were executed and no driver, signing, guest boot policy or host
-security state was changed. The isolated VM itself and its Windows installation
-are now the only environment changes. The upstream archive and Microsoft-signed
-WDK bootstrapper are verified in ignored local cache only. Progress into the
-unchanged SysVAD build requires completed guest setup, a baseline checkpoint
-and the compile toolchain; the daily host is not an acceptable driver target.
+No driver package, signing command, boot-policy change or Verifier action has
+run. Compile-only WDK/MSBuild and InfVerif tools did run locally. ADR 0029 now
+permits the identified host as a controlled Gate 7B target, but elevated WinRE,
+BitLocker, Secure Boot and rollback evidence could not be read from the current
+non-elevated session. Deployment remains blocked until that preflight and exact
+package approval are complete. Separately, the Broker-to-Audio-Share PCM ingest
+contract must be resolved before the APO path can claim phone delivery.

@@ -62,9 +62,18 @@ planned_integrations:
     binary_imported: false
     imported_paths: []
     local_modifications: []
+    build_only_submodules:
+      - id: microsoft-wil
+        upstream_repository: https://github.com/microsoft/wil
+        pinned_revision: 3c00e7f1d8cf9930bbb8e5be3ef0df65c84e8928
+        archive_sha256: 0e4974ff5f74b2afbe95e8f85ddc6b7329adf5718a228d54e4b21da132a1a13e
+        license: MIT
+        source_imported: false
+        binary_imported: false
+        purpose: restore the upstream SysVAD Git submodule in ignored build cache
     purpose: >-
       Official Microsoft WDM/WaveRT virtual-audio sample used first unchanged in
-      an isolated Windows VM, then minimized into the CapyIO Speaker render
+      an approved Windows lab, then minimized into the CapyIO Speaker render
       endpoint only after build, enumeration and licensing evidence.
     alternatives_considered:
       - new WDM audio driver from an empty template

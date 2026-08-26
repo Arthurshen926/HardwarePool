@@ -195,13 +195,14 @@ contract, data plane or performance test.
   lock/background, focus, route changes and power saving;
 - Windows user mode: endpoint enumeration, Broker restart, bounded IPC and
   sleep/resume;
-- drivers: install/update/remove, service restart, reboot and project-only
-  Verifier in an isolated VM/dedicated target;
+- drivers: install/update/remove, service restart and reboot in an isolated
+  VM/dedicated target or the ADR 0029 controlled local lab; project-only
+  Verifier remains isolated by default and requires separate approval;
 - end to end: IMU Panel/Recorder, audio both directions, camera, gamepad,
   independent Routes, disconnect/reconnect and clock epochs.
 
-Gate 7B first proves an unchanged pinned SysVAD build and install in an
-identified isolated VM as a toolchain/enumeration baseline; synthetic SysVAD
+Gate 7B first proves an unchanged pinned SysVAD build and an approved-target
+install as a toolchain/enumeration baseline; synthetic SysVAD
 WASAPI loopback is not real-PCM evidence. It then requires `CapyIO Speaker`
 enumeration, explicit application selection, endpoint-associated render APO
 PCM evidence, bounded ring-full/Broker-loss behavior, silence on the ordinary
@@ -209,6 +210,8 @@ physical/RDP endpoint, audio-service/reboot survival and clean uninstall. The
 APO callback must have evidence of no blocking, allocation, file/network I/O
 or ordinary logging. Repository validation prevents driver source from
 appearing while the SysVAD record still declares `source_imported: false`.
+ADR 0029 permits `DESKTOP-AT8EVE9` for the approved-target install only after
+its recovery, exact-package and rollback preflight passes.
 
 ## Android read-only lab commands
 

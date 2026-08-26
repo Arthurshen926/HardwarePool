@@ -269,13 +269,18 @@ and user-mode Broker. Networking remains outside both the driver and APO.
 
 Microsoft Windows-driver-samples is pinned at revision
 `717778a20ba4dd2440fe609f69153a1f8a64f597`; its repository license is MS-PL.
-No upstream source has been imported. The current x64 daily host is Windows
-build 26200.8875 with Visual Studio Build Tools 17.14 and Windows SDK
-10.0.26100.0, but WDK build integration/InfVerif is absent. No driver tool,
+No upstream source has been imported. The identified local host is
+`DESKTOP-AT8EVE9`, AMD64 Windows build 26200.9168, with Visual Studio Build
+Tools 17.14, Windows SDK 10.0.26100.0 and WDK 10.0.26100.6584. WDK MSBuild and
+x64 InfVerif execute locally. The pinned SysVAD `EndpointsCommon` target and a
+v142/WIL x64 Release `SwapAPO.dll` compile baseline succeeded. No driver
 installation or signing action has been performed.
 The refreshed `arthu` token now includes `Hyper-V Administrators`. An exact
 Generation 2 target named `CapyIO-DriverLab` has been created on `F:` with
 Secure Boot, vTPM, 8 vCPU, 4–16 GiB dynamic memory and a 96 GiB dynamic disk.
 Its Windows 11 Enterprise 25H2 Evaluation ZH-CN installer hash matches
-Microsoft's published value. Guest installation is in progress; no driver tool
-or driver package has run yet.
+Microsoft's published value. Guest installation reached OOBE but did not
+produce a stable recoverable target. ADR 0029 permits a controlled local-host
+Gate 7B exception after elevated recovery, exact-package and rollback preflight.
+The separate Broker-to-Audio-Share PCM-ingest decision remains open because the
+current external `as-cmd` process has no supported PCM injection interface.

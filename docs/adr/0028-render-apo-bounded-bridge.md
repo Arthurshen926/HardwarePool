@@ -3,7 +3,8 @@
 Status: accepted
 
 Supersedes: the Gate 7B data-path decision in ADR 0027. ADR 0027 still owns
-the dedicated-endpoint product decision and isolated-target safety boundary.
+the dedicated-endpoint product decision. ADR 0029 amends its target-safety
+boundary with one controlled local-lab exception.
 
 ## Context
 

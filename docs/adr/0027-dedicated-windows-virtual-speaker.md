@@ -2,10 +2,10 @@
 
 Status: accepted; data-path decision superseded by ADR 0028
 
-ADR 0028 retains this ADR's dedicated-endpoint and isolated-target decisions,
-but replaces the WASAPI-loopback data path after fixed-revision source review
-showed that SysVAD loopback generates a synthetic tone rather than the real
-render stream.
+ADR 0028 retains this ADR's dedicated-endpoint decision but replaces the
+WASAPI-loopback data path after fixed-revision source review showed that SysVAD
+loopback generates a synthetic tone rather than the real render stream. ADR
+0029 later amends the isolated-target-only rule with one controlled local lab.
 
 ## Context
 
@@ -39,9 +39,10 @@ user-mode WASAPI loopback capture. ADR 0028 supersedes that part of this
 decision with a bounded render-APO-to-Broker bridge. No network, pairing,
 codec, JSON/Protobuf or reconnect logic enters the driver or APO callback.
 
-All driver build, install, restart, uninstall, Verifier and signing experiments
-run only in an identified Hyper-V Generation 2 VM or dedicated installation.
-The daily-development host is never a driver target.
+Driver experiments default to an identified Hyper-V Generation 2 VM or
+dedicated installation. ADR 0029 permits install/enumeration/playback/uninstall
+on one identified local lab after recovery and exact rollback preflight.
+Verifier, signing and boot/security changes remain separately approved.
 
 ## Consequences
 

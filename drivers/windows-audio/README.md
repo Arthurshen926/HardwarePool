@@ -5,7 +5,10 @@ This directory is the future home of the Windows system-projection component tha
 - `CapyIO Speaker` as a Windows render endpoint;
 - `CapyIO Microphone` as a Windows capture endpoint.
 
-No kernel driver source is included in the bootstrap archive. The first implementation must be developed and tested from an isolated Windows target, beginning with an unmodified Microsoft SysVAD build and an explicit licensing review.
+No kernel driver source is included in the bootstrap archive. The first
+implementation begins with an unmodified Microsoft SysVAD build and explicit
+licensing review. Deployment defaults to an isolated Windows target; ADR 0029
+defines the single controlled local-lab exception.
 
 ## Required process boundary
 
@@ -33,7 +36,8 @@ user-mode bridge and retains a custom driver IPC as a deferred fallback.
 
 ## Intended milestones
 
-1. Build and install an unchanged SysVAD sample in a test VM.
+1. Build an unchanged SysVAD sample locally; install it only in an approved
+   isolated target or the ADR 0029 local lab after recovery preflight.
 2. Prove the render endpoint can enumerate and survive restart/uninstall.
 3. Prove an endpoint-associated render APO receives real PCM and can copy it
    into bounded staging without blocking the real-time callback.
