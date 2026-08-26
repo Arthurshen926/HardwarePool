@@ -1,6 +1,6 @@
 # CAPY-AUDIO-001B — Dedicated Windows virtual speaker
 
-Status: active; isolated target access required before driver execution
+Status: active; isolated target provisioned, guest/toolchain installation pending
 
 Owner: Codex
 
@@ -57,13 +57,23 @@ without playing through the physical or Remote Desktop output.
   research evidence; ADR 0028 selects the bounded render APO spike;
 - daily host: x64 Windows build 26200.8875, Visual Studio Build Tools 17.14,
   Windows SDK 10.0.26100.0;
+- isolated target `CapyIO-DriverLab` now exists as a Hyper-V Generation 2 VM
+  under `F:\CapyIO-DriverLab\vm`, with 8 vCPU, 4–16 GiB dynamic memory, a
+  96 GiB dynamic VHDX, Secure Boot and vTPM enabled;
+- its Microsoft Windows 11 Enterprise 25H2 Evaluation ZH-CN ISO is 7,371,034,624
+  bytes and SHA-256
+  `7B4AC87391B659F7724229682B642256289A1C00504056249F0F12029157D3D2`,
+  matching Microsoft's published hash list;
+- the guest installation has started, but completed first boot, snapshot and
+  WDK evidence have not yet been retained;
 - WDK MSBuild integration, InfVerif and the upstream-required v142/ATL/Spectre
   component set are not yet accepted as installed;
-- `arthu` has been added to `Hyper-V Administrators`, but the current login
-  token must be refreshed by signing out and back in before VM enumeration.
+- the refreshed `arthu` login token contains the `Hyper-V Administrators` SID
+  and can enumerate/manage the exact lab VM.
 
-No driver tools were executed and no driver, VM, signing, boot or security state
-was changed. The upstream archive and Microsoft-signed WDK bootstrapper are
-verified in ignored local cache only. Progress beyond `001B0` requires a fresh
-login token, one exact isolated VM and a completed compile toolchain; the daily
-host is not an acceptable driver target.
+No driver tools were executed and no driver, signing, guest boot policy or host
+security state was changed. The isolated VM itself and its Windows installation
+are now the only environment changes. The upstream archive and Microsoft-signed
+WDK bootstrapper are verified in ignored local cache only. Progress into the
+unchanged SysVAD build requires completed guest setup, a baseline checkpoint
+and the compile toolchain; the daily host is not an acceptable driver target.

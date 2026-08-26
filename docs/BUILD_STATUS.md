@@ -271,6 +271,11 @@ Microsoft Windows-driver-samples is pinned at revision
 `717778a20ba4dd2440fe609f69153a1f8a64f597`; its repository license is MS-PL.
 No upstream source has been imported. The current x64 daily host is Windows
 build 26200.8875 with Visual Studio Build Tools 17.14 and Windows SDK
-10.0.26100.0, but WDK build integration/InfVerif is absent. Hyper-V services are
-running, while the current account cannot enumerate VMs. No driver tool,
-installation, signing, boot/security setting or VM mutation was performed.
+10.0.26100.0, but WDK build integration/InfVerif is absent. No driver tool,
+installation or signing action has been performed.
+The refreshed `arthu` token now includes `Hyper-V Administrators`. An exact
+Generation 2 target named `CapyIO-DriverLab` has been created on `F:` with
+Secure Boot, vTPM, 8 vCPU, 4–16 GiB dynamic memory and a 96 GiB dynamic disk.
+Its Windows 11 Enterprise 25H2 Evaluation ZH-CN installer hash matches
+Microsoft's published value. Guest installation is in progress; no driver tool
+or driver package has run yet.

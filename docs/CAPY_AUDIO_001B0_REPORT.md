@@ -2,7 +2,7 @@
 
 Date: 2026-08-25
 
-Status: product/architecture and candidate audit complete; isolated target access pending token refresh
+Status: product/architecture and candidate audit complete; isolated target provisioning in progress
 
 ## Outcome
 
@@ -61,8 +61,17 @@ No candidate source or binary was imported. Exact revisions and hashes are in
   libraries; an attempted toolchain install did not complete, so none of these
   components is accepted as available evidence;
 - `DESKTOP-AT8EVE9\arthu` is a member of the built-in `Hyper-V Administrators`
-  group, but the current login token does not yet contain group SID
-  `S-1-5-32-578`.
+  group, and the refreshed login token contains group SID `S-1-5-32-578`;
+- `CapyIO-DriverLab` is an identified Hyper-V Generation 2 target at
+  `F:\CapyIO-DriverLab\vm`, configured with 8 vCPU, 4–16 GiB dynamic memory,
+  a 96 GiB dynamic VHDX, Secure Boot and vTPM;
+- Microsoft Windows 11 Enterprise 25H2 Evaluation ZH-CN was downloaded from
+  the Evaluation Center. Its 7,371,034,624-byte ISO SHA-256 is
+  `7B4AC87391B659F7724229682B642256289A1C00504056249F0F12029157D3D2`,
+  matching Microsoft's published `Enterprise Eval x64 Eval ZH-CN DVD9`
+  value;
+- Windows guest installation has begun, but first boot, baseline checkpoint
+  and toolchain evidence are still pending.
 
 The first direct GitHub query timed out without a proxy; the read-only pinned
 revision query succeeded through the user-provided Clash proxy at
@@ -70,11 +79,13 @@ revision query succeeded through the user-provided Clash proxy at
 
 ## Safety and validation
 
-No WDK driver tool, driver install/remove, signing command, VM mutation,
-Secure Boot/BitLocker/test-signing/Verifier operation or source import occurred.
+No WDK driver tool, driver install/remove, signing command,
+BitLocker/test-signing/Verifier operation or source import occurred. VM creation,
+Secure Boot/vTPM configuration and guest OS installation are confined to the
+identified `CapyIO-DriverLab` target.
 Repository validation now requires the SysVAD and candidate revision/license
-records, the `CapyIO Speaker`/APO/bounded/isolated-target boundary, and rejects driver source while
-the provenance record remains `source_imported: false`.
+records, the `CapyIO Speaker`/APO/bounded/isolated-target boundary, and rejects
+driver source while the provenance record remains `source_imported: false`.
 
 The source archive was downloaded and inspected only under the ignored
 `.agent-cache` directory. The Microsoft-signed WDK 26100.6584 bootstrapper was
@@ -86,7 +97,6 @@ UAC. The repository therefore records the toolchain as incomplete.
 
 ## Open prerequisite
 
-Sign out of Windows and sign back in before enumerating Hyper-V. Then
-`CAPY-AUDIO-001B1` requires one exact Generation 2 VM or dedicated Windows
-installation with snapshot/recovery planning. The daily host cannot be used as
-a substitute.
+Complete Windows first boot in `CapyIO-DriverLab`, detach the installer ISO,
+create and retain a clean baseline checkpoint, then install the pinned guest
+toolchain for `CAPY-AUDIO-001B1`. The daily host cannot be used as a substitute.
