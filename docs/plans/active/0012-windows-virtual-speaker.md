@@ -109,5 +109,8 @@ CapyIO endpoint playback the meter moved, but all attach counters remained zero.
 This isolates the defect to APO graph insertion. The prior stream-effect (SFX)
 position was also incompatible with the ring's single-producer invariant. The
 source now registers the bridge as the post-mix endpoint effect (EFX), which is
-the single final endpoint stream. The next step is a signed in-place update and
-the same counter-backed playback test.
+the single final endpoint stream. The first in-place EFX package revealed that
+Windows retained the prior SFX property values during extension upgrade. The
+INF now explicitly deletes those stale PID 13/5 values before adding EFX PID
+15/7. The next step is a signed in-place update and the same counter-backed
+playback test.

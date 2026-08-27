@@ -35,7 +35,12 @@ ComponentIDs = VEN_MSFT&CID_PROXYAPO
 Description = "Microsoft Proxy APO"
 
 [CapyIOExtension.Interface]
+DelReg = CapyIOExtension.Interface.DelReg
 AddReg = CapyIOExtension.Interface.AddReg
+
+[CapyIOExtension.Interface.DelReg]
+HKR,FX\0,%PKEY_CompositeFX_StreamEffectClsid%
+HKR,FX\0,%PKEY_SFX_ProcessingModes_Supported_For_Streaming%
 
 [CapyIOExtension.Interface.AddReg]
 HKR,FX\0,%PKEY_FX_Association%,,%KSNODETYPE_ANY%
@@ -57,7 +62,9 @@ KSNAME_TopologySpeaker = "TopologySpeaker"
 KSCATEGORY_AUDIO = "{6994AD04-93EF-11D0-A3CC-00A0C9223196}"
 KSCATEGORY_TOPOLOGY = "{DDA54A40-1E4C-11D1-A050-405705C10000}"
 PKEY_FX_Association = "{D04E05A6-594B-4FB6-A80D-01AF5EED7D1D},0"
+PKEY_CompositeFX_StreamEffectClsid = "{D04E05A6-594B-4FB6-A80D-01AF5EED7D1D},13"
 PKEY_CompositeFX_EndpointEffectClsid = "{D04E05A6-594B-4FB6-A80D-01AF5EED7D1D},15"
+PKEY_SFX_ProcessingModes_Supported_For_Streaming = "{D3993A3F-99C2-4402-B5EC-A92A0367664B},5"
 PKEY_EFX_ProcessingModes_Supported_For_Streaming = "{D3993A3F-99C2-4402-B5EC-A92A0367664B},7"
 REG_MULTI_SZ = 0x00010000
 AUDIO_SIGNALPROCESSINGMODE_DEFAULT = "{C18E2F7E-933D-4965-B7D1-1EEF228D2AF3}"

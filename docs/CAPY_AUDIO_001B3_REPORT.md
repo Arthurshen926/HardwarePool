@@ -128,6 +128,9 @@ the endpoint meter moved but every APO attach counter remained zero. The SFX
 was therefore not inserted into the active graph. It was also architecturally
 incorrect for the single-producer ring because Windows may create one SFX per
 input stream. The extension now binds the APO as the post-mix endpoint EFX and
-accepts the `GUID_NULL` processing mode required for endpoint effects. A newly
+accepts the `GUID_NULL` processing mode required for endpoint effects. The
+first EFX in-place update exposed one more upgrade rule: Windows retained the
+old SFX PID 13/5 values alongside the new EFX PID 15/7 values. The extension
+now explicitly deletes the obsolete SFX properties before adding EFX. A newly
 signed update and repeated physical test are still required; no successful
 end-to-end virtual-speaker claim is made from the zero-block diagnostic run.

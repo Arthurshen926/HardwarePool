@@ -33,7 +33,18 @@ fn main() -> std::process::ExitCode {
         return std::process::ExitCode::FAILURE;
     }
 
-    let magic = unsafe { ptr::read_unaligned(view.Value.cast::<u32>()) };
+    let base = view.Value.cast::<u8>();
+    let magic = unsafe { ptr::read_unaligned(base.cast::<u32>()) };
+    let read_i64 = |offset: usize| unsafe { ptr::read_unaligned(base.add(offset).cast::<i64>()) };
+    let read_u32 = |offset: usize| unsafe { ptr::read_unaligned(base.add(offset).cast::<u32>()) };
+    let produced = read_i64(64).max(0) as u64;
+    let dropped = read_i64(56).max(0) as u64;
+    let attach_attempts = read_i64(72).max(0) as u64;
+    let attach_successes = read_i64(80).max(0) as u64;
+    let attach_sample_rate = read_u32(88);
+    let attach_channels = read_u32(92);
+    let attach_stage = read_u32(96);
+    let attach_error = read_u32(100);
     unsafe {
         UnmapViewOfFile(MEMORY_MAPPED_VIEW_ADDRESS { Value: view.Value });
         CloseHandle(mapping);
@@ -41,7 +52,9 @@ fn main() -> std::process::ExitCode {
     let valid = magic == 0x524f_4950;
     let _ = fs::write(
         result_path,
-        format!("open=true map=true magic=0x{magic:08x} valid={valid}\n"),
+        format!(
+            "open=true map=true magic=0x{magic:08x} valid={valid} produced={produced} dropped={dropped} attach_attempts={attach_attempts} attach_successes={attach_successes} attach_sample_rate={attach_sample_rate} attach_channels={attach_channels} attach_stage={attach_stage} attach_error={attach_error}\n"
+        ),
     );
     if valid {
         std::process::ExitCode::SUCCESS
