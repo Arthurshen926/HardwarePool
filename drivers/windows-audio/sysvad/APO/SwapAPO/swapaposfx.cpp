@@ -224,6 +224,31 @@ STDMETHODIMP CSwapAPOSFX::LockForProcess(UINT32 u32NumInputConnections,
         ppInputConnections, u32NumOutputConnections, ppOutputConnections);
     IF_FAILED_JUMP(hr, Exit);
 
+    // Keep the callback lifetime bounded to the streaming lock. Registering
+    // adds a COM reference to this APO, so unregistering in the destructor
+    // would create the reference cycle documented by EndpointVolume.
+    if (m_endpointVolume != nullptr && !m_bRegisteredEndpointVolumeCallback)
+    {
+        if (SUCCEEDED(m_endpointVolume->RegisterControlChangeNotify(this)))
+        {
+            m_bRegisteredEndpointVolumeCallback = TRUE;
+
+            // Close the registration/query race and refresh state for every
+            // new processing lock.
+            BOOL muted = FALSE;
+            float scalar = 1.0f;
+            if (SUCCEEDED(m_endpointVolume->GetMute(&muted)) &&
+                SUCCEEDED(m_endpointVolume->GetMasterVolumeLevelScalar(&scalar)) &&
+                scalar >= 0.0f && scalar <= 1.0f)
+            {
+                const LONG gain = muted
+                    ? 0
+                    : static_cast<LONG>(scalar * capyio::render_ring::kUnityGainMillion + 0.5f);
+                InterlockedExchange(&m_endpointGainMillion, gain);
+            }
+        }
+    }
+
     // The Broker must create and initialize the mapping before playback. This
     // open/validation work is deliberately outside APOProcess.
     if (SUCCEEDED(ppInputConnections[0]->pFormat->GetUncompressedAudioFormat(&inputFormat)))
@@ -240,6 +265,11 @@ Exit:
 STDMETHODIMP CSwapAPOSFX::UnlockForProcess()
 {
     ASSERT_NONREALTIME();
+    if (m_bRegisteredEndpointVolumeCallback && m_endpointVolume != nullptr)
+    {
+        m_endpointVolume->UnregisterControlChangeNotify(this);
+        m_bRegisteredEndpointVolumeCallback = FALSE;
+    }
     m_renderRing.Detach();
     return CBaseAudioProcessingObject::UnlockForProcess();
 }
@@ -357,17 +387,16 @@ HRESULT CSwapAPOSFX::Initialize(UINT32 cbDataSize, BYTE* pbyData)
         if (SUCCEEDED(deviceCollection->GetCount(&deviceCount)) && deviceCount > 0 &&
             SUCCEEDED(deviceCollection->Item(deviceCount - 1, &m_audioEndpoint)))
         {
-            wil::com_ptr_nothrow<IAudioEndpointVolume> endpointVolume;
             if (SUCCEEDED(m_audioEndpoint->Activate(
                     __uuidof(IAudioEndpointVolume),
                     CLSCTX_ALL,
                     nullptr,
-                    endpointVolume.put_void())))
+                    m_endpointVolume.put_void())))
             {
                 BOOL muted = FALSE;
                 float scalar = 1.0f;
-                if (SUCCEEDED(endpointVolume->GetMute(&muted)) &&
-                    SUCCEEDED(endpointVolume->GetMasterVolumeLevelScalar(&scalar)) &&
+                if (SUCCEEDED(m_endpointVolume->GetMute(&muted)) &&
+                    SUCCEEDED(m_endpointVolume->GetMasterVolumeLevelScalar(&scalar)) &&
                     scalar >= 0.0f && scalar <= 1.0f)
                 {
                     const LONG gain = muted
@@ -386,6 +415,20 @@ HRESULT CSwapAPOSFX::Initialize(UINT32 cbDataSize, BYTE* pbyData)
     m_effectInfos[0] = { SwapEffectId, FALSE, AUDIO_SYSTEMEFFECT_STATE_ON };
 
     m_bIsInitialized = true;
+    return S_OK;
+}
+
+HRESULT CSwapAPOSFX::OnNotify(PAUDIO_VOLUME_NOTIFICATION_DATA notificationData)
+{
+    RETURN_HR_IF(E_POINTER, notificationData == nullptr);
+
+    const float scalar = notificationData->fMasterVolume;
+    RETURN_HR_IF(E_INVALIDARG, !(scalar >= 0.0f && scalar <= 1.0f));
+
+    const LONG gain = notificationData->bMuted
+        ? 0
+        : static_cast<LONG>(scalar * capyio::render_ring::kUnityGainMillion + 0.5f);
+    InterlockedExchange(&m_endpointGainMillion, gain);
     return S_OK;
 }
 

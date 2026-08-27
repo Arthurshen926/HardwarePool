@@ -53,6 +53,18 @@ written into the render ring. Endpoint lookup and COM calls remain outside the
 real-time callback. Legacy initialization without an endpoint collection
 retains unity gain and an empty notification registration.
 
+Physical amplitude measurement later showed that the Windows 11 APO
+notification framework did not deliver live volume changes to this MFX instance
+on the lab host, although initialization state and the bounded multiply were
+correct. The APO therefore also registers the endpoint's
+`IAudioEndpointVolumeCallback`, which is supported on the project's Windows
+baseline. Both notification paths update the same atomic gain outside
+`APOProcess`; no COM, registration, locking, allocation or logging enters the
+real-time callback. Direct callback registration is bounded to
+`LockForProcess`/`UnlockForProcess`; this avoids the reference cycle that would
+result from attempting to unregister an AddRef-owning EndpointVolume callback
+from the APO destructor.
+
 ## Consequences
 
 - One post-mix producer preserves the SPSC ring invariant.

@@ -230,6 +230,7 @@ class CSwapAPOSFX :
     public CComCoClass<CSwapAPOSFX, &CLSID_SwapAPOSFX>,
     public CBaseAudioProcessingObject,
     public IMMNotificationClient,
+    public IAudioEndpointVolumeCallback,
     public IAudioProcessingObjectNotifications,
     public IAudioSystemEffects3,
     public ISwapAPOSFX
@@ -256,6 +257,7 @@ BEGIN_COM_MAP(CSwapAPOSFX)
     COM_INTERFACE_ENTRY(IAudioSystemEffects2)
     COM_INTERFACE_ENTRY(IAudioSystemEffects3)
     COM_INTERFACE_ENTRY(IMMNotificationClient)
+    COM_INTERFACE_ENTRY(IAudioEndpointVolumeCallback)
     COM_INTERFACE_ENTRY(IAudioProcessingObjectNotifications)
     COM_INTERFACE_ENTRY(IAudioProcessingObjectRT)
     COM_INTERFACE_ENTRY(IAudioProcessingObject)
@@ -312,6 +314,9 @@ public:
     }
     STDMETHODIMP OnPropertyValueChanged(LPCWSTR pwstrDeviceId, const PROPERTYKEY key);
 
+    // IAudioEndpointVolumeCallback
+    STDMETHODIMP OnNotify(_In_ PAUDIO_VOLUME_NOTIFICATION_DATA notificationData);
+
     // IAudioProcessingObjectNotifications
     STDMETHODIMP GetApoNotificationRegistrationInfo(_Out_writes_(*count) APO_NOTIFICATION_DESCRIPTOR** apoNotifications, _Out_ DWORD* count);
     STDMETHODIMP_(void) HandleNotification(_In_ APO_NOTIFICATION* apoNotification);
@@ -333,6 +338,8 @@ public:
 private:
     capyio::render_ring::Producer m_renderRing;
     volatile LONG m_endpointGainMillion;
+    wil::com_ptr_nothrow<IAudioEndpointVolume> m_endpointVolume;
+    BOOL m_bRegisteredEndpointVolumeCallback = FALSE;
     wil::com_ptr_nothrow<IPropertyStore> m_userStore;
     wil::com_ptr_nothrow<IAudioProcessingObjectLoggingService> m_apoLoggingService;
     BOOL m_bRegisteredEndpointNotificationCallback = FALSE;

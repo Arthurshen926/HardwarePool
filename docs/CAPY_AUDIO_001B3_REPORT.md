@@ -254,7 +254,15 @@ default render endpoint and selected its waveOut device directly, avoiding
 default-player ambiguity. During a 22-second continuous 48 kHz stereo tone it
 set and read back the following endpoint states without interrupting the phone
 connection: scalar 1.0/unmuted, scalar 0.25/unmuted, scalar 0.25/muted, and
-scalar 1.0/unmuted. This proves endpoint control notification and directed
-playback execution on the machine side. Audible attenuation, silence and
-restoration remain pending the human operator's listening confirmation and are
-not yet claimed from scalar readback alone.
+scalar 1.0/unmuted. This proves endpoint control mutation and directed playback
+execution on the machine side, but the human operator reported no audible
+difference. A privileged read-only measurement of the latest shared-ring blocks
+confirmed the failure objectively: the same directed 440 Hz tone measured RMS
+0.12945720 at 100% and 0.12946192 at 25%, with the same 0.18310547 peak. After
+setting 25% and reinitializing AudioDG, RMS fell to 0.03364045, proving that
+initialization state, the atomic gain and bounded multiply path work while live
+notification delivery does not. The source now adds a direct
+`IAudioEndpointVolumeCallback` registration and retains the Windows 11 APO
+notification path as a secondary mechanism. A newly built, signed and approved
+package plus repeated continuous-stream RMS/listening test is required before
+endpoint-volume behavior is claimed as proven.
