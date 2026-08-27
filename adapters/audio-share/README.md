@@ -58,9 +58,13 @@ After the approved driver package is installed, start the Broker before opening
 an application stream on `CapyIO Speaker`:
 
 ```text
-cargo run -p capyio-audio-share-adapter --bin capyio-virtual-speaker -- 100.64.x.y:65530
+cargo run -p capyio-audio-share-adapter --bin capyio-virtual-speaker -- 100.64.x.y:65530 [duration-seconds]
 ```
 
-The process owns one session-local `Local\\CapyIO.RenderRing.v1` mapping. A
-second Broker is rejected. Ring loss, invalid layout and transport shutdown are
-typed failures; ring-empty polling is bounded and happens only in user mode.
+The optional duration is limited to 1-300 seconds and prints bounded ring and
+transport counters on completion for lab evidence. The current lab process must
+run elevated so it can own the cross-session
+`Global\\CapyIO.RenderRing.v1` mapping used by Session 0 AudioDG. Its protected
+ACL grants only Local Service, Local System and administrators access. A second
+Broker is rejected. Ring loss, invalid layout and transport shutdown are typed
+failures; ring-empty polling is bounded and happens only in user mode.

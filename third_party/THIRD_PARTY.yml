@@ -58,9 +58,10 @@ planned_integrations:
         - Win32_NetworkManagement_IpHelper
         - Win32_Networking_WinSock
         - Win32_Security
+        - Win32_Security_Authorization
         - Win32_System_Memory
       purpose: >-
-        Query process-owned established TCP rows and own the bounded local
+        Query process-owned established TCP rows and own the bounded cross-session
         render-ring mapping without parsing human logs or hand-written FFI.
       alternatives_rejected:
         - localized PowerShell or netstat output

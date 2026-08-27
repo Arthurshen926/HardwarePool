@@ -20,7 +20,7 @@ a direct driver ring remains a fallback.
 
 ## 3. Render ring v1
 
-The Broker creates `Local\\CapyIO.RenderRing.v1` before Windows opens a render
+The elevated lab Broker creates `Global\\CapyIO.RenderRing.v1` before Windows opens a render
 stream. The SFX APO opens it during `LockForProcess`; it never creates, opens or
 maps objects from `APOProcess`. Both sides require 48,000 Hz, stereo,
 interleaved IEEE float32 little-endian input. A format mismatch leaves the APO
@@ -72,8 +72,11 @@ block from an old generation is rejected.
 
 ## 6. Deferred production decisions
 
-The lab uses a Broker-owned named mapping and bounded 2 ms Broker polling. A
-production ABI still needs an authenticated setup/control channel, explicit
-security descriptor, wake-up strategy, format renegotiation, session-boundary
-review and compatibility policy. Buffered/direct IOCTL or a driver-owned
-section remains a fallback, not the default.
+The lab mapping uses a protected DACL granting read/write to Local Service
+(AudioDG), full access to Local System, administrators and the object owner,
+and no inheritance.
+Creating the global object from an interactive session requires an elevated
+Broker. A production ABI still needs an authenticated setup/control channel,
+least-privilege service identity, wake-up strategy, format renegotiation and
+compatibility policy. Buffered/direct IOCTL or a driver-owned section remains
+a fallback, not the default.

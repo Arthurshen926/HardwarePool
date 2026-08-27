@@ -55,7 +55,7 @@ the Broker is absent or the ring is full, the callback drops the block and
 increments a bounded diagnostic counter.
 
 The Gate 7B lab ABI is implemented as Broker-owned
-`Local\\CapyIO.RenderRing.v1`: 32 fixed slots, a 16 KiB per-block maximum and a
+`Global\\CapyIO.RenderRing.v1`: 32 fixed slots, a 16 KiB per-block maximum and a
 generation-tagged 48 kHz stereo float32 epoch. The Broker polls outside the
 real-time path, converts to bounded S16LE and feeds the Adapter-managed Android
 transport. Exact layout and memory ordering are recorded in

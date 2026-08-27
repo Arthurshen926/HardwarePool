@@ -94,9 +94,11 @@ without playing through the physical or Remote Desktop output.
   tests exercise mapping exclusivity, a committed block, conversion and read
   release.
 
-No driver install, signing command, boot-policy change or Verifier action has
-run. ADR 0029 preflight now confirms WinRE enabled, system volume fully
-decrypted with BitLocker protection off, Secure Boot off, test-signing already
-enabled and restore points present on the exact host. The next boundary is an
-exact package-specific signing/install approval followed by endpoint
-enumeration, real application playback to Android and clean rollback evidence.
+The first package-specific signing and approved install completed on the exact
+host after a fresh restore point. Its base, APO and extension packages enumerate
+healthy, but pre-playback inspection exposed a real cross-session defect:
+AudioDG runs in Session 0 while the original Broker mapping was session-local.
+The corrected source uses a protected global mapping and bounded lab counters.
+Its next boundary is new package-specific signing/update approval followed by
+real application playback to Android and clean rollback evidence. No boot-policy
+or Verifier change has run.

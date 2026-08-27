@@ -2,8 +2,8 @@
 
 Date: 2026-08-27
 
-Status: source, bounded APO/Broker bridge, x64 build, static validation and
-lab signing complete; deployment not yet run
+Status: first lab package installed and enumerated; cross-session correction
+implemented and awaiting package-specific signing/update approval
 
 ## Outcome
 
@@ -15,7 +15,7 @@ CapyIO-owned render SFX in `CapyIORenderAPO.dll`. Capture, keyword detector,
 HDMI, SPDIF, headphone and unrelated APO package dependencies are excluded.
 
 The SFX copies actual 48 kHz stereo float32 render buffers into the fixed
-`Local\\CapyIO.RenderRing.v1` staging ring. `APOProcess` performs one bounded
+`Global\\CapyIO.RenderRing.v1` staging ring. `APOProcess` performs one bounded
 copy, atomics and drop accounting only. Mapping creation/open, validation,
 Float32-to-S16 conversion, network transport and failure policy stay in user
 mode outside the callback. The exact v1 ABI is in
@@ -92,10 +92,18 @@ Float32-to-S16 conversion and the existing private Android transport. The test
 suite has 15 passing library tests and one intentionally ignored user-supplied
 binary probe; binary and supervisor tests also pass.
 
-## Remaining boundary
+## Deployment and remaining boundary
 
-No driver was installed or removed. The next action requires approval for the
-exact signed package above. It will create a fresh restore point, install the
-three exact INFs, enumerate `CapyIO Speaker`, run the Android playback smoke,
-record assigned OEM INF names, and remove only those names if rollback is
-required.
+The exact signed package above was installed on `DESKTOP-AT8EVE9` after restore
+point sequence 374 was created. The base, APO and extension packages were
+assigned `oem70.inf`, `oem73.inf` and `oem74.inf`. The root MEDIA device,
+software APO component and `CapyIO Speaker with Render Bridge` audio endpoint
+all enumerate with status OK.
+
+Pre-playback inspection then found AudioDG in Session 0 while the interactive
+Broker owns a per-user session. The original `Local\\` mapping therefore could
+not support the promised end-to-end path. The source now uses a protected
+`Global\\` mapping, explicitly grants AudioDG's Local Service identity access,
+and exposes bounded-duration counters for objective lab evidence. That corrected
+package must be signed and installed under new exact approvals before the real
+application-to-Android playback result can be claimed.

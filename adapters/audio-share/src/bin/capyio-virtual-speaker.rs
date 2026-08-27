@@ -17,7 +17,12 @@ fn main() -> std::process::ExitCode {
 
 #[cfg(windows)]
 fn windows_main() -> Result<(), String> {
-    use std::{env, net::SocketAddr, thread, time::Duration};
+    use std::{
+        env,
+        net::SocketAddr,
+        thread,
+        time::{Duration, Instant},
+    };
 
     use capyio_audio::AudioFormat;
     use capyio_audio_share_adapter::{
@@ -30,10 +35,25 @@ fn windows_main() -> Result<(), String> {
         .next()
         .unwrap_or_else(|| "capyio-virtual-speaker".to_owned());
     let Some(bind) = args.next() else {
-        return Err(format!("usage: {executable} <explicit-ipv4:port>"));
+        return Err(format!(
+            "usage: {executable} <explicit-ipv4:port> [duration-seconds]"
+        ));
     };
+    let duration = args
+        .next()
+        .map(|value| {
+            value
+                .parse::<u64>()
+                .ok()
+                .filter(|seconds| (1..=300).contains(seconds))
+                .map(Duration::from_secs)
+                .ok_or_else(|| "duration-seconds must be between 1 and 300".to_owned())
+        })
+        .transpose()?;
     if args.next().is_some() {
-        return Err(format!("usage: {executable} <explicit-ipv4:port>"));
+        return Err(format!(
+            "usage: {executable} <explicit-ipv4:port> [duration-seconds]"
+        ));
     }
     let bind_address = bind
         .parse::<SocketAddr>()
@@ -50,11 +70,15 @@ fn windows_main() -> Result<(), String> {
     let sender = transport.sender();
     let mut pcm = Vec::with_capacity(8 * 1024);
     println!(
-        "listening={} endpoint=CapyIO Speaker format=s16le/48000/stereo ring=Local\\CapyIO.RenderRing.v1",
+        "listening={} endpoint=CapyIO Speaker format=s16le/48000/stereo ring=Global\\CapyIO.RenderRing.v1",
         transport.local_address()
     );
+    let deadline = duration.map(|value| Instant::now() + value);
 
     loop {
+        if deadline.is_some_and(|value| Instant::now() >= value) {
+            break;
+        }
         match ring.try_read_s16le(&mut pcm) {
             Ok(true) => match sender.try_send_pcm(&pcm) {
                 Ok(()) | Err(AudioShareTransportError::QueueFull) => {}
@@ -64,4 +88,20 @@ fn windows_main() -> Result<(), String> {
             Err(error) => return Err(error.to_string()),
         }
     }
+
+    let (ring_produced, ring_dropped) = ring.counters();
+    let stats = transport.stats();
+    println!(
+        "bridge_complete=true ring_produced={} ring_dropped={} blocks_enqueued={} queue_full={} blocks_without_receiver={} datagrams_sent={} datagram_send_errors={} pcm_bytes_sent={}",
+        ring_produced,
+        ring_dropped,
+        stats.blocks_enqueued,
+        stats.queue_full,
+        stats.blocks_without_receiver,
+        stats.datagrams_sent,
+        stats.datagram_send_errors,
+        stats.pcm_bytes_sent,
+    );
+    transport.shutdown();
+    Ok(())
 }

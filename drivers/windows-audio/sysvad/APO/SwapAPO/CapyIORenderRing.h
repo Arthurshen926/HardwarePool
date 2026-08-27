@@ -14,7 +14,7 @@ constexpr std::uint16_t kHeaderSize = 128;
 constexpr std::uint16_t kSampleFormatFloat32Le = 1;
 constexpr std::uint32_t kMaxSlots = 64;
 constexpr std::uint32_t kMaxPayloadBytes = 16 * 1024;
-constexpr wchar_t kMappingName[] = L"Local\\CapyIO.RenderRing.v1";
+constexpr wchar_t kMappingName[] = L"Global\\CapyIO.RenderRing.v1";
 
 struct alignas(64) Header
 {

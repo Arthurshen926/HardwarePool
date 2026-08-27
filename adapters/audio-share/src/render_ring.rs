@@ -53,6 +53,13 @@ mod windows {
     use windows_sys::Win32::{
         Foundation::{
             CloseHandle, ERROR_ALREADY_EXISTS, GetLastError, HANDLE, INVALID_HANDLE_VALUE,
+            LocalFree,
+        },
+        Security::{
+            Authorization::{
+                ConvertStringSecurityDescriptorToSecurityDescriptorW, SDDL_REVISION_1,
+            },
+            PSECURITY_DESCRIPTOR, SECURITY_ATTRIBUTES,
         },
         System::Memory::{
             CreateFileMappingW, FILE_MAP_ALL_ACCESS, MEMORY_MAPPED_VIEW_ADDRESS, MapViewOfFile,
@@ -72,10 +79,11 @@ mod windows {
     const SLOT_HEADER_SIZE: usize = 16;
     const SLOT_STRIDE: usize = SLOT_HEADER_SIZE + MAX_PAYLOAD_BYTES;
     const TOTAL_SIZE: usize = HEADER_SIZE + SLOT_COUNT * SLOT_STRIDE;
-    const MAPPING_NAME: &[u16] = &[
-        76, 111, 99, 97, 108, 92, 67, 97, 112, 121, 73, 79, 46, 82, 101, 110, 100, 101, 114, 82,
-        105, 110, 103, 46, 118, 49, 0,
-    ];
+    #[cfg(not(test))]
+    const MAPPING_NAME: &str = "Global\\CapyIO.RenderRing.v1";
+    #[cfg(test)]
+    const MAPPING_NAME: &str = "Local\\CapyIO.RenderRing.v1.test";
+    const MAPPING_SDDL: &str = "D:P(A;;GA;;;SY)(A;;GRGW;;;LS)(A;;GA;;;BA)(A;;GA;;;OW)";
 
     #[repr(C, align(64))]
     struct Header {
@@ -109,20 +117,46 @@ mod windows {
     impl RenderRingConsumer {
         pub fn create_baseline() -> Result<Self, RenderRingError> {
             let size = u32::try_from(TOTAL_SIZE).expect("bounded render mapping fits u32");
+            let mapping_name = wide_null(MAPPING_NAME);
+            let mapping_sddl = wide_null(MAPPING_SDDL);
+            let mut security_descriptor: PSECURITY_DESCRIPTOR = ptr::null_mut();
+            if unsafe {
+                ConvertStringSecurityDescriptorToSecurityDescriptorW(
+                    mapping_sddl.as_ptr(),
+                    SDDL_REVISION_1,
+                    &mut security_descriptor,
+                    ptr::null_mut(),
+                )
+            } == 0
+            {
+                return Err(last_error(
+                    "ConvertStringSecurityDescriptorToSecurityDescriptorW",
+                ));
+            }
+            let security_attributes = SECURITY_ATTRIBUTES {
+                nLength: size_of::<SECURITY_ATTRIBUTES>() as u32,
+                lpSecurityDescriptor: security_descriptor,
+                bInheritHandle: 0,
+            };
             let mapping = unsafe {
                 CreateFileMappingW(
                     INVALID_HANDLE_VALUE,
-                    ptr::null(),
+                    &security_attributes,
                     PAGE_READWRITE,
                     0,
                     size,
-                    MAPPING_NAME.as_ptr(),
+                    mapping_name.as_ptr(),
                 )
             };
+            let mapping_error = unsafe { GetLastError() };
+            unsafe { LocalFree(security_descriptor) };
             if mapping.is_null() {
-                return Err(last_error("CreateFileMappingW"));
+                return Err(RenderRingError::Windows {
+                    operation: "CreateFileMappingW",
+                    code: mapping_error,
+                });
             }
-            if unsafe { GetLastError() } == ERROR_ALREADY_EXISTS {
+            if mapping_error == ERROR_ALREADY_EXISTS {
                 unsafe { CloseHandle(mapping) };
                 return Err(RenderRingError::AlreadyOwned);
             }
@@ -256,6 +290,10 @@ mod windows {
             .raw_os_error()
             .unwrap_or_default() as u32;
         RenderRingError::Windows { operation, code }
+    }
+
+    fn wide_null(value: &str) -> Vec<u16> {
+        value.encode_utf16().chain(Some(0)).collect()
     }
 
     #[cfg(test)]
