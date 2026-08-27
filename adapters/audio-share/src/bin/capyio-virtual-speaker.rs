@@ -90,11 +90,25 @@ fn windows_main() -> Result<(), String> {
     }
 
     let (ring_produced, ring_dropped) = ring.counters();
+    let (
+        attach_attempts,
+        attach_successes,
+        attach_sample_rate,
+        attach_channels,
+        attach_stage,
+        attach_error,
+    ) = ring.attach_diagnostics();
     let stats = transport.stats();
     println!(
-        "bridge_complete=true ring_produced={} ring_dropped={} blocks_enqueued={} queue_full={} blocks_without_receiver={} datagrams_sent={} datagram_send_errors={} pcm_bytes_sent={}",
+        "bridge_complete=true ring_produced={} ring_dropped={} attach_attempts={} attach_successes={} attach_sample_rate={} attach_channels={} attach_stage={} attach_error={} blocks_enqueued={} queue_full={} blocks_without_receiver={} datagrams_sent={} datagram_send_errors={} pcm_bytes_sent={}",
         ring_produced,
         ring_dropped,
+        attach_attempts,
+        attach_successes,
+        attach_sample_rate,
+        attach_channels,
+        attach_stage,
+        attach_error,
         stats.blocks_enqueued,
         stats.queue_full,
         stats.blocks_without_receiver,

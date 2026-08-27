@@ -224,10 +224,11 @@ STDMETHODIMP CSwapAPOSFX::LockForProcess(UINT32 u32NumInputConnections,
 
     // The Broker must create and initialize the mapping before playback. This
     // open/validation work is deliberately outside APOProcess.
-    if (SUCCEEDED(ppInputConnections[0]->pFormat->GetUncompressedAudioFormat(&inputFormat)) &&
-        inputFormat.fFramesPerSecond == 48000.0f)
+    if (SUCCEEDED(ppInputConnections[0]->pFormat->GetUncompressedAudioFormat(&inputFormat)))
     {
-        m_renderRing.Attach(48000, inputFormat.dwSamplesPerFrame);
+        m_renderRing.Attach(
+            static_cast<std::uint32_t>(inputFormat.fFramesPerSecond),
+            inputFormat.dwSamplesPerFrame);
     }
 
 Exit:

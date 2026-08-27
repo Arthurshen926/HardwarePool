@@ -33,7 +33,13 @@ struct alignas(64) Header
     volatile LONG64 read_sequence;
     volatile LONG64 dropped_blocks;
     volatile LONG64 produced_blocks;
-    std::uint8_t reserved[56];
+    volatile LONG64 attach_attempts;
+    volatile LONG64 attach_successes;
+    volatile LONG last_sample_rate;
+    volatile LONG last_channels;
+    volatile LONG last_stage;
+    volatile LONG last_error;
+    std::uint8_t reserved[24];
 };
 
 static_assert(sizeof(Header) == kHeaderSize);

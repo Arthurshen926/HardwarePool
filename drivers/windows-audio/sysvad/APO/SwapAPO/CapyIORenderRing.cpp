@@ -28,12 +28,21 @@ bool Producer::Attach(std::uint32_t sample_rate, std::uint32_t channels) noexcep
     }
 
     header_ = reinterpret_cast<Header*>(view_);
+    InterlockedIncrement64(&header_->attach_attempts);
+    InterlockedExchange(&header_->last_sample_rate, static_cast<LONG>(sample_rate));
+    InterlockedExchange(&header_->last_channels, static_cast<LONG>(channels));
+    InterlockedExchange(&header_->last_stage, 1);
+    InterlockedExchange(&header_->last_error, ERROR_SUCCESS);
     if (!Validate(sample_rate, channels))
     {
+        InterlockedExchange(&header_->last_stage, 2);
+        InterlockedExchange(&header_->last_error, ERROR_INVALID_DATA);
         Detach();
         return false;
     }
 
+    InterlockedIncrement64(&header_->attach_successes);
+    InterlockedExchange(&header_->last_stage, 3);
     return true;
 }
 

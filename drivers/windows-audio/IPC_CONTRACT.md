@@ -47,7 +47,18 @@ The mapping is 524,928 bytes: one 128-byte, 64-byte-aligned header followed by
 | 48 | atomic `i64` | consumer read sequence |
 | 56 | atomic `i64` | dropped block count |
 | 64 | atomic `i64` | produced block count |
-| 72 | 56 bytes | reserved, zero |
+| 72 | atomic `i64` | non-real-time APO attach attempts after the mapping is opened and mapped |
+| 80 | atomic `i64` | successful validated APO attaches |
+| 88 | atomic `u32` | last observed sample rate |
+| 92 | atomic `u32` | last observed channel count |
+| 96 | atomic `u32` | last attach stage: `1` mapped, `2` validation failed, `3` attached |
+| 100 | atomic `u32` | last Win32-style attach error (`13` means invalid layout/format) |
+| 104 | 24 bytes | reserved, zero |
+
+The attach fields are bounded lab diagnostics written only from
+`LockForProcess`, never from `APOProcess`. All-zero attach fields mean that the
+APO did not reach the mapped-view stage; they do not distinguish an absent
+`LockForProcess` call from an object-open or view-map failure.
 
 Each slot prefix is `generation: u64`, `byte_count: u32`, and
 `frame_count: u32`. The producer writes prefix and payload, executes a release

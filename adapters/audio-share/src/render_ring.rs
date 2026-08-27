@@ -46,7 +46,7 @@ mod windows {
         io,
         mem::size_of,
         ptr::{self, NonNull},
-        sync::atomic::{AtomicI64, Ordering},
+        sync::atomic::{AtomicI64, AtomicU32, Ordering},
         time::{SystemTime, UNIX_EPOCH},
     };
 
@@ -102,7 +102,13 @@ mod windows {
         read_sequence: AtomicI64,
         dropped_blocks: AtomicI64,
         produced_blocks: AtomicI64,
-        reserved: [u8; 56],
+        attach_attempts: AtomicI64,
+        attach_successes: AtomicI64,
+        last_sample_rate: AtomicU32,
+        last_channels: AtomicU32,
+        last_stage: AtomicU32,
+        last_error: AtomicU32,
+        reserved: [u8; 24],
     }
 
     const _: () = assert!(size_of::<Header>() == HEADER_SIZE);
@@ -189,7 +195,13 @@ mod windows {
                 read_sequence: AtomicI64::new(0),
                 dropped_blocks: AtomicI64::new(0),
                 produced_blocks: AtomicI64::new(0),
-                reserved: [0; 56],
+                attach_attempts: AtomicI64::new(0),
+                attach_successes: AtomicI64::new(0),
+                last_sample_rate: AtomicU32::new(0),
+                last_channels: AtomicU32::new(0),
+                last_stage: AtomicU32::new(0),
+                last_error: AtomicU32::new(0),
+                reserved: [0; 24],
             };
             unsafe { ptr::write(view.as_ptr().cast::<Header>(), header) };
 
@@ -259,6 +271,19 @@ mod windows {
                 header.dropped_blocks.load(Ordering::Relaxed).max(0) as u64,
             )
         }
+
+        #[must_use]
+        pub fn attach_diagnostics(&self) -> (u64, u64, u32, u32, u32, u32) {
+            let header = unsafe { &*self.view.as_ptr().cast::<Header>() };
+            (
+                header.attach_attempts.load(Ordering::Relaxed).max(0) as u64,
+                header.attach_successes.load(Ordering::Relaxed).max(0) as u64,
+                header.last_sample_rate.load(Ordering::Relaxed),
+                header.last_channels.load(Ordering::Relaxed),
+                header.last_stage.load(Ordering::Relaxed),
+                header.last_error.load(Ordering::Relaxed),
+            )
+        }
     }
 
     impl Drop for RenderRingConsumer {
@@ -307,6 +332,13 @@ mod windows {
             assert_eq!(size_of::<Header>(), 128);
             assert_eq!(SLOT_STRIDE, 16_400);
             assert_eq!(TOTAL_SIZE, 524_928);
+        }
+
+        #[test]
+        fn baseline_attach_diagnostics_are_zeroed() {
+            let _guard = TEST_MAPPING_LOCK.lock().unwrap();
+            let consumer = RenderRingConsumer::create_baseline().unwrap();
+            assert_eq!(consumer.attach_diagnostics(), (0, 0, 0, 0, 0, 0));
         }
 
         #[test]
