@@ -48,8 +48,10 @@ implementation scope automatically.
   output. SysVAD and audited-candidate provenance is pinned; ADR 0028 selects a
   bounded render APO/Broker bridge. The local host now has WDK 26100.6584 and
   compile-only SysVAD/SwapAPO evidence. ADR 0029 permits a controlled local
-  install after recovery and rollback preflight; driver/APO source and real-PCM
-  bridge evidence are still pending.
+  install after recovery and rollback preflight. ADR 0030 plus B2T physical
+  evidence now prove bounded simulated PCM reaches a started Android 48 kHz
+  stereo AudioTrack. Driver/APO source, real render PCM and user-confirmed B2T
+  audibility are still pending.
 
 ## Public-alpha proof bar
 

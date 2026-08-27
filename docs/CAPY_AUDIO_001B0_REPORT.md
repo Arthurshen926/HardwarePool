@@ -109,5 +109,6 @@ APO compile is evidence only and is not a production configuration.
 
 Run the ADR 0029 elevated recovery audit for `DESKTOP-AT8EVE9`, retain exact
 package/rollback evidence and obtain package-specific approval before B2
-deployment. In parallel, complete B2T by proving a supported Broker PCM ingest
-into the Android transport with a simulated producer before connecting the APO.
+deployment. B2T subsequently proved the supported simulated-Broker PCM ingest
+and physical Android submission described in `CAPY_AUDIO_001B2T_REPORT.md`;
+human-confirmed audibility and the real APO staging producer remain open.

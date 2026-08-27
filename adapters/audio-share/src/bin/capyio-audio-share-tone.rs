@@ -80,7 +80,16 @@ fn run() -> Result<(), String> {
             thread::sleep(remaining);
         }
     }
-    println!("tone_complete=true");
+    let stats = transport.stats();
+    println!(
+        "tone_complete=true blocks_enqueued={} queue_full={} blocks_without_receiver={} datagrams_sent={} datagram_send_errors={} pcm_bytes_sent={}",
+        stats.blocks_enqueued,
+        stats.queue_full,
+        stats.blocks_without_receiver,
+        stats.datagrams_sent,
+        stats.datagram_send_errors,
+        stats.pcm_bytes_sent,
+    );
     transport.shutdown();
     Ok(())
 }

@@ -10,7 +10,7 @@ use std::{
     net::{SocketAddr, TcpListener, TcpStream, UdpSocket},
     sync::{
         Arc, Mutex,
-        atomic::{AtomicBool, AtomicI32, Ordering},
+        atomic::{AtomicBool, AtomicI32, AtomicU64, Ordering},
         mpsc::{self, Receiver, RecvTimeoutError, SyncSender, TrySendError},
     },
     thread::{self, JoinHandle},
@@ -128,6 +128,7 @@ pub struct AudioShareTransportSender {
     format: AudioSharePrivateFormat,
     max_block_bytes: usize,
     stopped: Arc<AtomicBool>,
+    counters: Arc<TransportCounters>,
 }
 
 impl AudioShareTransportSender {
@@ -147,10 +148,50 @@ impl AudioShareTransportSender {
         if self.stopped.load(Ordering::Acquire) {
             return Err(AudioShareTransportError::Stopped);
         }
-        self.tx.try_send(pcm.to_vec()).map_err(|error| match error {
-            TrySendError::Full(_) => AudioShareTransportError::QueueFull,
-            TrySendError::Disconnected(_) => AudioShareTransportError::Stopped,
-        })
+        match self.tx.try_send(pcm.to_vec()) {
+            Ok(()) => {
+                saturating_increment(&self.counters.blocks_enqueued, 1);
+                Ok(())
+            }
+            Err(TrySendError::Full(_)) => {
+                saturating_increment(&self.counters.queue_full, 1);
+                Err(AudioShareTransportError::QueueFull)
+            }
+            Err(TrySendError::Disconnected(_)) => Err(AudioShareTransportError::Stopped),
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub struct AudioShareTransportStats {
+    pub blocks_enqueued: u64,
+    pub queue_full: u64,
+    pub blocks_without_receiver: u64,
+    pub datagrams_sent: u64,
+    pub datagram_send_errors: u64,
+    pub pcm_bytes_sent: u64,
+}
+
+#[derive(Default)]
+struct TransportCounters {
+    blocks_enqueued: AtomicU64,
+    queue_full: AtomicU64,
+    blocks_without_receiver: AtomicU64,
+    datagrams_sent: AtomicU64,
+    datagram_send_errors: AtomicU64,
+    pcm_bytes_sent: AtomicU64,
+}
+
+impl TransportCounters {
+    fn snapshot(&self) -> AudioShareTransportStats {
+        AudioShareTransportStats {
+            blocks_enqueued: self.blocks_enqueued.load(Ordering::Relaxed),
+            queue_full: self.queue_full.load(Ordering::Relaxed),
+            blocks_without_receiver: self.blocks_without_receiver.load(Ordering::Relaxed),
+            datagrams_sent: self.datagrams_sent.load(Ordering::Relaxed),
+            datagram_send_errors: self.datagram_send_errors.load(Ordering::Relaxed),
+            pcm_bytes_sent: self.pcm_bytes_sent.load(Ordering::Relaxed),
+        }
     }
 }
 
@@ -158,6 +199,7 @@ pub struct AudioShareTransport {
     local_address: SocketAddr,
     sender: AudioShareTransportSender,
     peers: Arc<Mutex<HashMap<i32, PeerRegistration>>>,
+    counters: Arc<TransportCounters>,
     stopped: Arc<AtomicBool>,
     threads: Vec<JoinHandle<()>>,
 }
@@ -205,6 +247,7 @@ impl AudioShareTransport {
         let stopped = Arc::new(AtomicBool::new(false));
         let peers = Arc::new(Mutex::new(HashMap::new()));
         let next_id = Arc::new(AtomicI32::new(1));
+        let counters = Arc::new(TransportCounters::default());
         let (tx, rx) = mpsc::sync_channel(config.queue_blocks);
         let format_wire = Arc::new(format.protobuf());
 
@@ -230,10 +273,18 @@ impl AudioShareTransport {
         let broadcast_thread = {
             let stopped = Arc::clone(&stopped);
             let peers = Arc::clone(&peers);
+            let counters = Arc::clone(&counters);
             thread::Builder::new()
                 .name("capyio-audio-share-pcm".to_owned())
                 .spawn(move || {
-                    broadcast_loop(broadcast_udp, rx, stopped, peers, format.block_align)
+                    broadcast_loop(
+                        broadcast_udp,
+                        rx,
+                        stopped,
+                        peers,
+                        counters,
+                        format.block_align,
+                    )
                 })
                 .map_err(AudioShareTransportError::Spawn)?
         };
@@ -243,11 +294,13 @@ impl AudioShareTransport {
             format,
             max_block_bytes: config.max_block_bytes,
             stopped: Arc::clone(&stopped),
+            counters: Arc::clone(&counters),
         };
         Ok(Self {
             local_address,
             sender,
             peers,
+            counters,
             stopped,
             threads: vec![accept_thread, udp_thread, broadcast_thread],
         })
@@ -275,6 +328,11 @@ impl AudioShareTransport {
                     .count()
             })
             .unwrap_or(0)
+    }
+
+    #[must_use]
+    pub fn stats(&self) -> AudioShareTransportStats {
+        self.counters.snapshot()
     }
 
     pub fn shutdown(mut self) {
@@ -481,6 +539,7 @@ fn broadcast_loop(
     rx: Receiver<Vec<u8>>,
     stopped: Arc<AtomicBool>,
     peers: Arc<Mutex<HashMap<i32, PeerRegistration>>>,
+    counters: Arc<TransportCounters>,
     block_align: usize,
 ) {
     let segment_bytes = MAX_UDP_PCM_BYTES - (MAX_UDP_PCM_BYTES % block_align);
@@ -499,12 +558,31 @@ fn broadcast_loop(
                     .collect::<Vec<_>>()
             })
             .unwrap_or_default();
+        if addresses.is_empty() {
+            saturating_increment(&counters.blocks_without_receiver, 1);
+            continue;
+        }
         for segment in pcm.chunks(segment_bytes) {
             for address in &addresses {
-                let _ = socket.send_to(segment, address);
+                match socket.send_to(segment, address) {
+                    Ok(bytes) => {
+                        saturating_increment(&counters.datagrams_sent, 1);
+                        saturating_increment(
+                            &counters.pcm_bytes_sent,
+                            u64::try_from(bytes).unwrap_or(u64::MAX),
+                        );
+                    }
+                    Err(_) => saturating_increment(&counters.datagram_send_errors, 1),
+                }
             }
         }
     }
+}
+
+fn saturating_increment(counter: &AtomicU64, increment: u64) {
+    let _ = counter.fetch_update(Ordering::Relaxed, Ordering::Relaxed, |value| {
+        Some(value.saturating_add(increment))
+    });
 }
 
 #[derive(Clone, PartialEq, Message)]
@@ -619,6 +697,11 @@ mod tests {
             }
         }
         assert_eq!(&received[..pcm.len()], pcm);
+        let stats = transport.stats();
+        assert!(stats.blocks_enqueued >= 1);
+        assert!(stats.datagrams_sent >= 3);
+        assert!(stats.pcm_bytes_sent >= pcm.len() as u64);
+        assert_eq!(stats.datagram_send_errors, 0);
         transport.shutdown();
     }
 

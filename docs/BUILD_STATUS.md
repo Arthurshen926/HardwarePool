@@ -282,5 +282,8 @@ Its Windows 11 Enterprise 25H2 Evaluation ZH-CN installer hash matches
 Microsoft's published value. Guest installation reached OOBE but did not
 produce a stable recoverable target. ADR 0029 permits a controlled local-host
 Gate 7B exception after elevated recovery, exact-package and rollback preflight.
-The separate Broker-to-Audio-Share PCM-ingest decision remains open because the
-current external `as-cmd` process has no supported PCM injection interface.
+ADR 0030 now resolves Broker-to-Android PCM ingest without the external
+`as-cmd` capture process. A bounded simulated producer sent 1,920,000 bytes to
+the pinned Android receiver over Tailscale with zero queue-full, receiver-gap
+or UDP-send errors; Android reported a started stereo 48 kHz `AudioTrack`.
+Human-confirmed audibility and the real APO staging producer remain pending.

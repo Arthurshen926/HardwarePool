@@ -1,6 +1,6 @@
 # CAPY-AUDIO-001B — Dedicated Windows virtual speaker
 
-Status: active; local compile baseline proven, deployment recovery preflight pending
+Status: active; B2T Android submission proven, deployment recovery preflight pending
 
 Owner: Codex
 
@@ -79,11 +79,17 @@ without playing through the physical or Remote Desktop output.
   INF-rule reconciliation;
 - the refreshed `arthu` login token contains the `Hyper-V Administrators` SID
   and can enumerate/manage the exact lab VM.
+- `CAPY-AUDIO-001B2T` is complete at the transport/submission level. The
+  CapyIO-authored bounded sender negotiated with the pinned Android v0.3.4 app
+  over Tailscale and sent exactly 1,920,000 PCM bytes in 2,000 UDP datagrams
+  with no queue-full, missing-receiver or send-error count. Android reported a
+  started stereo 48 kHz `AudioTrack`; human-confirmed audibility is pending.
 
 No driver package, signing command, boot-policy change or Verifier action has
 run. Compile-only WDK/MSBuild and InfVerif tools did run locally. ADR 0029 now
 permits the identified host as a controlled Gate 7B target, but elevated WinRE,
 BitLocker, Secure Boot and rollback evidence could not be read from the current
 non-elevated session. Deployment remains blocked until that preflight and exact
-package approval are complete. Separately, the Broker-to-Audio-Share PCM ingest
-contract must be resolved before the APO path can claim phone delivery.
+package approval are complete. The Broker-to-Audio-Share PCM ingest contract is
+now resolved by ADR 0030 and the B2T physical test; the remaining media-path gap
+is the real APO staging producer.

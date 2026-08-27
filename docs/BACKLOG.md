@@ -177,6 +177,13 @@ the current host's build-tool gap is recorded, and an isolated target is
 required before any driver/APO build or install action. Plan:
 `docs/plans/active/0012-windows-virtual-speaker.md`.
 
+`CAPY-AUDIO-001B2T` is complete at the transport/submission level. A bounded
+CapyIO sender implements the pinned Android private contract, deterministic
+tests cover negotiation/segmentation/limits, and a physical Tailscale run sent
+1,920,000 PCM bytes with no reported transport drops or errors into a started
+48 kHz stereo Android `AudioTrack`. User-confirmed audibility remains open and
+the next implementation slice is the real APO-to-Broker staging producer.
+
 ## Later small tasks
 
 - `CAPY-GAMEPAD-001`: DSU projection from recorded IMU fixture.

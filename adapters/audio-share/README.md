@@ -49,4 +49,6 @@ cargo run -p capyio-audio-share-adapter --bin capyio-audio-share-tone -- 100.64.
 
 The command waits at most 60 seconds for TCP plus UDP association, sends a quiet
 440 Hz tone for 10 seconds, then exits. Audible output is human-observed evidence
-and must be recorded separately from the deterministic transport test.
+and must be recorded separately from the deterministic transport test. Its
+final line reports bounded queue and UDP counters so a successful process exit
+is not mistaken for proof that PCM was actually submitted to the socket.

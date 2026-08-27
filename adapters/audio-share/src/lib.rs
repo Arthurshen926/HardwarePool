@@ -27,7 +27,7 @@ pub use supervisor::{
 };
 pub use transport::{
     AudioSharePrivateFormat, AudioShareTransport, AudioShareTransportConfig,
-    AudioShareTransportError, AudioShareTransportSender,
+    AudioShareTransportError, AudioShareTransportSender, AudioShareTransportStats,
 };
 
 pub const PINNED_AUDIO_SHARE_VERSION: &str = "0.3.4";
