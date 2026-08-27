@@ -3,8 +3,8 @@
 Date: 2026-08-27
 
 Status: endpoint, package, cross-session mapping and virtual-speaker-to-phone
-playback proven; endpoint-volume package deployed and machine-side phase test
-complete, pending human listening confirmation
+playback proven; live endpoint-volume attenuation/mute objectively proven,
+pending final human listening confirmation
 
 ## Outcome
 
@@ -266,3 +266,32 @@ notification delivery does not. The source now adds a direct
 notification path as a secondary mechanism. A newly built, signed and approved
 package plus repeated continuous-stream RMS/listening test is required before
 endpoint-volume behavior is claimed as proven.
+
+Commit `95bb185` implements the direct callback with registration bounded to
+`LockForProcess`/`UnlockForProcess`, avoiding the documented EndpointVolume
+AddRef cycle. Its x64 Release WDK build and full `cargo xtask ci` passed. The
+approved update uses monotonically newer `DriverVer` values `21.59.00.001`,
+`21.59.00.002` and `21.59.00.003`, passed independent x64 InfVerif `/u` and
+`/w`, Inf2Cat, Authenticode and catalog-membership verification, and has these
+signed binary identities:
+
+| Signed callback package file | Bytes | SHA-256 |
+|---|---:|---|
+| `capyioaudio.cat` | 10798 | `F0E4758C04DD7F894121E7E5F6F5734907B981C4DBEC9E3C6B364B2D9B2460A0` |
+| `CapyIOAudio.sys` | 81304 | `EF10A5CB8F3871583CDE6FD975922D92FAC5CF09FC31F7E9DE2E364C330C40FA` |
+| `CapyIORenderAPO.dll` | 604568 | `E1B1A064AD64F55D830CE8D739A0D6238ED0CC9B73A8169836792E2BED66815B` |
+
+Restore point sequence 384, `CapyIO volume callback 95bb185`, preceded the
+approved install. The base, APO and extension packages installed as
+`oem102.inf`, `oem103.inf` and `oem104.inf` without requiring a reboot; previous
+`oem99.inf` through `oem101.inf` remain available for rollback. Driver Store
+inspection found the exact APO/SYS hashes above, all three CapyIO devices report
+status OK and the Windows Audio service is running.
+
+The decisive regression used one uninterrupted 22-second directed 440 Hz stream
+without restarting AudioDG. Shared-ring RMS changed from 0.12946569 at 100% to
+0.03236234 at 25%, then to exactly 0 while muted, and returned to 0.12944853
+after restoring 100%. The Android receiver TCP session remained established
+throughout. This objectively proves live endpoint attenuation, mute and restore
+on the PCM forwarded to Android; final human listening confirmation is retained
+as the remaining physical check.

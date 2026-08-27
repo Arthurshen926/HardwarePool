@@ -1,7 +1,7 @@
 # CAPY-AUDIO-001B — Dedicated Windows virtual speaker
 
-Status: active; B2T and B3 virtual-speaker-to-Android playback proven;
-endpoint-volume deployment and machine-side phase test complete
+Status: active; B2T and B3 virtual-speaker-to-Android playback proven; live
+endpoint-volume attenuation/mute objectively proven
 
 Owner: Codex
 
@@ -108,8 +108,10 @@ to the composite mode-effect (MFX) position used after mixing by Microsoft's
 current componentized SysVAD render sample, and the extension deletes stale SFX
 and EFX values before adding MFX PID 14/6. Physical testing then proved audible
 Windows-to-phone playback. A later endpoint-volume fix was built, signed and
-installed as `oem99.inf` through `oem101.inf`; its machine-side directed-tone
-test exercised 100%, 25%, mute and restored 100% while the Android receiver
-remained connected. Human listening confirmation is the remaining boundary for
-the volume behavior, followed by B4 lifecycle integration and B5 recovery,
-upgrade/uninstall and stability checks.
+installed as `oem99.inf` through `oem101.inf`; objective measurement proved its
+live notification defect. The direct EndpointVolume callback update is now
+installed as `oem102.inf` through `oem104.inf`. One uninterrupted directed
+stream measured the expected 100%, 25%, mute and restored-100% amplitudes while
+Android remained connected. Final human listening confirmation remains,
+followed by B4 lifecycle integration and B5 recovery, upgrade/uninstall and
+stability checks.
