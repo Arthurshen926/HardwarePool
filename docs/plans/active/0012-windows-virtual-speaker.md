@@ -1,6 +1,7 @@
 # CAPY-AUDIO-001B — Dedicated Windows virtual speaker
 
-Status: active; B2T audible Android path and B3 compile/static validation proven
+Status: active; B2T and B3 virtual-speaker-to-Android playback proven;
+endpoint-volume deployment and machine-side phase test complete
 
 Owner: Codex
 
@@ -94,22 +95,21 @@ without playing through the physical or Remote Desktop output.
   tests exercise mapping exclusivity, a committed block, conversion and read
   release.
 
-The first package-specific signing and approved install completed on the exact
-host after a fresh restore point. Its base, APO and extension packages enumerate
-healthy, but pre-playback inspection exposed a real cross-session defect:
-AudioDG runs in Session 0 while the original Broker mapping was session-local.
-The corrected source uses a protected global mapping and bounded lab counters.
-Its next boundary is new package-specific signing/update approval followed by
-real application playback to Android and clean rollback evidence. No boot-policy
-or Verifier change has run.
+The package-specific signing and approved installs completed on the exact host
+after fresh restore points. A protected global mapping corrected the AudioDG
+Session 0 boundary. The MFX placement and initialization fixes now carry real
+application playback from the independently selectable CapyIO endpoint to the
+Android receiver, including recovery after an Android process/UDP-port change.
+No boot-policy or Verifier change has run.
 
-The installed diagnostic updates proved that Local Service can open and map the
-global ring. During exact CapyIO endpoint playback the meter moved, but all APO
-attach counters remained zero, isolating the defect to graph insertion. The
-prior stream-effect (SFX) position was incompatible with the ring's
-single-producer invariant. An attempted endpoint-effect (EFX) placement also
-remained uninstantiated on the tested Windows build. ADR 0031 corrects the
-placement to the composite mode-effect (MFX) position used after mixing by
-Microsoft's current componentized SysVAD render sample. The extension deletes
-stale SFX and EFX values before adding MFX PID 14/6. The next step is a signed
-in-place update and the same counter-backed playback test.
+The installed diagnostics proved that Local Service can open and map the global
+ring and isolated the original graph-position defect. ADR 0031 moved the bridge
+to the composite mode-effect (MFX) position used after mixing by Microsoft's
+current componentized SysVAD render sample, and the extension deletes stale SFX
+and EFX values before adding MFX PID 14/6. Physical testing then proved audible
+Windows-to-phone playback. A later endpoint-volume fix was built, signed and
+installed as `oem99.inf` through `oem101.inf`; its machine-side directed-tone
+test exercised 100%, 25%, mute and restored 100% while the Android receiver
+remained connected. Human listening confirmation is the remaining boundary for
+the volume behavior, followed by B4 lifecycle integration and B5 recovery,
+upgrade/uninstall and stability checks.

@@ -2,8 +2,9 @@
 
 Date: 2026-08-27
 
-Status: endpoint, package and cross-session mapping proven; diagnostic playback
-isolated the remaining graph-position defect and selected a post-mix APO fix
+Status: endpoint, package, cross-session mapping and virtual-speaker-to-phone
+playback proven; endpoint-volume package deployed and machine-side phase test
+complete, pending human listening confirmation
 
 ## Outcome
 
@@ -235,3 +236,25 @@ The exact signed package is retained outside version control at
 | `ComponentizedApoSample.inf` | 2806 | `EF4FA4003B47CC02090BD6ECB49287C8471BA175EE08EDE3AD127F80F830988F` |
 | `ComponentizedAudioSample.inf` | 3709 | `7968E23239E40AD834E0FD1C8C39FBF4E0C43D0F149C4DD3D35A99BC7E040363` |
 | `ComponentizedAudioSampleExtension.inf` | 3296 | `C21F5E090E48008D9DAE673EA44EF6AE62DCFB7CD52A4DFBBCE1511E05F776A1` |
+
+After exact-package approval, restore point sequence 383 named
+`CapyIO volume fix 84f16b8` was created on `DESKTOP-AT8EVE9`. The signed base,
+APO and extension packages installed as `oem99.inf`, `oem100.inf` and
+`oem101.inf`; the previous `oem96.inf` through `oem98.inf` packages were
+retained for rollback. The MEDIA device, `CapyIO Render APO` component and
+`CapyIO Speaker with Render Bridge` endpoint all enumerate with status OK, and
+the Windows Audio service is running. Driver Store hashes for the installed
+`CapyIOAudio.sys` and `CapyIORenderAPO.dll` match the signed-package hashes
+above.
+
+The Android receiver remained online over ADB as PID 5336 while Broker PID
+22916 retained established TCP receiver sessions on port 65530. A local
+untracked Core Audio/waveOut lab helper enumerated the CapyIO endpoint as the
+default render endpoint and selected its waveOut device directly, avoiding
+default-player ambiguity. During a 22-second continuous 48 kHz stereo tone it
+set and read back the following endpoint states without interrupting the phone
+connection: scalar 1.0/unmuted, scalar 0.25/unmuted, scalar 0.25/muted, and
+scalar 1.0/unmuted. This proves endpoint control notification and directed
+playback execution on the machine side. Audible attenuation, silence and
+restoration remain pending the human operator's listening confirmation and are
+not yet claimed from scalar readback alone.
