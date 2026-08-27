@@ -135,3 +135,15 @@ property values. The extension now explicitly deletes obsolete SFX and EFX
 properties before adding MFX PID 14/6. A newly signed update and repeated
 physical test are still required; no successful
 end-to-end virtual-speaker claim is made from the zero-block diagnostic run.
+
+The first MFX package then produced decisive crash evidence: Windows inserted
+and locked the APO at 48 kHz stereo, but each render start terminated
+`audiodg.exe` with access violation `0xc0000005` at DLL RVA `0xCE8F`.
+Disassembly with the matching PDB identified
+`CSwapAPOSFX::GetApoNotificationRegistrationInfo`: the retained SysVAD sample
+notification code queried a null `m_audioEndpoint` after the bridge initializer
+had deliberately stopped creating endpoint/property-store dependencies. The
+bridge has fixed effect state and consumes no property notifications, so it now
+returns a valid empty notification descriptor list. A newly signed package
+must prove that AudioDG remains alive, `blocks_enqueued` advances and Android
+receives PCM before this slice can be accepted.

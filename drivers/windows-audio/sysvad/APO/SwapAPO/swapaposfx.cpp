@@ -613,25 +613,14 @@ HRESULT CSwapAPOSFX::OnPropertyValueChanged(LPCWSTR pwstrDeviceId, const PROPERT
 
 HRESULT CSwapAPOSFX::GetApoNotificationRegistrationInfo(_Out_writes_(*count) APO_NOTIFICATION_DESCRIPTOR **apoNotifications, _Out_ DWORD *count)
 {
+    RETURN_HR_IF(E_POINTER, apoNotifications == nullptr || count == nullptr);
+
+    // The CapyIO bridge has fixed effect state and does not consume endpoint
+    // property changes. Returning an empty descriptor list also avoids keeping
+    // the SysVAD sample's notification path, whose endpoint/property-store
+    // members are intentionally not initialized by the minimal bridge.
     *apoNotifications = nullptr;
     *count = 0;
-
-    // Let the OS know what notifications we are interested in by returning an array of
-    // APO_NOTIFICATION_DESCRIPTORs.
-    constexpr DWORD numDescriptors = 1;
-    wil::unique_cotaskmem_ptr<APO_NOTIFICATION_DESCRIPTOR[]> apoNotificationDescriptors;
-
-    apoNotificationDescriptors.reset(static_cast<APO_NOTIFICATION_DESCRIPTOR*>(
-        CoTaskMemAlloc(sizeof(APO_NOTIFICATION_DESCRIPTOR) * numDescriptors)));
-    RETURN_IF_NULL_ALLOC(apoNotificationDescriptors);
-
-    // Our APO wants to get notified when a endpoint property changes on the audio endpoint.
-    apoNotificationDescriptors[0].type = APO_NOTIFICATION_TYPE_ENDPOINT_PROPERTY_CHANGE;
-    (void)m_audioEndpoint.query_to(&apoNotificationDescriptors[0].audioEndpointPropertyChange.device);
-
-    *apoNotifications = apoNotificationDescriptors.release();
-    *count = numDescriptors;
-
     return S_OK;
 }
 
