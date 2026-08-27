@@ -427,7 +427,8 @@ HRESULT CSwapAPOSFX::Initialize(UINT32 cbDataSize, BYTE* pbyData)
     // Validate then save the processing mode. Note an endpoint effects APO
     // does not depend on the mode. Windows sets the APOInitSystemEffects2
     // AudioProcessingMode member to GUID_NULL for an endpoint effects APO.
-    IF_TRUE_ACTION_JUMP((processingMode != AUDIO_SIGNALPROCESSINGMODE_DEFAULT        &&
+    IF_TRUE_ACTION_JUMP((processingMode != GUID_NULL                                 &&
+                         processingMode != AUDIO_SIGNALPROCESSINGMODE_DEFAULT        &&
                          processingMode != AUDIO_SIGNALPROCESSINGMODE_RAW            &&
                          processingMode != AUDIO_SIGNALPROCESSINGMODE_COMMUNICATIONS &&
                          processingMode != AUDIO_SIGNALPROCESSINGMODE_SPEECH         &&

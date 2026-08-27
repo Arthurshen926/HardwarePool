@@ -86,7 +86,7 @@ without playing through the physical or Remote Desktop output.
   started stereo 48 kHz `AudioTrack`; the human operator clearly heard the
   phone output.
 
-- `CAPY-AUDIO-001B3` now has a compile-validated implementation: the SFX APO
+- `CAPY-AUDIO-001B3` now has a compile-validated implementation: the post-mix EFX APO
   copies real render float32 blocks into a 32-slot/16 KiB fixed shared-memory
   ring without allocation, waiting, I/O, networking or logging in
   `APOProcess`. The Windows Broker owns and validates that mapping, converts
@@ -103,10 +103,11 @@ Its next boundary is new package-specific signing/update approval followed by
 real application playback to Android and clean rollback evidence. No boot-policy
 or Verifier change has run.
 
-That update installed as `oem75.inf`/`oem76.inf`/`oem77.inf` and proved the APO
-loads in Session 0 AudioDG. The first controlled playback deliberately failed
-the objective counter gate (`ring_produced=0`) even though endpoint level and
-Android receiver activity were present. The endpoint defaulted to 44.1 kHz, so
-the 48 kHz-only ring never attached. Source and x64 build now select the 48 kHz
-stereo baseline as the default while retaining 44.1 kHz compatibility. The next
-step is a signed in-place update and the same counter-backed playback test.
+The installed diagnostic update proved that the APO DLL loads in Session 0
+AudioDG and that Local Service can open and map the global ring. During exact
+CapyIO endpoint playback the meter moved, but all attach counters remained zero.
+This isolates the defect to APO graph insertion. The prior stream-effect (SFX)
+position was also incompatible with the ring's single-producer invariant. The
+source now registers the bridge as the post-mix endpoint effect (EFX), which is
+the single final endpoint stream. The next step is a signed in-place update and
+the same counter-backed playback test.

@@ -21,7 +21,7 @@ a direct driver ring remains a fallback.
 ## 3. Render ring v1
 
 The elevated lab Broker creates `Global\\CapyIO.RenderRing.v1` before Windows opens a render
-stream. The SFX APO opens it during `LockForProcess`; it never creates, opens or
+stream. The post-mix endpoint EFX APO opens it during `LockForProcess`; it never creates, opens or
 maps objects from `APOProcess`. Both sides require 48,000 Hz, stereo,
 interleaved IEEE float32 little-endian input. A format mismatch leaves the APO
 detached.

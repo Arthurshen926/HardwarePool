@@ -210,26 +210,29 @@ impl AudioShareTransport {
         format: AudioSharePrivateFormat,
     ) -> Result<Self, AudioShareTransportError> {
         let config = config.validate()?;
-        let tcp = TcpListener::bind(config.bind_address).map_err(|source| {
+        // Audio Share uses one port number for both transports. On Windows a
+        // TCP-selected ephemeral port can belong to an excluded UDP range, so
+        // let UDP choose the shared port before binding TCP to it.
+        let udp = UdpSocket::bind(config.bind_address).map_err(|source| {
             AudioShareTransportError::Bind {
-                protocol: "TCP",
+                protocol: "UDP",
                 source,
             }
         })?;
-        tcp.set_nonblocking(true)
-            .map_err(|source| AudioShareTransportError::Configure {
+        let local_address =
+            udp.local_addr()
+                .map_err(|source| AudioShareTransportError::Configure {
+                    protocol: "UDP",
+                    source,
+                })?;
+        let tcp =
+            TcpListener::bind(local_address).map_err(|source| AudioShareTransportError::Bind {
                 protocol: "TCP",
                 source,
             })?;
-        let local_address =
-            tcp.local_addr()
-                .map_err(|source| AudioShareTransportError::Configure {
-                    protocol: "TCP",
-                    source,
-                })?;
-        let udp =
-            UdpSocket::bind(local_address).map_err(|source| AudioShareTransportError::Bind {
-                protocol: "UDP",
+        tcp.set_nonblocking(true)
+            .map_err(|source| AudioShareTransportError::Configure {
+                protocol: "TCP",
                 source,
             })?;
         udp.set_nonblocking(true)

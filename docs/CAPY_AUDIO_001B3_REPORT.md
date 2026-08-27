@@ -2,8 +2,8 @@
 
 Date: 2026-08-27
 
-Status: cross-session package installed and enumerated; first real playback
-exposed and corrected a 44.1/48 kHz default-format mismatch
+Status: endpoint, package and cross-session mapping proven; diagnostic playback
+isolated the remaining graph-position defect and selected a post-mix EFX fix
 
 ## Outcome
 
@@ -11,10 +11,10 @@ The reviewed Microsoft SysVAD subset at revision
 `717778a20ba4dd2440fe609f69153a1f8a64f597` is imported under MS-PL and reduced
 to one root-enumerated render endpoint named `CapyIO Speaker`. The driver
 service and binary are `CapyIOAudio`; the endpoint extension registers the
-CapyIO-owned render SFX in `CapyIORenderAPO.dll`. Capture, keyword detector,
+CapyIO-owned render EFX in `CapyIORenderAPO.dll`. Capture, keyword detector,
 HDMI, SPDIF, headphone and unrelated APO package dependencies are excluded.
 
-The SFX copies actual 48 kHz stereo float32 render buffers into the fixed
+The post-mix EFX copies actual 48 kHz stereo float32 render buffers into the fixed
 `Global\\CapyIO.RenderRing.v1` staging ring. `APOProcess` performs one bounded
 copy, atomics and drop accounting only. Mapping creation/open, validation,
 Float32-to-S16 conversion, network transport and failure policy stay in user
@@ -90,7 +90,10 @@ The Adapter tests cover mapping exclusivity, exact 128-byte/32-slot layout, a
 committed shared-memory block, acquire/release sequencing, bounded
 Float32-to-S16 conversion and the existing private Android transport. The test
 suite has 15 passing library tests and one intentionally ignored user-supplied
-binary probe; binary and supervisor tests also pass.
+binary probe; binary and supervisor tests also pass. The Windows-only
+`capyio-render-ring-probe` helper performs a one-shot open/map/header check so
+the lab can verify the AudioDG service identity's access without adding file or
+logging work to the real-time callback.
 
 ## Deployment and remaining boundary
 
@@ -119,7 +122,12 @@ failure: the endpoint's first/default engine format was 44.1 kHz while the
 bounded ring deliberately attaches only at the 48 kHz speaker baseline.
 
 The format table now makes 48 kHz stereo the default and retains 44.1 kHz as a
-non-default compatibility entry. The x64 Release package rebuilt with signing
-off, passed Signability with zero findings and passed independent InfVerif `/u`
-and `/w`. A newly signed update and repeated physical test are still required;
-no successful end-to-end virtual-speaker claim is made from the zero-block run.
+non-default compatibility entry. A diagnostic package then proved that the
+Broker-owned global mapping is openable and mappable by Local Service, while
+the endpoint meter moved but every APO attach counter remained zero. The SFX
+was therefore not inserted into the active graph. It was also architecturally
+incorrect for the single-producer ring because Windows may create one SFX per
+input stream. The extension now binds the APO as the post-mix endpoint EFX and
+accepts the `GUID_NULL` processing mode required for endpoint effects. A newly
+signed update and repeated physical test are still required; no successful
+end-to-end virtual-speaker claim is made from the zero-block diagnostic run.
