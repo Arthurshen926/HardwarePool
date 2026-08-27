@@ -211,3 +211,27 @@ The exact unsigned pre-signing archive is retained outside version control as
 | `ComponentizedApoSample.inf` | 2806 | `EF4FA4003B47CC02090BD6ECB49287C8471BA175EE08EDE3AD127F80F830988F` |
 | `ComponentizedAudioSample.inf` | 3709 | `7968E23239E40AD834E0FD1C8C39FBF4E0C43D0F149C4DD3D35A99BC7E040363` |
 | `ComponentizedAudioSampleExtension.inf` | 3296 | `C21F5E090E48008D9DAE673EA44EF6AE62DCFB7CD52A4DFBBCE1511E05F776A1` |
+
+The former lab certificate still enumerated but its recorded private-key
+container no longer existed after reboot, so SignTool could not select it. No
+package file was modified by those failed selection attempts. After separate
+human approval, an elevated UAC-scoped script created a replacement
+non-exportable local-machine code-signing key with subject
+`CN=CapyIO Driver Lab 84f16b8`, SHA-1 thumbprint
+`10CED62FA5AFC65320CB35C9D31288F2E928D3F2`, valid through 2027-08-27. Its
+public certificate was added to the exact lab host's Local Machine Root and
+Trusted Publishers stores. The script signed SYS/DLL, regenerated the catalog,
+signed it, and passed Authenticode plus SYS/DLL catalog-membership checks.
+Independent x64 InfVerif `/u` and `/w` returned zero for all three INFs.
+
+The exact signed package is retained outside version control at
+`.agent-cache/capyio-volume-fix-signed-84f16b8-r4`:
+
+| Signed file | Bytes | SHA-256 |
+|---|---:|---|
+| `capyioaudio.cat` | 10798 | `3A9AA717FC774728D2CBB41F8F42C2D4DF45B703552E2FD27CEA927D121991D3` |
+| `CapyIOAudio.sys` | 81304 | `EF10A5CB8F3871583CDE6FD975922D92FAC5CF09FC31F7E9DE2E364C330C40FA` |
+| `CapyIORenderAPO.dll` | 603032 | `292587509683A33F66B9656983871CA1EAF050B47D59511C4411CC3FC4FE9FBD` |
+| `ComponentizedApoSample.inf` | 2806 | `EF4FA4003B47CC02090BD6ECB49287C8471BA175EE08EDE3AD127F80F830988F` |
+| `ComponentizedAudioSample.inf` | 3709 | `7968E23239E40AD834E0FD1C8C39FBF4E0C43D0F149C4DD3D35A99BC7E040363` |
+| `ComponentizedAudioSampleExtension.inf` | 3296 | `C21F5E090E48008D9DAE673EA44EF6AE62DCFB7CD52A4DFBBCE1511E05F776A1` |
