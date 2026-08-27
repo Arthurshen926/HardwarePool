@@ -144,6 +144,38 @@ Disassembly with the matching PDB identified
 notification code queried a null `m_audioEndpoint` after the bridge initializer
 had deliberately stopped creating endpoint/property-store dependencies. The
 bridge has fixed effect state and consumes no property notifications, so it now
-returns a valid empty notification descriptor list. A newly signed package
-must prove that AudioDG remains alive, `blocks_enqueued` advances and Android
-receives PCM before this slice can be accepted.
+returns a valid empty notification descriptor list. Signed package `2a9a643`
+then kept the same AudioDG process alive through playback, advanced the ring to
+`ring_produced=547` with `ring_dropped=0`, reported two successful 48 kHz stereo
+attachments and retained an established Android receiver session. Android
+reported a started 48 kHz stereo `AudioTrack`, and the human operator confirmed
+that the Windows control-panel test was audible from the phone. This establishes
+the first physical virtual-endpoint-to-phone proof.
+
+That proof does not yet establish product lifecycle or clean long-duration audio.
+The validation launcher supplied a 300-second Broker duration; after it expired,
+Windows correctly retained the virtual endpoint but there was no user-mode process
+to drain and forward its render ring. A duration-free lab Broker restored an
+established TCP/UDP receiver session and remains required until the Windows Node
+Runtime owns this Broker's lifecycle. The pinned Android receiver was also found
+using its default `1x` `AudioTrack` buffer and non-blocking per-datagram writes;
+Android AudioFlinger recorded receiver-track underruns during the physical run.
+The lab receiver buffer was raised to `4x` for follow-up listening. This is a
+latency-for-stability mitigation, not a substitute for a CapyIO-framed transport,
+ordered receive queue and jitter buffer.
+
+A later long-running check exposed a separate reconnect defect. After Android
+restarted the Audio Share process, TCP re-established but both newly created
+Android tracks retained zero written frames. A default-device WAV advanced the
+Windows ring from 30,965 to 31,342 blocks with zero drops and a successful APO
+reattach, proving that capture and ring drain remained healthy. The stale Android
+UDP port can cause Windows to surface an ICMP port-unreachable response as
+`ConnectionReset` or `ConnectionRefused` on the shared registration socket. The
+registration worker previously treated every error other than `WouldBlock` as
+terminal, so later UDP registration datagrams were never processed even though
+TCP appeared established. The worker now treats reset, refused and timed-out UDP
+receives as transient. A physical regression force-stopped Android PID 2331,
+restarted the receiver as PID 5336 without restarting Broker PID 22916, and then
+advanced the new Android 48 kHz stereo track to `0x36630` server frames from a
+second Windows default-device WAV. This proves recovery across a changed Android
+process and UDP source port.

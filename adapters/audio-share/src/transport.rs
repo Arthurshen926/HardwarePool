@@ -529,12 +529,22 @@ fn udp_registration_loop(
                 }
             }
             Ok(_) => {}
-            Err(error) if error.kind() == io::ErrorKind::WouldBlock => {
+            Err(error) if registration_error_is_transient(&error) => {
                 thread::sleep(POLL_INTERVAL);
             }
             Err(_) => break,
         }
     }
+}
+
+fn registration_error_is_transient(error: &io::Error) -> bool {
+    matches!(
+        error.kind(),
+        io::ErrorKind::WouldBlock
+            | io::ErrorKind::TimedOut
+            | io::ErrorKind::ConnectionReset
+            | io::ErrorKind::ConnectionRefused
+    )
 }
 
 fn broadcast_loop(
@@ -724,6 +734,21 @@ mod tests {
                 Err(AudioShareTransportError::InvalidPcmBlock { .. })
             ));
         }
+    }
+
+    #[test]
+    fn stale_udp_receiver_errors_do_not_terminate_registration() {
+        for kind in [
+            io::ErrorKind::WouldBlock,
+            io::ErrorKind::TimedOut,
+            io::ErrorKind::ConnectionReset,
+            io::ErrorKind::ConnectionRefused,
+        ] {
+            assert!(registration_error_is_transient(&io::Error::from(kind)));
+        }
+        assert!(!registration_error_is_transient(&io::Error::from(
+            io::ErrorKind::PermissionDenied
+        )));
     }
 
     fn read_u32(stream: &mut TcpStream) -> u32 {
