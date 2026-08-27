@@ -2,6 +2,8 @@
 
 Status: accepted
 
+Amended by: ADR 0031 replaces only the EFX graph placement with post-mix MFX.
+
 Supersedes: the Gate 7B data-path decision in ADR 0027. ADR 0027 still owns
 the dedicated-endpoint product decision. ADR 0029 amends its target-safety
 boundary with one controlled local-lab exception.
@@ -34,8 +36,10 @@ endpoint-associated processing point whose real-time `APOProcess` callback
 receives audio buffers. A stream effect (SFX) can have one instance per input
 stream and therefore cannot safely be the single producer of CapyIO's SPSC
 ring. The endpoint effect (EFX) runs after endpoint mixing and exposes exactly
-the final stream that the virtual speaker must forward. That is the suitable
-boundary, provided the callback obeys strict real-time constraints.
+the final stream that the virtual speaker must forward. Deployment later showed
+that EFX was not instantiated for this ordinary render endpoint; ADR 0031
+corrects the post-mix placement to MFX while retaining this ADR's bounded bridge
+and real-time constraints.
 
 ## Decision
 
@@ -44,14 +48,14 @@ Gate 7B uses this first functional path:
 ```text
 Windows application
   -> CapyIO Speaker WaveRT render endpoint
-  -> CapyIO post-mix endpoint EFX APO
+  -> CapyIO post-mix MFX APO (placement corrected by ADR 0031)
   -> pre-opened bounded shared-memory/SPSC staging ring
   -> CapyIO Broker (user mode)
   -> existing Audio Share transport
   -> Android speaker
 ```
 
-The single post-mix EFX callback performs only a bounded, non-blocking copy into preallocated
+The single post-mix APO callback performs only a bounded, non-blocking copy into preallocated
 storage and counter updates. It must not allocate, wait, open files, access the
 network, emit ordinary logs or execute protocol/codec/reconnect policy. When
 the Broker is absent or the ring is full, the callback drops the block and

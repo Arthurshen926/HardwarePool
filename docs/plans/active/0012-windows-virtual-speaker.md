@@ -86,7 +86,7 @@ without playing through the physical or Remote Desktop output.
   started stereo 48 kHz `AudioTrack`; the human operator clearly heard the
   phone output.
 
-- `CAPY-AUDIO-001B3` now has a compile-validated implementation: the post-mix EFX APO
+- `CAPY-AUDIO-001B3` now has a compile-validated implementation: the post-mix render APO
   copies real render float32 blocks into a 32-slot/16 KiB fixed shared-memory
   ring without allocation, waiting, I/O, networking or logging in
   `APOProcess`. The Windows Broker owns and validates that mapping, converts
@@ -103,14 +103,13 @@ Its next boundary is new package-specific signing/update approval followed by
 real application playback to Android and clean rollback evidence. No boot-policy
 or Verifier change has run.
 
-The installed diagnostic update proved that the APO DLL loads in Session 0
-AudioDG and that Local Service can open and map the global ring. During exact
-CapyIO endpoint playback the meter moved, but all attach counters remained zero.
-This isolates the defect to APO graph insertion. The prior stream-effect (SFX)
-position was also incompatible with the ring's single-producer invariant. The
-source now registers the bridge as the post-mix endpoint effect (EFX), which is
-the single final endpoint stream. The first in-place EFX package revealed that
-Windows retained the prior SFX property values during extension upgrade. The
-INF now explicitly deletes those stale PID 13/5 values before adding EFX PID
-15/7. The next step is a signed in-place update and the same counter-backed
-playback test.
+The installed diagnostic updates proved that Local Service can open and map the
+global ring. During exact CapyIO endpoint playback the meter moved, but all APO
+attach counters remained zero, isolating the defect to graph insertion. The
+prior stream-effect (SFX) position was incompatible with the ring's
+single-producer invariant. An attempted endpoint-effect (EFX) placement also
+remained uninstantiated on the tested Windows build. ADR 0031 corrects the
+placement to the composite mode-effect (MFX) position used after mixing by
+Microsoft's current componentized SysVAD render sample. The extension deletes
+stale SFX and EFX values before adding MFX PID 14/6. The next step is a signed
+in-place update and the same counter-backed playback test.

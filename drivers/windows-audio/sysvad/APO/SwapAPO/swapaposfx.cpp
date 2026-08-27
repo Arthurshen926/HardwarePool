@@ -327,9 +327,9 @@ HRESULT CSwapAPOSFX::Initialize(UINT32 cbDataSize, BYTE* pbyData)
         return E_INVALIDARG;
     }
 
-    // Validate then save the processing mode. Note an endpoint effects APO
-    // does not depend on the mode. Windows sets the APOInitSystemEffects2
-    // AudioProcessingMode member to GUID_NULL for an endpoint effects APO.
+    // Validate then save the processing mode. The bridge is registered as a
+    // post-mix mode effect; retain GUID_NULL for compatibility with older
+    // system-effects initialization data.
     RETURN_HR_IF(E_INVALIDARG,
                  processingMode != GUID_NULL                                 &&
                  processingMode != AUDIO_SIGNALPROCESSINGMODE_DEFAULT        &&
@@ -341,7 +341,7 @@ HRESULT CSwapAPOSFX::Initialize(UINT32 cbDataSize, BYTE* pbyData)
                  processingMode != AUDIO_SIGNALPROCESSINGMODE_NOTIFICATION);
     m_AudioProcessingMode = processingMode;
 
-    // CapyIO uses this endpoint effect only as a bounded render-ring bridge.
+    // CapyIO uses this post-mix effect only as a bounded render-ring bridge.
     // It must remain active, while the inherited SysVAD channel-swap DSP stays off.
     m_fEnableSwapSFX = FALSE;
     RtlZeroMemory(m_effectInfos, sizeof(m_effectInfos));

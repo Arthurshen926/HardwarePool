@@ -3,7 +3,7 @@
 Date: 2026-08-27
 
 Status: endpoint, package and cross-session mapping proven; diagnostic playback
-isolated the remaining graph-position defect and selected a post-mix EFX fix
+isolated the remaining graph-position defect and selected a post-mix APO fix
 
 ## Outcome
 
@@ -11,10 +11,10 @@ The reviewed Microsoft SysVAD subset at revision
 `717778a20ba4dd2440fe609f69153a1f8a64f597` is imported under MS-PL and reduced
 to one root-enumerated render endpoint named `CapyIO Speaker`. The driver
 service and binary are `CapyIOAudio`; the endpoint extension registers the
-CapyIO-owned render EFX in `CapyIORenderAPO.dll`. Capture, keyword detector,
+CapyIO-owned render APO in `CapyIORenderAPO.dll`. Capture, keyword detector,
 HDMI, SPDIF, headphone and unrelated APO package dependencies are excluded.
 
-The post-mix EFX copies actual 48 kHz stereo float32 render buffers into the fixed
+The post-mix MFX copies actual 48 kHz stereo float32 render buffers into the fixed
 `Global\\CapyIO.RenderRing.v1` staging ring. `APOProcess` performs one bounded
 copy, atomics and drop accounting only. Mapping creation/open, validation,
 Float32-to-S16 conversion, network transport and failure policy stay in user
@@ -127,10 +127,11 @@ Broker-owned global mapping is openable and mappable by Local Service, while
 the endpoint meter moved but every APO attach counter remained zero. The SFX
 was therefore not inserted into the active graph. It was also architecturally
 incorrect for the single-producer ring because Windows may create one SFX per
-input stream. The extension now binds the APO as the post-mix endpoint EFX and
-accepts the `GUID_NULL` processing mode required for endpoint effects. The
-first EFX in-place update exposed one more upgrade rule: Windows retained the
-old SFX PID 13/5 values alongside the new EFX PID 15/7 values. The extension
-now explicitly deletes the obsolete SFX properties before adding EFX. A newly
-signed update and repeated physical test are still required; no successful
+input stream. An EFX placement was not instantiated on the tested ordinary
+render endpoint. ADR 0031 therefore binds the APO as the post-mix MFX and
+accepts the declared default, media and movie processing modes. The
+first in-place update exposed one more upgrade rule: Windows retained old effect
+property values. The extension now explicitly deletes obsolete SFX and EFX
+properties before adding MFX PID 14/6. A newly signed update and repeated
+physical test are still required; no successful
 end-to-end virtual-speaker claim is made from the zero-block diagnostic run.
