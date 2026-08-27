@@ -2,8 +2,8 @@
 
 Date: 2026-08-27
 
-Status: source, bounded APO/Broker bridge, x64 build and static package
-validation complete; signing/deployment not yet run
+Status: source, bounded APO/Broker bridge, x64 build, static validation and
+lab signing complete; deployment not yet run
 
 ## Outcome
 
@@ -53,9 +53,36 @@ Package directory:
 | `ComponentizedAudioSample.inf` | 3709 | `8C9331104CCED1AF80B269733D0F5B149861A4374276956E864EE2B4FAFBB868` |
 | `ComponentizedAudioSampleExtension.inf` | 2645 | `9FF71A01AA2D45508C788CFBEDEA15DF5F3A0E57C778B0BE2AC36F3CC3453671` |
 
-These hashes identify the unsigned build. Signing necessarily changes CAT,
-SYS and DLL hashes, so the signed package must receive a second manifest before
-installation.
+These hashes identify the unsigned build.
+
+## Lab-signed package identity
+
+The approved signing-only step created a non-exportable local-machine code
+signing key with subject `CN=CapyIO Driver Lab f29c8a5`, SHA-1 thumbprint
+`7353E729B92ACD148BB0046FB254E976A4762FEF`, valid through 2027-08-27. Its
+public certificate is present in the exact host's Local Machine Root and
+Trusted Publishers stores. It is a lab-only self-signed identity, not a
+production or Microsoft-rooted certificate.
+
+The SYS and APO DLL were signed first, Inf2Cat then regenerated the catalog
+with zero errors and zero warnings, and the catalog was signed last. Final
+package hashes are:
+
+| File | Bytes | SHA-256 |
+|---|---:|---|
+| `capyioaudio.cat` | 11182 | `4574EA3CB5554F0FCD9B942FB5AD7BAC5FDCF0CB225CBD629520EBFD18A8D80C` |
+| `CapyIOAudio.sys` | 81688 | `E14E9FD0791698F2BD0C5C826277654A3D4507D47517538496CA1200C404EB7F` |
+| `CapyIORenderAPO.dll` | 604440 | `21A9FC6D6AA5C45FB87ADFA97522E0F00F0907BF5880D2CDA47E7A72E0D3C723` |
+| `ComponentizedApoSample.inf` | 2806 | `0C98954DD4532515F50D7645DC1BA172C2B317690DB0ADF7F1BEEB60618C2ECE` |
+| `ComponentizedAudioSample.inf` | 3709 | `8C9331104CCED1AF80B269733D0F5B149861A4374276956E864EE2B4FAFBB868` |
+| `ComponentizedAudioSampleExtension.inf` | 2645 | `9FF71A01AA2D45508C788CFBEDEA15DF5F3A0E57C778B0BE2AC36F3CC3453671` |
+
+SignTool Authenticode verification passes for the SYS, DLL and CAT, and the
+catalog-membership check passes for the SYS. Independent InfVerif `/u` and
+`/w` still return zero. Kernel-policy `/kp` verification reports the expected
+lab limitation that this self-signed certificate does not chain to a Microsoft
+root; installation therefore relies on the already-enabled Windows test-signing
+mode and is not evidence of production driver-signing eligibility.
 
 ## User-mode tests
 
@@ -67,9 +94,8 @@ binary probe; binary and supervisor tests also pass.
 
 ## Remaining boundary
 
-No certificate was created, no binary was signed, and no driver was installed
-or removed. The next action requires exact package approval. It will create a
-lab-only test certificate, sign only this package, record signed hashes, create
-a fresh restore point, install the three exact INFs, enumerate `CapyIO Speaker`,
-run the Android playback smoke, record assigned OEM INF names, and remove only
-those names if rollback is required.
+No driver was installed or removed. The next action requires approval for the
+exact signed package above. It will create a fresh restore point, install the
+three exact INFs, enumerate `CapyIO Speaker`, run the Android playback smoke,
+record assigned OEM INF names, and remove only those names if rollback is
+required.
