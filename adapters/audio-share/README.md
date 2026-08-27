@@ -36,9 +36,10 @@ The ignored real supervisor additionally requires an explicit endpoint and
 unused port; it starts Windows system-loopback capture briefly and always stops
 and reaps the process in the test.
 
-The next physical slice feeds a deterministic 48 kHz stereo S16 tone through
-`AudioShareTransportSender` to the already installed Android receiver. The
-later Broker replaces that tone source with the render APO shared-memory reader.
+The deterministic 48 kHz stereo S16 tone path has been physically submitted to
+the Android receiver and heard by the human operator. The Windows-only
+`capyio-virtual-speaker` Broker now replaces that tone source with the bounded
+render APO shared-memory reader and float32-to-S16 conversion.
 
 For that bounded physical lab, bind an explicit host IPv4 address and configure
 the same host and port in the pinned Android Audio Share app:
@@ -52,3 +53,14 @@ The command waits at most 60 seconds for TCP plus UDP association, sends a quiet
 and must be recorded separately from the deterministic transport test. Its
 final line reports bounded queue and UDP counters so a successful process exit
 is not mistaken for proof that PCM was actually submitted to the socket.
+
+After the approved driver package is installed, start the Broker before opening
+an application stream on `CapyIO Speaker`:
+
+```text
+cargo run -p capyio-audio-share-adapter --bin capyio-virtual-speaker -- 100.64.x.y:65530
+```
+
+The process owns one session-local `Local\\CapyIO.RenderRing.v1` mapping. A
+second Broker is rejected. Ring loss, invalid layout and transport shutdown are
+typed failures; ring-empty polling is bounded and happens only in user mode.

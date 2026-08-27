@@ -462,6 +462,7 @@ def validate_architecture_dependencies() -> None:
         path.read_text(encoding="utf-8").lower()
         for path in (ROOT / "drivers/windows-audio").rglob("*")
         if path.is_file()
+        and "x64" not in path.relative_to(ROOT / "drivers/windows-audio").parts
     )
     required_driver_rules = [
         "network",
@@ -527,9 +528,11 @@ def validate_windows_audio_provenance() -> None:
         "pinned_revision: 717778a20ba4dd2440fe609f69153a1f8a64f597",
         "upstream_path: audio/sysvad",
         "license: MS-PL",
-        "integration_mode: planned_driver_derivative",
-        "source_imported: false",
+        "integration_mode: driver_derivative",
+        "source_imported: true",
         "binary_imported: false",
+        "drivers/windows-audio/sysvad/APO/SwapAPO",
+        "drivers/windows-audio/sysvad/TabletAudioSample",
     ]
     missing = [entry for entry in required if entry not in provenance]
     if missing:
@@ -572,10 +575,10 @@ def validate_windows_audio_provenance() -> None:
         for path in (ROOT / "drivers/windows-audio").rglob("*")
         if path.is_file() and path.suffix.lower() in {".c", ".cpp", ".inx", ".vcxproj"}
     ]
-    if imported_driver_sources:
+    if not imported_driver_sources:
         fail(
-            "Windows driver source appeared before the SysVAD provenance record "
-            "was advanced from source_imported: false"
+            "SysVAD provenance declares imported source but no Windows driver "
+            "source files are present"
         )
 
 

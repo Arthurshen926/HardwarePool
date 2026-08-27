@@ -1,0 +1,114 @@
+[Version]
+Signature   = "$Windows NT$"
+Class       = MEDIA
+Provider    = %ProviderName%
+ClassGUID   = {4d36e96c-e325-11ce-bfc1-08002be10318}
+DriverVer   = 08/27/2026,0.1.0.0
+CatalogFile = capyioaudio.cat
+PnpLockDown = 1
+
+[SourceDisksNames]
+1 = %DiskName%
+
+[SourceDisksFiles]
+CapyIOAudio.sys = 1
+
+[SignatureAttributes]
+CapyIOAudio.sys = SignatureAttributes.DRM
+
+[SignatureAttributes.DRM]
+DRMLevel = 1300
+
+[Manufacturer]
+%MfgName% = CapyIO,NT$ARCH$.10.0...17763
+
+[CapyIO.NT$ARCH$.10.0...17763]
+%CapyIO.DeviceDesc% = CapyIO_Install,Root\CapyIO_VirtualSpeaker
+
+[DestinationDirs]
+CapyIO.CopyList = 13
+
+[CapyIO.CopyList]
+CapyIOAudio.sys
+
+[CapyIO_Install.NT]
+Include = ks.inf,wdmaudio.inf
+Needs = KS.Registration,WDMAUDIO.Registration,MsApoFxProxy.Registration
+CopyFiles = CapyIO.CopyList
+AddReg = CapyIO.AddReg
+
+[CapyIO.AddReg]
+HKR,,AssociatedFilters,,"wdmaud,swmidi,redbook"
+HKR,,Driver,,CapyIOAudio.sys
+HKR,Drivers,SubClasses,,"wave,midi,mixer"
+HKR,Drivers\wave\wdmaud.drv,Driver,,wdmaud.drv
+HKR,Drivers\midi\wdmaud.drv,Driver,,wdmaud.drv
+HKR,Drivers\mixer\wdmaud.drv,Driver,,wdmaud.drv
+HKR,Drivers\wave\wdmaud.drv,Description,,%CapyIO.DeviceDesc%
+HKR,Drivers\midi\wdmaud.drv,Description,,%CapyIO.DeviceDesc%
+HKR,Drivers\mixer\wdmaud.drv,Description,,%CapyIO.DeviceDesc%
+
+[CapyIO_Install.NT.Interfaces]
+AddInterface = %KSCATEGORY_AUDIO%,%KSNAME_WaveSpeaker%,CapyIO.I.WaveSpeaker
+AddInterface = %KSCATEGORY_RENDER%,%KSNAME_WaveSpeaker%,CapyIO.I.WaveSpeaker
+AddInterface = %KSCATEGORY_REALTIME%,%KSNAME_WaveSpeaker%,CapyIO.I.WaveSpeaker
+AddInterface = %KSCATEGORY_AUDIO%,%KSNAME_TopologySpeaker%,CapyIO.I.TopologySpeaker
+AddInterface = %KSCATEGORY_TOPOLOGY%,%KSNAME_TopologySpeaker%,CapyIO.I.TopologySpeaker
+
+[CapyIO.I.WaveSpeaker]
+AddReg = CapyIO.I.WaveSpeaker.AddReg
+
+[CapyIO.I.WaveSpeaker.AddReg]
+HKR,,CLSID,,%Proxy.CLSID%
+HKR,,FriendlyName,,%CapyIO.WaveSpeaker.Name%
+
+[CapyIO.I.TopologySpeaker]
+AddReg = CapyIO.I.TopologySpeaker.AddReg
+
+[CapyIO.I.TopologySpeaker.AddReg]
+HKR,,CLSID,,%Proxy.CLSID%
+HKR,,FriendlyName,,%CapyIO.TopologySpeaker.Name%
+HKR,EP\0,%PKEY_AudioEndpoint_Association%,,%KSNODETYPE_ANY%
+HKR,EP\0,%PKEY_AudioEndpoint_Supports_EventDriven_Mode%,0x00010001,1
+
+[CapyIO_Install.NT.Services]
+AddService = CapyIOAudio,0x00000002,CapyIO_Service
+
+[CapyIO_Service]
+DisplayName = %CapyIO.ServiceDesc%
+ServiceType = 1
+StartType = 3
+ErrorControl = 1
+ServiceBinary = %13%\CapyIOAudio.sys
+
+[CapyIO_Install.NT.HW]
+AddReg = CapyIO.Hardware
+
+[CapyIO.Hardware]
+HKR,,DeviceType,0x00010001,0x0000001D
+HKR,,Security,,"D:P(A;;GA;;;SY)(A;;GRGWGX;;;BA)(A;;GRGWGX;;;WD)(A;;GRGWGX;;;RC)"
+
+[CapyIO_Install.NT.Wdf]
+KmdfService = CapyIOAudio,CapyIO_Wdf
+
+[CapyIO_Wdf]
+KmdfLibraryVersion = $KMDFVERSION$
+
+[Strings]
+ProviderName = "CapyIO Project"
+MfgName = "CapyIO Project"
+DiskName = "CapyIO Virtual Audio Driver"
+CapyIO.DeviceDesc = "CapyIO Virtual Speaker"
+CapyIO.ServiceDesc = "CapyIO Virtual Speaker Driver"
+CapyIO.WaveSpeaker.Name = "CapyIO Speaker"
+CapyIO.TopologySpeaker.Name = "CapyIO Speaker Topology"
+KSNAME_WaveSpeaker = "WaveSpeaker"
+KSNAME_TopologySpeaker = "TopologySpeaker"
+Proxy.CLSID = "{17CCA71B-ECD7-11D0-B908-00A0C9223196}"
+KSCATEGORY_AUDIO = "{6994AD04-93EF-11D0-A3CC-00A0C9223196}"
+KSCATEGORY_RENDER = "{65E8773E-8F56-11D0-A3B9-00A0C9223196}"
+KSCATEGORY_REALTIME = "{EB115FFC-10C8-4964-831D-6DCB02E6F23F}"
+KSCATEGORY_TOPOLOGY = "{DDA54A40-1E4C-11D1-A050-405705C10000}"
+KSNODETYPE_ANY = "{00000000-0000-0000-0000-000000000000}"
+PKEY_AudioEndpoint_Association = "{1DA5D803-D492-4EDD-8C23-E0C0FFEE7F0E},2"
+PKEY_AudioEndpoint_Supports_EventDriven_Mode = "{1DA5D803-D492-4EDD-8C23-E0C0FFEE7F0E},7"

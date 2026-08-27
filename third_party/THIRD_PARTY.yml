@@ -54,11 +54,14 @@ planned_integrations:
       version: 0.61.2
       license: MIT OR Apache-2.0
       enabled_features:
+        - Win32_Foundation
         - Win32_NetworkManagement_IpHelper
         - Win32_Networking_WinSock
+        - Win32_Security
+        - Win32_System_Memory
       purpose: >-
-        Query process-owned established TCP rows without parsing human logs or
-        retaining peer addresses.
+        Query process-owned established TCP rows and own the bounded local
+        render-ring mapping without parsing human logs or hand-written FFI.
       alternatives_rejected:
         - localized PowerShell or netstat output
         - hand-written Windows FFI
@@ -83,11 +86,23 @@ planned_integrations:
     upstream_path: audio/sysvad
     license: MS-PL
     license_source: https://github.com/microsoft/Windows-driver-samples/blob/717778a20ba4dd2440fe609f69153a1f8a64f597/LICENSE
-    integration_mode: planned_driver_derivative
-    source_imported: false
+    integration_mode: driver_derivative
+    source_imported: true
     binary_imported: false
-    imported_paths: []
-    local_modifications: []
+    imported_paths:
+      - drivers/windows-audio/sysvad/sysvad.sln
+      - drivers/windows-audio/sysvad/root-driver-sources
+      - drivers/windows-audio/sysvad/EndpointsCommon
+      - drivers/windows-audio/sysvad/TabletAudioSample
+      - drivers/windows-audio/sysvad/APO/Inc
+      - drivers/windows-audio/sysvad/APO/SwapAPO
+      - drivers/windows-audio/sysvad/Package
+    local_modifications:
+      - retain only the speaker render endpoint in the runtime endpoint arrays
+      - remove keyword detector, capture, HDMI, SPDIF, headphone, delay, KWS and AEC package dependencies
+      - rename the device, service, binary and APO for CapyIO ownership
+      - replace sample hardware identifiers and APO identifiers with CapyIO-owned values
+      - add a bounded non-blocking render-APO staging bridge
     build_only_submodules:
       - id: microsoft-wil
         upstream_repository: https://github.com/microsoft/wil
@@ -106,9 +121,10 @@ planned_integrations:
       - third-party virtual cable dependency
       - continue mirroring an existing physical or RDP endpoint
     distribution_note: >-
-      No Microsoft source or binary is imported or distributed in this slice.
-      Before any source import, preserve notices, add the MS-PL text and record
-      exact imported paths and local modifications.
+      The source subset is redistributed under MS-PL with the complete license
+      in LICENSES/MS-PL.txt and attribution in THIRD_PARTY_NOTICES.md. No
+      Microsoft-built binary is imported. CapyIO-built driver binaries are not
+      release artifacts until signing and distribution review is complete.
   - id: virtualdrivers-virtual-audio-driver
     upstream_repository: https://github.com/VirtualDrivers/Virtual-Audio-Driver
     pinned_revision: bb34fba15faf569a6ae9bdea360bc1cf4821354e

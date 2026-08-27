@@ -54,10 +54,15 @@ network, emit ordinary logs or execute protocol/codec/reconnect policy. When
 the Broker is absent or the ring is full, the callback drops the block and
 increments a bounded diagnostic counter.
 
-The exact shared-memory handle lifecycle, format epoch and wake-up mechanism
-remain a lab spike rather than a frozen ABI. A small versioned driver IPC is
-the fallback only if isolated-target evidence shows that the APO boundary
-cannot meet lifecycle, latency, packaging or Windows certification needs.
+The Gate 7B lab ABI is implemented as Broker-owned
+`Local\\CapyIO.RenderRing.v1`: 32 fixed slots, a 16 KiB per-block maximum and a
+generation-tagged 48 kHz stereo float32 epoch. The Broker polls outside the
+real-time path, converts to bounded S16LE and feeds the Adapter-managed Android
+transport. Exact layout and memory ordering are recorded in
+`drivers/windows-audio/IPC_CONTRACT.md`. This remains a lab ABI rather than a
+production-frozen compatibility promise. A small versioned driver IPC is the
+fallback only if deployment evidence shows that the APO boundary cannot meet
+lifecycle, latency, packaging or Windows certification needs.
 
 The unchanged pinned SysVAD build remains useful for the B1 toolchain and
 enumeration baseline. It is not accepted as real-PCM evidence. Third-party

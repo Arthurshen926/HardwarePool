@@ -1,6 +1,6 @@
 # CAPY-AUDIO-001B — Dedicated Windows virtual speaker
 
-Status: active; B2T Android submission proven, deployment recovery preflight pending
+Status: active; B2T audible Android path and B3 compile/static validation proven
 
 Owner: Codex
 
@@ -55,7 +55,8 @@ without playing through the physical or Remote Desktop output.
 ## Current evidence and blocker
 
 - official upstream pinned at
-  `717778a20ba4dd2440fe609f69153a1f8a64f597`, MS-PL, no source imported;
+  `717778a20ba4dd2440fe609f69153a1f8a64f597`, MS-PL; the reviewed driver,
+  speaker endpoint, SwapAPO and package subset is imported with notices;
 - fixed archive SHA-256 is
   `C05B09BB89C929B4E736B54209CD2B4B9B2A382D4D4820F5F9755C0389F7D38A`;
 - fixed-revision review rejects SysVAD loopback as real-PCM evidence, rejects
@@ -72,24 +73,30 @@ without playing through the physical or Remote Desktop output.
   matching Microsoft's published hash list;
 - the guest installation reached OOBE but did not complete a stable first boot
   or baseline checkpoint;
-- local WDK MSBuild integration and InfVerif are installed. The pinned SysVAD
-  `EndpointsCommon` target compiled and the pinned WIL submodule plus existing
-  v142 ATL produced an x64 Release `SwapAPO.dll`. The full solution still needs
-  current-toolset ATL/Spectre, signing-disabled build configuration and current
-  INF-rule reconciliation;
+- local WDK MSBuild integration, current MSVC Spectre/ATL components and x64
+  InfVerif are installed. The minimized x64 Release package builds with signing
+  disabled, passes WDK Signability with zero findings and passes independent
+  InfVerif `/u` and `/w` validation;
 - the refreshed `arthu` login token contains the `Hyper-V Administrators` SID
   and can enumerate/manage the exact lab VM.
 - `CAPY-AUDIO-001B2T` is complete at the transport/submission level. The
   CapyIO-authored bounded sender negotiated with the pinned Android v0.3.4 app
   over Tailscale and sent exactly 1,920,000 PCM bytes in 2,000 UDP datagrams
   with no queue-full, missing-receiver or send-error count. Android reported a
-  started stereo 48 kHz `AudioTrack`; human-confirmed audibility is pending.
+  started stereo 48 kHz `AudioTrack`; the human operator clearly heard the
+  phone output.
 
-No driver package, signing command, boot-policy change or Verifier action has
-run. Compile-only WDK/MSBuild and InfVerif tools did run locally. ADR 0029 now
-permits the identified host as a controlled Gate 7B target, but elevated WinRE,
-BitLocker, Secure Boot and rollback evidence could not be read from the current
-non-elevated session. Deployment remains blocked until that preflight and exact
-package approval are complete. The Broker-to-Audio-Share PCM ingest contract is
-now resolved by ADR 0030 and the B2T physical test; the remaining media-path gap
-is the real APO staging producer.
+- `CAPY-AUDIO-001B3` now has a compile-validated implementation: the SFX APO
+  copies real render float32 blocks into a 32-slot/16 KiB fixed shared-memory
+  ring without allocation, waiting, I/O, networking or logging in
+  `APOProcess`. The Windows Broker owns and validates that mapping, converts
+  blocks to S16LE, and feeds the proven bounded Android transport. Windows unit
+  tests exercise mapping exclusivity, a committed block, conversion and read
+  release.
+
+No driver install, signing command, boot-policy change or Verifier action has
+run. ADR 0029 preflight now confirms WinRE enabled, system volume fully
+decrypted with BitLocker protection off, Secure Boot off, test-signing already
+enabled and restore points present on the exact host. The next boundary is an
+exact package-specific signing/install approval followed by endpoint
+enumeration, real application playback to Android and clean rollback evidence.

@@ -1,14 +1,15 @@
 # Windows Virtual Audio Driver Slot
 
-This directory is the future home of the Windows system-projection component that exposes:
+This directory contains the Gate 7B Windows system-projection spike that exposes:
 
 - `CapyIO Speaker` as a Windows render endpoint;
-- `CapyIO Microphone` as a Windows capture endpoint.
+- a later `CapyIO Microphone` capture endpoint (not implemented in this gate).
 
-No kernel driver source is included in the bootstrap archive. The first
-implementation begins with an unmodified Microsoft SysVAD build and explicit
-licensing review. Deployment defaults to an isolated Windows target; ADR 0029
-defines the single controlled local-lab exception.
+The speaker implementation is a minimized MS-PL SysVAD derivative with
+CapyIO-owned device, service, APO and extension identifiers. Its source and
+local modifications are recorded in `third_party/THIRD_PARTY.yml`. Deployment
+defaults to an isolated Windows target; ADR 0029 defines the single controlled
+local-lab exception.
 
 ## Required process boundary
 

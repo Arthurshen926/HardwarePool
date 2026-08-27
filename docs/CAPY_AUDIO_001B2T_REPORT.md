@@ -2,8 +2,8 @@
 
 Date: 2026-08-27
 
-Status: Broker-owned PCM ingest and physical Android submission proven;
-human-confirmed audibility pending
+Status: Broker-owned PCM ingest, physical Android submission and
+human-confirmed audibility proven
 
 ## Outcome
 
@@ -68,17 +68,17 @@ for ten seconds. Android `dumpsys audio` independently showed an active
 `AudioTrack` owned by the pinned package, `state:started`, stereo channel mask,
 48 kHz sample rate, `USAGE_MEDIA`/`CONTENT_TYPE_MUSIC`, and an unmuted music
 stream routed to the speaker. These facts prove network delivery through
-Android audio submission; audible output still requires the user's observation
-and is not inferred from counters.
+Android audio submission. The human operator subsequently confirmed that the
+tone was clearly audible from the phone; that observation is recorded
+separately from the machine counters.
 
 ## Remaining Gate 7B work
 
-1. Record user-confirmed audibility for this simulated-producer run.
-2. Complete the elevated ADR 0029 recovery/rollback audit and exact-package
-   approval before any local driver deployment.
-3. Import only the reviewed minimal Microsoft endpoint/APO paths with MS-PL
-   notices and CapyIO identifiers.
-4. Implement and stress the preallocated APO-to-Broker staging ring, then feed
-   its real PCM into the transport proven here.
-5. Prove independent `CapyIO Speaker` selection, silence on ordinary output,
+1. Obtain exact-package approval before local signing and deployment; the
+   elevated ADR 0029 recovery preflight has passed.
+2. Install and enumerate the imported minimized SysVAD-derived endpoint/APO
+   package with CapyIO identifiers.
+3. Feed real application PCM through the implemented preallocated
+   APO-to-Broker staging ring into the transport proven here.
+4. Prove independent `CapyIO Speaker` selection, silence on ordinary output,
    Broker/receiver loss, audio-service/reboot behavior and clean uninstall.

@@ -39,6 +39,8 @@ Thumbs.db
 # Driver and test output
 artifacts/
 test-results/
+drivers/windows-audio/sysvad/**/x64/
+drivers/windows-audio/sysvad/.vs/
 *.dmp
 *.etl
 *.evtx
