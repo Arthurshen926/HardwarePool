@@ -242,6 +242,7 @@ public:
     ,   m_AudioProcessingMode(AUDIO_SIGNALPROCESSINGMODE_DEFAULT)
     ,   m_fEnableSwapSFX(FALSE)
     ,   m_fEnableDelaySFX(FALSE)
+    ,   m_endpointGainMillion(capyio::render_ring::kUnityGainMillion)
     {
     }
 
@@ -331,6 +332,7 @@ public:
 
 private:
     capyio::render_ring::Producer m_renderRing;
+    volatile LONG m_endpointGainMillion;
     wil::com_ptr_nothrow<IPropertyStore> m_userStore;
     wil::com_ptr_nothrow<IAudioProcessingObjectLoggingService> m_apoLoggingService;
     BOOL m_bRegisteredEndpointNotificationCallback = FALSE;

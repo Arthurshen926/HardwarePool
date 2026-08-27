@@ -14,7 +14,7 @@ a direct driver ring remains a fallback.
 
 - Every layout has a magic, version, total size and fixed bounds.
 - All counts, offsets and arithmetic are validated before copying.
-- The APO callback performs only bounded copy, atomics and drop accounting.
+- The APO callback performs only bounded copy/scale, atomics and drop accounting.
 - Broker or phone absence degrades to drop/silence and never blocks AudioDG.
 - A generation prevents stale blocks entering a new Broker lifetime.
 
@@ -29,6 +29,14 @@ detached.
 The mapping is 524,928 bytes: one 128-byte, 64-byte-aligned header followed by
 32 fixed 16,400-byte slots. Each slot contains a 16-byte prefix and at most
 16,384 payload bytes. All offsets and integers are little-endian.
+
+The APO subscribes to the virtual endpoint's Windows master-volume and mute
+notifications outside `APOProcess`. It stores the current normalized gain as
+one fixed-point atomic value. `APOProcess` snapshots that value and applies it
+only while copying the block into the ring: mute writes zeroes, unity uses the
+bounded copy path, and intermediate volume performs one bounded per-sample
+multiply. The Windows audio-engine buffer is not modified, and notification,
+COM and endpoint queries never execute on the real-time callback.
 
 | Header offset | Type | Field |
 |---:|---|---|

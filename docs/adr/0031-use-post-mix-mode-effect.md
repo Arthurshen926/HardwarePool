@@ -46,10 +46,19 @@ Windows application streams
 ```
 
 All callback restrictions and failure behavior from ADR 0028 remain unchanged.
+Because this side-channel copy occurs before Windows applies its software
+endpoint attenuation, the APO subscribes to endpoint master-volume/mute
+notifications and applies the resulting bounded atomic gain only to the copy
+written into the render ring. Endpoint lookup and COM calls remain outside the
+real-time callback. Legacy initialization without an endpoint collection
+retains unity gain and an empty notification registration.
 
 ## Consequences
 
 - One post-mix producer preserves the SPSC ring invariant.
+- The virtual endpoint's Windows master volume and mute control the PCM sent to
+  the remote speaker; CapyIO route gain and the phone's physical volume remain
+  separate controls.
 - The extension follows the ordinary render placement demonstrated by the
   current Microsoft SysVAD componentized sample.
 - A newly signed package and counter-backed playback run must prove MFX

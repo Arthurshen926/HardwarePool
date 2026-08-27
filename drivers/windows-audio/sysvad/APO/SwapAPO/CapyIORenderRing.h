@@ -14,6 +14,7 @@ constexpr std::uint16_t kHeaderSize = 128;
 constexpr std::uint16_t kSampleFormatFloat32Le = 1;
 constexpr std::uint32_t kMaxSlots = 64;
 constexpr std::uint32_t kMaxPayloadBytes = 16 * 1024;
+constexpr LONG kUnityGainMillion = 1'000'000;
 constexpr wchar_t kMappingName[] = L"Global\\CapyIO.RenderRing.v1";
 
 struct alignas(64) Header
@@ -65,7 +66,11 @@ public:
 
     bool Attach(std::uint32_t sample_rate, std::uint32_t channels) noexcept;
     void Detach() noexcept;
-    void TryWrite(const float* samples, std::uint32_t frame_count, std::uint32_t channels) noexcept;
+    void TryWrite(
+        const float* samples,
+        std::uint32_t frame_count,
+        std::uint32_t channels,
+        LONG gain_million) noexcept;
 
 private:
     bool Validate(std::uint32_t sample_rate, std::uint32_t channels) const noexcept;

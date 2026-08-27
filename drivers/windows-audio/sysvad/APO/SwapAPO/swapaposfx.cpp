@@ -14,6 +14,7 @@
 
 #include <audioenginebaseapo.h>
 #include <baseaudioprocessingobject.h>
+#include <endpointvolume.h>
 #include <resource.h>
 
 #include <float.h>
@@ -125,7 +126,8 @@ STDMETHODIMP_(void) CSwapAPOSFX::APOProcess(
             m_renderRing.TryWrite(
                 pf32InputFrames,
                 ppInputConnections[0]->u32ValidFrameCount,
-                GetSamplesPerFrame());
+                GetSamplesPerFrame(),
+                InterlockedCompareExchange(&m_endpointGainMillion, 0, 0));
 
             // swap the input buffer in-place
             if (
@@ -307,16 +309,21 @@ STDMETHODIMP CSwapAPOSFX::UnlockForProcess()
 HRESULT CSwapAPOSFX::Initialize(UINT32 cbDataSize, BYTE* pbyData)
 {
     GUID processingMode = GUID_NULL;
+    IMMDeviceCollection* deviceCollection = nullptr;
 
     RETURN_HR_IF(E_INVALIDARG, pbyData == nullptr || cbDataSize == 0);
 
     if (cbDataSize == sizeof(APOInitSystemEffects3))
     {
-        processingMode = reinterpret_cast<APOInitSystemEffects3*>(pbyData)->AudioProcessingMode;
+        auto* init = reinterpret_cast<APOInitSystemEffects3*>(pbyData);
+        processingMode = init->AudioProcessingMode;
+        deviceCollection = init->pDeviceCollection;
     }
     else if (cbDataSize == sizeof(APOInitSystemEffects2))
     {
-        processingMode = reinterpret_cast<APOInitSystemEffects2*>(pbyData)->AudioProcessingMode;
+        auto* init = reinterpret_cast<APOInitSystemEffects2*>(pbyData);
+        processingMode = init->AudioProcessingMode;
+        deviceCollection = init->pDeviceCollection;
     }
     else if (cbDataSize == sizeof(APOInitSystemEffects))
     {
@@ -340,6 +347,37 @@ HRESULT CSwapAPOSFX::Initialize(UINT32 cbDataSize, BYTE* pbyData)
                  processingMode != AUDIO_SIGNALPROCESSINGMODE_MOVIE          &&
                  processingMode != AUDIO_SIGNALPROCESSINGMODE_NOTIFICATION);
     m_AudioProcessingMode = processingMode;
+
+    // Windows supplies the endpoint as the final item for SystemEffects2/3.
+    // Cache it outside the real-time path for endpoint-volume notifications.
+    // Failure leaves the bridge at unity gain instead of breaking playback.
+    if (deviceCollection != nullptr)
+    {
+        UINT32 deviceCount = 0;
+        if (SUCCEEDED(deviceCollection->GetCount(&deviceCount)) && deviceCount > 0 &&
+            SUCCEEDED(deviceCollection->Item(deviceCount - 1, &m_audioEndpoint)))
+        {
+            wil::com_ptr_nothrow<IAudioEndpointVolume> endpointVolume;
+            if (SUCCEEDED(m_audioEndpoint->Activate(
+                    __uuidof(IAudioEndpointVolume),
+                    CLSCTX_ALL,
+                    nullptr,
+                    endpointVolume.put_void())))
+            {
+                BOOL muted = FALSE;
+                float scalar = 1.0f;
+                if (SUCCEEDED(endpointVolume->GetMute(&muted)) &&
+                    SUCCEEDED(endpointVolume->GetMasterVolumeLevelScalar(&scalar)) &&
+                    scalar >= 0.0f && scalar <= 1.0f)
+                {
+                    const LONG gain = muted
+                        ? 0
+                        : static_cast<LONG>(scalar * capyio::render_ring::kUnityGainMillion + 0.5f);
+                    InterlockedExchange(&m_endpointGainMillion, gain);
+                }
+            }
+        }
+    }
 
     // CapyIO uses this post-mix effect only as a bounded render-ring bridge.
     // It must remain active, while the inherited SysVAD channel-swap DSP stays off.
@@ -615,46 +653,50 @@ HRESULT CSwapAPOSFX::GetApoNotificationRegistrationInfo(_Out_writes_(*count) APO
 {
     RETURN_HR_IF(E_POINTER, apoNotifications == nullptr || count == nullptr);
 
-    // The CapyIO bridge has fixed effect state and does not consume endpoint
-    // property changes. Returning an empty descriptor list also avoids keeping
-    // the SysVAD sample's notification path, whose endpoint/property-store
-    // members are intentionally not initialized by the minimal bridge.
     *apoNotifications = nullptr;
     *count = 0;
+
+    // Legacy initialization has no endpoint collection. Keep a valid empty
+    // registration in that case; the render bridge remains at unity gain.
+    if (m_audioEndpoint == nullptr)
+    {
+        return S_OK;
+    }
+
+    wil::unique_cotaskmem_ptr<APO_NOTIFICATION_DESCRIPTOR[]> descriptors(
+        static_cast<APO_NOTIFICATION_DESCRIPTOR*>(
+            CoTaskMemAlloc(sizeof(APO_NOTIFICATION_DESCRIPTOR))));
+    RETURN_IF_NULL_ALLOC(descriptors);
+    RtlZeroMemory(descriptors.get(), sizeof(APO_NOTIFICATION_DESCRIPTOR));
+    descriptors[0].type = APO_NOTIFICATION_TYPE_ENDPOINT_VOLUME;
+    RETURN_IF_FAILED(m_audioEndpoint.query_to(&descriptors[0].audioEndpointVolume.device));
+
+    *apoNotifications = descriptors.release();
+    *count = 1;
     return S_OK;
 }
 
 void CSwapAPOSFX::HandleNotification(APO_NOTIFICATION *apoNotification)
 {
-    if (apoNotification->type == APO_NOTIFICATION_TYPE_ENDPOINT_PROPERTY_CHANGE)
+    if (apoNotification == nullptr ||
+        apoNotification->type != APO_NOTIFICATION_TYPE_ENDPOINT_VOLUME ||
+        apoNotification->audioEndpointVolumeChange.volume == nullptr)
     {
-        // If either the master disable or our APO's enable properties changed...
-        if (PK_EQUAL(apoNotification->audioEndpointPropertyChange.propertyKey, PKEY_Endpoint_Enable_Channel_Swap_SFX) ||
-            PK_EQUAL(apoNotification->audioEndpointPropertyChange.propertyKey, PKEY_AudioEndpoint_Disable_SysFx))
-        {
-            struct KeyControl
-            {
-                PROPERTYKEY key;
-                LONG* value;
-            };
-
-            KeyControl controls[] = {
-                {PKEY_Endpoint_Enable_Channel_Swap_SFX, &m_fEnableSwapSFX},
-            };
-
-            m_apoLoggingService->ApoLog(APO_LOG_LEVEL_INFO, L"CSwapAPOSFX::HandleNotification - pkey: " GUID_FORMAT_STRING L" %d", GUID_FORMAT_ARGS(apoNotification->audioEndpointPropertyChange.propertyKey.fmtid), apoNotification->audioEndpointPropertyChange.propertyKey.pid);
-
-            for (int i = 0; i < ARRAYSIZE(controls); i++)
-            {
-                LONG fNewValue = true;
-
-                // Get the state of whether channel swap MFX is enabled or not
-                fNewValue = GetCurrentEffectsSetting(m_userStore.get(), controls[i].key, m_AudioProcessingMode);
-
-                SetAudioSystemEffectState(m_effectInfos[i].id, fNewValue ? AUDIO_SYSTEMEFFECT_STATE_ON : AUDIO_SYSTEMEFFECT_STATE_OFF);
-            }
-        }
+        return;
     }
+
+    const AUDIO_VOLUME_NOTIFICATION_DATA* volume =
+        apoNotification->audioEndpointVolumeChange.volume;
+    const float scalar = volume->fMasterVolume;
+    if (!(scalar >= 0.0f && scalar <= 1.0f))
+    {
+        return;
+    }
+
+    const LONG gain = volume->bMuted
+        ? 0
+        : static_cast<LONG>(scalar * capyio::render_ring::kUnityGainMillion + 0.5f);
+    InterlockedExchange(&m_endpointGainMillion, gain);
 }
 
 //-------------------------------------------------------------------------

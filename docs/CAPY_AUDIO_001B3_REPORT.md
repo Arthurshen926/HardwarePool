@@ -179,3 +179,35 @@ restarted the receiver as PID 5336 without restarting Broker PID 22916, and then
 advanced the new Android 48 kHz stereo track to `0x36630` server frames from a
 second Windows default-device WAV. This proves recovery across a changed Android
 process and UDP source port.
+
+## Endpoint-volume follow-up
+
+Physical listening then exposed that changing the `CapyIO Speaker` Windows
+master volume did not change the phone playback level. The post-mix MFX was
+copying its input into the side-channel ring before the software endpoint
+attenuation owned by Windows. The source now caches the endpoint during
+non-real-time initialization, subscribes only to endpoint-volume notifications,
+and stores mute/master volume as one bounded atomic fixed-point gain. The
+real-time callback snapshots that value and applies it during the existing ring
+copy without COM, allocation, locks, logging, file or network work. This source
+and build change still requires a newly approved exact-package deployment and
+physical checks at 100%, an intermediate setting, 0%/mute and restored 100%
+before endpoint-volume behavior is claimed as proven.
+
+The x64 Release APO rebuild passed MSVC `/W4 /WX` and Windows Driver API
+validation with zero warnings and zero errors. A full unsigned package rebuild
+also completed Inf2Cat signability with no errors or warnings. The WDK embedded
+InfVerif task retained the already-recorded three `x86\\InfVerif.dll` loader
+errors; this is a local WDK integration limitation, not a clean InfVerif result.
+The exact unsigned pre-signing archive is retained outside version control as
+`.agent-cache/capyio-volume-fix-unsigned-20260827.zip` (297,934 bytes, SHA-256
+`E571C28306EFE86993B71DB407B2D8A8E2F616E331274F8A9037CE0AA7655FDC`).
+
+| Unsigned file | Bytes | SHA-256 |
+|---|---:|---|
+| `capyioaudio.cat` | 9673 | `947436FCA715381926EAAAA913B0FEFE8FC7430CA934552D7FAF24F27219F95C` |
+| `CapyIOAudio.sys` | 79872 | `F46BAD4870E263E17F11D5AD2E2BF4860D99624EADA744D3435DE74B8C7ADEE2` |
+| `CapyIORenderAPO.dll` | 601600 | `26B95DCDC60D1D03FAB6A10511AF37AA00B6D2452F9F384EA9B3F363138656FD` |
+| `ComponentizedApoSample.inf` | 2806 | `EF4FA4003B47CC02090BD6ECB49287C8471BA175EE08EDE3AD127F80F830988F` |
+| `ComponentizedAudioSample.inf` | 3709 | `7968E23239E40AD834E0FD1C8C39FBF4E0C43D0F149C4DD3D35A99BC7E040363` |
+| `ComponentizedAudioSampleExtension.inf` | 3296 | `C21F5E090E48008D9DAE673EA44EF6AE62DCFB7CD52A4DFBBCE1511E05F776A1` |

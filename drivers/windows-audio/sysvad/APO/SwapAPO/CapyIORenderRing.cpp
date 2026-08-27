@@ -91,7 +91,8 @@ void Producer::CountDrop() noexcept
 void Producer::TryWrite(
     const float* samples,
     std::uint32_t frame_count,
-    std::uint32_t channels) noexcept
+    std::uint32_t channels,
+    LONG gain_million) noexcept
 {
     if (header_ == nullptr || samples == nullptr || channels != header_->channels || frame_count == 0)
     {
@@ -121,7 +122,25 @@ void Producer::TryWrite(
     slot->generation = header_->generation;
     slot->byte_count = static_cast<std::uint32_t>(byte_count64);
     slot->frame_count = frame_count;
-    CopyMemory(slot_base + sizeof(SlotHeader), samples, static_cast<SIZE_T>(byte_count64));
+    auto* destination = reinterpret_cast<float*>(slot_base + sizeof(SlotHeader));
+    const std::uint32_t sample_count = frame_count * channels;
+    if (gain_million <= 0)
+    {
+        ZeroMemory(destination, static_cast<SIZE_T>(byte_count64));
+    }
+    else if (gain_million >= kUnityGainMillion)
+    {
+        CopyMemory(destination, samples, static_cast<SIZE_T>(byte_count64));
+    }
+    else
+    {
+        const float gain = static_cast<float>(gain_million) /
+                           static_cast<float>(kUnityGainMillion);
+        for (std::uint32_t index = 0; index < sample_count; ++index)
+        {
+            destination[index] = samples[index] * gain;
+        }
+    }
 
     MemoryBarrier();
     InterlockedExchange64(&header_->write_sequence, write + 1);
