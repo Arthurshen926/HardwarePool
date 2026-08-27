@@ -72,8 +72,8 @@ KSDATAFORMAT_WAVEFORMATEXTENSIBLE SpeakerAudioEngineSupportedDeviceFormats[] =
             {
                 WAVE_FORMAT_EXTENSIBLE,
                 2,
-                44100,
-                176400,
+                48000,
+                192000,
                 4,
                 16,
                 sizeof(WAVEFORMATEXTENSIBLE) - sizeof(WAVEFORMATEX)
@@ -122,8 +122,8 @@ KSDATAFORMAT_WAVEFORMATEXTENSIBLE SpeakerAudioEngineSupportedDeviceFormats[] =
             {
                 WAVE_FORMAT_EXTENSIBLE,
                 2,
-                48000,
-                192000,
+                44100,
+                176400,
                 4,
                 16,
                 sizeof(WAVEFORMATEXTENSIBLE) - sizeof(WAVEFORMATEX)

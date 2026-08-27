@@ -2,8 +2,8 @@
 
 Date: 2026-08-27
 
-Status: first lab package installed and enumerated; cross-session correction
-implemented and awaiting package-specific signing/update approval
+Status: cross-session package installed and enumerated; first real playback
+exposed and corrected a 44.1/48 kHz default-format mismatch
 
 ## Outcome
 
@@ -105,5 +105,21 @@ Broker owns a per-user session. The original `Local\\` mapping therefore could
 not support the promised end-to-end path. The source now uses a protected
 `Global\\` mapping, explicitly grants AudioDG's Local Service identity access,
 and exposes bounded-duration counters for objective lab evidence. That corrected
-package must be signed and installed under new exact approvals before the real
-application-to-Android playback result can be claimed.
+package was signed as commit `4b2407a`, installed as `oem75.inf`, `oem76.inf`
+and `oem77.inf`, and selected by the base and APO devices. Restore point 375
+was created before the update; the MEDIA device, APO component and render
+endpoint remained status OK.
+
+The Windows control-panel test then showed active endpoint levels and Android
+held an established TCP session with a started 48 kHz stereo `AudioTrack`, but
+the bounded Broker evidence correctly reported `ring_produced=0`. Elevated
+module inspection proved `CapyIORenderAPO.dll` was loaded by Session 0
+`audiodg.exe` under Local Service. Source inspection then identified the actual
+failure: the endpoint's first/default engine format was 44.1 kHz while the
+bounded ring deliberately attaches only at the 48 kHz speaker baseline.
+
+The format table now makes 48 kHz stereo the default and retains 44.1 kHz as a
+non-default compatibility entry. The x64 Release package rebuilt with signing
+off, passed Signability with zero findings and passed independent InfVerif `/u`
+and `/w`. A newly signed update and repeated physical test are still required;
+no successful end-to-end virtual-speaker claim is made from the zero-block run.
