@@ -1,7 +1,7 @@
 # CAPY-AUDIO-001B — Dedicated Windows virtual speaker
 
-Status: active; B2T and B3 virtual-speaker-to-Android playback proven; live
-endpoint-volume attenuation/mute objectively proven
+Status: active; B2T and B3 virtual-speaker-to-Android playback and live
+endpoint-volume attenuation/mute physically proven
 
 Owner: Codex
 
@@ -112,6 +112,6 @@ installed as `oem99.inf` through `oem101.inf`; objective measurement proved its
 live notification defect. The direct EndpointVolume callback update is now
 installed as `oem102.inf` through `oem104.inf`. One uninterrupted directed
 stream measured the expected 100%, 25%, mute and restored-100% amplitudes while
-Android remained connected. Final human listening confirmation remains,
-followed by B4 lifecycle integration and B5 recovery, upgrade/uninstall and
-stability checks.
+Android remained connected, and the human operator confirmed the corresponding
+phone playback changes. The remaining work is B4 lifecycle integration and B5
+recovery, upgrade/uninstall and stability checks.

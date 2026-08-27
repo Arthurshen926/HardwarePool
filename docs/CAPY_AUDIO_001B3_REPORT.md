@@ -2,9 +2,8 @@
 
 Date: 2026-08-27
 
-Status: endpoint, package, cross-session mapping and virtual-speaker-to-phone
-playback proven; live endpoint-volume attenuation/mute objectively proven,
-pending final human listening confirmation
+Status: endpoint, package, cross-session mapping, virtual-speaker-to-phone
+playback and live endpoint-volume attenuation/mute physically proven
 
 ## Outcome
 
@@ -293,5 +292,6 @@ without restarting AudioDG. Shared-ring RMS changed from 0.12946569 at 100% to
 0.03236234 at 25%, then to exactly 0 while muted, and returned to 0.12944853
 after restoring 100%. The Android receiver TCP session remained established
 throughout. This objectively proves live endpoint attenuation, mute and restore
-on the PCM forwarded to Android; final human listening confirmation is retained
-as the remaining physical check.
+on the PCM forwarded to Android. The human operator then confirmed that Windows
+system volume control changes the phone playback level correctly, completing
+the physical endpoint-volume check.
