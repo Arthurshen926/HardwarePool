@@ -7,7 +7,13 @@ use std::{
 use capyio_audio_share_adapter::{
     AudioShareSupervisor, ReceiverTcpPresence, SupervisorLimits, SupervisorStatus,
 };
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
+
+#[cfg(windows)]
+mod control;
+
+#[cfg(windows)]
+pub use control::{BrokerServiceClient, control_server_loop, wake_control_server};
 
 pub const SERVICE_NAME: &str = "CapyIOBroker";
 pub const DEFAULT_POLL_INTERVAL: Duration = Duration::from_millis(250);
@@ -136,7 +142,7 @@ impl std::fmt::Display for ConfigError {
 
 impl std::error::Error for ConfigError {}
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum BrokerServiceState {
     Stopped,
@@ -145,14 +151,14 @@ pub enum BrokerServiceState {
     Failed,
 }
 
-#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct BrokerServiceSnapshot {
     pub schema_version: u8,
     pub state: BrokerServiceState,
     pub generation: u64,
     pub receiver_present: bool,
-    pub problem_code: Option<&'static str>,
+    pub problem_code: Option<String>,
 }
 
 pub trait BrokerProcess {
@@ -234,6 +240,19 @@ impl<P: BrokerProcess> BrokerServiceRuntime<P> {
         }
     }
 
+    pub fn ensure_started(&mut self) -> Result<BrokerServiceSnapshot, String> {
+        match self.state {
+            BrokerServiceState::Stopped => self.start(),
+            BrokerServiceState::Failed => {
+                self.stop()?;
+                self.start()
+            }
+            BrokerServiceState::WaitingForReceiver | BrokerServiceState::Active => {
+                Ok(self.snapshot())
+            }
+        }
+    }
+
     pub fn poll(&mut self) -> BrokerServiceSnapshot {
         if !matches!(
             self.state,
@@ -272,13 +291,21 @@ impl<P: BrokerProcess> BrokerServiceRuntime<P> {
         result.map(|()| self.snapshot())
     }
 
+    pub fn ensure_stopped(&mut self) -> Result<BrokerServiceSnapshot, String> {
+        if self.state == BrokerServiceState::Stopped {
+            Ok(self.snapshot())
+        } else {
+            self.stop()
+        }
+    }
+
     pub fn snapshot(&self) -> BrokerServiceSnapshot {
         BrokerServiceSnapshot {
             schema_version: 1,
             state: self.state,
             generation: self.generation,
             receiver_present: self.state == BrokerServiceState::Active,
-            problem_code: self.problem_code,
+            problem_code: self.problem_code.map(str::to_owned),
         }
     }
 
@@ -424,7 +451,7 @@ mod tests {
         let snapshot = runtime.poll();
         assert_eq!(snapshot.state, BrokerServiceState::Failed);
         assert_eq!(
-            snapshot.problem_code,
+            snapshot.problem_code.as_deref(),
             Some("CAPY.WINDOWS_SERVICE.BROKER_EXITED")
         );
         assert_eq!(runtime.process.stops, 1);

@@ -364,6 +364,7 @@ dependencies = [
  "capyio-runtime",
  "capyio-sensor-server-adapter",
  "capyio-testkit",
+ "capyio-windows-service",
  "serde",
  "serde_json",
  "tauri",
@@ -456,6 +457,7 @@ dependencies = [
  "serde",
  "serde_json",
  "windows-service",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]

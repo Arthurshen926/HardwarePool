@@ -170,19 +170,15 @@ Goal: expose a real Windows render endpoint that applications can select
 independently of the physical/RDP output, then bridge only that endpoint's real
 PCM through a bounded render APO/Broker path and feed the proven Android speaker transport.
 
-`CAPY-AUDIO-001B0` is active: ADR 0027 resolves the former Gate 7 non-goal and
-ADR 0028 corrects the synthetic-loopback assumption after fixed-revision
-candidate review. SysVAD/candidate provenance is pinned without importing it,
-the current host's build-tool gap is recorded, and an isolated target is
-required before any driver/APO build or install action. Plan:
+The controlled-lab vertical slice through B6B is complete. The installed
+`CapyIO Speaker` post-mix APO feeds a bounded global render ring, the
+service-owned Broker sends it to the pinned Android receiver, and human tests
+confirmed playback plus Windows endpoint volume/mute. ADRs 0033/0034 separate
+the privileged Broker from Tauri and expose only bounded local
+start/stop/status control to the ordinary desktop user. Remaining work is B5
+soak/reboot/audio-service recovery and B6C signed installer, immutable
+configuration, upgrade/uninstall and multi-user policy. Plan:
 `docs/plans/active/0012-windows-virtual-speaker.md`.
-
-`CAPY-AUDIO-001B2T` is complete at the transport/submission level. A bounded
-CapyIO sender implements the pinned Android private contract, deterministic
-tests cover negotiation/segmentation/limits, and a physical Tailscale run sent
-1,920,000 PCM bytes with no reported transport drops or errors into a started
-48 kHz stereo Android `AudioTrack`. User-confirmed audibility remains open and
-the next implementation slice is the real APO-to-Broker staging producer.
 
 ## Later small tasks
 

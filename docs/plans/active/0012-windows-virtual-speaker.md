@@ -1,7 +1,7 @@
 # CAPY-AUDIO-001B — Dedicated Windows virtual speaker
 
-Status: active; B2T and B3 virtual-speaker-to-Android playback and live
-endpoint-volume attenuation/mute physically proven
+Status: active; speaker playback, endpoint volume and B6B ordinary-user
+desktop/service control physically proven; installer/security/soak work remains
 
 Owner: Codex
 
@@ -131,12 +131,10 @@ process used the installed endpoint path but is not a new human audibility or
 quality claim. The already retained audible/volume evidence continues to own
 that claim.
 
-The remaining lifecycle product gap is privilege separation: the current
-Broker must be elevated to create the protected global render mapping used by
-Session 0 AudioDG. The desktop can supervise it when the host is elevated, but
-ordinary launch cannot silently cross that boundary. A background service or
-revised mapping-ownership design is required before release; B5 recovery,
-upgrade/uninstall and stability checks also remain.
+The privilege-separation gap is closed for the controlled lab: LocalSystem owns
+the protected global mapping and an ordinary desktop user controls only the
+bounded service API. B5 soak/reboot/audio-service recovery and release-grade
+upgrade/uninstall checks still remain.
 
 `CAPY-AUDIO-001B6A` is now implemented and physically exercised on the approved
 local lab. ADR 0033 adds an SCM-compatible headless service host with closed
@@ -149,7 +147,15 @@ audibility remains a separate operator observation. The service is left
 installed as manual and running, with exact rollback retained in
 `CAPY_AUDIO_001B6A_REPORT.md`.
 
-The desktop Quick Action still uses its direct development fallback. B6B must
-add ACL-protected local management IPC and B6C must add installer-owned
-configuration/startup policy before the service becomes the normal product
-flow.
+`CAPY-AUDIO-001B6B` is implemented and physically exercised. ADR 0034 defines a
+4 KiB closed named-pipe protocol with local interactive-user ACLs and only
+`status`, `start` and `stop`. The desktop selects it without environment
+variables or elevation, preserves the service-owned Route on UI shutdown, and
+passed its ignored physical integration test. Repeated control calls survived
+two Broker generations; stop released TCP/UDP, and the restored Android
+receiver plus a five-second endpoint submission left generation 3 active.
+
+B6C remains release engineering: replace workspace paths with signed,
+installer-owned immutable locations; define upgrade/rollback and multi-user
+control policy; then test reboot/autostart and uninstall from the packaged
+product.

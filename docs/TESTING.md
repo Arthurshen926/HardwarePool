@@ -206,6 +206,15 @@ submission then left the service and transport healthy. The run does not claim
 human audibility without a separate operator observation and does not cover
 reboot/autostart, desktop IPC or installer behavior.
 
+`CAPY-AUDIO-001B6B` adds closed-schema/control-bound unit tests and an ignored
+physical desktop/service composition test. The approved local run exercised
+dozens of non-administrator status calls across stop/start generations, proved
+port cleanup without stopping the SCM host, proved Quick Action service
+selection and UI-shutdown independence, restored the Android receiver and
+retained `active` state after a five-second endpoint submission. Automatic SCM
+configuration was observed; reboot recovery and signed-installer behavior are
+still not implied.
+
 ## Sidecar smoke test
 
 Adapter Host launches repository-built mock binaries, performs initialize,

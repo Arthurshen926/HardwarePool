@@ -85,11 +85,11 @@ retry always starts with a later epoch.
 Platform and child-process callbacks return typed completions through opaque
 operation IDs; they never mutate Core state from arbitrary threads.
 
-On Windows, the dedicated virtual-speaker Broker is moving to the headless
-`CapyIOBroker` service selected by ADR 0033. The first service slice owns the
-privileged cross-session render mapping and child lifecycle but exposes no
-management IPC yet. The Tauri-owned supervisor remains a development fallback,
-not the final lifecycle authority.
+On Windows, the headless `CapyIOBroker` service selected by ADR 0033 owns the
+dedicated virtual-speaker Broker, privileged cross-session render mapping and
+child lifecycle. ADR 0034 gives ordinary CapyIO Desktop a bounded local
+start/stop/status boundary; Tauri is not privileged and does not own the
+service Route's lifetime. Its direct supervisor remains a development fallback.
 
 ### Protocol
 
@@ -286,6 +286,14 @@ dedicated-speaker mode supervises the CapyIO-owned render-ring Broker and has no
 endpoint-selection input: `CapyIO Speaker` is the fixed Projection. Trusted
 host configuration selects the mode; the WebView cannot supply executable or
 network configuration.
+
+For the installed dedicated-speaker flow, `CapyIOBroker` is the privileged
+lifecycle owner. CapyIO Desktop sends only bounded `status`, `start` and `stop`
+requests over the local named pipe defined by ADR 0034 and projects the typed
+service snapshot into its existing Runtime Route. Service launch paths and
+network settings remain administrator configuration. Closing the UI does not
+stop a service-owned Route; the legacy direct process path is a development
+fallback when the service boundary is absent.
 
 ## 12. Android boundary
 

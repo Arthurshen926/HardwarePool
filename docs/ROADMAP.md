@@ -43,15 +43,12 @@ implementation scope automatically.
   open for longer background/audio-focus, latency and soak evidence. Gates 4,
   6 and 8–15
   remain roadmap only.
-- Gate 7B is now active by explicit product decision. The intended endpoint is
-  an independent `CapyIO Speaker`, not a renamed mirror of the current physical
-  output. SysVAD and audited-candidate provenance is pinned; ADR 0028 selects a
-  bounded render APO/Broker bridge. The local host now has WDK 26100.6584 and
-  compile-only SysVAD/SwapAPO evidence. ADR 0029 permits a controlled local
-  install after recovery and rollback preflight. ADR 0030 plus B2T physical
-  evidence now prove bounded simulated PCM reaches a started Android 48 kHz
-  stereo AudioTrack. Driver/APO source, real render PCM and user-confirmed B2T
-  audibility are still pending.
+- Gate 7B's controlled-lab vertical slice is implemented. The independent
+  `CapyIO Speaker` endpoint, post-mix APO, bounded render ring and service-owned
+  Broker have physically delivered application playback to Android; endpoint
+  volume/mute, Broker restart, port cleanup and ordinary-user desktop control
+  are proven. Gate 7B remains open for B5 soak/reboot/audio-service recovery and
+  B6C signed installer, upgrade/uninstall and production security work.
 
 ## Public-alpha proof bar
 

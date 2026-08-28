@@ -3,7 +3,7 @@ mod windows_host {
     use std::{
         ffi::OsString,
         sync::{
-            Arc,
+            Arc, Mutex,
             atomic::{AtomicBool, Ordering},
         },
         thread,
@@ -12,7 +12,7 @@ mod windows_host {
 
     use capyio_windows_service::{
         BrokerServiceRuntime, DEFAULT_POLL_INTERVAL, DEFAULT_STABLE_RECEIVER_POLLS, SERVICE_NAME,
-        ServiceConfig,
+        ServiceConfig, control_server_loop, wake_control_server,
     };
     use windows_service::{
         define_windows_service,
@@ -28,11 +28,32 @@ mod windows_host {
 
     pub fn main() -> Result<(), String> {
         let arguments = std::env::args().collect::<Vec<_>>();
+        if arguments
+            .get(1)
+            .is_some_and(|argument| argument == "--control")
+        {
+            return run_control_command(arguments.get(2).map(String::as_str));
+        }
         if arguments.iter().any(|argument| argument == "--console") {
             let config = ServiceConfig::parse(arguments).map_err(|error| error.to_string())?;
             return run_broker(config, Arc::new(AtomicBool::new(false)), true);
         }
         service_dispatcher::start(SERVICE_NAME, ffi_service_main).map_err(|error| error.to_string())
+    }
+
+    fn run_control_command(operation: Option<&str>) -> Result<(), String> {
+        let client = capyio_windows_service::BrokerServiceClient::default();
+        let snapshot = match operation {
+            Some("status") => client.status()?,
+            Some("start") => client.start()?,
+            Some("stop") => client.stop()?,
+            _ => return Err("usage: capyio-windows-service --control status|start|stop".to_owned()),
+        };
+        println!(
+            "{}",
+            serde_json::to_string(&snapshot).map_err(|error| error.to_string())?
+        );
+        Ok(())
     }
 
     fn service_main(_arguments: Vec<OsString>) {
@@ -63,8 +84,28 @@ mod windows_host {
             ))
             .map_err(|error| error.to_string())?;
         let supervisor = config.supervisor()?;
-        let mut runtime = BrokerServiceRuntime::new(supervisor, DEFAULT_STABLE_RECEIVER_POLLS)?;
-        runtime.start()?;
+        let runtime = Arc::new(Mutex::new(BrokerServiceRuntime::new(
+            supervisor,
+            DEFAULT_STABLE_RECEIVER_POLLS,
+        )?));
+        let control_runtime = Arc::clone(&runtime);
+        let control_stop = Arc::clone(&stop);
+        let control = thread::Builder::new()
+            .name("capyio-service-control".to_owned())
+            .spawn(move || control_server_loop(control_runtime, control_stop))
+            .map_err(|_| "start CapyIO service control thread".to_owned())?;
+        // Prove the control listener is reachable before reporting Running.
+        let client = capyio_windows_service::BrokerServiceClient::default();
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while client.status().is_err() {
+            if Instant::now() >= deadline {
+                stop.store(true, Ordering::Release);
+                wake_control_server();
+                let _ = control.join();
+                return Err("CapyIO service control pipe did not become ready".to_owned());
+            }
+            thread::sleep(Duration::from_millis(25));
+        }
         status_handle
             .set_service_status(service_status(
                 ServiceState::Running,
@@ -74,7 +115,9 @@ mod windows_host {
             ))
             .map_err(|error| error.to_string())?;
         while !stop.load(Ordering::Acquire) {
-            runtime.poll();
+            if let Ok(mut runtime) = runtime.lock() {
+                runtime.poll();
+            }
             thread::sleep(DEFAULT_POLL_INTERVAL);
         }
         status_handle
@@ -85,7 +128,15 @@ mod windows_host {
                 Duration::from_secs(10),
             ))
             .map_err(|error| error.to_string())?;
-        let result = runtime.stop().map(|_| ());
+        wake_control_server();
+        let control_result = control
+            .join()
+            .map_err(|_| "CapyIO service control thread panicked".to_owned())?;
+        let result = runtime
+            .lock()
+            .map_err(|_| "CapyIO service state lock poisoned".to_owned())?
+            .ensure_stopped()
+            .map(|_| ());
         status_handle
             .set_service_status(service_status(
                 ServiceState::Stopped,
@@ -94,7 +145,7 @@ mod windows_host {
                 Duration::ZERO,
             ))
             .map_err(|error| error.to_string())?;
-        result
+        control_result.and(result)
     }
 
     fn run_broker(

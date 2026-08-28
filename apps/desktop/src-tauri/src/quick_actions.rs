@@ -1,16 +1,27 @@
-use std::{collections::BTreeMap, env, net::IpAddr, path::PathBuf};
+use std::{
+    collections::BTreeMap,
+    env,
+    net::IpAddr,
+    path::PathBuf,
+    time::{SystemTime, UNIX_EPOCH},
+};
 
 use capyio_audio_share_adapter::{
     AudioEncoding, AudioShareConfig, AudioShareProbe, AudioShareSupervisor, ProbeLimits,
-    SupervisorLimits,
+    ProcessExitReport, ProcessOutputSummary, ReceiverTcpPresence, SupervisorLimits,
+    SupervisorStatus,
 };
 use capyio_core::{Problem, RouteId, RouteState, SessionId};
 use capyio_runtime::NodeRuntime;
 use serde::{Deserialize, Serialize};
 
 use crate::audio_share_runtime::{
-    AudioShareRouteController, DEFAULT_RECEIVER_WAIT_POLLS, DEFAULT_STABLE_RECEIVER_POLLS,
+    AudioShareProcessBoundary, AudioShareRouteController, AudioShareStartError,
+    DEFAULT_RECEIVER_WAIT_POLLS, DEFAULT_STABLE_RECEIVER_POLLS,
 };
+
+#[cfg(windows)]
+use capyio_windows_service::{BrokerServiceClient, BrokerServiceSnapshot, BrokerServiceState};
 
 pub const QUICK_ACTION_SCHEMA_VERSION: u8 = 1;
 pub const AUDIO_SHARE_ACTION_ID: &str = "capyio.quick-action.remote-speaker";
@@ -83,7 +94,7 @@ pub struct UiQuickAction {
 }
 
 pub struct AudioShareQuickAction {
-    controller: Option<AudioShareRouteController<AudioShareSupervisor>>,
+    controller: Option<AudioShareRouteController<AudioShareHostProcess>>,
     host_config: Option<TrustedAudioShareHostConfig>,
     endpoint_selection: EndpointSelectionCache,
     configuration_problem: Option<String>,
@@ -92,17 +103,22 @@ pub struct AudioShareQuickAction {
 
 impl AudioShareQuickAction {
     pub fn install(runtime: &mut NodeRuntime, session_id: SessionId) -> Self {
-        let configured = TrustedAudioShareHostConfig::from_environment()
-            .and_then(|host| host.supervisor().map(|supervisor| (host, supervisor)));
-        match configured.and_then(|(host, supervisor)| {
+        let configured = configured_host_process();
+        match configured.and_then(|(host, process, service_was_running)| {
             AudioShareRouteController::install(
                 runtime,
                 session_id,
-                supervisor,
+                process,
                 DEFAULT_STABLE_RECEIVER_POLLS,
                 DEFAULT_RECEIVER_WAIT_POLLS,
             )
-            .map(|controller| (host, controller))
+            .and_then(|mut controller| {
+                if service_was_running {
+                    controller.start(runtime, unix_time_ms()?)?;
+                    controller.poll(runtime)?;
+                }
+                Ok((host, controller))
+            })
         }) {
             Ok((host_config, controller)) => Self {
                 controller: Some(controller),
@@ -181,7 +197,7 @@ impl AudioShareQuickAction {
                 "Audio Share host configuration is unavailable",
             );
         };
-        if host_config.mode == TrustedAudioShareMode::VirtualSpeaker {
+        if host_config.mode.is_fixed_projection() {
             return UiAudioEndpointCatalog {
                 schema_version: 1,
                 action_id: AUDIO_SHARE_ACTION_ID,
@@ -257,14 +273,14 @@ impl AudioShareQuickAction {
             .host_config
             .as_ref()
             .ok_or_else(|| "Audio Share host configuration is unavailable".to_owned())?;
-        if host_config.mode == TrustedAudioShareMode::VirtualSpeaker {
+        if host_config.mode.is_fixed_projection() {
             return Err("CapyIO Speaker is a fixed projection and cannot be reselected".to_owned());
         }
         let supervisor = host_config.supervisor_for(endpoint_id.clone())?;
         self.controller
             .as_mut()
             .ok_or_else(|| "Audio Share host configuration is unavailable".to_owned())?
-            .replace_process(runtime, supervisor)?;
+            .replace_process(runtime, AudioShareHostProcess::Direct(Box::new(supervisor)))?;
         self.host_config
             .as_mut()
             .expect("configured controller retains host configuration")
@@ -300,7 +316,7 @@ impl AudioShareQuickAction {
         let virtual_speaker = self
             .host_config
             .as_ref()
-            .is_some_and(|host| host.mode == TrustedAudioShareMode::VirtualSpeaker);
+            .is_some_and(|host| host.mode.is_fixed_projection());
         Ok(UiQuickAction {
             schema_version: QUICK_ACTION_SCHEMA_VERSION,
             id: AUDIO_SHARE_ACTION_ID,
@@ -335,6 +351,13 @@ impl AudioShareQuickAction {
     }
 
     pub fn shutdown(&mut self, runtime: &mut NodeRuntime) {
+        if self
+            .host_config
+            .as_ref()
+            .is_some_and(|host| host.mode == TrustedAudioShareMode::WindowsService)
+        {
+            return;
+        }
         if let Some(controller) = self.controller.as_mut() {
             let _ = controller.stop(runtime);
         }
@@ -354,6 +377,13 @@ struct TrustedAudioShareHostConfig {
 enum TrustedAudioShareMode {
     SystemMirror,
     VirtualSpeaker,
+    WindowsService,
+}
+
+impl TrustedAudioShareMode {
+    const fn is_fixed_projection(self) -> bool {
+        matches!(self, Self::VirtualSpeaker | Self::WindowsService)
+    }
 }
 
 impl TrustedAudioShareHostConfig {
@@ -389,6 +419,9 @@ impl TrustedAudioShareHostConfig {
     }
 
     fn supervisor_for(&self, endpoint_id: String) -> Result<AudioShareSupervisor, String> {
+        if self.mode == TrustedAudioShareMode::WindowsService {
+            return Err("Windows service mode does not create a desktop Broker".to_owned());
+        }
         if self.mode == TrustedAudioShareMode::VirtualSpeaker {
             return AudioShareSupervisor::new_virtual_speaker(
                 self.executable.clone(),
@@ -411,6 +444,142 @@ impl TrustedAudioShareHostConfig {
         AudioShareSupervisor::new(config, ProbeLimits::default(), SupervisorLimits::default())
             .map_err(|error| error.to_string())
     }
+}
+
+enum AudioShareHostProcess {
+    Direct(Box<AudioShareSupervisor>),
+    #[cfg(windows)]
+    WindowsService(BrokerServiceProcess),
+}
+
+impl AudioShareProcessBoundary for AudioShareHostProcess {
+    fn start(&mut self) -> Result<(), AudioShareStartError> {
+        match self {
+            Self::Direct(process) => AudioShareProcessBoundary::start(process.as_mut()),
+            #[cfg(windows)]
+            Self::WindowsService(process) => process.start(),
+        }
+    }
+
+    fn status(&mut self) -> Result<SupervisorStatus, String> {
+        match self {
+            Self::Direct(process) => AudioShareProcessBoundary::status(process.as_mut()),
+            #[cfg(windows)]
+            Self::WindowsService(process) => process.status(),
+        }
+    }
+
+    fn receiver_presence(&mut self) -> Result<ReceiverTcpPresence, String> {
+        match self {
+            Self::Direct(process) => AudioShareProcessBoundary::receiver_presence(process.as_mut()),
+            #[cfg(windows)]
+            Self::WindowsService(process) => process.receiver_presence(),
+        }
+    }
+
+    fn stop(&mut self) -> Result<(), String> {
+        match self {
+            Self::Direct(process) => AudioShareProcessBoundary::stop(process.as_mut()),
+            #[cfg(windows)]
+            Self::WindowsService(process) => process.stop(),
+        }
+    }
+}
+
+#[cfg(windows)]
+struct BrokerServiceProcess {
+    client: BrokerServiceClient,
+}
+
+#[cfg(windows)]
+impl BrokerServiceProcess {
+    fn start(&self) -> Result<(), AudioShareStartError> {
+        self.client
+            .start()
+            .map(|_| ())
+            .map_err(AudioShareStartError::Other)
+    }
+
+    fn status(&self) -> Result<SupervisorStatus, String> {
+        self.client.status().map(service_supervisor_status)
+    }
+
+    fn receiver_presence(&self) -> Result<ReceiverTcpPresence, String> {
+        self.client.status().map(|snapshot| {
+            if snapshot.state == BrokerServiceState::Active {
+                ReceiverTcpPresence::Established {
+                    connection_count: 1,
+                }
+            } else if snapshot.state == BrokerServiceState::Stopped {
+                ReceiverTcpPresence::SupervisorNotRunning
+            } else {
+                ReceiverTcpPresence::Disconnected
+            }
+        })
+    }
+
+    fn stop(&self) -> Result<(), String> {
+        self.client.stop().map(|_| ())
+    }
+}
+
+#[cfg(windows)]
+fn service_supervisor_status(snapshot: BrokerServiceSnapshot) -> SupervisorStatus {
+    match snapshot.state {
+        BrokerServiceState::Stopped => SupervisorStatus::Stopped,
+        BrokerServiceState::WaitingForReceiver | BrokerServiceState::Active => {
+            SupervisorStatus::Running { process_id: 0 }
+        }
+        BrokerServiceState::Failed => SupervisorStatus::Exited(ProcessExitReport {
+            exit_code: None,
+            output: ProcessOutputSummary {
+                stdout_retained_bytes: 0,
+                stderr_retained_bytes: 0,
+                stdout_overflowed: false,
+                stderr_overflowed: false,
+            },
+        }),
+    }
+}
+
+fn configured_host_process()
+-> Result<(TrustedAudioShareHostConfig, AudioShareHostProcess, bool), String> {
+    #[cfg(windows)]
+    {
+        let client = BrokerServiceClient::default();
+        if let Ok(snapshot) = client.status() {
+            let was_running = matches!(
+                snapshot.state,
+                BrokerServiceState::WaitingForReceiver | BrokerServiceState::Active
+            );
+            return Ok((
+                TrustedAudioShareHostConfig {
+                    mode: TrustedAudioShareMode::WindowsService,
+                    executable: PathBuf::new(),
+                    bind_ip: "127.0.0.1".parse().expect("literal IPv4"),
+                    port: 1,
+                    endpoint_id: "capyio-virtual-speaker".to_owned(),
+                },
+                AudioShareHostProcess::WindowsService(BrokerServiceProcess { client }),
+                was_running,
+            ));
+        }
+    }
+    let host = TrustedAudioShareHostConfig::from_environment()?;
+    let supervisor = host.supervisor()?;
+    Ok((
+        host,
+        AudioShareHostProcess::Direct(Box::new(supervisor)),
+        false,
+    ))
+}
+
+fn unix_time_ms() -> Result<u64, String> {
+    let millis = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_err(|_| "system clock is before Unix epoch".to_owned())?
+        .as_millis();
+    u64::try_from(millis).map_err(|_| "system time exceeds Runtime range".to_owned())
 }
 
 #[derive(Default)]
@@ -594,5 +763,44 @@ mod tests {
         assert_eq!(sanitized.chars().count(), 256);
         assert!(sanitized.contains('\u{fffd}'));
         assert!(!sanitized.contains('\n'));
+    }
+
+    #[cfg(windows)]
+    #[test]
+    #[ignore = "requires the approved installed CapyIOBroker Windows service"]
+    fn physical_windows_service_quick_action_controls_and_preserves_broker() {
+        let client = BrokerServiceClient::default();
+        client.stop().expect("stop Broker fixture");
+
+        let mut lab = DemoLab::new().expect("demo Runtime");
+        let session_id = lab.session_id;
+        let mut action = AudioShareQuickAction::install(&mut lab.runtime, session_id);
+        assert!(action.is_configured());
+        assert_eq!(
+            action.host_config.as_ref().map(|host| host.mode),
+            Some(TrustedAudioShareMode::WindowsService)
+        );
+
+        let started = action
+            .invoke(
+                &mut lab.runtime,
+                InvokeQuickActionRequest {
+                    action_id: AUDIO_SHARE_ACTION_ID.to_owned(),
+                    operation: QuickActionOperation::Start,
+                },
+                unix_time_ms().expect("wall clock"),
+            )
+            .expect("start through Quick Action");
+        assert_eq!(started.status, "starting");
+        assert_eq!(started.title, "使用 CapyIO 虚拟扬声器");
+
+        action.shutdown(&mut lab.runtime);
+        let snapshot = client
+            .status()
+            .expect("service state after desktop shutdown");
+        assert!(matches!(
+            snapshot.state,
+            BrokerServiceState::WaitingForReceiver | BrokerServiceState::Active
+        ));
     }
 }

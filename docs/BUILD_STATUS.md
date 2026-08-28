@@ -287,3 +287,17 @@ ADR 0030 now resolves Broker-to-Android PCM ingest without the external
 the pinned Android receiver over Tailscale with zero queue-full, receiver-gap
 or UDP-send errors; Android reported a started stereo 48 kHz `AudioTrack`.
 Human-confirmed audibility and the real APO staging producer remain pending.
+
+## CAPY-AUDIO-001B6B ordinary-user service control
+
+The controlled local lab now has an Automatic LocalSystem `CapyIOBroker`
+service and an ACL-protected local named pipe defined by ADR 0034. Closed 4 KiB
+schema-v1 requests expose only `status`, `start` and `stop`; trusted executable
+and network configuration remain outside the WebView contract. Repeated
+ordinary-user requests survived stop/start generations, stop released TCP/UDP
+65530 without stopping the SCM host, and the ignored physical desktop test
+proved Quick Action service selection plus UI-shutdown independence. The
+Android receiver re-established an owned TCP connection and a five-second
+`CapyIO Speaker` submission left service state active. Full evidence and exact
+hashes are in `docs/CAPY_AUDIO_001B6B_REPORT.md`; signed installer, reboot/soak,
+multi-user policy and production peer security remain open.

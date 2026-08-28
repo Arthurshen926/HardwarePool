@@ -66,9 +66,13 @@ ADR 0033 moves that Broker into an SCM-managed Windows service so the WebView
 host need not inherit the privilege required for the cross-session global
 mapping. Service launch configuration remains administrator-controlled and
 accepts only a direct executable path, explicit IPv4 literal and bounded port.
-The initial service slice exposes no local control socket or named pipe; its
-future desktop management API requires an explicit ACL and bounded closed DTO
-review before it is enabled.
+ADR 0034 adds one local-only named pipe for bounded `status`, `start` and `stop`
+operations. The protected DACL grants LocalSystem/Administrators full access
+and interactive local users explicit read/write access; remote pipe clients are
+rejected. Closed schema-v1 frames are limited to 4 KiB and have fixed I/O
+deadlines. No request can change executable paths, bind addresses, ports or
+endpoint identity. Any interactive user can currently control the machine-wide
+Route, so multi-user authorization remains unresolved release work.
 
 The desktop Quick Action never accepts an executable path, endpoint identifier,
 bind address or port from the WebView. Those values come only from the trusted
