@@ -141,6 +141,18 @@ and confirms no process/listener remains. Listener readiness is not receiver
 presence; v0.3.4 has no machine-readable peer-status API and tests never parse
 ordinary log prose into lifecycle state.
 
+The same bounded supervisor has a dedicated virtual-speaker launch contract:
+one positional explicit IPv4 bind address, no upstream version/endpoint probe,
+listener readiness, bounded output and idempotent stop/reap. Tests reject an
+unspecified address and zero port. Desktop projection tests keep this fixed
+mode separate from the legacy endpoint picker.
+
+An ignored Windows/Android lab test composes that supervisor with the Runtime
+Route. It requires explicit `CAPYIO_VIRTUAL_SPEAKER_EXE`, bind-IP and port host
+configuration plus an elevated token, waits for stable receiver presence,
+retains a bounded directed-playback window and proves explicit stop. The test
+does not install a driver, change permissions or infer audibility from TCP.
+
 Windows-only owner-table tests then prove that the short-lived readiness
 connection is not retained as a receiver, a process-owned established peer is
 observed, peer close becomes disconnected and stopped supervision becomes

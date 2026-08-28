@@ -1,5 +1,6 @@
 use std::{
-    net::TcpStream,
+    net::{IpAddr, TcpStream},
+    path::PathBuf,
     process::{Child, Command, ExitStatus, Stdio},
     thread::{self, JoinHandle},
     time::{Duration, Instant},
@@ -81,10 +82,17 @@ struct RunningProcess {
 
 pub struct AudioShareSupervisor {
     config: AudioShareConfig,
+    launch_mode: LaunchMode,
     probe_limits: ProbeLimits,
     limits: SupervisorLimits,
     running: Option<RunningProcess>,
     terminal_exit: Option<ProcessExitReport>,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum LaunchMode {
+    UpstreamSystemMirror,
+    CapyIoVirtualSpeaker,
 }
 
 impl std::fmt::Debug for AudioShareSupervisor {
@@ -111,11 +119,48 @@ impl AudioShareSupervisor {
     ) -> Result<Self, AudioShareError> {
         Ok(Self {
             config,
+            launch_mode: LaunchMode::UpstreamSystemMirror,
             probe_limits: probe_limits.validate()?,
             limits: limits.validate()?,
             running: None,
             terminal_exit: None,
         })
+    }
+
+    /// Supervises the CapyIO-owned render-ring Broker. Unlike the pinned
+    /// upstream mirror process, this executable has one positional bind
+    /// argument and always consumes the fixed `CapyIO Speaker` endpoint.
+    pub fn new_virtual_speaker(
+        executable: impl Into<PathBuf>,
+        bind_ip: IpAddr,
+        port: u16,
+        limits: SupervisorLimits,
+    ) -> Result<Self, AudioShareError> {
+        if !matches!(bind_ip, IpAddr::V4(address) if !address.is_unspecified()) {
+            return Err(AudioShareError::InvalidVirtualSpeakerBindAddress);
+        }
+        let config = AudioShareConfig::new(
+            executable,
+            bind_ip,
+            port,
+            "capyio-virtual-speaker",
+            crate::AudioEncoding::S16,
+            2,
+            48_000,
+        )?;
+        Ok(Self {
+            config,
+            launch_mode: LaunchMode::CapyIoVirtualSpeaker,
+            probe_limits: ProbeLimits::default(),
+            limits: limits.validate()?,
+            running: None,
+            terminal_exit: None,
+        })
+    }
+
+    #[must_use]
+    pub const fn is_virtual_speaker(&self) -> bool {
+        matches!(self.launch_mode, LaunchMode::CapyIoVirtualSpeaker)
     }
 
     pub fn config(&self) -> &AudioShareConfig {
@@ -127,12 +172,18 @@ impl AudioShareSupervisor {
             return Err(AudioShareError::SupervisorAlreadyRunning);
         }
 
-        AudioShareProbe::new(self.probe_limits)?.probe_config(&self.config)?;
+        if self.launch_mode == LaunchMode::UpstreamSystemMirror {
+            AudioShareProbe::new(self.probe_limits)?.probe_config(&self.config)?;
+        }
         self.terminal_exit = None;
 
         let mut command = Command::new(self.config.executable());
+        let arguments = match self.launch_mode {
+            LaunchMode::UpstreamSystemMirror => self.config.server_args(),
+            LaunchMode::CapyIoVirtualSpeaker => vec![self.config.bind_address().to_string()],
+        };
         command
-            .args(self.config.server_args())
+            .args(arguments)
             .stdin(Stdio::null())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped());

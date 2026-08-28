@@ -274,6 +274,13 @@ real-time callback never blocks, allocates, performs file/network I/O or owns
 reconnect policy. SysVAD WASAPI loopback is synthetic and is not real-PCM
 evidence; a custom kernel PCM IPC remains a measured fallback only.
 
+The desktop host has two explicit Audio Share launch modes. The legacy mode
+supervises pinned `as-cmd` against one host-enumerated playback endpoint. The
+dedicated-speaker mode supervises the CapyIO-owned render-ring Broker and has no
+endpoint-selection input: `CapyIO Speaker` is the fixed Projection. Trusted
+host configuration selects the mode; the WebView cannot supply executable or
+network configuration.
+
 ## 12. Android boundary
 
 Android platform code owns permissions, microphone indicators, foreground

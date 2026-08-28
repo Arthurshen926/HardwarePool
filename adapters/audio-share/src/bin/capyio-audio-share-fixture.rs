@@ -7,6 +7,19 @@ const SPAM_ENDPOINT: &str = "fixture-spam";
 
 fn main() {
     let args = std::env::args().skip(1).collect::<Vec<_>>();
+    if let [bind] = args.as_slice()
+        && !bind.starts_with("--")
+    {
+        let listener = TcpListener::bind(bind).expect("virtual speaker fixture listener");
+        let mut connections = Vec::new();
+        for connection in listener.incoming() {
+            match connection {
+                Ok(connection) => connections.push(connection),
+                Err(_) => break,
+            }
+        }
+        return;
+    }
     if args == ["--version"] {
         println!("as-cmd\nversion: 0.3.4\nurl: https://github.com/mkckr0/audio-share");
         return;

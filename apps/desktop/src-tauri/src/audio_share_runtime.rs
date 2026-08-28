@@ -1136,6 +1136,62 @@ mod tests {
         eprintln!("CAPYIO_PHYSICAL_AUDIO_COMPLETE");
     }
 
+    #[test]
+    #[ignore = "requires the authorized elevated CapyIO Speaker Windows/Android lab"]
+    fn physical_virtual_speaker_runtime_owns_active_and_stopped_lifecycle() {
+        let executable = std::env::var_os("CAPYIO_VIRTUAL_SPEAKER_EXE")
+            .map(PathBuf::from)
+            .expect("set CAPYIO_VIRTUAL_SPEAKER_EXE to the repository-built Broker");
+        let bind_ip = std::env::var("CAPYIO_AUDIO_SHARE_BIND_IP")
+            .expect("set CAPYIO_AUDIO_SHARE_BIND_IP")
+            .parse::<IpAddr>()
+            .expect("bind IP literal");
+        let port = std::env::var("CAPYIO_AUDIO_SHARE_PORT")
+            .expect("set CAPYIO_AUDIO_SHARE_PORT")
+            .parse::<u16>()
+            .expect("non-zero port");
+        let supervisor = AudioShareSupervisor::new_virtual_speaker(
+            executable,
+            bind_ip,
+            port,
+            SupervisorLimits::default(),
+        )
+        .expect("virtual speaker supervisor");
+        let mut lab = DemoLab::new().expect("demo Runtime");
+        let session_id = lab.session_id;
+        let mut controller = AudioShareRouteController::install(
+            &mut lab.runtime,
+            session_id,
+            supervisor,
+            DEFAULT_STABLE_RECEIVER_POLLS,
+            DEFAULT_RECEIVER_WAIT_POLLS,
+        )
+        .expect("physical virtual-speaker Route");
+
+        let epoch = controller.start(&mut lab.runtime, 1).expect("start Broker");
+        eprintln!("CAPYIO_VIRTUAL_SPEAKER_WAITING_FOR_RECEIVER epoch={epoch}");
+        wait_for_state(
+            &mut controller,
+            &mut lab.runtime,
+            RouteState::Active,
+            Duration::from_secs(60),
+        );
+        eprintln!("CAPYIO_VIRTUAL_SPEAKER_ACTIVE epoch={epoch}");
+        // Keep one bounded playback window so a separately directed Windows
+        // stream can exercise the installed endpoint without making this test
+        // itself a platform-audio implementation.
+        thread::sleep(Duration::from_secs(30));
+        controller.stop(&mut lab.runtime).expect("explicit stop");
+        assert_eq!(
+            controller
+                .status(&lab.runtime)
+                .expect("stopped status")
+                .route_state,
+            RouteState::Stopped
+        );
+        eprintln!("CAPYIO_VIRTUAL_SPEAKER_STOPPED");
+    }
+
     fn wait_for_state<P: AudioShareProcessBoundary>(
         controller: &mut AudioShareRouteController<P>,
         runtime: &mut NodeRuntime,

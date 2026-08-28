@@ -44,7 +44,7 @@ function chooseEndpoint(event: Event): void {
       <div><dt>Runtime</dt><dd>{{ action.routeState ?? "not installed" }}<template v-if="action.routeEpoch !== null"> · epoch {{ action.routeEpoch }}</template></dd></div>
       <div><dt>Evidence</dt><dd>{{ action.evidenceLevel }}</dd></div>
     </dl>
-    <div v-if="audioEndpoints" class="audio-endpoint-picker">
+    <div v-if="audioEndpoints?.supported" class="audio-endpoint-picker">
       <label :for="`${action.id}-endpoint`">Windows 播放设备（本次运行）</label>
       <div class="audio-endpoint-picker__controls">
         <select :id="`${action.id}-endpoint`" :value="audioEndpoints.choices.find((choice) => choice.selected)?.selectionToken ?? ''" :disabled="busy || !audioEndpoints.canSelect || audioEndpoints.choices.length === 0" @change="chooseEndpoint">

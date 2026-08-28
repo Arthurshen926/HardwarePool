@@ -16,6 +16,7 @@ pub const QUICK_ACTION_SCHEMA_VERSION: u8 = 1;
 pub const AUDIO_SHARE_ACTION_ID: &str = "capyio.quick-action.remote-speaker";
 
 const ENV_EXE: &str = "CAPYIO_AUDIO_SHARE_EXE";
+const ENV_VIRTUAL_SPEAKER_EXE: &str = "CAPYIO_VIRTUAL_SPEAKER_EXE";
 const ENV_BIND_IP: &str = "CAPYIO_AUDIO_SHARE_BIND_IP";
 const ENV_PORT: &str = "CAPYIO_AUDIO_SHARE_PORT";
 const ENV_ENDPOINT: &str = "CAPYIO_AUDIO_SHARE_ENDPOINT";
@@ -180,6 +181,16 @@ impl AudioShareQuickAction {
                 "Audio Share host configuration is unavailable",
             );
         };
+        if host_config.mode == TrustedAudioShareMode::VirtualSpeaker {
+            return UiAudioEndpointCatalog {
+                schema_version: 1,
+                action_id: AUDIO_SHARE_ACTION_ID,
+                supported: false,
+                can_select: false,
+                choices: Vec::new(),
+                problem: None,
+            };
+        }
         if !can_select {
             return endpoint_catalog_problem(
                 true,
@@ -246,6 +257,9 @@ impl AudioShareQuickAction {
             .host_config
             .as_ref()
             .ok_or_else(|| "Audio Share host configuration is unavailable".to_owned())?;
+        if host_config.mode == TrustedAudioShareMode::VirtualSpeaker {
+            return Err("CapyIO Speaker is a fixed projection and cannot be reselected".to_owned());
+        }
         let supervisor = host_config.supervisor_for(endpoint_id.clone())?;
         self.controller
             .as_mut()
@@ -283,12 +297,24 @@ impl AudioShareQuickAction {
         let problem = matches!(status.route_state, RouteState::Offline | RouteState::Failed)
             .then(|| latest_problem(runtime, controller.route_id()))
             .flatten();
+        let virtual_speaker = self
+            .host_config
+            .as_ref()
+            .is_some_and(|host| host.mode == TrustedAudioShareMode::VirtualSpeaker);
         Ok(UiQuickAction {
             schema_version: QUICK_ACTION_SCHEMA_VERSION,
             id: AUDIO_SHARE_ACTION_ID,
             kind: "route_control",
-            title: "将电脑声音镜像到手机",
-            summary: "Windows 系统音频镜像 → Android 扬声器 · 电脑端仍可能播放",
+            title: if virtual_speaker {
+                "使用 CapyIO 虚拟扬声器"
+            } else {
+                "将电脑声音镜像到手机"
+            },
+            summary: if virtual_speaker {
+                "CapyIO Speaker → Android 扬声器 · 独立虚拟设备"
+            } else {
+                "Windows 系统音频镜像 → Android 扬声器 · 电脑端仍可能播放"
+            },
             status: action_status(status.route_state),
             simulated: false,
             route_id: Some(controller.route_id().to_string()),
@@ -317,23 +343,44 @@ impl AudioShareQuickAction {
 
 #[derive(Clone)]
 struct TrustedAudioShareHostConfig {
+    mode: TrustedAudioShareMode,
     executable: PathBuf,
     bind_ip: IpAddr,
     port: u16,
     endpoint_id: String,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum TrustedAudioShareMode {
+    SystemMirror,
+    VirtualSpeaker,
+}
+
 impl TrustedAudioShareHostConfig {
     fn from_environment() -> Result<Self, String> {
+        let virtual_speaker = env::var_os(ENV_VIRTUAL_SPEAKER_EXE).map(PathBuf::from);
+        let mode = if virtual_speaker.is_some() {
+            TrustedAudioShareMode::VirtualSpeaker
+        } else {
+            TrustedAudioShareMode::SystemMirror
+        };
         Ok(Self {
-            executable: required_env_path(ENV_EXE)?,
+            mode,
+            executable: match virtual_speaker {
+                Some(executable) => executable,
+                None => required_env_path(ENV_EXE)?,
+            },
             bind_ip: required_env(ENV_BIND_IP)?
                 .parse::<IpAddr>()
                 .map_err(|_| format!("{ENV_BIND_IP} must be an IP literal"))?,
             port: required_env(ENV_PORT)?
                 .parse::<u16>()
                 .map_err(|_| format!("{ENV_PORT} must be a non-zero u16"))?,
-            endpoint_id: required_env(ENV_ENDPOINT)?,
+            endpoint_id: if mode == TrustedAudioShareMode::VirtualSpeaker {
+                "capyio-virtual-speaker".to_owned()
+            } else {
+                required_env(ENV_ENDPOINT)?
+            },
         })
     }
 
@@ -342,6 +389,15 @@ impl TrustedAudioShareHostConfig {
     }
 
     fn supervisor_for(&self, endpoint_id: String) -> Result<AudioShareSupervisor, String> {
+        if self.mode == TrustedAudioShareMode::VirtualSpeaker {
+            return AudioShareSupervisor::new_virtual_speaker(
+                self.executable.clone(),
+                self.bind_ip,
+                self.port,
+                SupervisorLimits::default(),
+            )
+            .map_err(|error| error.to_string());
+        }
         let config = AudioShareConfig::new(
             self.executable.clone(),
             self.bind_ip,
@@ -489,7 +545,7 @@ mod tests {
         assert_eq!(dto.schema_version, QUICK_ACTION_SCHEMA_VERSION);
         assert_eq!(dto.id, AUDIO_SHARE_ACTION_ID);
         assert_eq!(dto.title, "将电脑声音镜像到手机");
-        assert!(dto.summary.contains("非虚拟扬声器"));
+        assert!(dto.summary.contains("宿主尚未配置"));
         assert_eq!(dto.status, "blocked");
         assert!(!dto.simulated);
         assert!(dto.route_id.is_none());

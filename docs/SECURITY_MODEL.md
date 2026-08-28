@@ -55,6 +55,13 @@ private TCP/UDP protocol. The pinned upstream Windows release is not
 Authenticode signed and is neither bundled nor treated as trusted production
 software by CapyIO.
 
+The dedicated virtual-speaker Broker is a separate trusted-host mode. It
+requires a non-unspecified IPv4 bind address and accepts no playback endpoint
+identifier; it can consume only the fixed, versioned CapyIO render ring. Its
+child process is launched directly with bounded output and is reaped on an
+explicit stop or host shutdown. This lifecycle control does not add peer
+authentication or make the private Android transport production-safe.
+
 The desktop Quick Action never accepts an executable path, endpoint identifier,
 bind address or port from the WebView. Those values come only from the trusted
 host environment, while the versioned UI request is closed to unknown fields

@@ -33,8 +33,10 @@ without playing through the physical or Remote Desktop output.
 5. `CAPY-AUDIO-001B3`: import the minimal reviewed Microsoft endpoint/APO paths
    with MS-PL notices, assign CapyIO-owned identifiers/friendly name, implement
    the bounded APO staging spike and remove unrelated endpoints/features.
-6. `CAPY-AUDIO-001B4`: select `CapyIO Speaker` through the existing trusted-host
-   picker, prove the APO/Broker bridge reaches Android, and prove the ordinary output remains silent.
+6. `CAPY-AUDIO-001B4`: supervise the fixed `CapyIO Speaker` Broker through the
+   trusted Runtime host, prove the APO/Broker bridge reaches Android, and prove
+   the ordinary output remains silent. ADR 0032 replaces the earlier picker
+   assumption because the render-ring Broker has no arbitrary endpoint input.
 7. `CAPY-AUDIO-001B5`: exercise Broker/receiver loss, audio-service restart,
    endpoint disable/enable, upgrade/uninstall and scoped Driver Verifier.
 
@@ -113,5 +115,22 @@ live notification defect. The direct EndpointVolume callback update is now
 installed as `oem102.inf` through `oem104.inf`. One uninterrupted directed
 stream measured the expected 100%, 25%, mute and restored-100% amplitudes while
 Android remained connected, and the human operator confirmed the corresponding
-phone playback changes. The remaining work is B4 lifecycle integration and B5
-recovery, upgrade/uninstall and stability checks.
+phone playback changes. B4 now has compile- and unit-validated dedicated Broker
+supervision: trusted host configuration selects the fixed projection, skips the
+legacy upstream endpoint probe/picker, bounds readiness/output and reaps the
+child on stop. On `DESKTOP-AT8EVE9`, the ignored exact physical test launched
+the repository-built Broker under the Runtime controller, reached `Active`
+epoch 1 with the Android v0.3.4 receiver, stopped explicitly, passed in 18.63
+seconds and released TCP/UDP port 65530. A separate Runtime-spawned session had
+an established Android TCP receiver while the directed Windows lab tool wrote
+five seconds of 48 kHz PCM to `CapyIO Speaker`; this confirms the supervised
+process used the installed endpoint path but is not a new human audibility or
+quality claim. The already retained audible/volume evidence continues to own
+that claim.
+
+The remaining lifecycle product gap is privilege separation: the current
+Broker must be elevated to create the protected global render mapping used by
+Session 0 AudioDG. The desktop can supervise it when the host is elevated, but
+ordinary launch cannot silently cross that boundary. A background service or
+revised mapping-ownership design is required before release; B5 recovery,
+upgrade/uninstall and stability checks also remain.

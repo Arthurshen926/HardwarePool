@@ -68,3 +68,15 @@ run elevated so it can own the cross-session
 ACL grants only Local Service, Local System and administrators access. A second
 Broker is rejected. Ring loss, invalid layout and transport shutdown are typed
 failures; ring-empty polling is bounded and happens only in user mode.
+
+For the desktop Runtime-owned path, configure the same explicit bind IP/port
+and the repository-built Broker executable in the trusted host environment:
+
+```text
+CAPYIO_VIRTUAL_SPEAKER_EXE=C:\path\to\capyio-virtual-speaker.exe
+CAPYIO_AUDIO_SHARE_BIND_IP=100.64.x.y
+CAPYIO_AUDIO_SHARE_PORT=65530
+```
+
+This fixed mode does not use `CAPYIO_AUDIO_SHARE_ENDPOINT` and hides the legacy
+endpoint picker. Start/stop from the Quick Action owns and reaps the Broker.

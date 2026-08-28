@@ -569,6 +569,8 @@ pub enum AudioShareError {
     EmptyExecutablePath,
     #[error("Audio Share bind port must be non-zero")]
     ZeroPort,
+    #[error("CapyIO virtual speaker requires an explicit non-unspecified IPv4 bind address")]
+    InvalidVirtualSpeakerBindAddress,
     #[error("Audio Share endpoint id is empty")]
     EmptyEndpointId,
     #[error("Audio Share endpoint id is {actual} bytes; limit is {limit}")]

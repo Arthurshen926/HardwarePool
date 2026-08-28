@@ -74,6 +74,52 @@ fn starts_polls_stops_and_reaps_idempotently() {
 }
 
 #[test]
+fn virtual_speaker_mode_uses_the_bounded_supervisor_without_upstream_probe() {
+    let port = unused_loopback_port();
+    let mut supervisor = AudioShareSupervisor::new_virtual_speaker(
+        fixture_executable(),
+        IpAddr::V4(Ipv4Addr::LOCALHOST),
+        port,
+        SupervisorLimits {
+            startup_deadline: Duration::from_secs(2),
+            process_output_bytes: 4096,
+        },
+    )
+    .expect("virtual speaker supervisor");
+    assert!(supervisor.is_virtual_speaker());
+    assert_eq!(supervisor.config().bind_address().port(), port);
+    let started = supervisor.start().expect("virtual speaker fixture starts");
+    assert!(started.tcp_listener_ready);
+    assert!(matches!(
+        supervisor.status().expect("status"),
+        SupervisorStatus::Running { process_id } if process_id == started.process_id
+    ));
+    assert!(supervisor.stop().expect("stop").was_running);
+}
+
+#[test]
+fn virtual_speaker_mode_rejects_unspecified_or_zero_bind_configuration() {
+    assert!(matches!(
+        AudioShareSupervisor::new_virtual_speaker(
+            fixture_executable(),
+            IpAddr::V4(Ipv4Addr::UNSPECIFIED),
+            65_530,
+            SupervisorLimits::default(),
+        ),
+        Err(AudioShareError::InvalidVirtualSpeakerBindAddress)
+    ));
+    assert!(matches!(
+        AudioShareSupervisor::new_virtual_speaker(
+            fixture_executable(),
+            IpAddr::V4(Ipv4Addr::LOCALHOST),
+            0,
+            SupervisorLimits::default(),
+        ),
+        Err(AudioShareError::ZeroPort)
+    ));
+}
+
+#[test]
 fn early_exit_and_startup_timeout_are_typed_and_reaped() {
     let mut early_exit = supervisor(EXIT_ENDPOINT, 4096);
     assert!(matches!(
