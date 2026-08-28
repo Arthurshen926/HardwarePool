@@ -101,6 +101,24 @@ Implementation slices:
   physical activation plus explicit stop. Evidence is in
   `docs/CAPY_IMU_001B3B_REPORT.md`.
 
+## Completed audio foundation
+
+### CAPY-AUDIO-CORE-001 — Unified audio media contracts
+
+Goal: make the existing transport-neutral audio primitives the common contract
+for independent microphone and speaker Routes before beginning MicYou work.
+
+Completed: selected stream candidates, three initial QoS presets, processing
+requests, bounded exact negotiation, common metrics, Audio Share mapping,
+automated regression and an authorized physical Speaker regression. Concrete
+codecs/transports, MicYou import, 96 kHz claims and driver/APK changes remain
+out of scope. Evidence is in `docs/CAPY_AUDIO_CORE_001_REPORT.md`; the completed
+plan is `docs/plans/completed/0014-unified-audio-media-engine.md` and the
+architecture decision is ADR 0035.
+
+Follow-up `CAPY-MIC-000` must pin and audit the exact MicYou revision and
+GPL-3.0 integration boundary before `CAPY-AUDIO-002` implementation.
+
 ## Active product slice
 
 ### CAPY-AUDIO-000/001A — Audio Share remote-speaker spike and external Adapter
@@ -184,7 +202,8 @@ in `docs/plans/active/0013-speaker-release-qualification.md`.
 
 - `CAPY-GAMEPAD-001`: DSU projection from recorded IMU fixture.
 - `CAPY-GAMEPAD-002`: VIIPER sidecar probe and license/build spike.
-- `CAPY-AUDIO-002`: MicYou AdapterManaged Android→Windows path.
+- `CAPY-MIC-000`: pin and reproduce MicYou with license/build/performance evidence.
+- `CAPY-AUDIO-002`: audited MicYou-compatible AdapterManaged Android→Windows path.
 - `CAPY-CAMERA-001`: VCamdroid sidecar catalog/probe spike.
 - `CAPY-UX-001`: versioned Quick Action template schema.
 - `CAPY-SEC-001`: authenticated control-channel design spike.

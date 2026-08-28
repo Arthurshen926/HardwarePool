@@ -24,7 +24,7 @@ fn windows_main() -> Result<(), String> {
         time::{Duration, Instant},
     };
 
-    use capyio_audio::AudioFormat;
+    use capyio_audio::AudioStreamSpec;
     use capyio_audio_share_adapter::{
         AudioSharePrivateFormat, AudioShareTransport, AudioShareTransportConfig,
         AudioShareTransportError, RenderRingConsumer,
@@ -62,7 +62,7 @@ fn windows_main() -> Result<(), String> {
     // Create the ring first: the APO opens it outside its real-time callback
     // when Windows starts a stream on CapyIO Speaker.
     let mut ring = RenderRingConsumer::create_baseline().map_err(|error| error.to_string())?;
-    let format = AudioSharePrivateFormat::from_audio_format(&AudioFormat::speaker_baseline())
+    let format = AudioSharePrivateFormat::from_stream_spec(&AudioStreamSpec::media_balanced())
         .map_err(|error| error.to_string())?;
     let transport =
         AudioShareTransport::bind(AudioShareTransportConfig::local_lab(bind_address), format)

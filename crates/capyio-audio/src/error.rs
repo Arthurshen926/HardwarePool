@@ -20,4 +20,22 @@ pub enum AudioDataError {
 
     #[error("reorder-buffer capacity must be greater than zero")]
     ZeroCapacity,
+
+    #[error("invalid audio stream specification: {0}")]
+    InvalidStreamSpec(String),
+
+    #[error("audio endpoint must advertise at least one stream candidate")]
+    EmptyStreamCandidates,
+
+    #[error("audio endpoint advertises {actual} candidates; limit is {limit}")]
+    TooManyStreamCandidates { actual: usize, limit: usize },
+
+    #[error("audio endpoint advertises the same stream candidate more than once")]
+    DuplicateStreamCandidate,
+
+    #[error("source or sink does not support the requested audio use case")]
+    UnsupportedAudioUseCase,
+
+    #[error("source and sink have no compatible audio stream candidate")]
+    NoCompatibleAudioStream,
 }

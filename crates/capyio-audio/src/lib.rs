@@ -10,10 +10,17 @@ mod drift;
 mod error;
 mod format;
 mod frame;
+mod metrics;
 mod reorder;
+mod spec;
 
 pub use drift::{ClockDriftEstimate, ClockDriftEstimator};
 pub use error::AudioDataError;
 pub use format::{AudioFormat, AudioProcessingSupport, AudioSampleFormat, ChannelLayout};
 pub use frame::AudioFrame;
+pub use metrics::AudioMetricsSnapshot;
 pub use reorder::{FrameBufferStats, InsertOutcome, ReorderBuffer};
+pub use spec::{
+    AudioEncoding, AudioEncodingSpec, AudioProcessingRequest, AudioQosPolicy,
+    AudioStreamCapabilities, AudioStreamSpec, AudioUseCase, negotiate_audio_stream,
+};

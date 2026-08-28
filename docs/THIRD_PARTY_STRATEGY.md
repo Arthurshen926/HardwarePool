@@ -30,6 +30,11 @@ current lab uses only a user-supplied, hash-verified artifact and makes no
 distribution claim. A README, protocol mapping or physical lab run does not
 imply endorsement or production security.
 
+`CAPY-AUDIO-CORE-001` imports no MicYou code or dependency. The follow-up
+`CAPY-MIC-000` slice must pin an exact revision and decide a
+GPL-3.0-compatible process/protocol or separately approved implementation
+boundary before reuse.
+
 Microsoft SysVAD remains the reviewed toolchain and endpoint-enumeration
 starting point for the dedicated Windows virtual-speaker work. Its synthetic
 loopback is not a real-PCM implementation. VirtualDrivers/Virtual-Audio-Driver

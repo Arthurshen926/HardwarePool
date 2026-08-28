@@ -1,4 +1,7 @@
-use capyio_audio::{AudioFormat, AudioFrame, ClockDriftEstimator, InsertOutcome, ReorderBuffer};
+use capyio_audio::{
+    AudioFormat, AudioFrame, AudioStreamCapabilities, AudioStreamSpec, AudioUseCase,
+    ClockDriftEstimator, InsertOutcome, ReorderBuffer, negotiate_audio_stream,
+};
 use capyio_core::StreamId;
 
 #[test]
@@ -31,4 +34,21 @@ fn decoded_frames_can_be_validated_reordered_and_measured() {
     assert!(drift.observe(0, 0).is_none());
     let estimate = drift.observe(48_000, 1_000_000).expect("estimate");
     assert!((estimate.rate_ratio - 1.0).abs() < f64::EPSILON);
+}
+
+#[test]
+fn microphone_and_speaker_use_one_contract_without_merging_specs() {
+    let voice = AudioStreamSpec::voice_interactive();
+    let speaker = AudioStreamSpec::media_balanced();
+    let both = AudioStreamCapabilities::new(vec![voice.clone(), speaker.clone()])
+        .expect("direction-neutral candidates");
+
+    assert_eq!(
+        negotiate_audio_stream(&both, &both, AudioUseCase::VoiceInteractive).expect("voice"),
+        voice
+    );
+    assert_eq!(
+        negotiate_audio_stream(&both, &both, AudioUseCase::MediaBalanced).expect("speaker"),
+        speaker
+    );
 }

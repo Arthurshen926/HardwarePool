@@ -126,6 +126,14 @@ The probe tests above do not start the audio server or send PCM. Process
 supervision, receiver-loss/Route behavior and physical playback are separate
 acceptance steps.
 
+The shared audio-contract tests validate microphone, balanced-speaker and
+lossless-music presets; reject voice processing on media playback, invalid QoS,
+empty/duplicate/unbounded candidate inventories and unsupported use cases; and
+prove deterministic exact candidate intersection without implicit conversion.
+Audio Share regression tests require the `MediaBalanced` common PCM
+specification to produce the unchanged pinned protobuf bytes and map only
+observable transport counters into common metrics.
+
 A separately ignored real-CLI stale-endpoint test re-probes an explicitly
 supplied endpoint that is expected to be absent, requires the typed
 `ConfiguredEndpointMissing` result before child spawn and confirms supervisor

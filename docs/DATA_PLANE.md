@@ -8,8 +8,9 @@
 `capyio-data-plane` provides bounded, transport-independent StandardPort
 envelopes, per-consumer queues and fan-out used after a transport has
 authenticated and decoded data. `capyio-audio` retains audio-specific frame,
-reordering and drift primitives. Neither crate opens sockets, accesses hardware
-or runs inside a Windows driver.
+selected-stream candidates, bounded QoS policy, common metrics, reordering and
+drift primitives. Neither crate opens sockets, accesses hardware, runs codecs
+or executes inside a Windows driver.
 
 The semantic envelope is not a public wire layout. It carries Profile identity,
 typed stream identity, stream epoch, sequence, source/receive timestamps, clock
@@ -20,6 +21,9 @@ ADR 0030's Audio Share-compatible TCP/UDP sender is a deliberately private
 `AdapterManaged` bridge to the pinned Android receiver. It strips CapyIO frame
 metadata because the upstream protocol cannot carry it and therefore is not a
 StandardPort implementation or a candidate production binding.
+It validates the common `MediaBalanced` PCM stream specification and maps only
+its observable counters into common metrics; this mapping does not add metadata
+to or alter the private wire.
 
 ## 2. StandardPort queue and fan-out semantics
 
@@ -70,6 +74,12 @@ exit. It is a bounded lab consumer, not Runtime reconnect policy or a public
 wire protocol.
 
 ## 4. Audio frame semantics
+
+Before frames flow, each endpoint advertises a bounded list of complete
+`AudioStreamSpec` candidates. The selected candidate binds decoded format,
+encoding identity, use case, QoS bounds and processing request. Initial
+negotiation uses exact deterministic intersection and therefore requires an
+explicit Converter for resampling, transcoding or processing changes.
 
 Every decoded frame contains:
 

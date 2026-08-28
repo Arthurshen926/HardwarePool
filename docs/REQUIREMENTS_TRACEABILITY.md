@@ -84,6 +84,10 @@ hardware, networking, security or performance behavior has run.
 | `FR-DIAG-002` | verified | Gate 2 | Runtime tests assert bounded monotonic events; B3B projects Route state, epoch and Problem code to the Tauri DTO. |
 | `FR-DIAG-003` | verified | Gate 3 | Adapter Host tests exercise bounded/truncated stderr retention. |
 | `FR-DIAG-004` | verified | Gate 3 | Sidecar stdout/stderr separation tests and repository secret scanning; finite sample data stays test-only. |
+| `FR-AUDIO-001` | planned | Gate 8 | ADR 0035 and shared-contract tests establish the API; MicYou adoption and two-direction physical evidence remain. |
+| `FR-AUDIO-002` | planned | Gate 8 | Bounded exact-intersection tests reject implicit conversion; endpoint capability evidence remains. |
+| `FR-AUDIO-003` | planned | Gate 8 | Preset tests separate voice/media/music policy; real processing-chain evidence remains. |
+| `FR-AUDIO-004` | planned | Gate 8 | ADR 0004/0035 retain independent Routes; a physical duplex/AEC association remains later work. |
 | `FR-PROTO-001` | verified | Gate 2 | `capyio.v1` Envelope constants and binary round-trip/version tests. |
 | `FR-PROTO-002` | verified | Gate 2 | Reserved Protobuf ranges plus offline duplicate/reserved-field validation. |
 | `FR-PROTO-003` | planned | Gate 14 | Production control additions still need heartbeat and complete authorization semantics. |

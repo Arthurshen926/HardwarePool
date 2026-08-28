@@ -17,7 +17,7 @@ use std::{
     time::{Duration, Instant},
 };
 
-use capyio_audio::{AudioFormat, AudioSampleFormat};
+use capyio_audio::{AudioEncoding, AudioMetricsSnapshot, AudioSampleFormat, AudioStreamSpec};
 use prost::Message;
 use thiserror::Error;
 
@@ -31,6 +31,7 @@ const POLL_INTERVAL: Duration = Duration::from_millis(10);
 const IO_TIMEOUT: Duration = Duration::from_millis(100);
 const HEARTBEAT_INTERVAL: Duration = Duration::from_secs(3);
 const HEARTBEAT_TIMEOUT: Duration = Duration::from_secs(5);
+const MAX_SHARED_EPHEMERAL_BIND_ATTEMPTS: usize = 32;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct AudioSharePrivateFormat {
@@ -41,10 +42,15 @@ pub struct AudioSharePrivateFormat {
 }
 
 impl AudioSharePrivateFormat {
-    pub fn from_audio_format(format: &AudioFormat) -> Result<Self, AudioShareTransportError> {
-        format
-            .validate()
+    pub fn from_stream_spec(spec: &AudioStreamSpec) -> Result<Self, AudioShareTransportError> {
+        spec.validate()
             .map_err(|error| AudioShareTransportError::InvalidFormat(error.to_string()))?;
+        if spec.encoding.encoding != AudioEncoding::Pcm {
+            return Err(AudioShareTransportError::InvalidFormat(
+                "Audio Share v0.3.4 compatibility transport accepts only PCM".to_owned(),
+            ));
+        }
+        let format = &spec.format;
         if format.channels > 8 || format.sample_rate_hz > 192_000 {
             return Err(AudioShareTransportError::InvalidFormat(
                 "Audio Share v0.3.4 supports at most 8 channels and 192 kHz".to_owned(),
@@ -172,6 +178,24 @@ pub struct AudioShareTransportStats {
     pub pcm_bytes_sent: u64,
 }
 
+impl AudioShareTransportStats {
+    /// Maps only counters observable through the private compatibility transport.
+    /// Unobservable common metrics retain their default value rather than being
+    /// presented as measured zero loss or jitter.
+    #[must_use]
+    pub fn common_metrics(self) -> AudioMetricsSnapshot {
+        AudioMetricsSnapshot {
+            media_blocks_produced: self.blocks_enqueued,
+            media_blocks_without_consumer: self.blocks_without_receiver,
+            payload_bytes_transmitted: self.pcm_bytes_sent,
+            packets_transmitted: self.datagrams_sent,
+            queue_overruns: self.queue_full,
+            transport_errors: self.datagram_send_errors,
+            ..AudioMetricsSnapshot::default()
+        }
+    }
+}
+
 #[derive(Default)]
 struct TransportCounters {
     blocks_enqueued: AtomicU64,
@@ -211,25 +235,10 @@ impl AudioShareTransport {
     ) -> Result<Self, AudioShareTransportError> {
         let config = config.validate()?;
         // Audio Share uses one port number for both transports. On Windows a
-        // TCP-selected ephemeral port can belong to an excluded UDP range, so
-        // let UDP choose the shared port before binding TCP to it.
-        let udp = UdpSocket::bind(config.bind_address).map_err(|source| {
-            AudioShareTransportError::Bind {
-                protocol: "UDP",
-                source,
-            }
-        })?;
-        let local_address =
-            udp.local_addr()
-                .map_err(|source| AudioShareTransportError::Configure {
-                    protocol: "UDP",
-                    source,
-                })?;
-        let tcp =
-            TcpListener::bind(local_address).map_err(|source| AudioShareTransportError::Bind {
-                protocol: "TCP",
-                source,
-            })?;
+        // UDP-selected ephemeral port can still belong to a TCP excluded range.
+        // Retry only port-zero selection; an explicit operator-selected port
+        // retains one exact bind attempt and its original error.
+        let (udp, tcp, local_address) = bind_shared_sockets(config.bind_address)?;
         tcp.set_nonblocking(true)
             .map_err(|source| AudioShareTransportError::Configure {
                 protocol: "TCP",
@@ -348,6 +357,40 @@ impl AudioShareTransport {
             let _ = handle.join();
         }
     }
+}
+
+fn bind_shared_sockets(
+    bind_address: SocketAddr,
+) -> Result<(UdpSocket, TcpListener, SocketAddr), AudioShareTransportError> {
+    let attempts = if bind_address.port() == 0 {
+        MAX_SHARED_EPHEMERAL_BIND_ATTEMPTS
+    } else {
+        1
+    };
+    let mut last_tcp_error = None;
+
+    for _ in 0..attempts {
+        let udp =
+            UdpSocket::bind(bind_address).map_err(|source| AudioShareTransportError::Bind {
+                protocol: "UDP",
+                source,
+            })?;
+        let local_address =
+            udp.local_addr()
+                .map_err(|source| AudioShareTransportError::Configure {
+                    protocol: "UDP",
+                    source,
+                })?;
+        match TcpListener::bind(local_address) {
+            Ok(tcp) => return Ok((udp, tcp, local_address)),
+            Err(source) => last_tcp_error = Some(source),
+        }
+    }
+
+    Err(AudioShareTransportError::Bind {
+        protocol: "TCP",
+        source: last_tcp_error.expect("at least one shared bind attempt"),
+    })
 }
 
 impl Drop for AudioShareTransport {
@@ -652,7 +695,7 @@ mod tests {
 
     #[test]
     fn speaker_baseline_matches_pinned_protobuf_wire_format() {
-        let format = AudioSharePrivateFormat::from_audio_format(&AudioFormat::speaker_baseline())
+        let format = AudioSharePrivateFormat::from_stream_spec(&AudioStreamSpec::media_balanced())
             .expect("baseline format");
         assert_eq!(format.block_align(), 4);
         assert_eq!(
@@ -663,7 +706,7 @@ mod tests {
 
     #[test]
     fn private_transport_negotiates_and_delivers_segmented_pcm() {
-        let format = AudioSharePrivateFormat::from_audio_format(&AudioFormat::speaker_baseline())
+        let format = AudioSharePrivateFormat::from_stream_spec(&AudioStreamSpec::media_balanced())
             .expect("baseline format");
         let transport = AudioShareTransport::bind(
             AudioShareTransportConfig::local_lab("127.0.0.1:0".parse().unwrap()),
@@ -715,12 +758,17 @@ mod tests {
         assert!(stats.datagrams_sent >= 3);
         assert!(stats.pcm_bytes_sent >= pcm.len() as u64);
         assert_eq!(stats.datagram_send_errors, 0);
+        let common = stats.common_metrics();
+        assert_eq!(common.media_blocks_produced, stats.blocks_enqueued);
+        assert_eq!(common.packets_transmitted, stats.datagrams_sent);
+        assert_eq!(common.payload_bytes_transmitted, stats.pcm_bytes_sent);
+        assert_eq!(common.estimated_jitter_micros, None);
         transport.shutdown();
     }
 
     #[test]
     fn sender_rejects_empty_oversized_and_unaligned_blocks() {
-        let format = AudioSharePrivateFormat::from_audio_format(&AudioFormat::speaker_baseline())
+        let format = AudioSharePrivateFormat::from_stream_spec(&AudioStreamSpec::media_balanced())
             .expect("baseline format");
         let config = AudioShareTransportConfig {
             max_block_bytes: 16,
@@ -734,6 +782,16 @@ mod tests {
                 Err(AudioShareTransportError::InvalidPcmBlock { .. })
             ));
         }
+    }
+
+    #[test]
+    fn compatibility_transport_rejects_compressed_common_spec() {
+        let mut compressed = AudioStreamSpec::media_balanced();
+        compressed.encoding = capyio_audio::AudioEncodingSpec::opus(128_000);
+        assert!(matches!(
+            AudioSharePrivateFormat::from_stream_spec(&compressed),
+            Err(AudioShareTransportError::InvalidFormat(_))
+        ));
     }
 
     #[test]

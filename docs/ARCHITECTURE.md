@@ -123,7 +123,7 @@ power.
 capyio-core
    ^
    +--- capyio-data-plane
-   +--- capyio-audio
+   +--- capyio-audio (shared direction-neutral audio contracts/algorithms)
    +--- capyio-protocol
    +--- capyio-runtime
    +--- capyio-adapter-sdk
@@ -142,7 +142,8 @@ capyio-data-plane
    +--- SensorServer protocol Adapter (bounded mapping; transport separate)
 
 Audio Share process Adapter
-   +--- pinned external as-cmd process (AdapterManaged TCP/UDP PCM)
+   +--- common selected Speaker stream specification and metrics
+   +--- pinned private AdapterManaged TCP/UDP PCM binding
 ```
 
 Dependency rules:
@@ -154,6 +155,15 @@ Dependency rules:
 - Adapter Host owns process I/O and does not enter Core.
 - Profile-specific Adapters may depend on `capyio-data-plane`; the data-plane
   crate never depends on an Adapter or concrete transport.
+- `capyio-audio` defines complete selected audio candidates, bounded QoS
+  policies, decoded frames, worker-thread reordering/clock estimates and common
+  metrics for both microphone and speaker Routes. It does not define a global
+  audio Source/Sink role, open sockets, access platform audio APIs, run codecs
+  or select a production transport.
+- Initial audio negotiation selects the first Source-preferred complete
+  candidate also advertised by the Sink. It never silently resamples, changes
+  encoding, enables processing or rewrites QoS; a later Converter must make any
+  such operation explicit.
 - The Audio Share Adapter validates and supervises a pinned external executable;
   its TCP/UDP PCM contract does not become a Core, Protocol or StandardPort
   dependency.
@@ -250,6 +260,11 @@ are independent. Clock recovery and resampling remain in user mode.
 Real-time callbacks use fixed-capacity/preallocated structures. They do not
 block, wait on contended locks, allocate without bounds, log normally, parse
 JSON/Protobuf, call UI code, or perform network/file I/O.
+
+ADR 0035 applies one media contract to both audio directions while ADR 0004
+keeps microphone and speaker as independent Routes. A future duplex association
+may expose a render reference to a capture-side AEC implementation, but it does
+not merge permissions, stop state or failure state.
 
 ## 10. Platform projection strategy
 
