@@ -3,7 +3,7 @@ Signature   = "$Windows NT$"
 Class       = MEDIA
 Provider    = %ProviderName%
 ClassGUID   = {4d36e96c-e325-11ce-bfc1-08002be10318}
-DriverVer   = 08/27/2026,0.1.0.0
+DriverVer   = 08/28/2026,0.2.0.0
 CatalogFile = capyioaudio.cat
 PnpLockDown = 1
 
@@ -54,6 +54,11 @@ AddInterface = %KSCATEGORY_RENDER%,%KSNAME_WaveSpeaker%,CapyIO.I.WaveSpeaker
 AddInterface = %KSCATEGORY_REALTIME%,%KSNAME_WaveSpeaker%,CapyIO.I.WaveSpeaker
 AddInterface = %KSCATEGORY_AUDIO%,%KSNAME_TopologySpeaker%,CapyIO.I.TopologySpeaker
 AddInterface = %KSCATEGORY_TOPOLOGY%,%KSNAME_TopologySpeaker%,CapyIO.I.TopologySpeaker
+AddInterface = %KSCATEGORY_AUDIO%,%KSNAME_WaveMicIn%,CapyIO.I.WaveMicIn
+AddInterface = %KSCATEGORY_CAPTURE%,%KSNAME_WaveMicIn%,CapyIO.I.WaveMicIn
+AddInterface = %KSCATEGORY_REALTIME%,%KSNAME_WaveMicIn%,CapyIO.I.WaveMicIn
+AddInterface = %KSCATEGORY_AUDIO%,%KSNAME_TopologyMicIn%,CapyIO.I.TopologyMicIn
+AddInterface = %KSCATEGORY_TOPOLOGY%,%KSNAME_TopologyMicIn%,CapyIO.I.TopologyMicIn
 
 [CapyIO.I.WaveSpeaker]
 AddReg = CapyIO.I.WaveSpeaker.AddReg
@@ -68,6 +73,22 @@ AddReg = CapyIO.I.TopologySpeaker.AddReg
 [CapyIO.I.TopologySpeaker.AddReg]
 HKR,,CLSID,,%Proxy.CLSID%
 HKR,,FriendlyName,,%CapyIO.TopologySpeaker.Name%
+HKR,EP\0,%PKEY_AudioEndpoint_Association%,,%KSNODETYPE_ANY%
+HKR,EP\0,%PKEY_AudioEndpoint_Supports_EventDriven_Mode%,0x00010001,1
+
+[CapyIO.I.WaveMicIn]
+AddReg = CapyIO.I.WaveMicIn.AddReg
+
+[CapyIO.I.WaveMicIn.AddReg]
+HKR,,CLSID,,%Proxy.CLSID%
+HKR,,FriendlyName,,%CapyIO.WaveMicIn.Name%
+
+[CapyIO.I.TopologyMicIn]
+AddReg = CapyIO.I.TopologyMicIn.AddReg
+
+[CapyIO.I.TopologyMicIn.AddReg]
+HKR,,CLSID,,%Proxy.CLSID%
+HKR,,FriendlyName,,%CapyIO.TopologyMicIn.Name%
 HKR,EP\0,%PKEY_AudioEndpoint_Association%,,%KSNODETYPE_ANY%
 HKR,EP\0,%PKEY_AudioEndpoint_Supports_EventDriven_Mode%,0x00010001,1
 
@@ -98,14 +119,19 @@ KmdfLibraryVersion = $KMDFVERSION$
 ProviderName = "CapyIO Project"
 MfgName = "CapyIO Project"
 DiskName = "CapyIO Virtual Audio Driver"
-CapyIO.DeviceDesc = "CapyIO Virtual Speaker"
-CapyIO.ServiceDesc = "CapyIO Virtual Speaker Driver"
+CapyIO.DeviceDesc = "CapyIO Virtual Audio"
+CapyIO.ServiceDesc = "CapyIO Virtual Audio Driver"
 CapyIO.WaveSpeaker.Name = "CapyIO Speaker"
 CapyIO.TopologySpeaker.Name = "CapyIO Speaker Topology"
+CapyIO.WaveMicIn.Name = "CapyIO Microphone"
+CapyIO.TopologyMicIn.Name = "CapyIO Microphone Topology"
 KSNAME_WaveSpeaker = "WaveSpeaker"
 KSNAME_TopologySpeaker = "TopologySpeaker"
+KSNAME_WaveMicIn = "WaveMicIn"
+KSNAME_TopologyMicIn = "TopologyMicIn"
 Proxy.CLSID = "{17CCA71B-ECD7-11D0-B908-00A0C9223196}"
 KSCATEGORY_AUDIO = "{6994AD04-93EF-11D0-A3CC-00A0C9223196}"
+KSCATEGORY_CAPTURE = "{65E8773D-8F56-11D0-A3B9-00A0C9223196}"
 KSCATEGORY_RENDER = "{65E8773E-8F56-11D0-A3B9-00A0C9223196}"
 KSCATEGORY_REALTIME = "{EB115FFC-10C8-4964-831D-6DCB02E6F23F}"
 KSCATEGORY_TOPOLOGY = "{DDA54A40-1E4C-11D1-A050-405705C10000}"

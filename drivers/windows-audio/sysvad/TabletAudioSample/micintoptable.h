@@ -22,9 +22,9 @@ PropertyHandler_MicInTopoFilter(
     );
 
 //
-// {d48deb08-fd1c-4d1e-b821-9064d49ae96e}
+// CapyIO-owned microphone connector name: {ba3df3f3-aa52-4d39-b9d7-d2a44a50510a}
 DEFINE_GUID(MICIN_CUSTOM_NAME,
-0xd48deb08, 0xfd1c, 0x4d1e, 0xb8, 0x21, 0x90, 0x64, 0xd4, 0x9a, 0xe9, 0x6e);
+0xba3df3f3, 0xaa52, 0x4d39, 0xb9, 0xd7, 0xd2, 0xa4, 0x4a, 0x50, 0x51, 0x0a);
 
 //=============================================================================
 static

@@ -18,6 +18,9 @@ Abstract:
 #include "speakertopo.h"
 #include "speakertoptable.h"
 #include "speakerwavtable.h"
+#include "micintopo.h"
+#include "micintoptable.h"
+#include "micinwavtable.h"
 
 NTSTATUS
 CreateMiniportWaveRTSYSVAD
@@ -121,9 +124,44 @@ static PENDPOINT_MINIPAIR g_RenderEndpoints[] =
 
 #define g_cRenderEndpoints (SIZEOF_ARRAY(g_RenderEndpoints))
 
-static PENDPOINT_MINIPAIR* g_CaptureEndpoints = nullptr;
-static ULONG g_cCaptureEndpoints = 0;
+static PHYSICALCONNECTIONTABLE CapyIoMicrophoneTopologyPhysicalConnections[] =
+{
+    {
+        KSPIN_TOPO_BRIDGE,
+        KSPIN_WAVE_BRIDGE,
+        CONNECTIONTYPE_TOPOLOGY_OUTPUT
+    }
+};
 
-#define g_MaxMiniports (g_cRenderEndpoints * 2)
+static ENDPOINT_MINIPAIR CapyIoMicrophoneMiniports =
+{
+    eMicInDevice,
+    L"TopologyMicIn",
+    NULL,
+    CreateMiniportTopologySYSVAD,
+    &MicInTopoMiniportFilterDescriptor,
+    0, NULL,
+    L"WaveMicIn",
+    NULL,
+    CreateMiniportWaveRTSYSVAD,
+    &MicInWaveMiniportFilterDescriptor,
+    0, NULL,
+    MICIN_DEVICE_MAX_CHANNELS,
+    MicInPinDeviceFormatsAndModes,
+    SIZEOF_ARRAY(MicInPinDeviceFormatsAndModes),
+    CapyIoMicrophoneTopologyPhysicalConnections,
+    SIZEOF_ARRAY(CapyIoMicrophoneTopologyPhysicalConnections),
+    ENDPOINT_NO_FLAGS,
+    NULL, 0, NULL,
+};
+
+static PENDPOINT_MINIPAIR g_CaptureEndpoints[] =
+{
+    &CapyIoMicrophoneMiniports,
+};
+
+#define g_cCaptureEndpoints (SIZEOF_ARRAY(g_CaptureEndpoints))
+
+#define g_MaxMiniports ((g_cRenderEndpoints + g_cCaptureEndpoints) * 2)
 
 #endif // _SYSVAD_MINIPAIRS_H_

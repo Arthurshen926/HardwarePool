@@ -3,7 +3,8 @@
 This directory contains the Gate 7B Windows system-projection spike that exposes:
 
 - `CapyIO Speaker` as a Windows render endpoint;
-- a later `CapyIO Microphone` capture endpoint (not implemented in this gate).
+- an enumeration-only `CapyIO Microphone` capture endpoint baseline. It still
+  emits the SysVAD test tone until the bounded capture-APO ingress is complete.
 
 The speaker implementation is a minimized MS-PL SysVAD derivative with
 CapyIO-owned device, service, APO and extension identifiers. Its source and

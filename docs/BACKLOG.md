@@ -119,7 +119,8 @@ architecture decision is ADR 0035.
 Follow-up `CAPY-MIC-000A` pinned/audited MicYou v2.0.1 and implemented the
 bounded external-process boundary under ADR 0036. `CAPY-MIC-001` must now add a
 CapyIO-owned Windows capture endpoint and bounded PCM ingress before ordinary
-application recording can be claimed.
+application recording can be claimed. Its `001A` enumeration-only source and
+x64 WDK build baseline are complete; the capture APO/ring is still active work.
 
 ## Active product slice
 

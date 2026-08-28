@@ -290,6 +290,7 @@
     <ClCompile Include="..\kshelper.cpp" />
     <ClCompile Include="..\savedata.cpp" />
     <ClCompile Include="..\tonegenerator.cpp" />
+    <ClCompile Include="micintopo.cpp" />
     <ResourceCompile Include="TabletAudioSample.rc" />
   </ItemGroup>
   <ItemGroup>

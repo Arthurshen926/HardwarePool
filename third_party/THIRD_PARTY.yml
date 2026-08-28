@@ -160,8 +160,8 @@ planned_integrations:
       - drivers/windows-audio/sysvad/APO/SwapAPO
       - drivers/windows-audio/sysvad/Package
     local_modifications:
-      - retain only the speaker render endpoint in the runtime endpoint arrays
-      - remove keyword detector, capture, HDMI, SPDIF, headphone, delay, KWS and AEC package dependencies
+      - retain one speaker render endpoint and one microphone capture endpoint in the runtime arrays
+      - remove keyword detector, microphone arrays, HDMI, SPDIF, headphone, delay, KWS and AEC package dependencies
       - rename the device, service, binary and APO for CapyIO ownership
       - replace sample hardware identifiers and APO identifiers with CapyIO-owned values
       - add a bounded non-blocking render-APO staging bridge
