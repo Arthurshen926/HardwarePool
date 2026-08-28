@@ -11,7 +11,11 @@ planned_integrations:
     source_imported: false
     binary_imported: false
     imported_paths: []
-    local_modifications: []
+    local_modifications:
+      - >-
+        local-lab-only CLI patch preserves CPAL enumeration order, adds
+        --device-index with exact expected-name validation, removes explicit
+        device fallback, and exposes the device-index-v1 capability
     fixed_revision_review:
       reviewed_paths:
         - LICENSE
@@ -30,6 +34,8 @@ planned_integrations:
         - private TCP control and UDP audio data planes with session identifiers
         - PCM and Opus payload modes with bounded FEC and jitter structures
         - explicit CLI Wi-Fi bind, port and output-device arguments
+        - upstream exact-name selection chooses the first duplicate and falls
+          back to the default output device when no exact match exists
         - Windows output targets a separately installed render endpoint such as VB-CABLE input
         - decoded desktop PCM currently crosses an unbounded standard mpsc channel upstream
         - the Windows release publishes an installer but no standalone CLI artifact
@@ -50,11 +56,13 @@ planned_integrations:
         sha256: 0c5537aef4321cef6ed65f99f4b92684c42bb67c6e96aeffa3f48444f32b564d
         distributed_by_capyio: false
     distribution_note: >-
-      CapyIO does not copy, link, vendor, modify, repackage or distribute MicYou
-      in this slice. The Adapter launches only a user-supplied exact v2.0.1 CLI
-      as a separate process. Building that CLI and installing the upstream APK
-      remain explicit local-lab actions; public redistribution and the Windows
-      virtual-microphone package require separate review.
+      CapyIO does not copy, link, vendor, repackage or distribute MicYou in this
+      slice. The Adapter launches only a user-supplied local build of exact
+      v2.0.1 carrying the reviewed device-index-v1 patch, and rejects an
+      unmodified CLI. The GPL patch/source and binary remain outside this
+      repository. Installing the upstream APK remains an explicit local-lab
+      action; public redistribution and the Windows virtual-microphone package
+      require separate legal and release review.
   - id: audio-share
     upstream_repository: https://github.com/mkckr0/audio-share
     pinned_revision: 342751fe675367483170b002ec6054e243966dc0

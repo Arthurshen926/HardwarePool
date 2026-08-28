@@ -614,6 +614,7 @@ def validate_windows_audio_endpoint_contract() -> None:
         fail("Windows audio package project must not override an explicit Release build")
 
     base_inf = inx_paths[1].read_text(encoding="utf-8")
+    extension_inf = inx_paths[2].read_text(encoding="utf-8")
     topology = (
         ROOT / "drivers/windows-audio/sysvad/EndpointsCommon/speakertoptable.h"
     ).read_text(encoding="utf-8")
@@ -651,6 +652,22 @@ def validate_windows_audio_endpoint_contract() -> None:
             fail(f"Windows audio {endpoint} must declare its explicit endpoint association")
     if "HKR,EP\\0,%PKEY_AudioEndpoint_Association%,,%KSNODETYPE_ANY%" in base_inf:
         fail("Windows audio endpoint associations must not fall back to KSNODETYPE_ANY")
+    if "TopologyMicIngress%,CapyIOIngressExtension.Interface" not in extension_inf:
+        fail("microphone ingress must use its independent render processing-mode contract")
+    ingress_fx = extension_inf.split("[CapyIOIngressExtension.Interface.AddReg]", 1)[-1].split("[", 1)[0]
+    for mode in (
+        "%AUDIO_SIGNALPROCESSINGMODE_DEFAULT%",
+        "%AUDIO_SIGNALPROCESSINGMODE_MEDIA%",
+        "%AUDIO_SIGNALPROCESSINGMODE_MOVIE%",
+    ):
+        if mode not in ingress_fx:
+            fail(f"microphone ingress processing modes must include {mode}")
+    for capture_only_mode in (
+        "%AUDIO_SIGNALPROCESSINGMODE_COMMUNICATIONS%",
+        "%AUDIO_SIGNALPROCESSINGMODE_SPEECH%",
+    ):
+        if capture_only_mode in ingress_fx:
+            fail(f"microphone ingress processing modes must exclude {capture_only_mode}")
     ingress_descriptor = topology.split(
         "PCFILTER_DESCRIPTOR CapyIoMicrophoneIngressTopoMiniportFilterDescriptor =", 1
     )[-1]

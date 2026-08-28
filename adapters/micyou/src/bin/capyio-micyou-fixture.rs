@@ -8,6 +8,10 @@ fn main() {
         println!("micyou-cli 2.0.1");
         return;
     }
+    if args == ["capyio-capabilities"] {
+        println!("device-index-v1");
+        return;
+    }
     if args == ["devices"] {
         println!("audio output devices:\n  1. {DEVICE}");
         return;
@@ -18,7 +22,8 @@ fn main() {
     let bind = value(&args, "--bind").expect("explicit bind");
     let port = value(&args, "--port").expect("explicit port");
     let device = value(&args, "--device").expect("explicit device");
-    if device != DEVICE {
+    let device_index = value(&args, "--device-index").expect("explicit device index");
+    if device != DEVICE || device_index != "1" {
         process::exit(3);
     }
     let listener = TcpListener::bind(format!("{bind}:{port}")).expect("fixture listener");

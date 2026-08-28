@@ -2,7 +2,7 @@
 
 Date: 2026-08-28
 
-Status: `21.64.0.1` deployed; `21.65.0.1` ingress-jack build validated, deployment pending
+Status: `21.65.0.1` deployed; signed `21.66.0.1` ingress-mode fix validated, deployment pending
 
 ## Outcome
 
@@ -60,7 +60,24 @@ Deployment proved that the explicit association reached MMDevice, but the
 display prefix still remained `Speakers`. The ingress topology was still using
 the Speaker automation table, which reports an integrated stereo-speaker jack.
 `21.65.0.1` removes Speaker jack properties from the private ingress topology;
-the actual CapyIO Speaker retains them unchanged.
+the actual CapyIO Speaker retains them unchanged. Signed deployment completed
+without reboot; all five CapyIO PnP nodes and the three audio/Broker services
+are healthy. Direct KS and registry probes prove the independent Pin Name,
+Category and Association, but Windows 11 build 26200 still labels both render
+MMDevices as localized `Speakers`. A privileged registry write and the public
+Core Audio property store both rejected renaming. Friendly-name uniqueness is
+therefore no longer an acceptance dependency: the product selects the ingress
+using a freshly probed one-based inventory entry plus its expected name and
+fails closed if either changes.
+
+The first real CPAL/WASAPI comparison then exposed a separate defect. WASAPI
+enumerated both active render endpoints, but CPAL rejected Microphone Ingress
+with `AUDCLNT_E_UNSUPPORTED_FORMAT` (`0x88890008`). The extension INF had
+attached the capture endpoint's `DEFAULT`, `COMMUNICATIONS` and `SPEECH` MFX
+mode list to the render ingress as well. `21.66.0.1` gives ingress an independent
+extension section whose modes match its render miniport: `DEFAULT`, `MEDIA` and
+`MOVIE`. Repository validation now prevents the two contracts from being
+merged again.
 
 ## Build evidence
 
@@ -73,26 +90,39 @@ the actual CapyIO Speaker retains them unchanged.
 - independent x64 InfVerif `/u` and `/w`: passed for all three INFs;
 - repository structural validation: passed;
 - `capyio-windows-service`: 9 tests passed;
-- `capyio-micyou-adapter`: 6 tests passed, 1 physical-CLI test ignored;
+- `capyio-micyou-adapter`: 7 tests passed, 1 physical-CLI test ignored;
 - Clippy with warnings denied passed for both affected Rust crates.
 
 The WDK MSBuild wrapper continues to print its known managed-task failure while
 loading relative `x86\\InfVerif.dll`. It does not fail the build, and the native
 x64 verifier is the retained INF evidence.
 
+For `21.66.0.1`, Release x64 compilation produced `CapyIOAudio.sys` and
+`CapyIORenderAPO.dll`; x64 InfVerif `/u` returned zero for all three INFs, and
+ApiValidator classified both binaries as Universal. Inf2Cat reported no errors
+or warnings. The staged SYS, DLL and catalog all have valid SHA-256 signatures
+from `CapyIO Driver Lab 4b2407a` (thumbprint
+`C439F114B8090E3F27192093455BDE6D0C7ED45A`).
+
 ## Deployment boundary
 
-Signed `21.64.0.1` is installed on `DESKTOP-AT8EVE9`; all five CapyIO devices
-and the three audio/Broker services are healthy. Before deploying `21.65.0.1`,
-the exact package must be built, staged, hashed and lab-signed, and signed
-`21.64.0.1` must be retained as the immediate rollback target.
+Signed `21.65.0.1` is installed on `DESKTOP-AT8EVE9`; all five CapyIO devices
+and the three audio/Broker services are healthy. The staged signed package is
+retained under
+`artifacts/windows-audio/41ac16d-microphone-jack-isolation-signed`, and signed
+`21.64.0.1` remains a rollback target. Signed `21.66.0.1` is staged under
+`artifacts/windows-audio/21.66-microphone-ingress-modes-signed`; `21.65.0.1` is
+the immediate rollback package until deployment evidence is complete. No
+reboot is expected.
 
 ## Remaining acceptance work
 
-1. Build, sign and deploy `21.65.0.1`, then verify distinct Speaker and
-   Microphone Ingress MMDevice names.
-2. Play a deterministic 48 kHz tone into Microphone Ingress and record it from
+1. Deploy signed `21.66.0.1` and prove CPAL/MicYou enumerate both CapyIO render
+   endpoints with usable output configurations.
+2. Probe the pinned MicYou CLI with the reviewed `device-index-v1` patch and
+   prove duplicate endpoint names select the intended ingress or fail closed.
+3. Play a deterministic 48 kHz tone into Microphone Ingress and record it from
    CapyIO Microphone through an ordinary WASAPI client.
-3. Verify Broker absence and ingress disconnect return capture to silence.
-4. Build/probe pinned MicYou v2.0.1, then install its APK only for the approved
+4. Verify Broker absence and ingress disconnect return capture to silence.
+5. Probe the patched MicYou v2.0.1 CLI, then install its APK only for the approved
    physical Android test and retain the Android-to-Windows recording evidence.

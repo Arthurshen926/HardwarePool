@@ -7,13 +7,17 @@ schema, library or binary is copied, linked or distributed here.
 
 The current slice:
 
-- verifies the exact `micyou-cli 2.0.1` version;
-- enumerates a bounded output-device inventory and requires an exact device;
+- verifies the exact `micyou-cli 2.0.1` version and the CapyIO
+  `device-index-v1` capability;
+- preserves a bounded output-device inventory, including duplicate display
+  names, and requires both a one-based index and its expected name;
 - starts Wi-Fi mode with an explicit IPv4 bind address and port;
 - drains child output with bounded retention and owns stop/reap behavior;
 - maps the Adapter-managed route to CapyIO's shared voice audio policy.
 
-It does not yet provide a CapyIO virtual microphone. A future Gate must add the
-Windows capture endpoint and a supported user-mode PCM ingress. Do not run
+The adapter now targets the CapyIO-owned paired Windows microphone endpoints,
+but ordinary-application and phone audio evidence remains pending. The pinned
+upstream CLI must be locally rebuilt with the reviewed fail-closed device-index
+patch; an unmodified v2.0.1 binary is rejected. Do not run
 `micyou-cli mics --install` from this Adapter: that performs a separate driver
 installation and needs its own approval and provenance review.

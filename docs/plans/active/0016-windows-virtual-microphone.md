@@ -87,5 +87,13 @@ tool invocation still requires explicit approval for the exact package.
   Category, but deployment showed the ingress still inherited Speaker identity
   through the shared integrated-speaker Jack Description;
 - `21.65.0.1` removes Speaker jack automation only from the private ingress
-  topology (`CAPY_MIC_001C_REPORT.md`);
+  topology and is signed/deployed with all PnP nodes and services healthy;
+- Windows still presents both render flows with the same localized Speaker
+  label, so the MicYou Adapter now preserves duplicate names and validates a
+  freshly probed one-based device index plus expected name. The local MicYou
+  build exposes `device-index-v1` and fails instead of falling back;
+- the real CPAL probe rejected the ingress mix format because it inherited
+  capture-only `COMMUNICATIONS` and `SPEECH` MFX modes. Signed `21.66.0.1`
+  isolates the ingress mode list to `DEFAULT`, `MEDIA` and `MOVIE`; deployment
+  and post-install enumeration evidence remain pending;
 - deterministic ordinary-app capture and physical MicYou tests remain pending.

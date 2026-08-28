@@ -33,6 +33,7 @@ fn probes_pinned_fixture_and_requires_exact_device() {
         fixture(),
         IpAddr::V4(Ipv4Addr::LOCALHOST),
         unused_port(),
+        1,
         DEVICE,
     )
     .expect("config");
@@ -41,7 +42,8 @@ fn probes_pinned_fixture_and_requires_exact_device() {
         .probe_config(&config)
         .expect("inventory");
     assert_eq!(inventory.version, "2.0.1");
-    assert_eq!(inventory.output_devices, [DEVICE]);
+    assert_eq!(inventory.output_devices[0].index.get(), 1);
+    assert_eq!(inventory.output_devices[0].name, DEVICE);
 }
 
 #[test]
@@ -50,6 +52,7 @@ fn starts_polls_stops_and_reaps_fixture() {
         fixture(),
         IpAddr::V4(Ipv4Addr::LOCALHOST),
         unused_port(),
+        1,
         DEVICE,
     )
     .expect("config");
