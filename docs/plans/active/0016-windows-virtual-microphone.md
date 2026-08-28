@@ -81,6 +81,9 @@ tool invocation still requires explicit approval for the exact package.
   but the standard Line Connector category still retained duplicate MMDevice
   names after endpoint regeneration;
 - `21.63.0.1` gives the ingress a registered CapyIO-specific Category GUID,
-  matching Microsoft's persistent endpoint-name contract
+  but deployment showed the topology interfaces still associated every
+  endpoint with `KSNODETYPE_ANY`;
+- `21.64.0.1` explicitly associates each topology interface with its real Pin
+  Category so AudioEndpointBuilder can initialize a distinct identity
   (`CAPY_MIC_001C_REPORT.md`);
 - deterministic ordinary-app capture and physical MicYou tests remain pending.

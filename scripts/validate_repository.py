@@ -640,6 +640,17 @@ def validate_windows_audio_endpoint_contract() -> None:
         fail("microphone ingress category GUID must match its topology and INF registration")
     if "CapyIO.MicrophoneIngressCategoryGuid" not in base_inf:
         fail("microphone ingress category GUID must have a device-specific name registration")
+    required_associations = {
+        "%KSNODETYPE_SPEAKER%": "speaker",
+        "%CapyIO.MicrophoneIngressCategoryGuid%": "microphone ingress",
+        "%KSNODETYPE_MICROPHONE%": "microphone",
+    }
+    for category, endpoint in required_associations.items():
+        association = f"HKR,EP\\0,%PKEY_AudioEndpoint_Association%,,{category}"
+        if association not in base_inf:
+            fail(f"Windows audio {endpoint} must declare its explicit endpoint association")
+    if "HKR,EP\\0,%PKEY_AudioEndpoint_Association%,,%KSNODETYPE_ANY%" in base_inf:
+        fail("Windows audio endpoint associations must not fall back to KSNODETYPE_ANY")
 
 
 def workflow_has_pull_request_branch(text: str, expected: str) -> bool:

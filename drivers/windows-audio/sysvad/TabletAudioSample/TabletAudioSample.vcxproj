@@ -301,7 +301,7 @@
   <ItemGroup>
     <Inf Exclude="@(Inx)" Include="*.inx">
       <DateStamp>08/28/2026</DateStamp>
-      <TimeStamp>21.63.0.1</TimeStamp>
+      <TimeStamp>21.64.0.1</TimeStamp>
     </Inf>
     <FilesToPackage Include="$(TargetPath)" Condition="'$(ConfigurationType)'=='Driver' or '$(ConfigurationType)'=='DynamicLibrary'" />
   </ItemGroup>
