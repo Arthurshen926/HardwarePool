@@ -3,8 +3,10 @@
 This directory contains the Gate 7B Windows system-projection spike that exposes:
 
 - `CapyIO Speaker` as a Windows render endpoint;
-- an enumeration-only `CapyIO Microphone` capture endpoint baseline. It still
-  emits the SysVAD test tone until the bounded capture-APO ingress is complete.
+- `CapyIO Microphone Ingress` as the private render-side PCM entry selected by
+  the MicYou Adapter;
+- `CapyIO Microphone` as the application-facing capture endpoint backed by the
+  service-owned bounded capture ring.
 
 The speaker implementation is a minimized MS-PL SysVAD derivative with
 CapyIO-owned device, service, APO and extension identifiers. Its source and
@@ -48,6 +50,6 @@ user-mode bridge and retains a custom driver IPC as a deferred fallback.
 5. Exercise ring-full, Broker loss, format-epoch and restart behavior; activate
    a small Broker/driver IPC only if the APO evidence fails.
 6. Run Driver Verifier and applicable HLK tests.
-7. Add signing and installer workflows only after functional stability.
+7. Add public signing and installer workflows only after functional stability.
 
 Read `IPC_CONTRACT.md`, this directory's `AGENTS.md`, `docs/ARCHITECTURE.md`, and `docs/SECURITY_MODEL.md` before adding code.

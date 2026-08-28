@@ -131,9 +131,10 @@ def relative(path: Path) -> str:
 
 
 def is_ignored(path: Path) -> bool:
-    return any(
-        part in IGNORED_DIRECTORY_NAMES for part in path.relative_to(ROOT).parts
-    )
+    parts = path.relative_to(ROOT).parts
+    if any(part in IGNORED_DIRECTORY_NAMES for part in parts):
+        return True
+    return len(parts) >= 3 and parts[:2] == ("drivers", "windows-audio") and "x64" in parts
 
 
 def repository_files() -> list[Path]:
@@ -582,6 +583,58 @@ def validate_windows_audio_provenance() -> None:
         )
 
 
+def validate_windows_audio_endpoint_contract() -> None:
+    tablet = ROOT / "drivers/windows-audio/sysvad/TabletAudioSample"
+    inx_paths = [
+        tablet / "ComponentizedApoSample.inx",
+        tablet / "ComponentizedAudioSample.inx",
+        tablet / "ComponentizedAudioSampleExtension.inx",
+    ]
+    versions = []
+    for path in inx_paths:
+        match = re.search(
+            r"^DriverVer\s*=\s*\d{2}/\d{2}/\d{4},(?P<version>\d+\.\d+\.\d+\.\d+)\s*$",
+            path.read_text(encoding="utf-8"),
+            re.MULTILINE,
+        )
+        if match is None:
+            fail(f"Windows audio INF lacks a deterministic DriverVer: {relative(path)}")
+        versions.append(match.group("version"))
+    if len(set(versions)) != 1:
+        fail(f"Windows audio component DriverVer values disagree: {versions}")
+
+    project = (tablet / "TabletAudioSample.vcxproj").read_text(encoding="utf-8")
+    if f"<TimeStamp>{versions[0]}</TimeStamp>" not in project:
+        fail("Windows audio project TimeStamp does not match the three component INFs")
+
+    package_project = (
+        ROOT / "drivers/windows-audio/sysvad/Package/package.VcxProj"
+    ).read_text(encoding="utf-8")
+    if '<Configuration Condition="\'$(Configuration)\' == \'\'">Debug</Configuration>' not in package_project:
+        fail("Windows audio package project must not override an explicit Release build")
+
+    base_inf = inx_paths[1].read_text(encoding="utf-8")
+    topology = (
+        ROOT / "drivers/windows-audio/sysvad/EndpointsCommon/speakertoptable.h"
+    ).read_text(encoding="utf-8")
+    microphone_topology = (tablet / "micintoptable.h").read_text(encoding="utf-8")
+    required_endpoint_names = {
+        "c2ae0cd6-c228-41a6-8b0f-8b13773556a0": "CapyIO Speaker",
+        "bec4e45e-4dd5-492b-91b0-596da93ccec5": "CapyIO Microphone Ingress",
+        "ba3df3f3-aa52-4d39-b9d7-d2a44a50510a": "CapyIO Microphone",
+    }
+    driver_sources = f"{topology}\n{microphone_topology}".lower()
+    for guid, endpoint_name in required_endpoint_names.items():
+        if guid not in driver_sources:
+            fail(f"Windows audio bridge-pin GUID is missing from topology source: {guid}")
+        if guid not in base_inf.lower() or f'= "{endpoint_name}"' not in base_inf:
+            fail(f"Windows audio endpoint name is not registered in the base INF: {endpoint_name}")
+    if "&CapyIoMicrophoneIngressTopoMiniportFilterDescriptor" not in (
+        tablet / "minipairs.h"
+    ).read_text(encoding="utf-8"):
+        fail("microphone ingress must not reuse the speaker topology descriptor")
+
+
 def workflow_has_pull_request_branch(text: str, expected: str) -> bool:
     lines = text.splitlines()
     for index, line in enumerate(lines):
@@ -722,6 +775,7 @@ def main() -> None:
     validate_architecture_dependencies()
     validate_sensor_server_provenance()
     validate_windows_audio_provenance()
+    validate_windows_audio_endpoint_contract()
     validate_hosted_ci_contract()
     validate_current_foundation_labels()
     validate_local_markdown_links()

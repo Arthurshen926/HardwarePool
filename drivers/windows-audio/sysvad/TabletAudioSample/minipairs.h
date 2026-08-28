@@ -135,7 +135,7 @@ static ENDPOINT_MINIPAIR CapyIoMicrophoneIngressMiniports =
     L"TopologyMicIngress",
     NULL,
     CreateMiniportTopologySYSVAD,
-    &SpeakerTopoMiniportFilterDescriptor,
+    &CapyIoMicrophoneIngressTopoMiniportFilterDescriptor,
     0, NULL,
     L"WaveMicIngress",
     NULL,
