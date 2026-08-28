@@ -234,7 +234,10 @@ STDMETHODIMP_(void) CSwapAPOMFX::APOProcess(
     ATLASSERT(m_pRegProperties->u32MinOutputConnections <= u32NumOutputConnections);
     ATLASSERT(m_pRegProperties->u32MaxOutputConnections >= u32NumOutputConnections);
 
-    // check APO_BUFFER_FLAGS.
+    // The CapyIO MFX is shared by the paired microphone endpoints. A mono
+    // graph is the application-facing capture consumer; the dedicated stereo
+    // ingress graph is the producer. The role and mapping are fixed before the
+    // real-time callback is entered.
     switch( ppInputConnections[0]->u32BufferFlags )
     {
         case BUFFER_INVALID:
@@ -253,31 +256,35 @@ STDMETHODIMP_(void) CSwapAPOMFX::APOProcess(
             pf32OutputFrames = reinterpret_cast<FLOAT32*>(ppOutputConnections[0]->pBuffer);
             ATLASSERT( IS_VALID_TYPED_READ_POINTER(pf32OutputFrames) );
 
-            if (BUFFER_SILENT == ppInputConnections[0]->u32BufferFlags)
+            const UINT32 frameCount = ppInputConnections[0]->u32ValidFrameCount;
+            if (m_microphoneBridgeRole == MicrophoneBridgeRole::CaptureConsumer)
             {
-                WriteSilence( pf32InputFrames,
-                              ppInputConnections[0]->u32ValidFrameCount,
-                              GetSamplesPerFrame() );
+                const std::uint32_t copied = m_captureConsumer.TryRead(
+                    pf32OutputFrames,
+                    frameCount);
+                ppOutputConnections[0]->u32BufferFlags =
+                    copied == 0 ? BUFFER_SILENT : BUFFER_VALID;
+                ppOutputConnections[0]->u32ValidFrameCount = frameCount;
+                break;
             }
 
-            // swap and apply coefficients to the input buffer in-place
-            if (
-                !IsEqualGUID(m_AudioProcessingMode, AUDIO_SIGNALPROCESSINGMODE_RAW) &&
-                m_fEnableSwapMFX &&
-                (1 < m_u32SamplesPerFrame)
-            )
+            if (m_microphoneBridgeRole == MicrophoneBridgeRole::IngressProducer &&
+                ppInputConnections[0]->u32BufferFlags == BUFFER_VALID)
             {
-                ProcessSwapScale(pf32InputFrames, pf32InputFrames,
-                            ppInputConnections[0]->u32ValidFrameCount,
-                            m_u32SamplesPerFrame, m_pf32Coefficients );
+                m_captureProducer.TryWrite(
+                    pf32InputFrames,
+                    frameCount,
+                    GetSamplesPerFrame());
             }
 
-            // copy the memory only if there is an output connection, and input/output pointers are unequal
+            // The ingress remains a valid render endpoint even if the service
+            // mapping is absent. Its Windows buffer is passed through while the
+            // bridge independently drops the callback.
             if ( (0 != u32NumOutputConnections) &&
                   (ppOutputConnections[0]->pBuffer != ppInputConnections[0]->pBuffer) )
             {
                 CopyFrames( pf32OutputFrames, pf32InputFrames,
-                            ppInputConnections[0]->u32ValidFrameCount,
+                            frameCount,
                             GetSamplesPerFrame() );
             }
 
@@ -285,7 +292,7 @@ STDMETHODIMP_(void) CSwapAPOMFX::APOProcess(
             ppOutputConnections[0]->u32BufferFlags = ppInputConnections[0]->u32BufferFlags;
 
             // Set the valid frame count.
-            ppOutputConnections[0]->u32ValidFrameCount = ppInputConnections[0]->u32ValidFrameCount;
+            ppOutputConnections[0]->u32ValidFrameCount = frameCount;
 
             break;
         }
@@ -350,6 +357,7 @@ STDMETHODIMP CSwapAPOMFX::LockForProcess(UINT32 u32NumInputConnections,
 {
     ASSERT_NONREALTIME();
     HRESULT hr = S_OK;
+    UNCOMPRESSEDAUDIOFORMAT inputFormat = {};
 
     if (m_queueId != 0)
     {
@@ -368,8 +376,42 @@ STDMETHODIMP CSwapAPOMFX::LockForProcess(UINT32 u32NumInputConnections,
         ppInputConnections, u32NumOutputConnections, ppOutputConnections);
     IF_FAILED_JUMP(hr, Exit);
 
+    if (SUCCEEDED(ppInputConnections[0]->pFormat->GetUncompressedAudioFormat(&inputFormat)))
+    {
+        if (inputFormat.dwSamplesPerFrame == capyio::capture_ring::kChannels)
+        {
+            m_microphoneBridgeRole = MicrophoneBridgeRole::CaptureConsumer;
+            m_captureConsumer.Attach(
+                static_cast<std::uint32_t>(inputFormat.fFramesPerSecond),
+                inputFormat.dwSamplesPerFrame);
+        }
+        else if (inputFormat.dwSamplesPerFrame == 2)
+        {
+            m_microphoneBridgeRole = MicrophoneBridgeRole::IngressProducer;
+            m_captureProducer.Attach(
+                static_cast<std::uint32_t>(inputFormat.fFramesPerSecond),
+                inputFormat.dwSamplesPerFrame);
+        }
+    }
+    else if (GetSamplesPerFrame() == capyio::capture_ring::kChannels)
+    {
+        // Fail closed for the capture graph even if an unexpected media-type
+        // query failure prevents attachment. Passing through would expose the
+        // inherited SysVAD test tone as microphone input.
+        m_microphoneBridgeRole = MicrophoneBridgeRole::CaptureConsumer;
+    }
+
 Exit:
     return hr;
+}
+
+STDMETHODIMP CSwapAPOMFX::UnlockForProcess()
+{
+    ASSERT_NONREALTIME();
+    m_captureProducer.Detach();
+    m_captureConsumer.Detach();
+    m_microphoneBridgeRole = MicrophoneBridgeRole::Detached;
+    return CBaseAudioProcessingObject::UnlockForProcess();
 }
 
 // The method that this long comment refers to is "Initialize()"

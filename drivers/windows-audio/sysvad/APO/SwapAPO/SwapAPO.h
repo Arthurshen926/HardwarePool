@@ -19,6 +19,7 @@
 #include <rtworkq.h>
 
 #include <wil\com.h>
+#include "CapyIOCaptureRing.h"
 #include "CapyIORenderRing.h"
 
 _Analysis_mode_(_Analysis_code_type_user_driver_)
@@ -45,6 +46,13 @@ DEFINE_GUID(SWAP_APO_MFX_CONTEXT, 0x65ec019c, 0x809c, 0x4c9f, 0xa8, 0xaf, 0xcc, 
 DEFINE_GUID(SWAP_APO_SFX_CONTEXT, 0xb13a3b36, 0x2f6f, 0x4716, 0xb3, 0xc2, 0x25, 0x54, 0xee, 0xa0, 0x14, 0x29);
 
 LONG GetCurrentEffectsSetting(IPropertyStore* properties, PROPERTYKEY pkeyEnable, GUID processingMode);
+
+enum class MicrophoneBridgeRole : std::uint8_t
+{
+    Detached,
+    IngressProducer,
+    CaptureConsumer,
+};
 
 class SwapMFXApoAsyncCallback :
     public IRtwqAsyncCallback
@@ -132,6 +140,8 @@ public:
         APO_CONNECTION_DESCRIPTOR** ppInputConnections,
         UINT32 u32NumOutputConnections, APO_CONNECTION_DESCRIPTOR** ppOutputConnections);
 
+    STDMETHOD(UnlockForProcess)();
+
     STDMETHOD(Initialize)(UINT32 cbDataSize, BYTE* pbyData);
 
     // IAudioSystemEffects2
@@ -207,6 +217,9 @@ public:
     FLOAT32                                 *m_pf32Coefficients;
 
 private:
+    capyio::capture_ring::Producer m_captureProducer;
+    capyio::capture_ring::Consumer m_captureConsumer;
+    MicrophoneBridgeRole m_microphoneBridgeRole = MicrophoneBridgeRole::Detached;
     CCriticalSection                        m_EffectsLock;
     HANDLE                                  m_hEffectsChangedEvent;
     BOOL m_bRegisteredEndpointNotificationCallback = FALSE;

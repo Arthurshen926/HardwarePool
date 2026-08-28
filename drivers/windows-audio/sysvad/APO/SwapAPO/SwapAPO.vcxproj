@@ -224,6 +224,7 @@
     </Link>
   </ItemDefinitionGroup>
   <ItemGroup>
+    <ClCompile Include="CapyIOCaptureRing.cpp" />
     <ClCompile Include="CapyIORenderRing.cpp" />
     <ClCompile Include="Swap.cpp" />
     <ClCompile Include="SwapAPODll.cpp" />

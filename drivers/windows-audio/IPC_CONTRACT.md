@@ -82,14 +82,62 @@ One mapping lifetime is one format epoch: sample rate, representation, channel
 count/layout and generation. Changing format requires a new generation. A
 block from an old generation is rejected.
 
-## 5. Offline behavior
+## 5. Capture frame ring v1
+
+ADR 0037 selects paired Windows endpoints for MicYou compatibility. The
+CapyIO service creates `Global\\CapyIO.CaptureRing.v1`. The MFX on `CapyIO
+Microphone Ingress` is the sole producer; the MFX on `CapyIO Microphone` is the
+sole consumer. Both open and validate the mapping during `LockForProcess`, not
+from `APOProcess`.
+
+The mapping is 65,664 bytes: one 128-byte, 64-byte-aligned header followed by
+16,384 mono float32 frames. At 48 kHz this is an absolute capacity bound of
+341.33 ms, not a target latency. Monotonic frame sequences allow producer and
+consumer callback sizes to differ without allocating or repacketizing.
+
+| Header offset | Type | Field |
+|---:|---|---|
+| 0 | `u32` | magic `0x434f4950` |
+| 4 | `u16` | version `1` |
+| 6 | `u16` | header size `128` |
+| 8 | `u32` | total mapping size `65664` |
+| 12 | `u32` | frame capacity `16384` |
+| 16 | `u32` | bytes per frame `4` |
+| 20 | `u32` | sample rate `48000` |
+| 24 | `u16` | channels `1` |
+| 26 | `u16` | sample format `1` (float32 LE) |
+| 28 | `u32` | reserved, zero |
+| 32 | `u64` | service generation |
+| 40 | atomic `i64` | producer write-frame sequence |
+| 48 | atomic `i64` | consumer read-frame sequence |
+| 56 | atomic `i64` | dropped ingress frames |
+| 64 | atomic `i64` | produced frames |
+| 72 | atomic `i64` | consumed frames |
+| 80 | atomic `i64` | zero-filled underrun frames |
+| 88 | atomic `i64` | producer attach attempts |
+| 96 | atomic `i64` | successful producer attaches |
+| 104 | atomic `i64` | consumer attach attempts |
+| 112 | atomic `i64` | successful consumer attaches |
+| 120 | atomic `u32` | last attach stage (`101`/`102`/`103` producer, `201`/`202`/`203` consumer) |
+| 124 | atomic `u32` | last Win32-style attach error |
+
+The ingress APO accepts 48 kHz float processing buffers. Mono is copied and
+stereo is downmixed with equal `0.5` weights. It commits a complete callback or
+drops the complete callback when capacity is insufficient. The capture APO
+copies up to the requested mono frame count, zero-fills the remainder and
+advances only by frames actually consumed. A detached capture APO therefore
+returns silence instead of exposing the underlying SysVAD test tone.
+
+## 6. Offline behavior
 
 - The render endpoint continues accepting Windows audio and drops/counts when
   the Broker is absent or the bounded ring is full.
 - Network and Android receiver state never enter the APO or kernel driver.
 - Driver unload, Broker exit and process crash must not wait on an audio callback.
+- MicYou or ingress loss drains the capture ring and then produces silence;
+  the capture callback never waits for new frames.
 
-## 6. Deferred production decisions
+## 7. Deferred production decisions
 
 The lab mapping uses a protected DACL granting read/write to Local Service
 (AudioDG), full access to Local System, administrators and the object owner,

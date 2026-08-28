@@ -1,6 +1,6 @@
 [package]
 name = "capyio-windows-service"
-description = "Headless Windows service host for the CapyIO virtual-speaker Broker."
+description = "Headless Windows service host for CapyIO audio projections."
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true

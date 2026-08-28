@@ -45,6 +45,7 @@ and the separately installed native x64 verifier passed both modes.
 ## Safety and missing evidence
 
 No signing, catalog generation, driver install/update/removal, endpoint
-enumeration or capture was performed. Those actions are intentionally deferred
-until the capture ring/APO path can replace the sample tone; installing this
-intermediate package would not provide useful phone audio.
+enumeration or capture was performed. Those actions were intentionally
+deferred until the paired ingress/capture ring/APO path selected by ADR 0037
+could replace the sample tone; installing this intermediate package would not
+have provided useful phone audio.

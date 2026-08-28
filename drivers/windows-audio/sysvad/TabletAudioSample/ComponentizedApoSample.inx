@@ -37,6 +37,22 @@ HKR,AudioEngine\AudioProcessingObjects\%CAPYIO_RENDER_SFX_CLSID%,"MaxInstances",
 HKR,AudioEngine\AudioProcessingObjects\%CAPYIO_RENDER_SFX_CLSID%,"NumAPOInterfaces",0x00010001,1
 HKR,AudioEngine\AudioProcessingObjects\%CAPYIO_RENDER_SFX_CLSID%,"APOInterface0",,"{FD7F2B29-24D0-4B5C-B177-592C39F9CA10}"
 
+HKR,Classes\CLSID\%CAPYIO_MIC_BRIDGE_MFX_CLSID%,,,%MicMFX.FriendlyName%
+HKR,Classes\CLSID\%CAPYIO_MIC_BRIDGE_MFX_CLSID%\InProcServer32,,0x00020000,%13%\CapyIORenderAPO.dll
+HKR,Classes\CLSID\%CAPYIO_MIC_BRIDGE_MFX_CLSID%\InProcServer32,ThreadingModel,,"Both"
+HKR,AudioEngine\AudioProcessingObjects\%CAPYIO_MIC_BRIDGE_MFX_CLSID%,"FriendlyName",,%MicMFX.FriendlyName%
+HKR,AudioEngine\AudioProcessingObjects\%CAPYIO_MIC_BRIDGE_MFX_CLSID%,"Copyright",,%Copyright%
+HKR,AudioEngine\AudioProcessingObjects\%CAPYIO_MIC_BRIDGE_MFX_CLSID%,"MajorVersion",0x00010001,1
+HKR,AudioEngine\AudioProcessingObjects\%CAPYIO_MIC_BRIDGE_MFX_CLSID%,"MinorVersion",0x00010001,0
+HKR,AudioEngine\AudioProcessingObjects\%CAPYIO_MIC_BRIDGE_MFX_CLSID%,"Flags",0x00010001,%APO_FLAG_DEFAULT%
+HKR,AudioEngine\AudioProcessingObjects\%CAPYIO_MIC_BRIDGE_MFX_CLSID%,"MinInputConnections",0x00010001,1
+HKR,AudioEngine\AudioProcessingObjects\%CAPYIO_MIC_BRIDGE_MFX_CLSID%,"MaxInputConnections",0x00010001,1
+HKR,AudioEngine\AudioProcessingObjects\%CAPYIO_MIC_BRIDGE_MFX_CLSID%,"MinOutputConnections",0x00010001,1
+HKR,AudioEngine\AudioProcessingObjects\%CAPYIO_MIC_BRIDGE_MFX_CLSID%,"MaxOutputConnections",0x00010001,1
+HKR,AudioEngine\AudioProcessingObjects\%CAPYIO_MIC_BRIDGE_MFX_CLSID%,"MaxInstances",0x00010001,0xffffffff
+HKR,AudioEngine\AudioProcessingObjects\%CAPYIO_MIC_BRIDGE_MFX_CLSID%,"NumAPOInterfaces",0x00010001,1
+HKR,AudioEngine\AudioProcessingObjects\%CAPYIO_MIC_BRIDGE_MFX_CLSID%,"APOInterface0",,"{CCCBA2BD-CF9C-4730-8CD4-127ACB2A63DC}"
+
 [CapyIOApo_Install.HW]
 AddReg = CapyIOApo.FriendlyName
 
@@ -67,6 +83,8 @@ MfgName = "CapyIO Project"
 DiskName = "CapyIO Render APO"
 Apo.ComponentDesc = "CapyIO Render APO"
 SFX.FriendlyName = "CapyIO Render Bridge"
+MicMFX.FriendlyName = "CapyIO Microphone Ring Bridge"
 Copyright = "CapyIO Project and Microsoft contributors"
 CAPYIO_RENDER_SFX_CLSID = "{D8D4EC87-0518-49B5-8E21-F975D2A0C210}"
+CAPYIO_MIC_BRIDGE_MFX_CLSID = "{BD509A91-814F-4937-AE1F-0ACF3C7D0E64}"
 APO_FLAG_DEFAULT = 0x0000000e

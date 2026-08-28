@@ -54,6 +54,11 @@ AddInterface = %KSCATEGORY_RENDER%,%KSNAME_WaveSpeaker%,CapyIO.I.WaveSpeaker
 AddInterface = %KSCATEGORY_REALTIME%,%KSNAME_WaveSpeaker%,CapyIO.I.WaveSpeaker
 AddInterface = %KSCATEGORY_AUDIO%,%KSNAME_TopologySpeaker%,CapyIO.I.TopologySpeaker
 AddInterface = %KSCATEGORY_TOPOLOGY%,%KSNAME_TopologySpeaker%,CapyIO.I.TopologySpeaker
+AddInterface = %KSCATEGORY_AUDIO%,%KSNAME_WaveMicIngress%,CapyIO.I.WaveMicIngress
+AddInterface = %KSCATEGORY_RENDER%,%KSNAME_WaveMicIngress%,CapyIO.I.WaveMicIngress
+AddInterface = %KSCATEGORY_REALTIME%,%KSNAME_WaveMicIngress%,CapyIO.I.WaveMicIngress
+AddInterface = %KSCATEGORY_AUDIO%,%KSNAME_TopologyMicIngress%,CapyIO.I.TopologyMicIngress
+AddInterface = %KSCATEGORY_TOPOLOGY%,%KSNAME_TopologyMicIngress%,CapyIO.I.TopologyMicIngress
 AddInterface = %KSCATEGORY_AUDIO%,%KSNAME_WaveMicIn%,CapyIO.I.WaveMicIn
 AddInterface = %KSCATEGORY_CAPTURE%,%KSNAME_WaveMicIn%,CapyIO.I.WaveMicIn
 AddInterface = %KSCATEGORY_REALTIME%,%KSNAME_WaveMicIn%,CapyIO.I.WaveMicIn
@@ -73,6 +78,22 @@ AddReg = CapyIO.I.TopologySpeaker.AddReg
 [CapyIO.I.TopologySpeaker.AddReg]
 HKR,,CLSID,,%Proxy.CLSID%
 HKR,,FriendlyName,,%CapyIO.TopologySpeaker.Name%
+HKR,EP\0,%PKEY_AudioEndpoint_Association%,,%KSNODETYPE_ANY%
+HKR,EP\0,%PKEY_AudioEndpoint_Supports_EventDriven_Mode%,0x00010001,1
+
+[CapyIO.I.WaveMicIngress]
+AddReg = CapyIO.I.WaveMicIngress.AddReg
+
+[CapyIO.I.WaveMicIngress.AddReg]
+HKR,,CLSID,,%Proxy.CLSID%
+HKR,,FriendlyName,,%CapyIO.WaveMicIngress.Name%
+
+[CapyIO.I.TopologyMicIngress]
+AddReg = CapyIO.I.TopologyMicIngress.AddReg
+
+[CapyIO.I.TopologyMicIngress.AddReg]
+HKR,,CLSID,,%Proxy.CLSID%
+HKR,,FriendlyName,,%CapyIO.TopologyMicIngress.Name%
 HKR,EP\0,%PKEY_AudioEndpoint_Association%,,%KSNODETYPE_ANY%
 HKR,EP\0,%PKEY_AudioEndpoint_Supports_EventDriven_Mode%,0x00010001,1
 
@@ -123,10 +144,14 @@ CapyIO.DeviceDesc = "CapyIO Virtual Audio"
 CapyIO.ServiceDesc = "CapyIO Virtual Audio Driver"
 CapyIO.WaveSpeaker.Name = "CapyIO Speaker"
 CapyIO.TopologySpeaker.Name = "CapyIO Speaker Topology"
+CapyIO.WaveMicIngress.Name = "CapyIO Microphone Ingress"
+CapyIO.TopologyMicIngress.Name = "CapyIO Microphone Ingress Topology"
 CapyIO.WaveMicIn.Name = "CapyIO Microphone"
 CapyIO.TopologyMicIn.Name = "CapyIO Microphone Topology"
 KSNAME_WaveSpeaker = "WaveSpeaker"
 KSNAME_TopologySpeaker = "TopologySpeaker"
+KSNAME_WaveMicIngress = "WaveMicIngress"
+KSNAME_TopologyMicIngress = "TopologyMicIngress"
 KSNAME_WaveMicIn = "WaveMicIn"
 KSNAME_TopologyMicIn = "TopologyMicIn"
 Proxy.CLSID = "{17CCA71B-ECD7-11D0-B908-00A0C9223196}"

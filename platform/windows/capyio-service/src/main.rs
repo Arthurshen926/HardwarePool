@@ -11,8 +11,9 @@ mod windows_host {
     };
 
     use capyio_windows_service::{
-        BrokerServiceRuntime, DEFAULT_POLL_INTERVAL, DEFAULT_STABLE_RECEIVER_POLLS, SERVICE_NAME,
-        ServiceConfig, control_server_loop, wake_control_server,
+        BrokerServiceRuntime, CaptureRingOwner, DEFAULT_POLL_INTERVAL,
+        DEFAULT_STABLE_RECEIVER_POLLS, SERVICE_NAME, ServiceConfig, control_server_loop,
+        wake_control_server,
     };
     use windows_service::{
         define_windows_service,
@@ -75,6 +76,8 @@ mod windows_host {
             .map_err(|error| error.to_string())?;
 
         let config = ServiceConfig::parse(std::env::args()).map_err(|error| error.to_string())?;
+        let _capture_ring =
+            CaptureRingOwner::create_baseline().map_err(|error| error.to_string())?;
         status_handle
             .set_service_status(service_status(
                 ServiceState::StartPending,
@@ -156,6 +159,8 @@ mod windows_host {
         let deadline = config
             .console_run_for
             .map(|duration| Instant::now() + duration);
+        let _capture_ring =
+            CaptureRingOwner::create_baseline().map_err(|error| error.to_string())?;
         let supervisor = config.supervisor()?;
         let mut runtime = BrokerServiceRuntime::new(supervisor, DEFAULT_STABLE_RECEIVER_POLLS)?;
         runtime.start()?;

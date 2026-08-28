@@ -10,8 +10,12 @@ use capyio_audio_share_adapter::{
 use serde::{Deserialize, Serialize};
 
 #[cfg(windows)]
+mod capture_ring;
+#[cfg(windows)]
 mod control;
 
+#[cfg(windows)]
+pub use capture_ring::{CaptureRingMetrics, CaptureRingOwner};
 #[cfg(windows)]
 pub use control::{BrokerServiceClient, control_server_loop, wake_control_server};
 
