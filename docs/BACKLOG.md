@@ -170,15 +170,15 @@ Goal: expose a real Windows render endpoint that applications can select
 independently of the physical/RDP output, then bridge only that endpoint's real
 PCM through a bounded render APO/Broker path and feed the proven Android speaker transport.
 
-The controlled-lab vertical slice through B6B is complete. The installed
+The Speaker functional Gate through B6B is complete. The installed
 `CapyIO Speaker` post-mix APO feeds a bounded global render ring, the
 service-owned Broker sends it to the pinned Android receiver, and human tests
 confirmed playback plus Windows endpoint volume/mute. ADRs 0033/0034 separate
 the privileged Broker from Tauri and expose only bounded local
-start/stop/status control to the ordinary desktop user. Remaining work is B5
-soak/reboot/audio-service recovery and B6C signed installer, immutable
-configuration, upgrade/uninstall and multi-user policy. Plan:
-`docs/plans/active/0012-windows-virtual-speaker.md`.
+start/stop/status control to the ordinary desktop user. The completed evidence
+plan is `docs/plans/completed/0012-windows-virtual-speaker.md`. Signed installer,
+qualification, production security and Android distribution continue separately
+in `docs/plans/active/0013-speaker-release-qualification.md`.
 
 ## Later small tasks
 

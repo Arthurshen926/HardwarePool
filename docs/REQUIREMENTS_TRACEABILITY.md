@@ -1,6 +1,6 @@
 # CapyIO Requirements Traceability
 
-> Updated: 2026-08-25 for `CAPY-AUDIO-001A4`.
+> Updated: 2026-08-28 for the completed Speaker functional Gate.
 >
 > Scope: the 84 normative Requirement IDs in `PRODUCT_REQUIREMENTS.md`.
 
@@ -39,7 +39,7 @@ hardware, networking, security or performance behavior has run.
 | Requirement ID | Status | Target Gate | Evidence or planned proof |
 |---|---|---|---|
 | `FR-SCEN-001` | planned | Gate 8 | MicYou phone microphone to desktop/system-microphone evidence. |
-| `FR-SCEN-002` | planned | Gate 7 | Gate 7A retains system-mix playback, user-confirmed audibility, disconnect/retry/stop and endpoint reselection; Gate 7B now requires a separately enumerated `CapyIO Speaker` plus isolated-VM and background/focus/performance evidence. |
+| `FR-SCEN-002` | implemented | Gate 7 | Controlled-lab evidence: Gate 7A retains system-mix playback; Gate 7B proves a separately enumerated `CapyIO Speaker`, real post-mix PCM, Android playback, endpoint volume/mute and service-owned ordinary-user control. Release qualification, background/focus/performance and production security continue in `CAPY-AUDIO-001C`. |
 | `FR-SCEN-003` | planned | Gate 6 | Gamepad input plus independent reverse-haptics Routes. |
 | `FR-SCEN-004` | planned | Gate 9 | Camera preview and Windows virtual-camera evidence. |
 | `FR-SCEN-005` | planned | Gates 10–11 | Mirror evidence at Gate 10 and separate extended-display evidence at Gate 11. |

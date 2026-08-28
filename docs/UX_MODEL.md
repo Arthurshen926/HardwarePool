@@ -65,9 +65,11 @@ Raw platform endpoint identifiers are never displayed or accepted by the UI.
 
 The final Windows workflow targets a separate system render device named
 `CapyIO Speaker`. Applications may choose it without changing where unrelated
-desktop audio plays. Until Gate 7B has isolated-VM enumeration and end-to-end
-evidence, the existing Quick Action continues to label itself as mirror mode
-and must not imply that the virtual endpoint is already installed.
+desktop audio plays. The completed Gate 7B controlled-lab path has enumeration
+and end-to-end evidence. When the installed service boundary is present, the
+Quick Action labels the fixed virtual-speaker projection explicitly; the
+environment-configured development fallback retains the mirror-mode label and
+must not imply that the virtual endpoint is installed.
 
 ## Runtime ownership
 

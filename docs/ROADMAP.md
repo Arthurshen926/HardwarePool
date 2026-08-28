@@ -43,12 +43,13 @@ implementation scope automatically.
   open for longer background/audio-focus, latency and soak evidence. Gates 4,
   6 and 8–15
   remain roadmap only.
-- Gate 7B's controlled-lab vertical slice is implemented. The independent
+- Gate 7B Speaker functionality is complete on the controlled lab. The independent
   `CapyIO Speaker` endpoint, post-mix APO, bounded render ring and service-owned
   Broker have physically delivered application playback to Android; endpoint
   volume/mute, Broker restart, port cleanup and ordinary-user desktop control
-  are proven. Gate 7B remains open for B5 soak/reboot/audio-service recovery and
-  B6C signed installer, upgrade/uninstall and production security work.
+  are proven. Release qualification is deliberately not folded into the
+  functional claim; signed installation, upgrade/uninstall, soak/reboot and
+  production security continue under `CAPY-AUDIO-001C` before public alpha.
 
 ## Public-alpha proof bar
 

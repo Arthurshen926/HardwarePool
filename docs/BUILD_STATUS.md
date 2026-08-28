@@ -1,6 +1,6 @@
 # CapyIO Build Status
 
-> Updated: 2026-08-25 during `CAPY-AUDIO-001B0`.
+> Updated: 2026-08-28 after the `CAPY-AUDIO-001B` functional Gate.
 
 ## Verified baseline
 
@@ -301,3 +301,8 @@ Android receiver re-established an owned TCP connection and a five-second
 `CapyIO Speaker` submission left service state active. Full evidence and exact
 hashes are in `docs/CAPY_AUDIO_001B6B_REPORT.md`; signed installer, reboot/soak,
 multi-user policy and production peer security remain open.
+
+The Speaker functional Gate is therefore closed at the controlled-lab evidence
+level. Remaining distribution, qualification and production-security work is
+tracked without ambiguity in
+`docs/plans/active/0013-speaker-release-qualification.md`.

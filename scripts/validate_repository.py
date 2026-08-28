@@ -64,7 +64,7 @@ GATE_EVIDENCE_ROW_RE = re.compile(
 )
 TARGET_GATE_RE = re.compile(r"^Gate(?:s)?\s+(?P<first>\d+)(?:[\-–](?P<last>\d+))?$")
 FOUNDATION_ACCEPTANCE_IDS = {f"G0-3-{number:02d}" for number in range(1, 10)}
-ACTIVE_IMPLEMENTATION_GATES = {5}
+ACTIVE_IMPLEMENTATION_GATES = {5, 7}
 
 JSON_FILES = [
     "package.json",

@@ -1,7 +1,6 @@
 # CAPY-AUDIO-001B — Dedicated Windows virtual speaker
 
-Status: active; speaker playback, endpoint volume and B6B ordinary-user
-desktop/service control physically proven; installer/security/soak work remains
+Status: completed (functional Gate); release qualification moved to plan 0013
 
 Owner: Codex
 
@@ -155,7 +154,15 @@ passed its ignored physical integration test. Repeated control calls survived
 two Broker generations; stop released TCP/UDP, and the restored Android
 receiver plus a five-second endpoint submission left generation 3 active.
 
-B6C remains release engineering: replace workspace paths with signed,
-installer-owned immutable locations; define upgrade/rollback and multi-user
-control policy; then test reboot/autostart and uninstall from the packaged
-product.
+## Completion boundary
+
+The Speaker Gate is functionally complete on the ADR 0029 controlled Windows
+lab: an independently selectable render endpoint, real post-mix PCM bridge,
+service-owned Broker, Android playback, endpoint volume/mute, receiver
+reconnection, bounded stop/start and ordinary-user desktop control are proven.
+
+This completion does not claim a public release. Signed installation,
+installer-owned immutable paths, packaged upgrade/rollback/uninstall,
+reboot/sleep/audio-service soak, multi-user authorization, production peer
+pairing/encryption and a CapyIO-owned Android receiver are explicitly transferred
+to `docs/plans/active/0013-speaker-release-qualification.md`.
