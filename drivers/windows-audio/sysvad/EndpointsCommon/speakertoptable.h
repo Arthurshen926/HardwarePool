@@ -134,7 +134,7 @@ PCPIN_DESCRIPTOR CapyIoMicrophoneIngressTopoMiniportPins[] =
       SpeakerTopoPinDataRangePointersBridge,
       KSPIN_DATAFLOW_OUT,
       KSPIN_COMMUNICATION_NONE,
-      &KSNODETYPE_SPEAKER,
+      &KSNODETYPE_LINE_CONNECTOR,
       &CAPYIO_MIC_INGRESS_CUSTOM_NAME,
       0
     }

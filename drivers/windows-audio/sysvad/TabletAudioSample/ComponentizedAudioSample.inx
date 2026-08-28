@@ -3,7 +3,7 @@ Signature   = "$Windows NT$"
 Class       = MEDIA
 Provider    = %ProviderName%
 ClassGUID   = {4d36e96c-e325-11ce-bfc1-08002be10318}
-DriverVer   = 08/28/2026,21.61.0.1
+DriverVer   = 08/28/2026,21.62.0.1
 CatalogFile = capyioaudio.cat
 PnpLockDown = 1
 

@@ -633,6 +633,8 @@ def validate_windows_audio_endpoint_contract() -> None:
         tablet / "minipairs.h"
     ).read_text(encoding="utf-8"):
         fail("microphone ingress must not reuse the speaker topology descriptor")
+    if "&KSNODETYPE_LINE_CONNECTOR" not in topology:
+        fail("microphone ingress must not use Windows' hard-coded speaker endpoint category")
 
 
 def workflow_has_pull_request_branch(text: str, expected: str) -> bool:

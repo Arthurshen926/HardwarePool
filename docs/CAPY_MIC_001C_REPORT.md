@@ -2,7 +2,7 @@
 
 Date: 2026-08-28
 
-Status: `21.60.0.1` deployed; `21.61.0.1` source/build validated, deployment pending
+Status: `21.61.0.1` deployed; `21.62.0.1` corrective build validated, deployment pending
 
 ## Outcome
 
@@ -18,7 +18,7 @@ endpoint used the generic `Microphone` connector name. MicYou v2.0.1 selects an
 output device by exact friendly name, so duplicate render names block a safe,
 deterministic Adapter configuration even when both devices are operational.
 
-`21.61.0.1` fixes this at the Windows AudioEndpointBuilder boundary:
+`21.61.0.1` attempted to fix this at the Windows AudioEndpointBuilder boundary:
 
 - the Speaker bridge pin has a CapyIO-owned name GUID registered as
   `CapyIO Speaker`;
@@ -29,9 +29,19 @@ deterministic Adapter configuration even when both devices are operational.
 - the package project preserves an explicitly requested Release configuration,
   and its stamped version matches all three component INFs.
 
-The root device suffix can remain visible in localized Windows UI. The
-application-facing endpoint prefix is now independent and the two render
-devices no longer depend on an ambiguous generic `Speakers` label.
+Deployment showed that the registry and kernel parts of that change worked:
+the device software key contains all three names and a direct KS property probe
+returns `CapyIO Speaker`, `CapyIO Microphone Ingress` and `CapyIO Microphone`.
+Windows MMDevice nevertheless continues to display both render endpoints as
+localized `Speakers`, including after an AudioEndpointBuilder restart. This is
+consistent with Microsoft's documented hard-coded handling of speaker endpoint
+categories; `21.61.0.1` therefore does not satisfy endpoint identity acceptance.
+
+`21.62.0.1` keeps the dedicated ingress topology and custom Pin Name but changes
+only its terminal category from `KSNODETYPE_SPEAKER` to the supported
+`KSNODETYPE_LINE_CONNECTOR`. The ingress is an internal line-level projection
+boundary, not a user speaker. This preserves render flow while allowing Windows
+to distinguish it from the actual CapyIO Speaker.
 
 ## Build evidence
 
@@ -53,14 +63,15 @@ x64 verifier is the retained INF evidence.
 
 ## Deployment boundary
 
-No `21.61.0.1` driver was installed by this source/build slice. Before deployment
-the exact package must be staged, hashed and lab-signed, the `21.60.0.1` package
-must remain the verified rollback target, and the human must approve that exact
-package for `DESKTOP-AT8EVE9`.
+Signed `21.61.0.1` is installed on `DESKTOP-AT8EVE9`; all five CapyIO devices
+and the three audio/Broker services are healthy. Before deploying `21.62.0.1`,
+the exact package must be built, staged, hashed and lab-signed, and signed
+`21.61.0.1` must be retained as the immediate rollback target.
 
 ## Remaining acceptance work
 
-1. Deploy signed `21.61.0.1` and verify three distinct endpoint names.
+1. Sign and deploy `21.62.0.1`, then verify distinct Speaker and
+   Microphone Ingress MMDevice names.
 2. Play a deterministic 48 kHz tone into Microphone Ingress and record it from
    CapyIO Microphone through an ordinary WASAPI client.
 3. Verify Broker absence and ingress disconnect return capture to silence.
