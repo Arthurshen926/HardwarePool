@@ -15,9 +15,10 @@ Abstract:
 #ifndef _SYSVAD_SPEAKERTOPTABLE_H_
 #define _SYSVAD_SPEAKERTOPTABLE_H_
 
-// CapyIO-owned endpoint connector names. Windows AudioEndpointBuilder uses
-// the bridge pin Name GUID before falling back to the generic speaker category.
-// Keep the GUID strings synchronized with ComponentizedAudioSample.inx.
+// CapyIO-owned endpoint connector identities. The Name GUID controls direct
+// KSPROPERTY_PIN_NAME queries, while AudioEndpointBuilder initializes the
+// endpoint DeviceDesc from the Category GUID. Keep both synchronized with
+// ComponentizedAudioSample.inx.
 // {c2ae0cd6-c228-41a6-8b0f-8b13773556a0}
 DEFINE_GUID(CAPYIO_SPEAKER_CUSTOM_NAME,
 0xc2ae0cd6, 0xc228, 0x41a6, 0x8b, 0x0f, 0x8b, 0x13, 0x77, 0x35, 0x56, 0xa0);
@@ -25,6 +26,10 @@ DEFINE_GUID(CAPYIO_SPEAKER_CUSTOM_NAME,
 // {bec4e45e-4dd5-492b-91b0-596da93ccec5}
 DEFINE_GUID(CAPYIO_MIC_INGRESS_CUSTOM_NAME,
 0xbec4e45e, 0x4dd5, 0x492b, 0x91, 0xb0, 0x59, 0x6d, 0xa9, 0x3c, 0xce, 0xc5);
+
+// {6f13d5db-0274-4e66-a116-340b4c54eb38}
+DEFINE_GUID(CAPYIO_MIC_INGRESS_CATEGORY,
+0x6f13d5db, 0x0274, 0x4e66, 0xa1, 0x16, 0x34, 0x0b, 0x4c, 0x54, 0xeb, 0x38);
 
 //=============================================================================
 static
@@ -134,7 +139,7 @@ PCPIN_DESCRIPTOR CapyIoMicrophoneIngressTopoMiniportPins[] =
       SpeakerTopoPinDataRangePointersBridge,
       KSPIN_DATAFLOW_OUT,
       KSPIN_COMMUNICATION_NONE,
-      &KSNODETYPE_LINE_CONNECTOR,
+      &CAPYIO_MIC_INGRESS_CATEGORY,
       &CAPYIO_MIC_INGRESS_CUSTOM_NAME,
       0
     }

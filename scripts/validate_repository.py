@@ -633,8 +633,13 @@ def validate_windows_audio_endpoint_contract() -> None:
         tablet / "minipairs.h"
     ).read_text(encoding="utf-8"):
         fail("microphone ingress must not reuse the speaker topology descriptor")
-    if "&KSNODETYPE_LINE_CONNECTOR" not in topology:
-        fail("microphone ingress must not use Windows' hard-coded speaker endpoint category")
+    if "&CAPYIO_MIC_INGRESS_CATEGORY" not in topology:
+        fail("microphone ingress must use its registered product-specific endpoint category")
+    ingress_category_guid = "6f13d5db-0274-4e66-a116-340b4c54eb38"
+    if ingress_category_guid not in topology.lower() or ingress_category_guid not in base_inf.lower():
+        fail("microphone ingress category GUID must match its topology and INF registration")
+    if "CapyIO.MicrophoneIngressCategoryGuid" not in base_inf:
+        fail("microphone ingress category GUID must have a device-specific name registration")
 
 
 def workflow_has_pull_request_branch(text: str, expected: str) -> bool:

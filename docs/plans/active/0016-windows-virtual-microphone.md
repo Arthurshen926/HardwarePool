@@ -77,6 +77,10 @@ tool invocation still requires explicit approval for the exact package.
 - `21.61.0.1` assigns/registers independent bridge-pin names and repairs Release
   packaging; deployment proved correct KS names but Windows still hard-codes
   both render endpoints as Speakers because both used the Speaker category;
-- `21.62.0.1` changes only the private ingress terminal to the supported Line
-  Connector category so MMDevice can distinguish it (`CAPY_MIC_001C_REPORT.md`);
+- `21.62.0.1` proved that the private ingress can use a non-speaker category,
+  but the standard Line Connector category still retained duplicate MMDevice
+  names after endpoint regeneration;
+- `21.63.0.1` gives the ingress a registered CapyIO-specific Category GUID,
+  matching Microsoft's persistent endpoint-name contract
+  (`CAPY_MIC_001C_REPORT.md`);
 - deterministic ordinary-app capture and physical MicYou tests remain pending.
