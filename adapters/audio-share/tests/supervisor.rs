@@ -1,13 +1,19 @@
 use std::{
-    net::{IpAddr, Ipv4Addr, TcpListener, TcpStream},
+    net::{IpAddr, Ipv4Addr, TcpListener},
     path::PathBuf,
     time::Duration,
 };
 
 use capyio_audio_share_adapter::{
     AudioEncoding, AudioShareConfig, AudioShareError, AudioShareSupervisor, ProbeLimits,
-    ReceiverTcpPresence, SupervisorLimits, SupervisorStatus,
+    SupervisorLimits, SupervisorStatus,
 };
+
+#[cfg(windows)]
+use std::net::TcpStream;
+
+#[cfg(windows)]
+use capyio_audio_share_adapter::ReceiverTcpPresence;
 
 const DEFAULT_ENDPOINT: &str = "fixture-default";
 const EXIT_ENDPOINT: &str = "fixture-exit";
