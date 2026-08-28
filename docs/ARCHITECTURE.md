@@ -85,6 +85,12 @@ retry always starts with a later epoch.
 Platform and child-process callbacks return typed completions through opaque
 operation IDs; they never mutate Core state from arbitrary threads.
 
+On Windows, the dedicated virtual-speaker Broker is moving to the headless
+`CapyIOBroker` service selected by ADR 0033. The first service slice owns the
+privileged cross-session render mapping and child lifecycle but exposes no
+management IPC yet. The Tauri-owned supervisor remains a development fallback,
+not the final lifecycle authority.
+
 ### Protocol
 
 `capyio.v1` is a versioned semantic control protocol. It does not select a

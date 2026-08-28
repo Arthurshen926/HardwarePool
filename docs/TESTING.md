@@ -191,6 +191,13 @@ asserted or retained in repository evidence.
 A separately ignored physical test composes the real supervisor and Runtime
 Route and waits for active, disconnect, later-epoch retry, active and stopped.
 
+Windows-service unit tests validate closed launch configuration, explicit
+non-unspecified IPv4/port bounds, stable receiver gating, receiver loss,
+Broker exit and child-stop ownership without installing a service. The binary
+also provides an explicitly time-bounded console mode for a later exact
+physical fixture run. SCM install/start/reboot evidence is not implied by these
+tests and requires a separately approved service-deployment slice.
+
 ## Sidecar smoke test
 
 Adapter Host launches repository-built mock binaries, performs initialize,

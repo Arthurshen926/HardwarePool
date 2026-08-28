@@ -76,6 +76,19 @@ planned_integrations:
       alternatives_rejected:
         - hand-written Protobuf varint encoding
         - importing upstream generated C++ or Kotlin sources
+    service_host_dependency:
+      name: windows-service
+      version: 0.8.1
+      license: MIT OR Apache-2.0
+      upstream_repository: https://github.com/mullvad/windows-service-rs
+      purpose: >-
+        Register the headless CapyIOBroker process with Windows Service Control
+        Manager and handle bounded status and stop transitions without
+        hand-written unsafe SCM FFI.
+      alternatives_rejected:
+        - hand-written Windows Service Control Manager FFI
+        - scheduled-task lifecycle ownership
+        - retaining the elevated Tauri host as production lifecycle owner
     distribution_note: >-
       CapyIO does not vendor, link, repackage or distribute Audio Share in this
       slice. Tests use a user-supplied, hash-verified unmodified release. The

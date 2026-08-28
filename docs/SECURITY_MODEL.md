@@ -62,6 +62,14 @@ child process is launched directly with bounded output and is reaped on an
 explicit stop or host shutdown. This lifecycle control does not add peer
 authentication or make the private Android transport production-safe.
 
+ADR 0033 moves that Broker into an SCM-managed Windows service so the WebView
+host need not inherit the privilege required for the cross-session global
+mapping. Service launch configuration remains administrator-controlled and
+accepts only a direct executable path, explicit IPv4 literal and bounded port.
+The initial service slice exposes no local control socket or named pipe; its
+future desktop management API requires an explicit ACL and bounded closed DTO
+review before it is enabled.
+
 The desktop Quick Action never accepts an executable path, endpoint identifier,
 bind address or port from the WebView. Those values come only from the trusted
 host environment, while the versioned UI request is closed to unknown fields

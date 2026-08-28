@@ -39,6 +39,9 @@ without playing through the physical or Remote Desktop output.
    assumption because the render-ring Broker has no arbitrary endpoint input.
 7. `CAPY-AUDIO-001B5`: exercise Broker/receiver loss, audio-service restart,
    endpoint disable/enable, upgrade/uninstall and scoped Driver Verifier.
+8. `CAPY-AUDIO-001B6`: move the privileged Broker/global-ring lifecycle into
+   the `CapyIOBroker` Windows service, then add a narrow ACL-protected desktop
+   management boundary and installer-owned configuration.
 
 ## Acceptance
 
@@ -134,3 +137,10 @@ Session 0 AudioDG. The desktop can supervise it when the host is elevated, but
 ordinary launch cannot silently cross that boundary. A background service or
 revised mapping-ownership design is required before release; B5 recovery,
 upgrade/uninstall and stability checks also remain.
+
+`CAPY-AUDIO-001B6A` is now implemented at source/unit-test level. ADR 0033 adds
+an SCM-compatible headless service host with closed trusted launch arguments,
+stable receiver gating, typed bounded snapshots and fail-silent Broker reaping.
+It does not yet install/start the service or redirect the desktop Quick Action;
+ACL-protected local management IPC, installer configuration and physical SCM
+evidence are the next B6 slices.

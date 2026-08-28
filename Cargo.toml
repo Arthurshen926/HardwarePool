@@ -15,6 +15,7 @@ members = [
     "adapters/audio-share",
     "apps/capyio-node",
     "apps/desktop/src-tauri",
+    "platform/windows/capyio-service",
     "xtask",
 ]
 default-members = [
@@ -53,6 +54,7 @@ tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
 tungstenite = { version = "0.30.0", default-features = false, features = ["handshake"] }
 uuid = { version = "1.18", features = ["serde", "v4"] }
 windows-sys = { version = "0.61.2", default-features = false }
+windows-service = "0.8.1"
 
 [profile.release]
 panic = "abort"
