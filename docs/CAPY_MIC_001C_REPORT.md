@@ -2,7 +2,7 @@
 
 Date: 2026-08-28
 
-Status: `21.63.0.1` deployed; `21.64.0.1` association build validated, deployment pending
+Status: `21.64.0.1` deployed; `21.65.0.1` ingress-jack build validated, deployment pending
 
 ## Outcome
 
@@ -56,6 +56,11 @@ remaining mismatch: every topology interface still declared
 `PKEY_AudioEndpoint_Association=KSNODETYPE_ANY`. `21.64.0.1` explicitly
 associates Speaker, Microphone Ingress and Microphone with their actual Pin
 categories, as required by the documented endpoint-property contract.
+Deployment proved that the explicit association reached MMDevice, but the
+display prefix still remained `Speakers`. The ingress topology was still using
+the Speaker automation table, which reports an integrated stereo-speaker jack.
+`21.65.0.1` removes Speaker jack properties from the private ingress topology;
+the actual CapyIO Speaker retains them unchanged.
 
 ## Build evidence
 
@@ -77,14 +82,14 @@ x64 verifier is the retained INF evidence.
 
 ## Deployment boundary
 
-Signed `21.63.0.1` is installed on `DESKTOP-AT8EVE9`; all five CapyIO devices
-and the three audio/Broker services are healthy. Before deploying `21.64.0.1`,
+Signed `21.64.0.1` is installed on `DESKTOP-AT8EVE9`; all five CapyIO devices
+and the three audio/Broker services are healthy. Before deploying `21.65.0.1`,
 the exact package must be built, staged, hashed and lab-signed, and signed
-`21.63.0.1` must be retained as the immediate rollback target.
+`21.64.0.1` must be retained as the immediate rollback target.
 
 ## Remaining acceptance work
 
-1. Build, sign and deploy `21.64.0.1`, then verify distinct Speaker and
+1. Build, sign and deploy `21.65.0.1`, then verify distinct Speaker and
    Microphone Ingress MMDevice names.
 2. Play a deterministic 48 kHz tone into Microphone Ingress and record it from
    CapyIO Microphone through an ordinary WASAPI client.

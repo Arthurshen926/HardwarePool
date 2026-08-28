@@ -84,6 +84,8 @@ tool invocation still requires explicit approval for the exact package.
   but deployment showed the topology interfaces still associated every
   endpoint with `KSNODETYPE_ANY`;
 - `21.64.0.1` explicitly associates each topology interface with its real Pin
-  Category so AudioEndpointBuilder can initialize a distinct identity
-  (`CAPY_MIC_001C_REPORT.md`);
+  Category, but deployment showed the ingress still inherited Speaker identity
+  through the shared integrated-speaker Jack Description;
+- `21.65.0.1` removes Speaker jack automation only from the private ingress
+  topology (`CAPY_MIC_001C_REPORT.md`);
 - deterministic ordinary-app capture and physical MicYou tests remain pending.

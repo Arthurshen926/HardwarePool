@@ -651,6 +651,11 @@ def validate_windows_audio_endpoint_contract() -> None:
             fail(f"Windows audio {endpoint} must declare its explicit endpoint association")
     if "HKR,EP\\0,%PKEY_AudioEndpoint_Association%,,%KSNODETYPE_ANY%" in base_inf:
         fail("Windows audio endpoint associations must not fall back to KSNODETYPE_ANY")
+    ingress_descriptor = topology.split(
+        "PCFILTER_DESCRIPTOR CapyIoMicrophoneIngressTopoMiniportFilterDescriptor =", 1
+    )[-1]
+    if "NULL, // The private ingress must not advertise the integrated Speaker jack." not in ingress_descriptor:
+        fail("microphone ingress must not reuse the integrated Speaker jack automation")
 
 
 def workflow_has_pull_request_branch(text: str, expected: str) -> bool:

@@ -250,7 +250,7 @@ static
 PCFILTER_DESCRIPTOR CapyIoMicrophoneIngressTopoMiniportFilterDescriptor =
 {
   0,
-  &AutomationSpeakerTopoFilter,
+  NULL, // The private ingress must not advertise the integrated Speaker jack.
   sizeof(PCPIN_DESCRIPTOR),
   SIZEOF_ARRAY(CapyIoMicrophoneIngressTopoMiniportPins),
   CapyIoMicrophoneIngressTopoMiniportPins,
