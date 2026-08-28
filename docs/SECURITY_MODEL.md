@@ -47,6 +47,51 @@ redirects, binary sensor payloads and frames/messages above 4 KiB. TCP and
 WebSocket operations have deadlines. These controls limit attack surface but do
 not authenticate the external app or authorize a Capability.
 
+The Audio Share lab likewise requires an explicit IP-literal bind address,
+non-zero port and enumerated playback endpoint; the CLI is launched directly,
+never through a shell. Probe output, lines and deadlines are bounded. These
+controls do not authenticate the Android receiver or secure Audio Share's
+private TCP/UDP protocol. The pinned upstream Windows release is not
+Authenticode signed and is neither bundled nor treated as trusted production
+software by CapyIO.
+
+The dedicated virtual-speaker Broker is a separate trusted-host mode. It
+requires a non-unspecified IPv4 bind address and accepts no playback endpoint
+identifier; it can consume only the fixed, versioned CapyIO render ring. Its
+child process is launched directly with bounded output and is reaped on an
+explicit stop or host shutdown. This lifecycle control does not add peer
+authentication or make the private Android transport production-safe.
+
+ADR 0033 moves that Broker into an SCM-managed Windows service so the WebView
+host need not inherit the privilege required for the cross-session global
+mapping. Service launch configuration remains administrator-controlled and
+accepts only a direct executable path, explicit IPv4 literal and bounded port.
+ADR 0034 adds one local-only named pipe for bounded `status`, `start` and `stop`
+operations. The protected DACL grants LocalSystem/Administrators full access
+and interactive local users explicit read/write access; remote pipe clients are
+rejected. Closed schema-v1 frames are limited to 4 KiB and have fixed I/O
+deadlines. No request can change executable paths, bind addresses, ports or
+endpoint identity. Any interactive user can currently control the machine-wide
+Route, so multi-user authorization remains unresolved release work.
+
+The desktop Quick Action never accepts an executable path, endpoint identifier,
+bind address or port from the WebView. Those values come only from the trusted
+host environment, while the versioned UI request is closed to unknown fields
+and permits only one stable action ID plus `start`, `retry` or `stop`.
+Start-time endpoint re-probing reports disappearance through a stable sanitized
+Problem and does not echo the configured endpoint ID into UI diagnostics.
+Endpoint reselection exposes only bounded display names and short-lived opaque
+tokens. The Tauri host accepts a bounded token only from its latest enumerated
+allow-list, rejects unknown/stale tokens and active-Route changes, and never
+accepts a raw endpoint ID from the WebView. Scan failures return a stable
+sanitized message rather than upstream stderr. The selection is not persisted.
+
+Windows receiver observation filters the OS TCP owner table by the supervised
+process ID, explicit local port and established state. It returns only a count,
+not local/remote addresses. An unauthenticated or unrelated TCP peer can still
+produce presence in the current lab, so this signal is not peer identity,
+authorization, successful negotiation or proof of audible playback.
+
 ### Adapter process abuse
 
 Versioned manifests, allow-listed entrypoints, bounded NDJSON, correlation
@@ -62,8 +107,16 @@ arbitrary shell/filesystem/updater plugin in the foundation.
 ### Kernel compromise
 
 No network, DNS, pairing, crypto negotiation, JSON/Protobuf, codecs or reconnect
-logic in drivers. Kernel IPC is fixed/bounded and validated. Driver tests and
-Verifier run only in an isolated approved target.
+logic in drivers. Kernel IPC is fixed/bounded and validated. Driver tests
+default to an isolated approved target. ADR 0029 permits bounded Gate 7B
+install/enumeration/playback/uninstall checks on the identified local lab after
+recovery and rollback preflight. Driver Verifier and boot/security-policy
+changes remain separately approved high-risk actions.
+
+The first `CapyIO Speaker` path uses the standard Windows render/loopback model
+so PCM remains observable in user mode without a new custom render-ring IPC.
+Any later custom driver IPC must be justified by retained measurements and must
+retain the same fixed-size, versioned and fail-silent boundary.
 
 ### Denial of service and stale state
 

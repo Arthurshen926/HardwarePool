@@ -20,13 +20,24 @@ license text under `LICENSES/`.
 
 ## Current status
 
-MicYou, Audio Share, VCamdroid, VIIPER, scrcpy and Sunshine/Moonlight remain
-planning candidates. SensorServer is the first reviewed external-service
-protocol boundary: its repository, commit and GPL-3.0-only license are recorded,
-but no upstream source or binary is included. The CapyIO parser/pairing crate is
-original Apache-2.0 code based on the documented message contract. A README or
-protocol mapping does not imply distribution, endorsement or production
-security.
+MicYou, VCamdroid, VIIPER, scrcpy and Sunshine/Moonlight remain planning
+candidates. SensorServer is the first reviewed external-service protocol
+boundary. Audio Share v0.3.4 is the first reviewed external-process
+`AdapterManaged` audio boundary: its repository, commit, Apache-2.0 license and
+official release hashes are recorded, but no upstream source or binary is
+included. The official Windows executable is not Authenticode signed, so the
+current lab uses only a user-supplied, hash-verified artifact and makes no
+distribution claim. A README, protocol mapping or physical lab run does not
+imply endorsement or production security.
+
+Microsoft SysVAD remains the reviewed toolchain and endpoint-enumeration
+starting point for the dedicated Windows virtual-speaker work. Its synthetic
+loopback is not a real-PCM implementation. VirtualDrivers/Virtual-Audio-Driver
+and Scream were reviewed at fixed revisions: the former lacks a supported
+user-mode PCM path, while the latter's kernel networking violates CapyIO's
+boundary. Exact revisions, hashes, licenses and findings are recorded, but no
+candidate source or binary is imported. ADR 0028 selects an endpoint-associated
+bounded render APO/Broker spike before a minimal derivative is selected.
 
 ## License boundary
 

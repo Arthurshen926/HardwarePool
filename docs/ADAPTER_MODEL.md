@@ -110,6 +110,13 @@ StandardPort. No upstream source or binary is linked or imported. WebSocket
 connection lifecycle remains outside the parser/pairing contract and plain
 `ws://` is a trusted-local-lab mechanism, not production transport security.
 
+The Gate 7 Audio Share integration is an external-process `AdapterManaged`
+boundary. CapyIO probes and later supervises a pinned, user-supplied `as-cmd`
+executable through direct process arguments; it does not parse upstream logs as
+Sidecar JSON-RPC. Audio Share retains TCP negotiation and UDP PCM delivery to
+its independently installed Android receiver. This private contract is not a
+`capyio.audio.frames/1` interoperability claim.
+
 ## Failure isolation
 
 Adapter Host owns child process handles, stdin/stdout/stderr tasks, deadlines

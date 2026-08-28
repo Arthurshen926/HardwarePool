@@ -1,6 +1,5 @@
 # Third-party license texts
 
-No third-party vertical-project source is imported in the foundation Gates.
-Verified license texts and required notices will be added here before future
-source or binary distribution.
-
+- `MS-PL.txt` covers the Microsoft SysVAD-derived source imported under
+  `drivers/windows-audio/sysvad/`. Exact upstream revision, imported paths and
+  local modifications are recorded in `third_party/THIRD_PARTY.yml`.

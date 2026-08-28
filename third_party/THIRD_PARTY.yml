@@ -8,11 +8,182 @@ planned_integrations:
     integration_mode: planned_sidecar
     source_imported: false
   - id: audio-share
-    upstream_repository: null
-    pinned_revision: null
-    license: pending_verification
-    integration_mode: planned_sidecar
+    upstream_repository: https://github.com/mkckr0/audio-share
+    pinned_revision: 342751fe675367483170b002ec6054e243966dc0
+    pinned_release: v0.3.4
+    license: Apache-2.0
+    integration_mode: external_process_and_compatible_private_transport
     source_imported: false
+    binary_imported: false
+    imported_paths: []
+    local_modifications: []
+    fixed_revision_protocol_review:
+      archive_sha256: 2cb8b9347ae5f1288b206955f0d8c69717e5d7236e19304510524d2edbdfce64
+      reviewed_paths:
+        - docs/protocol.md
+        - protos/client.proto
+        - server-core/src/network_manager.hpp
+        - server-core/src/network_manager.cpp
+        - server-core/src/audio_manager.hpp
+        - server-core/src/audio_manager.cpp
+        - server-core/src/win32/audio_manager_impl.hpp
+        - server-core/src/win32/audio_manager_impl.cpp
+        - android-app/app/src/main/java/io/github/mkckr0/audio_share_app/service/NetClient.kt
+        - android-app/app/src/main/java/io/github/mkckr0/audio_share_app/service/NetworkIO.kt
+        - android-app/app/src/main/java/io/github/mkckr0/audio_share_app/service/AudioPlayer.kt
+      upstream_source_imported: false
+      upstream_schema_imported: false
+      purpose: verify the pinned private wire contract and absence of external PCM injection
+    release_artifacts:
+      windows_x86_64_zip:
+        sha256: d73ea0dc2e16e4cfcc52ae370a0f06ebaf9ac0a1f2b9b069e03b0c107cb37bc1
+        distributed_by_capyio: false
+        authenticode_signed: false
+      android_apk:
+        package: io.github.mkckr0.audio_share_app
+        version_code: 3004
+        sha256: 77cc93d32a3e6b6117b9c202ff5be69082ea5711087c23e6877cef5ac4a471b4
+        distributed_by_capyio: false
+    private_contract:
+      negotiation: TCP
+      audio_payload: UDP PCM
+      default_port: 65530
+      capyio_route_backend: AdapterManaged
+    monitor_dependency:
+      name: windows-sys
+      version: 0.61.2
+      license: MIT OR Apache-2.0
+      enabled_features:
+        - Win32_Foundation
+        - Win32_NetworkManagement_IpHelper
+        - Win32_Networking_WinSock
+        - Win32_Security
+        - Win32_Security_Authorization
+        - Win32_System_Memory
+      purpose: >-
+        Query process-owned established TCP rows and own the bounded cross-session
+        render-ring mapping without parsing human logs or hand-written FFI.
+      alternatives_rejected:
+        - localized PowerShell or netstat output
+        - hand-written Windows FFI
+        - upstream log parsing
+    private_transport_dependency:
+      name: prost
+      version: 0.14.4
+      license: MIT OR Apache-2.0
+      upstream_repository: https://github.com/tokio-rs/prost
+      purpose: encode the bounded pinned AudioFormat message without importing generated upstream code
+      alternatives_rejected:
+        - hand-written Protobuf varint encoding
+        - importing upstream generated C++ or Kotlin sources
+    service_host_dependency:
+      name: windows-service
+      version: 0.8.1
+      license: MIT OR Apache-2.0
+      upstream_repository: https://github.com/mullvad/windows-service-rs
+      purpose: >-
+        Register the headless CapyIOBroker process with Windows Service Control
+        Manager and handle bounded status and stop transitions without
+        hand-written unsafe SCM FFI.
+      alternatives_rejected:
+        - hand-written Windows Service Control Manager FFI
+        - scheduled-task lifecycle ownership
+        - retaining the elevated Tauri host as production lifecycle owner
+    distribution_note: >-
+      CapyIO does not vendor, link, repackage or distribute Audio Share in this
+      slice. Tests use a user-supplied, hash-verified unmodified release. The
+      unsigned Windows executable and Android lifecycle behavior require
+      further review before any public packaging.
+  - id: microsoft-sysvad
+    upstream_repository: https://github.com/microsoft/Windows-driver-samples
+    pinned_revision: 717778a20ba4dd2440fe609f69153a1f8a64f597
+    upstream_path: audio/sysvad
+    license: MS-PL
+    license_source: https://github.com/microsoft/Windows-driver-samples/blob/717778a20ba4dd2440fe609f69153a1f8a64f597/LICENSE
+    integration_mode: driver_derivative
+    source_imported: true
+    binary_imported: false
+    imported_paths:
+      - drivers/windows-audio/sysvad/sysvad.sln
+      - drivers/windows-audio/sysvad/root-driver-sources
+      - drivers/windows-audio/sysvad/EndpointsCommon
+      - drivers/windows-audio/sysvad/TabletAudioSample
+      - drivers/windows-audio/sysvad/APO/Inc
+      - drivers/windows-audio/sysvad/APO/SwapAPO
+      - drivers/windows-audio/sysvad/Package
+    local_modifications:
+      - retain only the speaker render endpoint in the runtime endpoint arrays
+      - remove keyword detector, capture, HDMI, SPDIF, headphone, delay, KWS and AEC package dependencies
+      - rename the device, service, binary and APO for CapyIO ownership
+      - replace sample hardware identifiers and APO identifiers with CapyIO-owned values
+      - add a bounded non-blocking render-APO staging bridge
+    build_only_submodules:
+      - id: microsoft-wil
+        upstream_repository: https://github.com/microsoft/wil
+        pinned_revision: 3c00e7f1d8cf9930bbb8e5be3ef0df65c84e8928
+        archive_sha256: 0e4974ff5f74b2afbe95e8f85ddc6b7329adf5718a228d54e4b21da132a1a13e
+        license: MIT
+        source_imported: false
+        binary_imported: false
+        purpose: restore the upstream SysVAD Git submodule in ignored build cache
+    purpose: >-
+      Official Microsoft WDM/WaveRT virtual-audio sample used first unchanged in
+      an approved Windows lab, then minimized into the CapyIO Speaker render
+      endpoint only after build, enumeration and licensing evidence.
+    alternatives_considered:
+      - new WDM audio driver from an empty template
+      - third-party virtual cable dependency
+      - continue mirroring an existing physical or RDP endpoint
+    distribution_note: >-
+      The source subset is redistributed under MS-PL with the complete license
+      in LICENSES/MS-PL.txt and attribution in THIRD_PARTY_NOTICES.md. No
+      Microsoft-built binary is imported. CapyIO-built driver binaries are not
+      release artifacts until signing and distribution review is complete.
+  - id: virtualdrivers-virtual-audio-driver
+    upstream_repository: https://github.com/VirtualDrivers/Virtual-Audio-Driver
+    pinned_revision: bb34fba15faf569a6ae9bdea360bc1cf4821354e
+    reviewed_signed_release:
+      tag: 25.7.14
+      revision: 191d307c858cb7c2749bc849060849d2dac18d3b
+      archive_sha256: 24e07b8a4b82ec6fe136c079e73443a09a185d8cd17fbf03d9a7722992c4edff
+      third_party_notices_present: false
+    current_main_archive_sha256: aa505bcb85e892ce738771307a48c0974e82e8b52581c93eb320568787e5838a
+    license: MIT AND MS-PL
+    license_files:
+      license_sha256: 62ba3a5acc061d880d77b7046ed5d5df2b9be27caa3610d9976928b50c70e627
+      third_party_notices_sha256: 1c4ca89b2f9db1ba292c1ce56b91aafd8eb975b03d9f83dd4a482011ff612702
+    integration_mode: research_reference_only
+    source_imported: false
+    binary_imported: false
+    imported_paths: []
+    local_modifications: []
+    review_findings:
+      - enumerates a render speaker and capture microphone endpoint
+      - render PCM is discarded by default or sent to a debug kernel file path
+      - capture PCM is deterministic silence
+      - no supported user-mode PCM IPC or transport boundary was found
+    distribution_note: >-
+      Neither revision is imported or redistributed. The signed release is not
+      a functional CapyIO transport baseline and its missing notices file must
+      be resolved before any future redistribution review.
+  - id: scream
+    upstream_repository: https://github.com/duncanthrax/scream
+    pinned_revision: d789743c248b11d1df7e5ecc546b1bc60b90cd91
+    archive_sha256: 59dcd9889ba80d781745b3421facc7a5bdffefb77bf8543d606ac6abf0bc6ebdc
+    license: MS-PL
+    integration_mode: research_reference_only
+    source_imported: false
+    binary_imported: false
+    imported_paths: []
+    local_modifications: []
+    review_findings:
+      - taps real render PCM and uses bounded staging before transmission
+      - transmits from kernel mode through WSK or IVSHMEM
+      - kernel networking and transport policy are rejected by CapyIO invariants
+    distribution_note: >-
+      No Scream source or binary is imported or redistributed. The project is
+      retained only as fixed-revision design evidence for the PCM tap and
+      bounded staging; its kernel transport is not reusable in CapyIO.
   - id: vcamdroid
     upstream_repository: null
     pinned_revision: null

@@ -2,9 +2,10 @@
 import { computed, onMounted, onUnmounted, ref } from "vue";
 
 import RouteCard from "./components/RouteCard.vue";
+import QuickActionCard from "./components/QuickActionCard.vue";
 import StatusPill from "./components/StatusPill.vue";
 import { createCapyIOApi } from "./lib/api";
-import type { UiLiveImu, UiRoute, UiSnapshot } from "./lib/types";
+import type { QuickActionOperation, UiAudioEndpointCatalog, UiLiveImu, UiQuickAction, UiRoute, UiSnapshot } from "./lib/types";
 
 const api = createCapyIOApi();
 const snapshot = ref<UiSnapshot | null>(null);
@@ -16,6 +17,9 @@ const liveImu = ref<UiLiveImu | null>(null);
 const liveImuIp = ref("");
 const liveImuPort = ref(8080);
 const liveImuBusy = ref(false);
+const quickActions = ref<UiQuickAction[]>([]);
+const audioEndpoints = ref<UiAudioEndpointCatalog | null>(null);
+const busyActionId = ref<string | null>(null);
 let livePoll: ReturnType<typeof setInterval> | null = null;
 
 const localNode = computed(() => snapshot.value?.nodes.find((node) => node.local));
@@ -24,17 +28,56 @@ const activeCount = computed(() => snapshot.value?.routes.filter((route) => rout
 const recentEvents = computed(() => [...(snapshot.value?.events ?? [])].reverse());
 const liveImuRunning = computed(() => liveImu.value?.status === "connecting" || liveImu.value?.status === "active");
 const liveImuTone = computed(() => liveImu.value?.status === "active" ? "success" : ["failed", "offline"].includes(liveImu.value?.status ?? "") ? "danger" : "warning");
+const quickActionRouteIds = computed(() => new Set(quickActions.value.flatMap((action) => action.routeId ? [action.routeId] : [])));
+const ordinaryQuickRoutes = computed(() => (snapshot.value?.routes ?? []).filter((route) => !quickActionRouteIds.value.has(route.id)));
 
 async function load(): Promise<void> {
   loading.value = true;
   errorMessage.value = "";
   try {
-    const [nextSnapshot, nextLiveImu] = await Promise.all([api.getSnapshot(), api.getLiveImu()]);
+    const [nextSnapshot, nextLiveImu, nextQuickActions, nextAudioEndpoints] = await Promise.all([api.getSnapshot(), api.getLiveImu(), api.getQuickActions(), api.getAudioEndpoints()]);
     snapshot.value = nextSnapshot;
     liveImu.value = nextLiveImu;
+    quickActions.value = nextQuickActions;
+    audioEndpoints.value = nextAudioEndpoints;
   }
   catch (error) { errorMessage.value = normalizeError(error); }
   finally { loading.value = false; }
+}
+
+async function refreshAudioEndpoints(): Promise<void> {
+  errorMessage.value = "";
+  try { audioEndpoints.value = await api.getAudioEndpoints(); }
+  catch (error) { errorMessage.value = normalizeError(error); }
+}
+
+async function selectAudioEndpoint(action: UiQuickAction, selectionToken: string): Promise<void> {
+  busyActionId.value = action.id;
+  errorMessage.value = "";
+  try {
+    const updated = await api.selectAudioEndpoint(action.id, selectionToken);
+    quickActions.value = quickActions.value.map((item) => item.id === updated.id ? updated : item);
+    await refreshAudioEndpoints();
+  }
+  catch (error) { errorMessage.value = normalizeError(error); }
+  finally { busyActionId.value = null; }
+}
+
+async function refreshQuickActions(): Promise<void> {
+  try { quickActions.value = await api.getQuickActions(); }
+  catch (error) { errorMessage.value = normalizeError(error); }
+}
+
+async function invokeQuickAction(action: UiQuickAction, operation: QuickActionOperation): Promise<void> {
+  busyActionId.value = action.id;
+  errorMessage.value = "";
+  try {
+    const updated = await api.invokeQuickAction(action.id, operation);
+    quickActions.value = quickActions.value.map((item) => item.id === updated.id ? updated : item);
+    snapshot.value = await api.getSnapshot();
+  }
+  catch (error) { errorMessage.value = normalizeError(error); }
+  finally { busyActionId.value = null; }
 }
 
 async function refreshLiveImu(): Promise<void> {
@@ -80,7 +123,7 @@ function normalizeError(error: unknown): string {
 
 onMounted(() => {
   void load();
-  livePoll = setInterval(() => { void refreshLiveImu(); }, 500);
+  livePoll = setInterval(() => { void refreshLiveImu(); void refreshQuickActions(); }, 500);
 });
 onUnmounted(() => { if (livePoll) clearInterval(livePoll); });
 </script>
@@ -194,7 +237,8 @@ onUnmounted(() => { if (livePoll) clearInterval(livePoll); });
         <p>这里隐藏 Adapter 与 Port 细节，只呈现用户要完成的硬件组合。</p>
       </section>
       <section class="capability-grid">
-        <RouteCard v-for="route in snapshot?.routes ?? []" :key="route.id" :route="route" :busy="busyRouteId === route.id" @toggle="toggleRoute" />
+        <QuickActionCard v-for="action in quickActions" :key="action.id" :action="action" :busy="busyActionId === action.id" :audio-endpoints="audioEndpoints?.actionId === action.id ? audioEndpoints : null" @invoke="invokeQuickAction" @refresh-endpoints="refreshAudioEndpoints" @select-endpoint="selectAudioEndpoint" />
+        <RouteCard v-for="route in ordinaryQuickRoutes" :key="route.id" :route="route" :busy="busyRouteId === route.id" @toggle="toggleRoute" />
       </section>
     </template>
 

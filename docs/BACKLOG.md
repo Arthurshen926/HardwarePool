@@ -115,9 +115,70 @@ Problem and `Offline`; retry with a fresh epoch; stop without changing the IMU
 Route; keep PCM and ordinary logs outside Sidecar stdout; expose the workflow
 through a generic Quick Action projection rather than `UiLiveSpeaker`.
 
-Explicit non-scope: vendoring upstream source, a CapyIO Android app, virtual
-render endpoint, microphone, codec rewrite, production pairing/encryption or
-automatic retry policy.
+Progress:
+
+- `CAPY-AUDIO-000` complete: v0.3.4 provenance/hashes/license and unmodified
+  Windows/Android lab behavior are recorded. TCP negotiation, UDP PCM delivery,
+  Android `AudioTrack`, heartbeat, close and a second clean start were observed;
+  subjective audible quality remains unclaimed without a listener beside the
+  phone.
+- `CAPY-AUDIO-001A0` complete locally: bounded direct-process version/endpoint
+  probing and explicit bind/endpoint/PCM configuration are implemented with no
+  new production dependency. Runtime process supervision is the next slice.
+- `CAPY-AUDIO-001A1` complete locally: the child is probed, started directly,
+  checked for TCP-listener readiness, boundedly drained, polled, stopped and
+  reaped with typed early-exit/timeout behavior. The upstream CLI exposes no
+  machine-readable Android peer state; disconnect must not be inferred from
+  ordinary logs and remains open for `001A2`.
+- `CAPY-AUDIO-001A2A` complete locally: a Windows-only bounded IP Helper query
+  observes established TCP rows owned by the supervised PID and explicit port,
+  without retaining addresses or parsing logs. It is labeled receiver transport
+  presence, not playback health.
+- `CAPY-AUDIO-001A2B` complete locally: the desktop composition layer owns one
+  `AdapterManaged` Runtime Route, requires three consecutive receiver samples
+  for activation, reports receiver/process failures as typed `Offline`
+  Problems, advances retry epochs, stops explicitly and leaves active IMU state
+  unchanged.
+- `CAPY-AUDIO-001A3` complete locally: a schema-v1 generic
+  Quick Action projects the physical Route, exposes finite start/retry/stop
+  operations, keeps executable/network/endpoint configuration in the host, and
+  is polled by a host-owned worker rather than the WebView. The authorized lab
+  passed Active epoch 1, disconnect/Offline epoch 2, retry Active epoch 3 and
+  explicit stop, while Android reported a 48 kHz stereo Track with non-zero
+  written frames.
+- Post-`001A3` hardening bounds receiver startup, reaps and reports a retryable
+  Problem on exhaustion, and uses a private-negotiated Route format because the
+  upstream CLI can fall back to an endpoint default. A short physical
+  screen-off run retained TCP and advanced the Android Track; secure lock,
+  longer background, audio focus, latency and soak remain open.
+- Endpoint drift now has a typed, sanitized start-time Problem. A later UX slice
+  no longer strands the user on a stale host configuration.
+- `CAPY-AUDIO-001A4` complete locally: the desktop card rescans bounded endpoint
+  display names, selects through a fresh host-owned opaque-token allow-list and
+  replaces configuration only while the Route is inactive. Raw endpoint IDs
+  and executable paths never enter the WebView; selection is session-local.
+
+Explicit `001A` non-scope: vendoring upstream source, a CapyIO Android app,
+virtual render endpoint, microphone, codec rewrite, production
+pairing/encryption or automatic retry policy. The newly authorized virtual
+endpoint is isolated in `001B` rather than retrofitted into the proven transport
+slice.
+
+### CAPY-AUDIO-001B — Dedicated Windows `CapyIO Speaker`
+
+Goal: expose a real Windows render endpoint that applications can select
+independently of the physical/RDP output, then bridge only that endpoint's real
+PCM through a bounded render APO/Broker path and feed the proven Android speaker transport.
+
+The Speaker functional Gate through B6B is complete. The installed
+`CapyIO Speaker` post-mix APO feeds a bounded global render ring, the
+service-owned Broker sends it to the pinned Android receiver, and human tests
+confirmed playback plus Windows endpoint volume/mute. ADRs 0033/0034 separate
+the privileged Broker from Tauri and expose only bounded local
+start/stop/status control to the ordinary desktop user. The completed evidence
+plan is `docs/plans/completed/0012-windows-virtual-speaker.md`. Signed installer,
+qualification, production security and Android distribution continue separately
+in `docs/plans/active/0013-speaker-release-qualification.md`.
 
 ## Later small tasks
 
@@ -127,7 +188,8 @@ automatic retry policy.
 - `CAPY-CAMERA-001`: VCamdroid sidecar catalog/probe spike.
 - `CAPY-UX-001`: versioned Quick Action template schema.
 - `CAPY-SEC-001`: authenticated control-channel design spike.
-- `CAPY-DRIVER-001`: provision isolated Windows driver test VM; no driver code.
+- `CAPY-DRIVER-001`: provision the isolated Windows driver VM required by
+  `CAPY-AUDIO-001B0`.
 
 ## Task safety checklist
 

@@ -16,8 +16,11 @@ host and retain failures in the active plan.
 ## Future Windows inventory
 
 Before native/driver work, record Windows edition/build/architecture, SDK/WDK,
-CPU/RAM, network and the isolated test target. Do not change BitLocker, Secure
-Boot, boot policy or Verifier without explicit approval.
+CPU/RAM, network and the exact test target. For a local-host exception also
+record WinRE/recovery access, BitLocker status/recovery-key availability,
+Secure Boot state, current audio endpoints, the exact package hash and a tested
+uninstall command. Do not change BitLocker, Secure Boot, boot policy or Verifier
+without separate explicit approval.
 
 ## Android inventory baseline
 
@@ -44,6 +47,8 @@ external overlay is used. Foundation Mock Sidecars use local process pipes only.
 
 ## Driver target
 
-Use a Hyper-V Generation 2 VM or dedicated Windows installation with snapshots,
-debugging and recovery planning. The daily-development host is never a driver
-test target.
+Prefer a Hyper-V Generation 2 VM or dedicated Windows installation with
+snapshots, debugging and recovery planning. ADR 0029 permits
+`DESKTOP-AT8EVE9` as a Gate 7B controlled local-lab exception only after the
+preflight above passes. Remote-only access without a verified recovery path is
+not sufficient for a kernel-driver deployment.

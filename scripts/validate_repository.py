@@ -64,7 +64,7 @@ GATE_EVIDENCE_ROW_RE = re.compile(
 )
 TARGET_GATE_RE = re.compile(r"^Gate(?:s)?\s+(?P<first>\d+)(?:[\-–](?P<last>\d+))?$")
 FOUNDATION_ACCEPTANCE_IDS = {f"G0-3-{number:02d}" for number in range(1, 10)}
-ACTIVE_IMPLEMENTATION_GATES = {5}
+ACTIVE_IMPLEMENTATION_GATES = {5, 7}
 
 JSON_FILES = [
     "package.json",
@@ -462,8 +462,20 @@ def validate_architecture_dependencies() -> None:
         path.read_text(encoding="utf-8").lower()
         for path in (ROOT / "drivers/windows-audio").rglob("*")
         if path.is_file()
+        and "x64" not in path.relative_to(ROOT / "drivers/windows-audio").parts
     )
-    required_driver_rules = ["network", "protobuf", "json", "codec"]
+    required_driver_rules = [
+        "network",
+        "protobuf",
+        "json",
+        "codec",
+        "capyio speaker",
+        "wasapi",
+        "render apo",
+        "bounded",
+        "shared-memory",
+        "isolated",
+    ]
     missing_rules = [rule for rule in required_driver_rules if rule not in driver_text]
     if missing_rules:
         fail(f"Windows driver boundary docs lack rules: {missing_rules}")
@@ -505,6 +517,68 @@ def validate_sensor_server_provenance() -> None:
         fail(
             "SensorServer Adapter contains an unreviewed transport/TLS dependency: "
             f"{present}"
+        )
+
+
+def validate_windows_audio_provenance() -> None:
+    provenance = (ROOT / "third_party/THIRD_PARTY.yml").read_text(encoding="utf-8")
+    required = [
+        "id: microsoft-sysvad",
+        "upstream_repository: https://github.com/microsoft/Windows-driver-samples",
+        "pinned_revision: 717778a20ba4dd2440fe609f69153a1f8a64f597",
+        "upstream_path: audio/sysvad",
+        "license: MS-PL",
+        "integration_mode: driver_derivative",
+        "source_imported: true",
+        "binary_imported: false",
+        "drivers/windows-audio/sysvad/APO/SwapAPO",
+        "drivers/windows-audio/sysvad/TabletAudioSample",
+    ]
+    missing = [entry for entry in required if entry not in provenance]
+    if missing:
+        fail(f"Microsoft SysVAD provenance is incomplete: {missing}")
+
+    candidate_required = [
+        "id: virtualdrivers-virtual-audio-driver",
+        "pinned_revision: bb34fba15faf569a6ae9bdea360bc1cf4821354e",
+        "revision: 191d307c858cb7c2749bc849060849d2dac18d3b",
+        "archive_sha256: 24e07b8a4b82ec6fe136c079e73443a09a185d8cd17fbf03d9a7722992c4edff",
+        "id: scream",
+        "pinned_revision: d789743c248b11d1df7e5ecc546b1bc60b90cd91",
+        "archive_sha256: 59dcd9889ba80d781745b3421facc7a5bdffefb77bf8543d606ac6abf0bc6ebdc",
+        "integration_mode: research_reference_only",
+    ]
+    candidate_missing = [
+        entry for entry in candidate_required if entry not in provenance
+    ]
+    if candidate_missing:
+        fail(f"Windows audio candidate provenance is incomplete: {candidate_missing}")
+
+    bridge_adr = (
+        ROOT / "docs/adr/0028-render-apo-bounded-bridge.md"
+    ).read_text(encoding="utf-8").lower()
+    bridge_required = [
+        "status: accepted",
+        "synthetic tone",
+        "render apo",
+        "bounded shared-memory/spsc",
+        "must not allocate",
+        "research reference only",
+        "driver ipc",
+    ]
+    bridge_missing = [entry for entry in bridge_required if entry not in bridge_adr]
+    if bridge_missing:
+        fail(f"Windows render APO decision is incomplete: {bridge_missing}")
+
+    imported_driver_sources = [
+        path
+        for path in (ROOT / "drivers/windows-audio").rglob("*")
+        if path.is_file() and path.suffix.lower() in {".c", ".cpp", ".inx", ".vcxproj"}
+    ]
+    if not imported_driver_sources:
+        fail(
+            "SysVAD provenance declares imported source but no Windows driver "
+            "source files are present"
         )
 
 
@@ -647,6 +721,7 @@ def main() -> None:
     validate_proto_field_numbers()
     validate_architecture_dependencies()
     validate_sensor_server_provenance()
+    validate_windows_audio_provenance()
     validate_hosted_ci_contract()
     validate_current_foundation_labels()
     validate_local_markdown_links()

@@ -1,6 +1,7 @@
 # CapyIO Data-Plane Bootstrap
 
-> Status: bounded semantic foundation; no production network binding selected
+> Status: bounded semantic foundation; no production network binding selected;
+> one AdapterManaged Audio Share compatibility binding exists for trusted labs
 
 ## 1. Purpose
 
@@ -14,6 +15,11 @@ The semantic envelope is not a public wire layout. It carries Profile identity,
 typed stream identity, stream epoch, sequence, source/receive timestamps, clock
 domain and a validated bounded payload. A concrete transport still owns
 framing, authentication, replay defense, rate limits and MTU policy.
+
+ADR 0030's Audio Share-compatible TCP/UDP sender is a deliberately private
+`AdapterManaged` bridge to the pinned Android receiver. It strips CapyIO frame
+metadata because the upstream protocol cannot carry it and therefore is not a
+StandardPort implementation or a candidate production binding.
 
 ## 2. StandardPort queue and fan-out semantics
 
@@ -125,4 +131,9 @@ The semantic frame is not itself the public binary wire layout. A transport ADR 
 - maximum packet and aggregate rates;
 - fuzz and golden-fixture strategy.
 
-The Windows kernel driver never receives this network frame. The user-mode Broker converts validated decoded PCM into the smaller driver IPC contract.
+The Windows kernel driver and render APO never receive this network frame. For
+a virtual render endpoint, the preferred first path is a bounded copy from the
+endpoint-associated render APO into a pre-opened shared-memory/SPSC staging
+ring consumed by the Broker. SysVAD WASAPI loopback is synthetic and cannot
+prove real render PCM. A smaller versioned driver IPC remains available only
+if isolated-target APO lifecycle or certification evidence fails.

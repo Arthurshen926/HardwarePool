@@ -1,0 +1,72 @@
+[Version]
+Signature   = "$Windows NT$"
+Class       = AudioProcessingObject
+ClassGuid   = {5989fce8-9cd0-467d-8a6a-5419e31529d4}
+Provider    = %ProviderName%
+DriverVer   = 08/27/2026,0.1.0.0
+CatalogFile = capyioaudio.cat
+PnpLockDown = 1
+
+[Manufacturer]
+%MfgName% = CapyIOApo,NT$ARCH$.10.0...17763
+
+[CapyIOApo.NT$ARCH$.10.0...17763]
+%Apo.ComponentDesc% = CapyIOApo_Install,SWC\VEN_CAPY&CID_RENDERAPO
+
+[CapyIOApo_Install]
+CopyFiles = CapyIOApo.CopyFiles
+AddReg = CapyIOApo.AddReg
+
+[CapyIOApo.CopyFiles]
+CapyIORenderAPO.dll
+
+[CapyIOApo.AddReg]
+HKR,Classes\CLSID\%CAPYIO_RENDER_SFX_CLSID%,,,%SFX.FriendlyName%
+HKR,Classes\CLSID\%CAPYIO_RENDER_SFX_CLSID%\InProcServer32,,0x00020000,%13%\CapyIORenderAPO.dll
+HKR,Classes\CLSID\%CAPYIO_RENDER_SFX_CLSID%\InProcServer32,ThreadingModel,,"Both"
+HKR,AudioEngine\AudioProcessingObjects\%CAPYIO_RENDER_SFX_CLSID%,"FriendlyName",,%SFX.FriendlyName%
+HKR,AudioEngine\AudioProcessingObjects\%CAPYIO_RENDER_SFX_CLSID%,"Copyright",,%Copyright%
+HKR,AudioEngine\AudioProcessingObjects\%CAPYIO_RENDER_SFX_CLSID%,"MajorVersion",0x00010001,1
+HKR,AudioEngine\AudioProcessingObjects\%CAPYIO_RENDER_SFX_CLSID%,"MinorVersion",0x00010001,0
+HKR,AudioEngine\AudioProcessingObjects\%CAPYIO_RENDER_SFX_CLSID%,"Flags",0x00010001,%APO_FLAG_DEFAULT%
+HKR,AudioEngine\AudioProcessingObjects\%CAPYIO_RENDER_SFX_CLSID%,"MinInputConnections",0x00010001,1
+HKR,AudioEngine\AudioProcessingObjects\%CAPYIO_RENDER_SFX_CLSID%,"MaxInputConnections",0x00010001,1
+HKR,AudioEngine\AudioProcessingObjects\%CAPYIO_RENDER_SFX_CLSID%,"MinOutputConnections",0x00010001,1
+HKR,AudioEngine\AudioProcessingObjects\%CAPYIO_RENDER_SFX_CLSID%,"MaxOutputConnections",0x00010001,1
+HKR,AudioEngine\AudioProcessingObjects\%CAPYIO_RENDER_SFX_CLSID%,"MaxInstances",0x00010001,0xffffffff
+HKR,AudioEngine\AudioProcessingObjects\%CAPYIO_RENDER_SFX_CLSID%,"NumAPOInterfaces",0x00010001,1
+HKR,AudioEngine\AudioProcessingObjects\%CAPYIO_RENDER_SFX_CLSID%,"APOInterface0",,"{FD7F2B29-24D0-4B5C-B177-592C39F9CA10}"
+
+[CapyIOApo_Install.HW]
+AddReg = CapyIOApo.FriendlyName
+
+[CapyIOApo.FriendlyName]
+HKR,,FriendlyName,,%Apo.ComponentDesc%
+
+[CapyIOApo_Install.Services]
+AddService = ,2
+
+[SourceDisksNames]
+1 = %DiskName%
+
+[SourceDisksFiles]
+CapyIORenderAPO.dll = 1
+
+[DestinationDirs]
+CapyIOApo.CopyFiles = 13
+
+[SignatureAttributes]
+CapyIORenderAPO.dll = SignatureAttributes.PETrust
+
+[SignatureAttributes.PETrust]
+PETrust = true
+
+[Strings]
+ProviderName = "CapyIO Project"
+MfgName = "CapyIO Project"
+DiskName = "CapyIO Render APO"
+Apo.ComponentDesc = "CapyIO Render APO"
+SFX.FriendlyName = "CapyIO Render Bridge"
+Copyright = "CapyIO Project and Microsoft contributors"
+CAPYIO_RENDER_SFX_CLSID = "{D8D4EC87-0518-49B5-8E21-F975D2A0C210}"
+APO_FLAG_DEFAULT = 0x0000000e

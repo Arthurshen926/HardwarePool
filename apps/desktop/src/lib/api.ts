@@ -1,7 +1,7 @@
 import { invoke } from "@tauri-apps/api/core";
 
 import { BrowserMockCapyIOApi } from "./mock";
-import type { CapyIOApi, UiLiveImu, UiSnapshot } from "./types";
+import type { CapyIOApi, QuickActionOperation, UiAudioEndpointCatalog, UiLiveImu, UiQuickAction, UiSnapshot } from "./types";
 
 class TauriCapyIOApi implements CapyIOApi {
   getSnapshot(): Promise<UiSnapshot> {
@@ -28,6 +28,26 @@ class TauriCapyIOApi implements CapyIOApi {
 
   stopLiveImu(): Promise<UiLiveImu> {
     return invoke<UiLiveImu>("stop_live_imu");
+  }
+
+  getQuickActions(): Promise<UiQuickAction[]> {
+    return invoke<UiQuickAction[]>("get_quick_actions");
+  }
+
+  invokeQuickAction(actionId: string, operation: QuickActionOperation): Promise<UiQuickAction> {
+    return invoke<UiQuickAction>("invoke_quick_action", {
+      request: { actionId, operation },
+    });
+  }
+
+  getAudioEndpoints(): Promise<UiAudioEndpointCatalog> {
+    return invoke<UiAudioEndpointCatalog>("get_audio_endpoints");
+  }
+
+  selectAudioEndpoint(actionId: string, selectionToken: string): Promise<UiQuickAction> {
+    return invoke<UiQuickAction>("select_audio_endpoint", {
+      request: { actionId, selectionToken },
+    });
   }
 }
 

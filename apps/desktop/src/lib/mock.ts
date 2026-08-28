@@ -2,8 +2,11 @@ import type {
   CapyIOApi,
   RouteState,
   UiEvent,
+  UiAudioEndpointCatalog,
   UiLiveImu,
+  QuickActionOperation,
   UiPort,
+  UiQuickAction,
   UiRoute,
   UiSnapshot,
 } from "./types";
@@ -145,12 +148,54 @@ export class BrowserMockCapyIOApi implements CapyIOApi {
     return unsupportedLiveImu();
   }
 
+  async getQuickActions(): Promise<UiQuickAction[]> {
+    return [unsupportedAudioQuickAction()];
+  }
+
+  async invokeQuickAction(_actionId: string, _operation: QuickActionOperation): Promise<UiQuickAction> {
+    throw new Error("Physical Quick Actions require the Tauri desktop backend.");
+  }
+
+  async getAudioEndpoints(): Promise<UiAudioEndpointCatalog> {
+    return {
+      schemaVersion: 1,
+      actionId: "capyio.quick-action.remote-speaker",
+      supported: false,
+      canSelect: false,
+      choices: [],
+      problem: "Windows 播放端点枚举需要 Tauri 桌面后端。",
+    };
+  }
+
+  async selectAudioEndpoint(_actionId: string, _selectionToken: string): Promise<UiQuickAction> {
+    throw new Error("Windows playback endpoint selection requires the Tauri desktop backend.");
+  }
+
   private pushEvent(summary: string): void {
     const event: UiEvent = { sequence: this.nextSequence, summary };
     this.nextSequence += 1;
     this.snapshot.events.push(event);
     this.snapshot.events = this.snapshot.events.slice(-20);
   }
+}
+
+function unsupportedAudioQuickAction(): UiQuickAction {
+  return {
+    schemaVersion: 1,
+    id: "capyio.quick-action.remote-speaker",
+    kind: "route_control",
+    title: "将电脑声音镜像到手机",
+    summary: "系统音频镜像 · 非虚拟扬声器 · Browser Mock 不启动外部进程",
+    status: "blocked",
+    simulated: true,
+    routeId: null,
+    routeState: null,
+    routeEpoch: null,
+    availableOperations: [],
+    evidenceLevel: "not_started",
+    problemCode: "CAPY.UI.BROWSER_MOCK",
+    problem: "请使用配置了 Audio Share 的 Tauri 桌面宿主。",
+  };
 }
 
 function unsupportedLiveImu(): UiLiveImu {

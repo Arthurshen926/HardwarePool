@@ -1,0 +1,30 @@
+//
+// SwapAPO.idl -- Copyright (c) Microsoft Corporation. All rights reserved.
+//
+// Description:
+//
+//      The interface and type definitions for Swap APO functionality.
+//
+import "oaidl.idl";
+import "ocidl.idl";
+import "audioenginebaseapo.idl";
+
+// This is the SwapAPO interface.
+[
+    object,
+    uuid(CCCBA2BD-CF9C-4730-8CD4-127ACB2A63DC),
+    pointer_default(unique)
+]
+interface ISwapAPOMFX : IUnknown
+{
+};
+
+// This is the SwapAPO interface.
+[
+    object,
+    uuid(2D57EABB-D731-45B5-8AE3-8CA53C563A8D),
+    pointer_default(unique)
+]
+interface ISwapAPOSFX : IUnknown
+{
+};

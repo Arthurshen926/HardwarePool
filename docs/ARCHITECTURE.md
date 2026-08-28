@@ -1,6 +1,6 @@
 # CapyIO Architecture
 
-> Version: 0.3-pre-alpha
+> Version: 0.4-pre-alpha
 > Status: normative for the CapyIO foundation
 
 ## 1. Architecture objective
@@ -85,6 +85,12 @@ retry always starts with a later epoch.
 Platform and child-process callbacks return typed completions through opaque
 operation IDs; they never mutate Core state from arbitrary threads.
 
+On Windows, the headless `CapyIOBroker` service selected by ADR 0033 owns the
+dedicated virtual-speaker Broker, privileged cross-session render mapping and
+child lifecycle. ADR 0034 gives ordinary CapyIO Desktop a bounded local
+start/stop/status boundary; Tauri is not privileged and does not own the
+service Route's lifetime. Its direct supervisor remains a development fallback.
+
 ### Protocol
 
 `capyio.v1` is a versioned semantic control protocol. It does not select a
@@ -134,6 +140,9 @@ capyio-runtime
 capyio-data-plane
    ^
    +--- SensorServer protocol Adapter (bounded mapping; transport separate)
+
+Audio Share process Adapter
+   +--- pinned external as-cmd process (AdapterManaged TCP/UDP PCM)
 ```
 
 Dependency rules:
@@ -145,6 +154,39 @@ Dependency rules:
 - Adapter Host owns process I/O and does not enter Core.
 - Profile-specific Adapters may depend on `capyio-data-plane`; the data-plane
   crate never depends on an Adapter or concrete transport.
+- The Audio Share Adapter validates and supervises a pinned external executable;
+  its TCP/UDP PCM contract does not become a Core, Protocol or StandardPort
+  dependency.
+- The v0.3.4 CLI may fall back from a requested PCM format to an endpoint's
+  default format. Its `AdapterManaged` Route therefore advertises an explicit
+  private-negotiated format rather than claiming the requested sample format as
+  an observed result.
+- Its initial Windows host may observe process-owned established TCP state via
+  IP Helper. That platform signal is transport presence only and never imports
+  peer addresses, Windows structs or lifecycle decisions into Core.
+- The desktop composition layer maps that bounded process signal onto one
+  Runtime-owned `AdapterManaged` Route. Consecutive receiver observations are
+  required before activation; receiver loss and child exit submit typed
+  `Problem`/`Offline` transitions. The polling cadence and retry decision remain
+  explicit host policy, and unrelated Routes are never mutated as a side
+  effect.
+- The versioned Quick Action projection exposes only a stable action ID,
+  lifecycle state, evidence label and finite start/retry/stop operations. The
+  executable path, endpoint ID and bind address remain trusted host
+  configuration. A host-owned worker polls independently of the WebView. A
+  bounded number of receiver-wait polls transitions a stuck start to a typed,
+  retryable `Offline` Problem and reaps the external process.
+- Every Audio Share start re-probes the pinned CLI and current endpoint
+  inventory. A configured endpoint that disappeared after RDP, hot-plug or
+  audio-service re-enumeration maps to a sanitized, retryable
+  `CAPY.AUDIO_SHARE.ENDPOINT_UNAVAILABLE` Problem; raw endpoint IDs remain
+  trusted host configuration and do not enter the WebView DTO.
+- The desktop may project the freshly enumerated endpoint display names through
+  short-lived opaque selection tokens. Only tokens in the host-owned current
+  generation map back to endpoint IDs; refresh and successful selection
+  invalidate the map. Selection replaces the supervised process configuration
+  only while the Route is inactive and is intentionally session-local until a
+  trusted persistence design exists.
 - Testkit is never a production dependency of Core/Protocol/Runtime/Adapter SDK.
 - Drivers communicate through minimal validated contracts, never Rust memory
   layout or network/wire messages.
@@ -225,8 +267,33 @@ every level. Android/iOS limitations are reported honestly.
 
 Any future Windows driver is minimal: endpoint/PCM or fixed IPC surface only.
 Networking, DNS, pairing, encryption, JSON/Protobuf, codecs, reconnect and user
-configuration remain in user mode. Driver build/install/test requires an
-isolated VM or dedicated Windows installation.
+configuration remain in user mode. Driver build/install/test defaults to an
+isolated VM or dedicated Windows installation. ADR 0029 allows one identified
+local-lab exception with recorded recovery posture, exact-package approval and
+rollback evidence; it does not relax the driver boundary.
+
+The dedicated remote-speaker projection is a render endpoint named `CapyIO
+Speaker`. Windows applications render into it, and an endpoint-associated
+render APO copies real PCM into a preallocated bounded shared-memory/SPSC ring
+for the user-mode Broker and existing Adapter-managed transport. The APO
+real-time callback never blocks, allocates, performs file/network I/O or owns
+reconnect policy. SysVAD WASAPI loopback is synthetic and is not real-PCM
+evidence; a custom kernel PCM IPC remains a measured fallback only.
+
+The desktop host has two explicit Audio Share launch modes. The legacy mode
+supervises pinned `as-cmd` against one host-enumerated playback endpoint. The
+dedicated-speaker mode supervises the CapyIO-owned render-ring Broker and has no
+endpoint-selection input: `CapyIO Speaker` is the fixed Projection. Trusted
+host configuration selects the mode; the WebView cannot supply executable or
+network configuration.
+
+For the installed dedicated-speaker flow, `CapyIOBroker` is the privileged
+lifecycle owner. CapyIO Desktop sends only bounded `status`, `start` and `stop`
+requests over the local named pipe defined by ADR 0034 and projects the typed
+service snapshot into its existing Runtime Route. Service launch paths and
+network settings remain administrator configuration. Closing the UI does not
+stop a service-owned Route; the legacy direct process path is a development
+fallback when the service boundary is absent.
 
 ## 12. Android boundary
 

@@ -1,6 +1,6 @@
 # CapyIO Product Requirements
 
-> Version: v0.4-pre-alpha
+> Version: v0.5-pre-alpha
 > Status: normative active-development baseline
 > Working name: CapyIO — Cross-device I/O Capability Fabric
 > License baseline: Apache-2.0
@@ -237,11 +237,18 @@ The product has two experiences:
 
 ## 9. Current non-goals
 
-- real MicYou, Audio Share, VCamdroid or VIIPER integration;
+- real MicYou, VCamdroid or VIIPER integration;
+- Audio Share source import, vendoring or redistribution; the only current
+  exception is the pinned, unmodified external-process remote-speaker Adapter
+  scoped by `CAPY-AUDIO-000/001A` and ADR 0025;
 - vendoring, repackaging or production deployment of SensorServer; the only
   current exception is the externally installed, local-lab IMU protocol Adapter
   scoped by `CAPY-IMU-001B` and ADR 0021;
-- Windows virtual audio/camera/display/HID implementation or installation;
+- Windows virtual camera/display/HID implementation or installation;
+- uncontrolled Windows virtual-audio installation on a daily-development host;
+  ADRs 0027–0029 permit the dedicated `CapyIO Speaker` only in an identified
+  isolated target or the explicitly approved `DESKTOP-AT8EVE9` local lab after
+  recovery, exact-package and rollback preflight evidence;
 - unapproved Android permission, foreground-service, APK or physical-device
   operations; every approved lab action remains target-specific and retained as
   evidence;

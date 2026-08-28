@@ -1,6 +1,6 @@
 # CapyIO Build Status
 
-> Updated: 2026-08-24 during `CAPY-IMU-001B3B`.
+> Updated: 2026-08-28 after the `CAPY-AUDIO-001B` functional Gate.
 
 ## Verified baseline
 
@@ -159,13 +159,150 @@ are in `docs/CAPY_IMU_001B3B_REPORT.md`.
 
 - CapyIO-owned Android application/APK;
 - automated Android permission or foreground-service management;
-- real microphone, speaker, camera or input data path;
+- CapyIO-owned microphone/speaker, camera or input data path;
 - Windows virtual devices, driver, WDK or isolated-VM driver test;
-- production transport, pairing, encryption, live third-party Adapter transport
-  or performance.
+- production transport, pairing, encryption, Runtime-owned live audio Adapter
+  transport or performance.
 
 The physical SensorServer lab transport is owned by the desktop process's real
 Node Runtime Route, but it is not production transport or a long-lived headless
 Node service.
 
 These absences are expected and must not be reported as working functionality.
+
+## CAPY-AUDIO-000/001A0 Audio Share boundary
+
+The pinned, unmodified Audio Share v0.3.4 release was verified against official
+SHA-256 files and Apache-2.0 provenance. On the separately authorized
+Windows/Android lab, the upstream system-loopback server negotiated float
+stereo PCM, delivered UDP payloads, maintained heartbeats, closed cleanly and
+started a second peer. Android `AudioFlinger` reported a matching app-owned
+`AudioTrack` with frames written. No person was beside the phone, so subjective
+audibility/quality is not claimed.
+
+The repository contains only CapyIO-authored configuration, probe, supervision
+and Runtime-composition code:
+explicit IP/port/endpoint/PCM arguments, direct no-shell execution, bounded
+stdout/stderr/deadlines and strict v0.3.4 endpoint parsing. No upstream binary
+or APK is committed or distributed. Generic Quick Action exposure and renewed
+authorized physical playback/disconnect evidence remain active work.
+
+`CAPY-AUDIO-001A1` additionally implements direct child startup, explicit TCP
+listener readiness, bounded output draining, typed early exit/startup timeout,
+polling, idempotent stop and synchronous process reaping. Three fixture-backed
+supervisor tests pass. An ignored real-CLI run also started the verified release
+on loopback, observed it running, stopped it and confirmed zero remaining
+listeners/processes. This is server-process evidence only: upstream v0.3.4 has
+no machine-readable Android peer state, so this slice did not infer receiver
+loss and human logs are not used as lifecycle authority. The later `001A2A/B`
+slices add owner-scoped transport observation and Runtime mapping.
+
+`CAPY-AUDIO-001A2A` adds a Windows-only, bounded `GetExtendedTcpTable` query.
+The test proves readiness self-connect is excluded, an established process-owned
+peer is detected, disconnect clears presence and stopped supervision reports
+not running. The result contains a count only and is deliberately weaker than
+protocol negotiation, UDP delivery or audible playback.
+
+`CAPY-AUDIO-001A2B` binds the supervised process boundary to one real
+Runtime-owned `AdapterManaged` Route. Three consecutive established receiver
+samples are required for activation; an absence resets the starting counter,
+and loss after activation, process exit or process-start failure creates a
+stable Route-related Problem and `Offline`. Explicit retry advances the Route
+epoch, explicit stop terminates the Route/process boundary, and tests prove an
+active IMU Route is unchanged by audio failure. The controller is not yet wired
+to a desktop Quick Action, and TCP presence remains weaker than playback
+health.
+
+`CAPY-AUDIO-001A3` adds a generic schema-v1 Quick Action for the physical
+speaker Route. It exposes only lifecycle/evidence state and finite
+start/retry/stop operations; executable path, bind address, port and endpoint ID
+remain host environment configuration. A Tauri-owned 250 ms worker performs
+receiver polling independently of WebView refresh. Browser Mock uses the same
+DTO and remains visibly blocked/simulated. The authorized physical lab passed
+Active epoch 1, disconnect/Offline epoch 2, retry Active epoch 3 and explicit
+stop with no remaining Windows process/listener. A Windows system WAV produced
+non-zero written frames on the app-owned 48 kHz stereo Android Track. A later
+authorized repeat advanced that Track from zero to 2,421,542 server frames, and
+the user beside the receiver clearly heard phone playback. This confirms one
+audible case only; background/focus, latency and long-duration quality remain
+unverified. The Quick Action labels this initial path as system-audio mirroring,
+not a CapyIO virtual speaker, because the selected Windows endpoint may continue
+to play locally.
+
+Post-`001A3` hardening bounds receiver startup at 120 host polls. Exhaustion
+reaps the external process, retains a retryable typed Problem and permits a
+later-epoch retry instead of leaving the Route in `Starting`. A Windows Remote
+Desktop physical repeat also demonstrated that v0.3.4 may fall back from the
+requested signed-16/48 kHz format to an endpoint's 44.1 kHz float default. The
+Route now truthfully declares `audio-share-v0.3.4-private-negotiated`. During a
+15-second phone screen-off interval, TCP stayed established and the Android
+Track advanced by 757,150 frames; secure-lock, longer background, focus,
+latency and soak behavior remain unverified.
+
+Audio Share start now re-probes the current endpoint inventory. Endpoint drift
+caused by RDP, hot-plug or audio-service re-enumeration produces the sanitized,
+retryable `CAPY.AUDIO_SHARE.ENDPOINT_UNAVAILABLE` Route Problem rather than a
+generic process-start failure. The raw endpoint ID remains trusted host
+configuration and is not returned to the WebView.
+
+The hash-verified real CLI passed the current-endpoint start/listen/stop probe
+and rejected an explicitly stale former endpoint before spawn, leaving the
+supervisor stopped.
+
+`CAPY-AUDIO-001A4` adds trusted-host playback-endpoint reselection to the
+desktop Quick Action. The UI receives bounded names and per-scan opaque tokens;
+the Rust host resolves only its current token allow-list to raw IDs and rejects
+selection while the Route is active. Refresh and successful selection
+invalidate tokens. Selection intentionally lasts only for the current desktop
+run. Desktop unit tests cover token/request/name bounds and inactive/active
+process replacement; the hash-verified CLI real probe passed against the
+current Windows inventory.
+
+## CAPY-AUDIO-001B0 dedicated virtual-speaker start
+
+The product target now explicitly includes an independent Windows `CapyIO
+Speaker` render endpoint. ADR 0027 splits the proven mirror transport (7A) from
+the driver-backed projection (7B). Fixed-revision source review showed that
+SysVAD WASAPI loopback is synthetic, so ADR 0028 replaces that data path with a
+minimal WaveRT endpoint, endpoint-associated render APO, bounded staging ring
+and user-mode Broker. Networking remains outside both the driver and APO.
+
+Microsoft Windows-driver-samples is pinned at revision
+`717778a20ba4dd2440fe609f69153a1f8a64f597`; its repository license is MS-PL.
+No upstream source has been imported. The identified local host is
+`DESKTOP-AT8EVE9`, AMD64 Windows build 26200.9168, with Visual Studio Build
+Tools 17.14, Windows SDK 10.0.26100.0 and WDK 10.0.26100.6584. WDK MSBuild and
+x64 InfVerif execute locally. The pinned SysVAD `EndpointsCommon` target and a
+v142/WIL x64 Release `SwapAPO.dll` compile baseline succeeded. No driver
+installation or signing action has been performed.
+The refreshed `arthu` token now includes `Hyper-V Administrators`. An exact
+Generation 2 target named `CapyIO-DriverLab` has been created on `F:` with
+Secure Boot, vTPM, 8 vCPU, 4–16 GiB dynamic memory and a 96 GiB dynamic disk.
+Its Windows 11 Enterprise 25H2 Evaluation ZH-CN installer hash matches
+Microsoft's published value. Guest installation reached OOBE but did not
+produce a stable recoverable target. ADR 0029 permits a controlled local-host
+Gate 7B exception after elevated recovery, exact-package and rollback preflight.
+ADR 0030 now resolves Broker-to-Android PCM ingest without the external
+`as-cmd` capture process. A bounded simulated producer sent 1,920,000 bytes to
+the pinned Android receiver over Tailscale with zero queue-full, receiver-gap
+or UDP-send errors; Android reported a started stereo 48 kHz `AudioTrack`.
+Human-confirmed audibility and the real APO staging producer remain pending.
+
+## CAPY-AUDIO-001B6B ordinary-user service control
+
+The controlled local lab now has an Automatic LocalSystem `CapyIOBroker`
+service and an ACL-protected local named pipe defined by ADR 0034. Closed 4 KiB
+schema-v1 requests expose only `status`, `start` and `stop`; trusted executable
+and network configuration remain outside the WebView contract. Repeated
+ordinary-user requests survived stop/start generations, stop released TCP/UDP
+65530 without stopping the SCM host, and the ignored physical desktop test
+proved Quick Action service selection plus UI-shutdown independence. The
+Android receiver re-established an owned TCP connection and a five-second
+`CapyIO Speaker` submission left service state active. Full evidence and exact
+hashes are in `docs/CAPY_AUDIO_001B6B_REPORT.md`; signed installer, reboot/soak,
+multi-user policy and production peer security remain open.
+
+The Speaker functional Gate is therefore closed at the controlled-lab evidence
+level. Remaining distribution, qualification and production-security work is
+tracked without ambiguity in
+`docs/plans/active/0013-speaker-release-qualification.md`.

@@ -2,6 +2,10 @@
 
 Status: accepted
 
+Render-path amendment: ADR 0028 rejects synthetic SysVAD WASAPI loopback as
+real-PCM evidence and prefers a bounded user-mode render-APO-to-Broker bridge.
+The custom kernel PCM IPC remains a fallback rather than a Gate 7B default.
+
 ## Context
 
 Windows system-level audio endpoints require driver work, while networking, protocols, codecs and reconnect logic are complex and process untrusted input.

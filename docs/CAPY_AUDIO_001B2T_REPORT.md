@@ -1,0 +1,84 @@
+# CAPY-AUDIO-001B2T Report
+
+Date: 2026-08-27
+
+Status: Broker-owned PCM ingest, physical Android submission and
+human-confirmed audibility proven
+
+## Outcome
+
+The external Audio Share `as-cmd` process is no longer required for the final
+CapyIO Speaker media path. A CapyIO-authored user-mode transport now accepts
+bounded PCM blocks and implements only the pinned Audio Share v0.3.4 Android
+private contract:
+
+```text
+simulated Broker PCM
+  -> bounded non-blocking queue
+  -> TCP format/start/heartbeat control
+  -> frame-aligned UDP PCM segments
+  -> Audio Share v0.3.4 Android AudioTrack
+```
+
+The transport remains `AdapterManaged` and trusted-lab-only. It is not a
+`capyio.audio.frames/1` wire binding and does not add network or protocol work
+to the driver or render APO callback. ADR 0030 records the decision, upstream
+fixed-revision review, dependency and security limits.
+
+## Deterministic evidence
+
+The Adapter tests prove:
+
+- the 48 kHz stereo S16 format encodes to the pinned Protobuf wire bytes;
+- TCP get-format and start-play commands round-trip;
+- UDP session association requires a live id and the TCP peer's source IP;
+- a 4,000-byte PCM block is split below the upstream IPv4 UDP payload bound,
+  remains sample-frame aligned and reconstructs byte-for-byte;
+- empty, oversized and unaligned blocks fail explicitly;
+- queue and peer counts, block sizes, waits and shutdown are bounded.
+
+`cargo xtask ci` passes with the new transport and tone producer.
+
+## Physical evidence
+
+Approved Android target:
+
+- ADB target used explicitly: `100.66.157.119:33071`;
+- model: Vivo `V2419A` (`PD2419`);
+- installed receiver: `io.github.mkckr0.audio_share_app` v0.3.4,
+  version code 3004;
+- receiver configuration observed through UI automation:
+  `100.66.231.100:65530`;
+- path: host and phone on the existing Tailscale network.
+
+The second 10-second 440 Hz run reported:
+
+```text
+receiver_connected=true
+blocks_enqueued=1000
+queue_full=0
+blocks_without_receiver=0
+datagrams_sent=2000
+datagram_send_errors=0
+pcm_bytes_sent=1920000
+```
+
+The byte count is exact for 48,000 samples/channel × two channels × two bytes
+for ten seconds. Android `dumpsys audio` independently showed an active
+`AudioTrack` owned by the pinned package, `state:started`, stereo channel mask,
+48 kHz sample rate, `USAGE_MEDIA`/`CONTENT_TYPE_MUSIC`, and an unmuted music
+stream routed to the speaker. These facts prove network delivery through
+Android audio submission. The human operator subsequently confirmed that the
+tone was clearly audible from the phone; that observation is recorded
+separately from the machine counters.
+
+## Remaining Gate 7B work
+
+1. Obtain exact-package approval before local signing and deployment; the
+   elevated ADR 0029 recovery preflight has passed.
+2. Install and enumerate the imported minimized SysVAD-derived endpoint/APO
+   package with CapyIO identifiers.
+3. Feed real application PCM through the implemented preallocated
+   APO-to-Broker staging ring into the transport proven here.
+4. Prove independent `CapyIO Speaker` selection, silence on ordinary output,
+   Broker/receiver loss, audio-service/reboot behavior and clean uninstall.

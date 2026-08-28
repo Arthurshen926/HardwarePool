@@ -53,8 +53,25 @@ UI distinguishes system Projection, system route/injection, standard API and
 Panel/Recorder fallbacks. It never claims a system-level device when only an
 application-local path exists.
 
+The initial Audio Share remote-speaker action is labeled as system-audio
+mirroring. It captures an existing Windows render endpoint, so the desktop may
+continue to play locally; it is not presented as a CapyIO-created virtual
+speaker or exclusive output route.
+
+The desktop card can rescan current Windows playback endpoints and select one
+by display name while the Route is inactive. Selection applies to the current
+desktop process only; users must stop the mirror before changing endpoints.
+Raw platform endpoint identifiers are never displayed or accepted by the UI.
+
+The final Windows workflow targets a separate system render device named
+`CapyIO Speaker`. Applications may choose it without changing where unrelated
+desktop audio plays. The completed Gate 7B controlled-lab path has enumeration
+and end-to-end evidence. When the installed service boundary is present, the
+Quick Action labels the fixed virtual-speaker projection explicitly; the
+environment-configured development fallback retains the mirror-mode label and
+must not imply that the virtual endpoint is installed.
+
 ## Runtime ownership
 
 Closing or refreshing UI does not define the lifecycle of an active Node or
 mobile service. UI reads snapshots and submits intent through a narrow local API.
-

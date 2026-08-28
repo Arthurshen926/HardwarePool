@@ -109,6 +109,41 @@ export interface UiLiveImu {
   problem: string | null;
 }
 
+export type QuickActionOperation = "start" | "retry" | "stop";
+
+export interface UiQuickAction {
+  schemaVersion: 1;
+  id: string;
+  kind: "route_control";
+  title: string;
+  summary: string;
+  status: "blocked" | "idle" | "starting" | "active" | "stopping" | "offline" | "failed";
+  simulated: boolean;
+  routeId: string | null;
+  routeState: RouteState | null;
+  routeEpoch: number | null;
+  availableOperations: QuickActionOperation[];
+  evidenceLevel: "not_started" | "process_and_route_state" | "stable_tcp_receiver_presence";
+  problemCode: string | null;
+  problem: string | null;
+}
+
+export interface UiAudioEndpointChoice {
+  selectionToken: string;
+  displayName: string;
+  isDefault: boolean;
+  selected: boolean;
+}
+
+export interface UiAudioEndpointCatalog {
+  schemaVersion: 1;
+  actionId: string;
+  supported: boolean;
+  canSelect: boolean;
+  choices: UiAudioEndpointChoice[];
+  problem: string | null;
+}
+
 export interface UiSnapshot {
   backendMode: BackendMode;
   schemaVersion: 3;
@@ -128,4 +163,8 @@ export interface CapyIOApi {
   getLiveImu(): Promise<UiLiveImu>;
   startLiveImu(ip: string, port: number): Promise<UiLiveImu>;
   stopLiveImu(): Promise<UiLiveImu>;
+  getQuickActions(): Promise<UiQuickAction[]>;
+  invokeQuickAction(actionId: string, operation: QuickActionOperation): Promise<UiQuickAction>;
+  getAudioEndpoints(): Promise<UiAudioEndpointCatalog>;
+  selectAudioEndpoint(actionId: string, selectionToken: string): Promise<UiQuickAction>;
 }

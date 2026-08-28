@@ -110,6 +110,111 @@ or hardware reads. Tests register both catalogs, open a Session, prepare/start
 opposite-direction Routes, stop one, simulate Adapter/peer loss and assert
 ordered bounded events/snapshots.
 
+## Audio Share external-process probe tests
+
+- configuration requires an explicit IP address, non-zero port, bounded
+  enumerated endpoint ID, encoding, channel count and sample rate;
+- server arguments are direct process arguments and never a shell string;
+- pinned version and endpoint-list parsing enforce output, line, count, ID and
+  name bounds, reject duplicates/mismatched totals and tolerate lossy device
+  display names without weakening ASCII structure parsing;
+- a fake runner covers unsupported versions and missing configured endpoints;
+- an ignored test probes a separately supplied, hash-verified v0.3.4 CLI and is
+  never required by hosted CI.
+
+The probe tests above do not start the audio server or send PCM. Process
+supervision, receiver-loss/Route behavior and physical playback are separate
+acceptance steps.
+
+A separately ignored real-CLI stale-endpoint test re-probes an explicitly
+supplied endpoint that is expected to be absent, requires the typed
+`ConfiguredEndpointMissing` result before child spawn and confirms supervisor
+state remains stopped. It complements, but never replaces, the ignored current
+endpoint start/listen/stop probe.
+
+The next supervisor tests use a repository-built fixture executable to prove
+TCP-listener readiness, running/early-exit state, startup timeout, bounded
+continuous output, explicit kill/reap, idempotent stop and Drop cleanup. A
+separately ignored test briefly starts the hash-verified real Windows CLI on an
+explicit loopback port, verifies it remains running after readiness, then stops
+and confirms no process/listener remains. Listener readiness is not receiver
+presence; v0.3.4 has no machine-readable peer-status API and tests never parse
+ordinary log prose into lifecycle state.
+
+The same bounded supervisor has a dedicated virtual-speaker launch contract:
+one positional explicit IPv4 bind address, no upstream version/endpoint probe,
+listener readiness, bounded output and idempotent stop/reap. Tests reject an
+unspecified address and zero port. Desktop projection tests keep this fixed
+mode separate from the legacy endpoint picker.
+
+An ignored Windows/Android lab test composes that supervisor with the Runtime
+Route. It requires explicit `CAPYIO_VIRTUAL_SPEAKER_EXE`, bind-IP and port host
+configuration plus an elevated token, waits for stable receiver presence,
+retains a bounded directed-playback window and proves explicit stop. The test
+does not install a driver, change permissions or infer audibility from TCP.
+
+Windows-only owner-table tests then prove that the short-lived readiness
+connection is not retained as a receiver, a process-owned established peer is
+observed, peer close becomes disconnected and stopped supervision becomes
+unknown/not-running. The test filters by PID and port and never asserts or
+retains peer addresses. This is transport-presence evidence, not Audio Share
+negotiation or playback evidence.
+
+Hardware-free desktop composition tests bind a fake process boundary to a real
+`NodeRuntime` `AdapterManaged` Route. They require three consecutive established
+receiver samples before `Active`, reset the counter on an intervening absence,
+map receiver loss, child exit and process-start failure to typed Route Problems,
+bound the initial receiver wait, reap the child on wait exhaustion, verify retry
+advances the epoch, and prove that audio failure leaves an already active IMU
+Route unchanged. They also assert that the AdapterManaged Route exposes a
+private-negotiated Audio Share format rather than claiming an unobserved PCM
+request. The fake proves orchestration only; the adapter fixture tests remain
+the evidence for real child/TCP observation behavior.
+
+The desktop composition tests also map the Adapter's concrete
+`ConfiguredEndpointMissing` start error to the stable
+`CAPY.AUDIO_SHARE.ENDPOINT_UNAVAILABLE` Problem without retaining the endpoint
+ID. Other start failures remain `PROCESS_START_FAILED`; no ordinary CLI log
+text is parsed to distinguish them.
+
+Quick Action tests assert schema version 1, a truthful blocked state when host
+configuration is absent, finite operations derived from Route state, rejection
+of unknown request fields (including an attempted executable path), and matching
+Browser Mock/Tauri TypeScript contracts. The Tauri host owns a 250 ms poll loop;
+the WebView refresh only observes the projection and is not lifecycle authority.
+A separate endpoint-selection contract rejects unknown request fields,
+unbounded or non-token input and active-Route process replacement. Display
+names are bounded and control characters replaced; inactive replacement is
+covered with a fake process boundary. The real ignored CLI probe confirms the
+current Windows endpoint inventory remains parseable, while raw IDs are not
+asserted or retained in repository evidence.
+A separately ignored physical test composes the real supervisor and Runtime
+Route and waits for active, disconnect, later-epoch retry, active and stopped.
+
+Windows-service unit tests validate closed launch configuration, explicit
+non-unspecified IPv4/port bounds, stable receiver gating, receiver loss,
+Broker exit and child-stop ownership without installing a service. The binary
+also provides an explicitly time-bounded console mode for a later exact
+physical fixture run. SCM install/start/reboot evidence is not implied by these
+tests and requires a separately approved service-deployment slice.
+
+The approved `CAPY-AUDIO-001B6A` local-lab run registered the exact manual
+LocalSystem service, observed its Broker child plus TCP/UDP ownership, proved a
+controlled stop released processes and port 65530, restarted with new process
+IDs and regained the Android receiver. A directed five-second CapyIO endpoint
+submission then left the service and transport healthy. The run does not claim
+human audibility without a separate operator observation and does not cover
+reboot/autostart, desktop IPC or installer behavior.
+
+`CAPY-AUDIO-001B6B` adds closed-schema/control-bound unit tests and an ignored
+physical desktop/service composition test. The approved local run exercised
+dozens of non-administrator status calls across stop/start generations, proved
+port cleanup without stopping the SCM host, proved Quick Action service
+selection and UI-shutdown independence, restored the Android receiver and
+retained `active` state after a five-second endpoint submission. Automatic SCM
+configuration was observed; reboot recovery and signed-installer behavior are
+still not implied.
+
 ## Sidecar smoke test
 
 Adapter Host launches repository-built mock binaries, performs initialize,
@@ -126,10 +231,23 @@ contract, data plane or performance test.
   lock/background, focus, route changes and power saving;
 - Windows user mode: endpoint enumeration, Broker restart, bounded IPC and
   sleep/resume;
-- drivers: install/update/remove, service restart, reboot and project-only
-  Verifier in an isolated VM/dedicated target;
+- drivers: install/update/remove, service restart and reboot in an isolated
+  VM/dedicated target or the ADR 0029 controlled local lab; project-only
+  Verifier remains isolated by default and requires separate approval;
 - end to end: IMU Panel/Recorder, audio both directions, camera, gamepad,
   independent Routes, disconnect/reconnect and clock epochs.
+
+Gate 7B first proves an unchanged pinned SysVAD build and an approved-target
+install as a toolchain/enumeration baseline; synthetic SysVAD
+WASAPI loopback is not real-PCM evidence. It then requires `CapyIO Speaker`
+enumeration, explicit application selection, endpoint-associated render APO
+PCM evidence, bounded ring-full/Broker-loss behavior, silence on the ordinary
+physical/RDP endpoint, audio-service/reboot survival and clean uninstall. The
+APO callback must have evidence of no blocking, allocation, file/network I/O
+or ordinary logging. Repository validation prevents driver source from
+appearing while the SysVAD record still declares `source_imported: false`.
+ADR 0029 permits `DESKTOP-AT8EVE9` for the approved-target install only after
+its recovery, exact-package and rollback preflight passes.
 
 ## Android read-only lab commands
 
