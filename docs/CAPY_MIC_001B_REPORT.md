@@ -44,6 +44,10 @@ phone audio.
 - native x64 InfVerif `/u`: exit 0 for all three INFs;
 - native x64 InfVerif `/w`: exit 0 for all three INFs.
 
+The deployment build pins all three package components to deterministic,
+monotonically newer `DriverVer` `21.60.0.1`; WDK timestamp-derived versions are
+not accepted as an upgrade identity.
+
 The known WDK managed-task defect still reports three failures loading its
 relative `x86\\InfVerif.dll`; the independently installed x64 verifier passes.
 

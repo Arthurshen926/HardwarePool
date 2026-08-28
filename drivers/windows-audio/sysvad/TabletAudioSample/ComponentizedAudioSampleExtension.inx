@@ -4,7 +4,7 @@ Class       = Extension
 ClassGuid   = {e2f84ce7-8efa-411c-aa69-97454ca4cb57}
 Provider    = %ProviderName%
 ExtensionId = {AB84FE65-3D09-4C4B-BA5A-988CBAFF9692}
-DriverVer   = 08/27/2026,0.1.0.0
+DriverVer   = 08/28/2026,21.60.0.1
 CatalogFile = capyioaudio.cat
 PnpLockDown = 1
 
