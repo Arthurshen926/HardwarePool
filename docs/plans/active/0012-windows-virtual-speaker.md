@@ -138,9 +138,18 @@ ordinary launch cannot silently cross that boundary. A background service or
 revised mapping-ownership design is required before release; B5 recovery,
 upgrade/uninstall and stability checks also remain.
 
-`CAPY-AUDIO-001B6A` is now implemented at source/unit-test level. ADR 0033 adds
-an SCM-compatible headless service host with closed trusted launch arguments,
-stable receiver gating, typed bounded snapshots and fail-silent Broker reaping.
-It does not yet install/start the service or redirect the desktop Quick Action;
-ACL-protected local management IPC, installer configuration and physical SCM
-evidence are the next B6 slices.
+`CAPY-AUDIO-001B6A` is now implemented and physically exercised on the approved
+local lab. ADR 0033 adds an SCM-compatible headless service host with closed
+trusted launch arguments, stable receiver gating, typed bounded snapshots and
+fail-silent Broker reaping. The exact LocalSystem service reached `Running`,
+owned the Broker and cross-session ring, released all processes and ports on a
+controlled stop, restarted with new process IDs and regained the Android TCP
+receiver. Directed CapyIO endpoint playback was submitted after restart; human
+audibility remains a separate operator observation. The service is left
+installed as manual and running, with exact rollback retained in
+`CAPY_AUDIO_001B6A_REPORT.md`.
+
+The desktop Quick Action still uses its direct development fallback. B6B must
+add ACL-protected local management IPC and B6C must add installer-owned
+configuration/startup policy before the service becomes the normal product
+flow.

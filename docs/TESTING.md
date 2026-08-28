@@ -198,6 +198,14 @@ also provides an explicitly time-bounded console mode for a later exact
 physical fixture run. SCM install/start/reboot evidence is not implied by these
 tests and requires a separately approved service-deployment slice.
 
+The approved `CAPY-AUDIO-001B6A` local-lab run registered the exact manual
+LocalSystem service, observed its Broker child plus TCP/UDP ownership, proved a
+controlled stop released processes and port 65530, restarted with new process
+IDs and regained the Android receiver. A directed five-second CapyIO endpoint
+submission then left the service and transport healthy. The run does not claim
+human audibility without a separate operator observation and does not cover
+reboot/autostart, desktop IPC or installer behavior.
+
 ## Sidecar smoke test
 
 Adapter Host launches repository-built mock binaries, performs initialize,
