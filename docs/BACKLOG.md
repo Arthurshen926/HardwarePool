@@ -116,8 +116,10 @@ out of scope. Evidence is in `docs/CAPY_AUDIO_CORE_001_REPORT.md`; the completed
 plan is `docs/plans/completed/0014-unified-audio-media-engine.md` and the
 architecture decision is ADR 0035.
 
-Follow-up `CAPY-MIC-000` must pin and audit the exact MicYou revision and
-GPL-3.0 integration boundary before `CAPY-AUDIO-002` implementation.
+Follow-up `CAPY-MIC-000A` pinned/audited MicYou v2.0.1 and implemented the
+bounded external-process boundary under ADR 0036. `CAPY-MIC-001` must now add a
+CapyIO-owned Windows capture endpoint and bounded PCM ingress before ordinary
+application recording can be claimed.
 
 ## Active product slice
 
@@ -202,8 +204,8 @@ in `docs/plans/active/0013-speaker-release-qualification.md`.
 
 - `CAPY-GAMEPAD-001`: DSU projection from recorded IMU fixture.
 - `CAPY-GAMEPAD-002`: VIIPER sidecar probe and license/build spike.
-- `CAPY-MIC-000`: pin and reproduce MicYou with license/build/performance evidence.
-- `CAPY-AUDIO-002`: audited MicYou-compatible AdapterManaged Android→Windows path.
+- `CAPY-MIC-001`: CapyIO virtual microphone capture endpoint and bounded PCM ingress.
+- `CAPY-MIC-002`: real MicYou v2.0.1 Android→Windows application-recording lab.
 - `CAPY-CAMERA-001`: VCamdroid sidecar catalog/probe spike.
 - `CAPY-UX-001`: versioned Quick Action template schema.
 - `CAPY-SEC-001`: authenticated control-channel design spike.

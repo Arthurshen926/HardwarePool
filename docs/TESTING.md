@@ -130,6 +130,15 @@ The shared audio-contract tests validate microphone, balanced-speaker and
 lossless-music presets; reject voice processing on media playback, invalid QoS,
 empty/duplicate/unbounded candidate inventories and unsupported use cases; and
 prove deterministic exact candidate intersection without implicit conversion.
+
+The MicYou Adapter tests verify exact v2.0.1 CLI identity, bounded and
+structural output-device parsing, explicit Wi-Fi bind/port/device arguments,
+VoiceInteractive semantic mapping, fixture listener readiness, child status,
+bounded diagnostics and idempotent stop/reap behavior. The ignored real-CLI
+test requires `CAPYIO_MICYOU_CLI` to name a user-supplied executable built from
+the pinned revision. It does not install VB-CABLE or an APK and does not prove a
+Windows capture endpoint.
+
 Audio Share regression tests require the `MediaBalanced` common PCM
 specification to produce the unchanged pinned protobuf bytes and map only
 observable transport counters into common metrics.

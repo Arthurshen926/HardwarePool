@@ -373,6 +373,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "capyio-micyou-adapter"
+version = "0.1.0"
+dependencies = [
+ "capyio-audio",
+ "thiserror 2.0.20",
+]
+
+[[package]]
 name = "capyio-mock-sink"
 version = "0.1.0"
 dependencies = [

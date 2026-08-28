@@ -2,11 +2,59 @@ schema_version: 1
 foundation_source_imports: []
 planned_integrations:
   - id: micyou
-    upstream_repository: null
-    pinned_revision: null
-    license: pending_verification
-    integration_mode: planned_sidecar
+    upstream_repository: https://github.com/LanRhyme/MicYou
+    pinned_revision: b22c41fff3d3d1169c04c8acd1db7266cf9d4c62
+    pinned_release: v2.0.1
+    source_archive_sha256: 606a5c6fb717f2bbac4cd0571ad4e484e5602b20dcc8a5f76b55575eebc13f87
+    license: GPL-3.0-only
+    integration_mode: external_process_adapter
     source_imported: false
+    binary_imported: false
+    imported_paths: []
+    local_modifications: []
+    fixed_revision_review:
+      reviewed_paths:
+        - LICENSE
+        - tauri-app/Cargo.toml
+        - tauri-app/crates/micyou-cli/src/main.rs
+        - tauri-app/crates/micyou-cli/src/serve.rs
+        - tauri-app/crates/micyou-cli/src/commands.rs
+        - tauri-app/crates/micyou-protocol/proto/network.proto
+        - tauri-app/src-tauri/src/network.rs
+        - tauri-app/src-tauri/src/tcp_server.rs
+        - tauri-app/src-tauri/src/udp_server.rs
+        - tauri-app/src-tauri/src/jitter_buffer.rs
+        - tauri-app/src-tauri/src/audio_output.rs
+        - composeApp/src/main/kotlin/com/lanrhyme/micyou/audio/AudioEngine.kt
+      findings:
+        - private TCP control and UDP audio data planes with session identifiers
+        - PCM and Opus payload modes with bounded FEC and jitter structures
+        - explicit CLI Wi-Fi bind, port and output-device arguments
+        - Windows output targets a separately installed render endpoint such as VB-CABLE input
+        - decoded desktop PCM currently crosses an unbounded standard mpsc channel upstream
+        - the Windows release publishes an installer but no standalone CLI artifact
+    private_contract:
+      control_transport: TCP
+      audio_transport: UDP
+      default_tcp_port: 8554
+      udp_port_rule: tcp_port_plus_one
+      capyio_route_backend: AdapterManaged
+    release_artifacts:
+      windows_installer:
+        name: MicYou-Win-2.0.1-installer.exe
+        sha256: 4f85b6ec4e917e91fb5b520142e1c2e7f6bd8e6043ab61f79c87554a5e41f0fe
+        distributed_by_capyio: false
+      android_apk:
+        name: MicYou-Android-2.0.1.apk
+        package: com.lanrhyme.micyou
+        sha256: 0c5537aef4321cef6ed65f99f4b92684c42bb67c6e96aeffa3f48444f32b564d
+        distributed_by_capyio: false
+    distribution_note: >-
+      CapyIO does not copy, link, vendor, modify, repackage or distribute MicYou
+      in this slice. The Adapter launches only a user-supplied exact v2.0.1 CLI
+      as a separate process. Building that CLI and installing the upstream APK
+      remain explicit local-lab actions; public redistribution and the Windows
+      virtual-microphone package require separate review.
   - id: audio-share
     upstream_repository: https://github.com/mkckr0/audio-share
     pinned_revision: 342751fe675367483170b002ec6054e243966dc0

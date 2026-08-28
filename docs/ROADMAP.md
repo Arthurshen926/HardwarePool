@@ -50,10 +50,10 @@ implementation scope automatically.
   are proven. Release qualification is deliberately not folded into the
   functional claim; signed installation, upgrade/uninstall, soak/reboot and
   production security continue under `CAPY-AUDIO-001C` before public alpha.
-- Gate 8 preparation `CAPY-AUDIO-CORE-001` is complete locally: ADR 0035 and the
-  shared direction-neutral stream/QoS/metrics contracts passed workspace CI and
-  an authorized unchanged-wire Speaker regression. It does not claim a
-  microphone Adapter or codec; `CAPY-MIC-000` is the next Gate 8 slice.
+- Gate 8 preparation `CAPY-AUDIO-CORE-001` is complete locally. `CAPY-MIC-000A`
+  then pinned/audited MicYou v2.0.1 and added a fixture-proven bounded external
+  process Adapter under ADR 0036. It does not yet claim a virtual microphone or
+  physical recording; `CAPY-MIC-001` is the next Gate 8 slice.
 
 ## Public-alpha proof bar
 
