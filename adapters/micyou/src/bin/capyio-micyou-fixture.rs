@@ -1,6 +1,7 @@
 use std::{net::TcpListener, process};
 
 const DEVICE: &str = "CapyIO Fixture Microphone Ingress";
+const DEVICE_ID: &str = "{0.0.0.00000000}.{capyio-fixture-ingress}";
 
 fn main() {
     let args = std::env::args().skip(1).collect::<Vec<_>>();
@@ -9,11 +10,11 @@ fn main() {
         return;
     }
     if args == ["capyio-capabilities"] {
-        println!("device-index-v1");
+        println!("device-stable-id-v1");
         return;
     }
     if args == ["devices"] {
-        println!("audio output devices:\n  1. {DEVICE}");
+        println!("audio output devices v2:\n  1. {DEVICE_ID}\t{DEVICE}");
         return;
     }
     if args.first().map(String::as_str) != Some("serve") {
@@ -22,8 +23,9 @@ fn main() {
     let bind = value(&args, "--bind").expect("explicit bind");
     let port = value(&args, "--port").expect("explicit port");
     let device = value(&args, "--device").expect("explicit device");
+    let device_id = value(&args, "--device-id").expect("explicit device ID");
     let device_index = value(&args, "--device-index").expect("explicit device index");
-    if device != DEVICE || device_index != "1" {
+    if device != DEVICE || device_id != DEVICE_ID || device_index != "1" {
         process::exit(3);
     }
     let listener = TcpListener::bind(format!("{bind}:{port}")).expect("fixture listener");

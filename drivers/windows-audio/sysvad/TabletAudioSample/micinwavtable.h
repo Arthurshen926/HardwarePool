@@ -251,15 +251,15 @@ MODE_AND_DEFAULT_FORMAT MicInPinSupportedDeviceModes[] =
     },
     {
         STATIC_AUDIO_SIGNALPROCESSINGMODE_SPEECH,
-        &MicInPinSupportedDeviceFormats[SIZEOF_ARRAY(MicInPinSupportedDeviceFormats) - 1].DataFormat,
+        &MicInPinSupportedDeviceFormats[2].DataFormat, // 16KHz
     },
     {
         STATIC_AUDIO_SIGNALPROCESSINGMODE_COMMUNICATIONS,
-        &MicInPinSupportedDeviceFormats[SIZEOF_ARRAY(MicInPinSupportedDeviceFormats) - 1].DataFormat,
+        &MicInPinSupportedDeviceFormats[4].DataFormat, // 24KHz
     },
     {
         STATIC_AUDIO_SIGNALPROCESSINGMODE_FAR_FIELD_SPEECH,
-        &MicInPinSupportedDeviceFormats[SIZEOF_ARRAY(MicInPinSupportedDeviceFormats) - 1].DataFormat,
+        &MicInPinSupportedDeviceFormats[2].DataFormat, // 16KHz
     },
 };
 

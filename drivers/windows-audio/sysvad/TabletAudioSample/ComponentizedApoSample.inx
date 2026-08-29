@@ -3,7 +3,7 @@ Signature   = "$Windows NT$"
 Class       = AudioProcessingObject
 ClassGuid   = {5989fce8-9cd0-467d-8a6a-5419e31529d4}
 Provider    = %ProviderName%
-DriverVer   = 08/28/2026,21.66.0.1
+DriverVer   = 08/29/2026,21.82.0.1
 CatalogFile = capyioaudio.cat
 PnpLockDown = 1
 
@@ -51,7 +51,7 @@ HKR,AudioEngine\AudioProcessingObjects\%CAPYIO_MIC_BRIDGE_MFX_CLSID%,"MinOutputC
 HKR,AudioEngine\AudioProcessingObjects\%CAPYIO_MIC_BRIDGE_MFX_CLSID%,"MaxOutputConnections",0x00010001,1
 HKR,AudioEngine\AudioProcessingObjects\%CAPYIO_MIC_BRIDGE_MFX_CLSID%,"MaxInstances",0x00010001,0xffffffff
 HKR,AudioEngine\AudioProcessingObjects\%CAPYIO_MIC_BRIDGE_MFX_CLSID%,"NumAPOInterfaces",0x00010001,1
-HKR,AudioEngine\AudioProcessingObjects\%CAPYIO_MIC_BRIDGE_MFX_CLSID%,"APOInterface0",,"{CCCBA2BD-CF9C-4730-8CD4-127ACB2A63DC}"
+HKR,AudioEngine\AudioProcessingObjects\%CAPYIO_MIC_BRIDGE_MFX_CLSID%,"APOInterface0",,"{FD7F2B29-24D0-4B5C-B177-592C39F9CA10}"
 
 [CapyIOApo_Install.HW]
 AddReg = CapyIOApo.FriendlyName

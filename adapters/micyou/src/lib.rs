@@ -19,10 +19,15 @@ use std::{
 use capyio_audio::AudioStreamSpec;
 use thiserror::Error;
 
+mod peer_presence;
+
+pub use peer_presence::PeerTcpPresence;
+
 pub const PINNED_MICYOU_VERSION: &str = "2.0.1";
-pub const REQUIRED_MICYOU_CAPABILITY: &str = "device-index-v1";
+pub const REQUIRED_MICYOU_CAPABILITY: &str = "device-stable-id-v1";
 pub const DEFAULT_MICYOU_PORT: u16 = 8554;
 pub const MAX_OUTPUT_DEVICES: usize = 64;
+pub const MAX_DEVICE_ID_BYTES: usize = 512;
 pub const MAX_DEVICE_NAME_BYTES: usize = 512;
 pub const MAX_PROBE_OUTPUT_BYTES: usize = 64 * 1024;
 pub const MAX_PROBE_LINE_BYTES: usize = 1024;
@@ -31,7 +36,7 @@ pub const MAX_PROBE_LINE_BYTES: usize = 1024;
 pub struct MicYouConfig {
     executable: PathBuf,
     bind_address: SocketAddr,
-    output_device_index: NonZeroUsize,
+    output_device_id: String,
     output_device: String,
 }
 
@@ -41,7 +46,7 @@ impl fmt::Debug for MicYouConfig {
             .debug_struct("MicYouConfig")
             .field("executable", &"<redacted>")
             .field("bind_address", &"<redacted>")
-            .field("output_device_index", &self.output_device_index)
+            .field("output_device_id", &"<redacted>")
             .field("output_device", &"<redacted>")
             .finish()
     }
@@ -52,7 +57,7 @@ impl MicYouConfig {
         executable: impl Into<PathBuf>,
         bind_ip: IpAddr,
         port: u16,
-        output_device_index: usize,
+        output_device_id: impl Into<String>,
         output_device: impl Into<String>,
     ) -> Result<Self, MicYouError> {
         let executable = executable.into();
@@ -65,17 +70,14 @@ impl MicYouConfig {
         if port == 0 || port == u16::MAX {
             return Err(MicYouError::InvalidPort { port });
         }
-        let output_device_index =
-            NonZeroUsize::new(output_device_index).ok_or(MicYouError::InvalidDeviceIndex)?;
-        if output_device_index.get() > MAX_OUTPUT_DEVICES {
-            return Err(MicYouError::InvalidDeviceIndex);
-        }
+        let output_device_id = output_device_id.into();
+        validate_device_id(&output_device_id)?;
         let output_device = output_device.into();
         validate_device_name(&output_device)?;
         Ok(Self {
             executable,
             bind_address: SocketAddr::new(bind_ip, port),
-            output_device_index,
+            output_device_id,
             output_device,
         })
     }
@@ -92,12 +94,15 @@ impl MicYouConfig {
         &self.output_device
     }
 
-    pub const fn output_device_index(&self) -> NonZeroUsize {
-        self.output_device_index
+    pub fn output_device_id(&self) -> &str {
+        &self.output_device_id
     }
 
-    pub fn serve_args(&self) -> Vec<String> {
-        vec![
+    fn serve_args(&self, selection: &MicYouOutputDevice) -> Result<Vec<String>, MicYouError> {
+        if selection.id != self.output_device_id || selection.name != self.output_device {
+            return Err(MicYouError::ConfiguredDeviceChanged);
+        }
+        Ok(vec![
             "serve".to_owned(),
             "--port".to_owned(),
             self.bind_address.port().to_string(),
@@ -105,11 +110,13 @@ impl MicYouConfig {
             "wifi".to_owned(),
             "--device".to_owned(),
             self.output_device.clone(),
+            "--device-id".to_owned(),
+            self.output_device_id.clone(),
             "--device-index".to_owned(),
-            self.output_device_index.to_string(),
+            selection.index.to_string(),
             "--bind".to_owned(),
             self.bind_address.ip().to_string(),
-        ]
+        ])
     }
 
     /// Semantic mapping only. MicYou's private negotiated wire is not a
@@ -117,6 +124,22 @@ impl MicYouConfig {
     pub fn audio_stream_spec(&self) -> AudioStreamSpec {
         AudioStreamSpec::voice_interactive()
     }
+}
+
+fn validate_device_id(id: &str) -> Result<(), MicYouError> {
+    if id.is_empty() {
+        return Err(MicYouError::EmptyDeviceId);
+    }
+    if id.len() > MAX_DEVICE_ID_BYTES {
+        return Err(MicYouError::DeviceIdTooLong {
+            actual: id.len(),
+            limit: MAX_DEVICE_ID_BYTES,
+        });
+    }
+    if id.trim() != id || id.chars().any(|character| character.is_control()) {
+        return Err(MicYouError::InvalidDeviceId);
+    }
+    Ok(())
 }
 
 fn validate_device_name(name: &str) -> Result<(), MicYouError> {
@@ -170,6 +193,7 @@ impl ProbeLimits {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct MicYouOutputDevice {
     pub index: NonZeroUsize,
+    pub id: String,
     pub name: String,
 }
 
@@ -180,16 +204,22 @@ pub struct MicYouInventory {
 }
 
 impl MicYouInventory {
-    pub fn require_configured_device(&self, config: &MicYouConfig) -> Result<(), MicYouError> {
-        let device = self
+    pub fn resolve_configured_device(
+        &self,
+        config: &MicYouConfig,
+    ) -> Result<&MicYouOutputDevice, MicYouError> {
+        let mut matches = self
             .output_devices
-            .get(config.output_device_index().get() - 1)
-            .ok_or(MicYouError::ConfiguredDeviceMissing)?;
-        if device.index == config.output_device_index() && device.name == config.output_device() {
-            Ok(())
-        } else {
-            Err(MicYouError::ConfiguredDeviceChanged)
+            .iter()
+            .filter(|device| device.id == config.output_device_id());
+        let device = matches.next().ok_or(MicYouError::ConfiguredDeviceMissing)?;
+        if matches.next().is_some() {
+            return Err(MicYouError::DuplicateDeviceId);
         }
+        if device.name != config.output_device() {
+            return Err(MicYouError::ConfiguredDeviceChanged);
+        }
+        Ok(device)
     }
 }
 
@@ -225,7 +255,7 @@ impl MicYouProbe {
 
     pub fn probe_config(&self, config: &MicYouConfig) -> Result<MicYouInventory, MicYouError> {
         let inventory = self.inventory(config.executable())?;
-        inventory.require_configured_device(config)?;
+        inventory.resolve_configured_device(config)?;
         Ok(inventory)
     }
 }
@@ -261,7 +291,7 @@ pub fn parse_devices_output(
         return Ok(Vec::new());
     }
     let mut lines = text.lines();
-    if lines.next().map(str::trim) != Some("audio output devices:") {
+    if lines.next().map(str::trim) != Some("audio output devices v2:") {
         return Err(MicYouError::MalformedDeviceOutput);
     }
     let mut devices = Vec::new();
@@ -273,7 +303,10 @@ pub fn parse_devices_output(
             return Err(MicYouError::TooManyDevices);
         }
         let trimmed = line.trim();
-        let Some((index, name)) = trimmed.split_once(". ") else {
+        let Some((index, identity)) = trimmed.split_once(". ") else {
+            return Err(MicYouError::MalformedDeviceOutput);
+        };
+        let Some((id, name)) = identity.split_once('\t') else {
             return Err(MicYouError::MalformedDeviceOutput);
         };
         let index = index
@@ -282,9 +315,17 @@ pub fn parse_devices_output(
         if index != devices.len() + 1 {
             return Err(MicYouError::MalformedDeviceOutput);
         }
+        validate_device_id(id)?;
         validate_device_name(name)?;
+        if devices
+            .iter()
+            .any(|device: &MicYouOutputDevice| device.id == id)
+        {
+            return Err(MicYouError::DuplicateDeviceId);
+        }
         devices.push(MicYouOutputDevice {
             index: NonZeroUsize::new(index).ok_or(MicYouError::MalformedDeviceOutput)?,
+            id: id.to_owned(),
             name: name.to_owned(),
         });
     }
@@ -373,11 +414,12 @@ impl MicYouSupervisor {
         if matches!(self.status()?, SupervisorStatus::Running { .. }) {
             return Err(MicYouError::AlreadyRunning);
         }
-        MicYouProbe::new(self.probe_limits)?.probe_config(&self.config)?;
+        let inventory = MicYouProbe::new(self.probe_limits)?.probe_config(&self.config)?;
+        let selection = inventory.resolve_configured_device(&self.config)?;
         self.terminal_exit = None;
         let mut command = Command::new(self.config.executable());
         command
-            .args(self.config.serve_args())
+            .args(self.config.serve_args(selection)?)
             .stdin(Stdio::null())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped());
@@ -428,6 +470,13 @@ impl MicYouSupervisor {
                 process_id: self.running.as_ref().expect("checked").child.id(),
             })
         }
+    }
+
+    pub fn peer_tcp_presence(&mut self) -> Result<PeerTcpPresence, MicYouError> {
+        let SupervisorStatus::Running { process_id } = self.status()? else {
+            return Ok(PeerTcpPresence::SupervisorNotRunning);
+        };
+        peer_presence::peer_tcp_presence(process_id, self.config.bind_address())
     }
 
     pub fn stop(&mut self) -> Result<Option<OutputSummary>, MicYouError> {
@@ -574,8 +623,12 @@ pub enum MicYouError {
     InvalidBindAddress,
     #[error("MicYou TCP port {port} cannot reserve its following UDP port")]
     InvalidPort { port: u16 },
-    #[error("MicYou output device index must be within the bounded one-based inventory")]
-    InvalidDeviceIndex,
+    #[error("MicYou output device ID is empty")]
+    EmptyDeviceId,
+    #[error("MicYou output device ID is {actual} bytes; limit is {limit}")]
+    DeviceIdTooLong { actual: usize, limit: usize },
+    #[error("MicYou output device ID contains control characters")]
+    InvalidDeviceId,
     #[error("MicYou output device name is empty")]
     EmptyDeviceName,
     #[error("MicYou output device name is {actual} bytes; limit is {limit}")]
@@ -606,9 +659,11 @@ pub enum MicYouError {
     MalformedDeviceOutput,
     #[error("MicYou output device inventory exceeds its bound")]
     TooManyDevices,
-    #[error("the configured MicYou output device index is not present")]
+    #[error("MicYou output device inventory contains a duplicate stable ID")]
+    DuplicateDeviceId,
+    #[error("the configured MicYou output device ID is not present")]
     ConfiguredDeviceMissing,
-    #[error("the configured MicYou output device inventory entry changed")]
+    #[error("the configured MicYou output device name changed for its stable ID")]
     ConfiguredDeviceChanged,
     #[error("MicYou probe failed with exit code {exit_code:?}")]
     ProbeFailed { exit_code: Option<i32> },
@@ -632,6 +687,12 @@ pub enum MicYouError {
     ExitedBeforeReady,
     #[error("MicYou TCP listener did not become ready before the deadline")]
     StartupTimedOut,
+    #[error("Windows TCP owner table query failed with code {code}")]
+    PeerTableQueryFailed { code: u32 },
+    #[error("Windows TCP owner table exceeded the {limit} byte safety bound")]
+    PeerTableTooLarge { limit: usize },
+    #[error("Windows TCP owner table returned an invalid bounded layout")]
+    InvalidPeerTableLayout,
 }
 
 #[cfg(test)]
@@ -647,7 +708,7 @@ mod tests {
             "micyou-cli.exe",
             IpAddr::V4(Ipv4Addr::new(100, 66, 157, 119)),
             DEFAULT_MICYOU_PORT,
-            2,
+            "{0.0.0.00000000}.{capyio-ingress}",
             device,
         )
         .expect("valid config")
@@ -657,7 +718,13 @@ mod tests {
     fn config_builds_explicit_wifi_arguments_and_voice_mapping() {
         let config = config("CABLE Input (VB-Audio Virtual Cable)");
         assert_eq!(
-            config.serve_args(),
+            config
+                .serve_args(&MicYouOutputDevice {
+                    index: NonZeroUsize::new(2).expect("non-zero"),
+                    id: "{0.0.0.00000000}.{capyio-ingress}".to_owned(),
+                    name: "CABLE Input (VB-Audio Virtual Cable)".to_owned(),
+                })
+                .expect("matching selection"),
             [
                 "serve",
                 "--port",
@@ -666,6 +733,8 @@ mod tests {
                 "wifi",
                 "--device",
                 "CABLE Input (VB-Audio Virtual Cable)",
+                "--device-id",
+                "{0.0.0.00000000}.{capyio-ingress}",
                 "--device-index",
                 "2",
                 "--bind",
@@ -685,7 +754,7 @@ mod tests {
                 "micyou-cli",
                 IpAddr::V4(Ipv4Addr::UNSPECIFIED),
                 8554,
-                1,
+                "device-id",
                 "device"
             ),
             Err(MicYouError::InvalidBindAddress)
@@ -695,7 +764,7 @@ mod tests {
                 "micyou-cli",
                 IpAddr::V4(Ipv4Addr::LOCALHOST),
                 65535,
-                1,
+                "device-id",
                 "device"
             ),
             Err(MicYouError::InvalidPort { .. })
@@ -705,17 +774,27 @@ mod tests {
                 "micyou-cli",
                 IpAddr::V4(Ipv4Addr::LOCALHOST),
                 8554,
-                0,
+                "",
                 "device"
             ),
-            Err(MicYouError::InvalidDeviceIndex)
+            Err(MicYouError::EmptyDeviceId)
         ));
         assert!(matches!(
             MicYouConfig::new(
                 "micyou-cli",
                 IpAddr::V4(Ipv4Addr::LOCALHOST),
                 8554,
-                1,
+                " device-id ",
+                "device"
+            ),
+            Err(MicYouError::InvalidDeviceId)
+        ));
+        assert!(matches!(
+            MicYouConfig::new(
+                "micyou-cli",
+                IpAddr::V4(Ipv4Addr::LOCALHOST),
+                8554,
+                "device-id",
                 "bad\ndevice"
             ),
             Err(MicYouError::InvalidDeviceName)
@@ -729,15 +808,16 @@ mod tests {
             PINNED_MICYOU_VERSION
         );
         let devices = parse_devices_output(
-            b"audio output devices:\n  1. CABLE Input\n  2. CapyIO Microphone Ingress\n",
+            b"audio output devices v2:\n  1. cable-id\tCABLE Input\n  2. capyio-id\tCapyIO Microphone Ingress\n",
             ProbeLimits::default(),
         )
         .expect("devices");
         assert_eq!(devices[0].index.get(), 1);
+        assert_eq!(devices[0].id, "cable-id");
         assert_eq!(devices[0].name, "CABLE Input");
         assert_eq!(devices[1].index.get(), 2);
         assert_eq!(devices[1].name, "CapyIO Microphone Ingress");
-        parse_capabilities_output(b"device-index-v1\n").expect("capability");
+        parse_capabilities_output(b"device-stable-id-v1\n").expect("capability");
         assert!(matches!(
             parse_capabilities_output(b"other\n"),
             Err(MicYouError::RequiredCapabilityMissing)
@@ -751,14 +831,14 @@ mod tests {
             Err(MicYouError::MalformedVersionOutput)
         ));
         let duplicates = parse_devices_output(
-            b"audio output devices:\n  1. same\n  2. same\n",
+            b"audio output devices v2:\n  1. first-id\tsame\n  2. second-id\tsame\n",
             ProbeLimits::default(),
         )
         .expect("duplicate display names remain addressable by index");
         assert_eq!(duplicates.len(), 2);
         assert!(matches!(
             parse_devices_output(
-                b"audio output devices:\n  2. skipped\n",
+                b"audio output devices v2:\n  2. skipped-id\tskipped\n",
                 ProbeLimits::default()
             ),
             Err(MicYouError::MalformedDeviceOutput)
@@ -766,30 +846,77 @@ mod tests {
     }
 
     #[test]
-    fn inventory_requires_the_exact_index_and_expected_name() {
+    fn inventory_resolves_stable_id_after_reorder_and_requires_expected_name() {
         let inventory = MicYouInventory {
             version: PINNED_MICYOU_VERSION.to_owned(),
             output_devices: parse_devices_output(
-                b"audio output devices:\n  1. Speakers\n  2. Speakers\n",
+                b"audio output devices v2:\n  1. other-id\tSpeakers\n  2. {0.0.0.00000000}.{capyio-ingress}\tSpeakers\n",
                 ProbeLimits::default(),
             )
             .expect("inventory"),
         };
-        inventory
-            .require_configured_device(&config("Speakers"))
-            .expect("second duplicate selected");
+        let selected = inventory
+            .resolve_configured_device(&config("Speakers"))
+            .expect("stable ID selected");
+        assert_eq!(selected.index.get(), 2);
+        let inconsistent = MicYouOutputDevice {
+            index: selected.index,
+            id: "other-id".to_owned(),
+            name: selected.name.clone(),
+        };
+        assert!(matches!(
+            config("Speakers").serve_args(&inconsistent),
+            Err(MicYouError::ConfiguredDeviceChanged)
+        ));
+
+        let reordered = MicYouInventory {
+            version: PINNED_MICYOU_VERSION.to_owned(),
+            output_devices: parse_devices_output(
+                b"audio output devices v2:\n  1. {0.0.0.00000000}.{capyio-ingress}\tSpeakers\n  2. other-id\tSpeakers\n",
+                ProbeLimits::default(),
+            )
+            .expect("reordered inventory"),
+        };
+        assert_eq!(
+            reordered
+                .resolve_configured_device(&config("Speakers"))
+                .expect("same stable ID")
+                .index
+                .get(),
+            1
+        );
 
         let changed = MicYouConfig::new(
             "micyou-cli.exe",
             IpAddr::V4(Ipv4Addr::new(100, 66, 157, 119)),
             DEFAULT_MICYOU_PORT,
-            2,
+            "{0.0.0.00000000}.{capyio-ingress}",
             "Different Speakers",
         )
         .expect("changed config");
         assert!(matches!(
-            inventory.require_configured_device(&changed),
+            inventory.resolve_configured_device(&changed),
             Err(MicYouError::ConfiguredDeviceChanged)
+        ));
+        let missing = MicYouConfig::new(
+            "micyou-cli.exe",
+            IpAddr::V4(Ipv4Addr::new(100, 66, 157, 119)),
+            DEFAULT_MICYOU_PORT,
+            "missing-id",
+            "Speakers",
+        )
+        .expect("missing config is structurally valid");
+        assert!(matches!(
+            inventory.resolve_configured_device(&missing),
+            Err(MicYouError::ConfiguredDeviceMissing)
+        ));
+
+        assert!(matches!(
+            parse_devices_output(
+                b"audio output devices v2:\n  1. duplicate\tfirst\n  2. duplicate\tsecond\n",
+                ProbeLimits::default()
+            ),
+            Err(MicYouError::DuplicateDeviceId)
         ));
     }
 }

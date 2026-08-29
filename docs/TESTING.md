@@ -132,14 +132,55 @@ empty/duplicate/unbounded candidate inventories and unsupported use cases; and
 prove deterministic exact candidate intersection without implicit conversion.
 
 The MicYou Adapter tests verify exact v2.0.1 CLI identity plus the required
-`device-index-v1` capability, bounded structural output-device parsing that
-preserves duplicate names, exact index/name inventory validation, explicit
-Wi-Fi bind/port/device arguments,
+`device-stable-id-v1` capability, bounded structural output-device parsing that
+preserves duplicate names but rejects duplicate endpoint IDs, stable-ID/name
+configuration, fresh ID-to-index resolution after reorder, exact
+ID/index/name child arguments, explicit Wi-Fi bind/port/device arguments,
 VoiceInteractive semantic mapping, fixture listener readiness, child status,
 bounded diagnostics and idempotent stop/reap behavior. The ignored real-CLI
 test requires `CAPYIO_MICYOU_CLI` to name a user-supplied executable built from
-the pinned revision. It does not install VB-CABLE or an APK and does not prove a
-Windows capture endpoint.
+the pinned revision. The reviewed Windows CLI validates the same
+ID/index/name tuple before and after audio startup. The ignored probe does not
+install VB-CABLE or an APK and by itself does not prove a Windows capture
+endpoint.
+
+Windows MicYou supervisor tests use a repository fixture to distinguish the
+short-lived listener-readiness connection from a retained process-owned TCP
+peer, then prove peer close and stopped supervision. Audio Share runs the same
+regression through the shared `capyio-process-presence` safe boundary. The
+bounded Windows owner table returns counts only; tests and DTOs do not retain
+peer addresses.
+
+Microphone desktop-composition tests bind a fake MicYou process boundary to a
+real `NodeRuntime` `AdapterManaged` Route. They require three consecutive phone
+presence samples before `Active`, keep listener-only readiness at `Starting`,
+map peer loss and endpoint/start failures to typed sanitized Problems, stop and
+reap the receiver after active peer loss or a bounded initial wait, advance
+epoch on retry and prove an active IMU Route remains unchanged. Quick Action
+tests require schema v2, a truthful blocked Browser Mock/Tauri state and a
+connection hint containing only the validated bind IP/port—not the executable
+path or raw endpoint ID.
+
+`physical_quick_action_tracks_disconnect_retry_and_stop` is ignored by default
+and requires explicit physical-lab authorization plus `CAPYIO_ADB` and
+`CAPYIO_ANDROID_ADB_SERIAL`. Optional bounded `CAPYIO_MIC_*_HOLD_MS` variables
+create observation windows. The test force-stops and quick-starts only the
+already installed MicYou Android package, drives `Start`, stable `Active`,
+phone loss, `Offline`, explicit `Retry`, renewed `Active` and terminal `Stop`,
+and leaves the phone package stopped. PCM and exact-silence claims additionally
+require an ordinary Windows capture client; TCP presence alone is insufficient.
+Any WAV or other recording created for physical acceptance contains raw
+microphone payload and must stay in a Git-ignored local evidence directory. It
+must never be committed, placed in ordinary logs or uploaded by hosted CI.
+
+MicYou trusted-host configuration tests require a fixed user-local path,
+schema-v1 and deny-unknown-fields parsing, complete-or-rejected environment
+overrides, exact stable-ID selection even when endpoint names are duplicated,
+redacted debug output and create-new persistence that refuses silent overwrite.
+Desktop tests prove a file-equivalent configuration installs the same typed
+Route while the serialized Quick Action still excludes executable and endpoint
+identity. These tests use synthetic paths/inventories and do not run MicYou or
+write the real user configuration.
 
 Audio Share regression tests require the `MediaBalanced` common PCM
 specification to produce the unchanged pinned protobuf bytes and map only

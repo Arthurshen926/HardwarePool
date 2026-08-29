@@ -92,9 +92,6 @@ class CSwapAPOMFX :
     public IMMNotificationClient,
     public IAudioProcessingObjectNotifications,
     public IAudioSystemEffects3,
-    // IAudioSystemEffectsCustomFormats may be optionally supported
-    // by APOs that attach directly to the connector in the DEFAULT mode streaming graph
-    public IAudioSystemEffectsCustomFormats,
     public ISwapAPOMFX
 {
 public:
@@ -117,9 +114,6 @@ BEGIN_COM_MAP(CSwapAPOMFX)
     COM_INTERFACE_ENTRY(IAudioSystemEffects)
     COM_INTERFACE_ENTRY(IAudioSystemEffects2)
     COM_INTERFACE_ENTRY(IAudioSystemEffects3)
-    // IAudioSystemEffectsCustomFormats may be optionally supported
-    // by APOs that attach directly to the connector in the DEFAULT mode streaming graph
-    COM_INTERFACE_ENTRY(IAudioSystemEffectsCustomFormats)
     COM_INTERFACE_ENTRY(IMMNotificationClient)
     COM_INTERFACE_ENTRY(IAudioProcessingObjectNotifications)
     COM_INTERFACE_ENTRY(IAudioProcessingObjectRT)
@@ -334,6 +328,11 @@ public:
     STDMETHODIMP GetApoNotificationRegistrationInfo(_Out_writes_(*count) APO_NOTIFICATION_DESCRIPTOR** apoNotifications, _Out_ DWORD* count);
     STDMETHODIMP_(void) HandleNotification(_In_ APO_NOTIFICATION* apoNotification);
 
+    STDMETHOD(IsOutputFormatSupported)(
+        IAudioMediaType* pInputFormat,
+        IAudioMediaType* pRequestedOutputFormat,
+        IAudioMediaType** ppSupportedOutputFormat);
+
 public:
     LONG                                    m_fEnableSwapSFX;
     LONG                                    m_fEnableDelaySFX;
@@ -350,6 +349,9 @@ public:
 
 private:
     capyio::render_ring::Producer m_renderRing;
+    capyio::capture_ring::Producer m_captureProducer;
+    capyio::capture_ring::Consumer m_captureConsumer;
+    MicrophoneBridgeRole m_microphoneBridgeRole = MicrophoneBridgeRole::Detached;
     volatile LONG m_endpointGainMillion;
     wil::com_ptr_nothrow<IAudioEndpointVolume> m_endpointVolume;
     BOOL m_bRegisteredEndpointVolumeCallback = FALSE;

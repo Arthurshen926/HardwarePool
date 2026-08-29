@@ -23,7 +23,7 @@ use crate::audio_share_runtime::{
 #[cfg(windows)]
 use capyio_windows_service::{BrokerServiceClient, BrokerServiceSnapshot, BrokerServiceState};
 
-pub const QUICK_ACTION_SCHEMA_VERSION: u8 = 1;
+pub const QUICK_ACTION_SCHEMA_VERSION: u8 = 2;
 pub const AUDIO_SHARE_ACTION_ID: &str = "capyio.quick-action.remote-speaker";
 
 const ENV_EXE: &str = "CAPYIO_AUDIO_SHARE_EXE";
@@ -89,6 +89,7 @@ pub struct UiQuickAction {
     pub route_epoch: Option<u64>,
     pub available_operations: Vec<&'static str>,
     pub evidence_level: &'static str,
+    pub connection_hint: Option<String>,
     pub problem_code: Option<String>,
     pub problem: Option<String>,
 }
@@ -305,6 +306,7 @@ impl AudioShareQuickAction {
                 route_epoch: None,
                 available_operations: Vec::new(),
                 evidence_level: "not_started",
+                connection_hint: None,
                 problem_code: Some("CAPY.AUDIO_SHARE.HOST_CONFIGURATION_MISSING".to_owned()),
                 problem: self.configuration_problem.clone(),
             });
@@ -342,6 +344,7 @@ impl AudioShareQuickAction {
             } else {
                 "process_and_route_state"
             },
+            connection_hint: None,
             problem_code: problem.as_ref().map(|value| value.code.clone()),
             problem: self
                 .orchestration_problem
@@ -648,7 +651,7 @@ fn required_env_path(name: &str) -> Result<PathBuf, String> {
         .ok_or_else(|| format!("set {name} in the trusted desktop host environment"))
 }
 
-fn latest_problem(runtime: &NodeRuntime, route_id: RouteId) -> Option<Problem> {
+pub(crate) fn latest_problem(runtime: &NodeRuntime, route_id: RouteId) -> Option<Problem> {
     runtime
         .snapshot()
         .problems
@@ -657,7 +660,7 @@ fn latest_problem(runtime: &NodeRuntime, route_id: RouteId) -> Option<Problem> {
         .find(|problem| problem.related_route == Some(route_id))
 }
 
-fn action_status(state: RouteState) -> &'static str {
+pub(crate) fn action_status(state: RouteState) -> &'static str {
     match state {
         RouteState::Draft | RouteState::Prepared | RouteState::Stopped => "idle",
         RouteState::Starting => "starting",
@@ -668,7 +671,7 @@ fn action_status(state: RouteState) -> &'static str {
     }
 }
 
-fn route_state_label(state: RouteState) -> &'static str {
+pub(crate) fn route_state_label(state: RouteState) -> &'static str {
     match state {
         RouteState::Draft => "draft",
         RouteState::Prepared => "prepared",
@@ -681,7 +684,7 @@ fn route_state_label(state: RouteState) -> &'static str {
     }
 }
 
-fn operations(state: RouteState) -> Vec<&'static str> {
+pub(crate) fn operations(state: RouteState) -> Vec<&'static str> {
     match state {
         RouteState::Draft | RouteState::Prepared | RouteState::Stopped => vec!["start"],
         RouteState::Starting | RouteState::Active | RouteState::Stopping => vec!["stop"],
@@ -690,7 +693,7 @@ fn operations(state: RouteState) -> Vec<&'static str> {
     }
 }
 
-fn bounded(value: String) -> String {
+pub(crate) fn bounded(value: String) -> String {
     value.chars().take(1024).collect()
 }
 

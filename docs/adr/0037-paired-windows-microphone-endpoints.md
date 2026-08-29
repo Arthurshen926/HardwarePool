@@ -38,8 +38,10 @@ Android microphone Source and Windows application-facing capture Sink.
 
 ## Consequences
 
-- MicYou remains an unmodified GPL-3.0-only external process and can target an
-  exact CapyIO-owned output-device name.
+- MicYou remains a separate GPL-3.0-only external process. The reviewed
+  lab-only stable-endpoint selector, exact-silence and per-session metrics
+  patches recorded in ADR 0036 and `THIRD_PARTY.yml` do not cross the process
+  boundary or enter the CapyIO distribution.
 - CapyIO does not require VB-CABLE for this path.
 - The Windows package temporarily exposes two render endpoints (`CapyIO
   Speaker` and microphone ingress) plus one capture endpoint. Hiding the ingress

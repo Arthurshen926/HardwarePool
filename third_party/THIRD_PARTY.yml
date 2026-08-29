@@ -13,9 +13,24 @@ planned_integrations:
     imported_paths: []
     local_modifications:
       - >-
-        local-lab-only CLI patch preserves CPAL enumeration order, adds
-        --device-index with exact expected-name validation, removes explicit
-        device fallback, and exposes the device-index-v1 capability
+        local-lab-only CLI patch preserves CPAL enumeration order, pairs it
+        with bounded Windows Core Audio endpoint IDs, adds --device-id plus a
+        freshly resolved --device-index and exact expected-name validation,
+        removes explicit device fallback, validates identity before and after
+        audio startup, and exposes the device-stable-id-v1 capability
+      - >-
+        local-lab-only audio patch preserves exact digital silence during
+        float32-to-int16 quantization instead of injecting TPDF dither into
+        zero-valued underrun frames; non-zero audio remains dithered
+      - >-
+        local-lab-only UDP metrics patch stores packet loss as a per-session
+        bounded fraction, resets sequence tracking on epoch changes and avoids
+        moving the sequence watermark backwards for reordered packets
+      - >-
+        local-lab-only Windows mode-lock patch validates both the recorded PID
+        and its process creation time before treating a retained lock as live;
+        this prevents fast PID reuse after supervised termination from blocking
+        an explicit Route retry
     fixed_revision_review:
       reviewed_paths:
         - LICENSE
@@ -23,12 +38,16 @@ planned_integrations:
         - tauri-app/crates/micyou-cli/src/main.rs
         - tauri-app/crates/micyou-cli/src/serve.rs
         - tauri-app/crates/micyou-cli/src/commands.rs
+        - tauri-app/crates/micyou-cli/src/capyio_windows_devices.rs
+        - tauri-app/crates/micyou-audio/src/engine.rs
+        - tauri-app/crates/micyou-protocol/src/lib.rs
         - tauri-app/crates/micyou-protocol/proto/network.proto
         - tauri-app/src-tauri/src/network.rs
         - tauri-app/src-tauri/src/tcp_server.rs
         - tauri-app/src-tauri/src/udp_server.rs
         - tauri-app/src-tauri/src/jitter_buffer.rs
         - tauri-app/src-tauri/src/audio_output.rs
+        - tauri-app/src-tauri/src/mode_lock.rs
         - composeApp/src/main/kotlin/com/lanrhyme/micyou/audio/AudioEngine.kt
       findings:
         - private TCP control and UDP audio data planes with session identifiers
@@ -45,6 +64,35 @@ planned_integrations:
       default_tcp_port: 8554
       udp_port_rule: tcp_port_plus_one
       capyio_route_backend: AdapterManaged
+    local_cli_dependency:
+      name: windows
+      version: 0.61.3
+      license: MIT OR Apache-2.0
+      enabled_features:
+        - Win32_Foundation
+        - Win32_Media_Audio
+        - Win32_System_Com
+      purpose: >-
+        Resolve the stable IMMDevice endpoint ID corresponding to each current
+        Windows CPAL output device and free the returned COM allocation.
+      alternatives_rejected:
+        - localized and duplicate Windows friendly names
+        - persisting a reorderable CPAL enumeration index
+        - a CapyIO-native replacement of the complete MicYou desktop receiver in this Gate
+    peer_presence_dependency:
+      name: windows-sys
+      version: 0.61.2
+      license: MIT OR Apache-2.0
+      enabled_features:
+        - Win32_NetworkManagement_IpHelper
+        - Win32_Networking_WinSock
+      purpose: >-
+        Observe only the count of process-owned established MicYou TCP peers
+        through the shared bounded CapyIO platform helper.
+      alternatives_rejected:
+        - localized MicYou log parsing
+        - treating the listener-readiness probe as a connected phone
+        - hand-written Windows declarations inside the unsafe-free MicYou Adapter
     release_artifacts:
       windows_installer:
         name: MicYou-Win-2.0.1-installer.exe
@@ -58,7 +106,7 @@ planned_integrations:
     distribution_note: >-
       CapyIO does not copy, link, vendor, repackage or distribute MicYou in this
       slice. The Adapter launches only a user-supplied local build of exact
-      v2.0.1 carrying the reviewed device-index-v1 patch, and rejects an
+      v2.0.1 carrying the reviewed device-stable-id-v1 patch, and rejects an
       unmodified CLI. The GPL patch/source and binary remain outside this
       repository. Installing the upstream APK remains an explicit local-lab
       action; public redistribution and the Windows virtual-microphone package

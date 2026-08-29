@@ -128,14 +128,22 @@ copies up to the requested mono frame count, zero-fills the remainder and
 advances only by frames actually consumed. A detached capture APO therefore
 returns silence instead of exposing the underlying SysVAD test tone.
 
+The ring carries live microphone frames, not a recording backlog. During the
+non-real-time consumer attach, the capture APO atomically synchronizes the read
+sequence to the current write sequence before processing starts. Frames that
+accumulated while no capture application was active are therefore discarded;
+a newly opened application receives only frames produced after its attach and
+cannot replay stale speech after an earlier phone disconnect.
+
 ## 6. Offline behavior
 
 - The render endpoint continues accepting Windows audio and drops/counts when
   the Broker is absent or the bounded ring is full.
 - Network and Android receiver state never enter the APO or kernel driver.
 - Driver unload, Broker exit and process crash must not wait on an audio callback.
-- MicYou or ingress loss drains the capture ring and then produces silence;
-  the capture callback never waits for new frames.
+- MicYou or ingress loss drains an already-active capture session and then
+  produces silence. A newly attached capture session skips any pre-attach
+  backlog; the capture callback never waits for new frames.
 
 ## 7. Deferred production decisions
 

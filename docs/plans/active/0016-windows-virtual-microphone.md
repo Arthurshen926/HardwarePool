@@ -1,6 +1,6 @@
 # CAPY-MIC-001 — Windows `CapyIO Microphone`
 
-Status: active
+Status: local functional acceptance complete; merge pending; release qualification moved to plan 0021
 
 Owner: Codex and project owner
 
@@ -89,11 +89,50 @@ tool invocation still requires explicit approval for the exact package.
 - `21.65.0.1` removes Speaker jack automation only from the private ingress
   topology and is signed/deployed with all PnP nodes and services healthy;
 - Windows still presents both render flows with the same localized Speaker
-  label, so the MicYou Adapter now preserves duplicate names and validates a
-  freshly probed one-based device index plus expected name. The local MicYou
-  build exposes `device-index-v1` and fails instead of falling back;
+  label. The interim MicYou selector therefore preserved duplicate names and
+  validated a freshly probed index/name pair; CAPY-MIC-001E later replaced its
+  persisted index with a stable Core Audio endpoint ID;
 - the real CPAL probe rejected the ingress mix format because it inherited
   capture-only `COMMUNICATIONS` and `SPEECH` MFX modes. Signed `21.66.0.1`
   isolates the ingress mode list to `DEFAULT`, `MEDIA` and `MOVIE`; deployment
   and post-install enumeration evidence remain pending;
-- deterministic ordinary-app capture and physical MicYou tests remain pending.
+- `21.79.0.1` restored the pinned SysVAD capture Pin mode/attribute contract.
+  A valid high-integrity CPAL comparison opened both a physical USB microphone
+  and `CapyIO Microphone`; the earlier medium-integrity sandbox harness failed
+  on both and is not valid driver evidence;
+- `21.81.0.1` corrected the capture APO exact-format return contract and was
+  hot-deployed without a reboot. Ordinary CPAL capture proved zero RMS/peak
+  without an ingress producer, then a 997 Hz local ingress closure recorded
+  216,000 samples with 191,519 non-zero samples and peak `0.25`;
+- the pinned MicYou Debug APK is installed on the approved Android device and
+  the user granted microphone and notification permissions. The current
+  separately built CLI persists the bounded endpoint ID plus expected name,
+  resolves the index at launch, validates the full tuple around audio startup
+  and exposes `device-stable-id-v1`;
+- the real Android-to-Windows path is proven through an ordinary CPAL capture
+  client. On signed/deployed `21.82.0.1`, 47,520 live samples measured RMS
+  `0.01841975` and peak `0.10452271`; the corrected per-session transport loss
+  metric stayed bounded and began at `0.00%` on a fresh connection;
+- disconnect testing exposed a stale-backlog defect in `21.81.0.1`: a newly
+  opened capture application could replay frames retained while no consumer
+  was attached. `21.82.0.1` synchronizes the consumer to the current producer
+  sequence at attach. The physical test retained 16,320 old frames before the
+  new capture opened, then returned 47,520 samples with exact zero RMS/peak;
+- the stable-ID physical regression independently recorded 47,520 live samples
+  with RMS `0.00126867` and peak `0.00500488`. An intentional correct-ID/wrong-
+  index tuple failed before startup, while disconnect again yielded 47,520
+  exact-zero samples;
+- CAPY-MIC-001F now registers the Android Source and Windows Sink in the desktop
+  Runtime and exposes a schema-v2 microphone Quick Action. Hardware-free tests
+  require stable process-owned phone TCP presence before `Active`, retain typed
+  disconnect/start/timeout Problems, advance retry epoch and preserve an
+  unrelated active IMU Route;
+- CAPY-MIC-001G adds fixed host-only configuration and validates the current
+  patched CLI plus stable ingress identity on every start;
+- CAPY-MIC-001H physically exercised the normal desktop Quick Action through
+  ordinary-client PCM, bounded disconnect silence, fresh-process retry and
+  stop. Its eight-second WAV contained non-zero audio in every one-second
+  interval, and the project owner confirmed the recording was audible;
+- functional work is ready to archive after exact-head hosted checks and merge.
+  Installer, lifecycle, security, performance and distribution work continues
+  only under plan 0021.

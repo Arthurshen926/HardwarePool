@@ -1,0 +1,17 @@
+[package]
+name = "capyio-process-presence"
+description = "Bounded process-owned TCP peer observation for CapyIO platform hosts."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish = false
+
+[dependencies]
+thiserror.workspace = true
+
+[target.'cfg(windows)'.dependencies]
+windows-sys = { workspace = true, features = [
+    "Win32_NetworkManagement_IpHelper",
+    "Win32_Networking_WinSock",
+] }

@@ -20,6 +20,10 @@ constexpr std::uint32_t kBytesPerFrame = sizeof(float);
 constexpr std::uint32_t kTotalSize = kHeaderSize + kFrameCapacity * kBytesPerFrame;
 constexpr wchar_t kMappingName[] = L"Global\\CapyIO.CaptureRing.v1";
 
+// Non-real-time initialization/format-negotiation breadcrumb. This opens the
+// existing Broker mapping briefly and never runs from APOProcess.
+void RecordDiagnostic(LONG stage, LONG error) noexcept;
+
 struct alignas(64) Header
 {
     std::uint32_t magic;

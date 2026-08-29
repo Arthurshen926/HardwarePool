@@ -33,6 +33,12 @@ REQUIRED_FILES = [
     "crates/capyio-core/src/lib.rs",
     "crates/capyio-data-plane/src/lib.rs",
     "adapters/sensor-server/src/lib.rs",
+    "adapters/micyou/src/lib.rs",
+    "platform/windows/process-presence/Cargo.toml",
+    "platform/windows/process-presence/src/lib.rs",
+    "platform/windows/micyou-host-config/Cargo.toml",
+    "platform/windows/micyou-host-config/src/lib.rs",
+    "platform/windows/micyou-host-config/src/bin/capyio-micyou-config.rs",
     "crates/capyio-audio/src/lib.rs",
     "crates/capyio-runtime/src/lib.rs",
     "crates/capyio-protocol/src/lib.rs",
@@ -45,6 +51,8 @@ REQUIRED_FILES = [
     "apps/desktop/package.json",
     "apps/desktop/src/App.vue",
     "apps/desktop/src-tauri/tauri.conf.json",
+    "apps/desktop/src-tauri/src/micyou_runtime.rs",
+    "apps/desktop/src-tauri/src/microphone_quick_action.rs",
 ]
 
 REQUIREMENT_ID_RE = re.compile(r"(?:FR|NFR)-[A-Z]+-\d{3}")
@@ -64,7 +72,7 @@ GATE_EVIDENCE_ROW_RE = re.compile(
 )
 TARGET_GATE_RE = re.compile(r"^Gate(?:s)?\s+(?P<first>\d+)(?:[\-–](?P<last>\d+))?$")
 FOUNDATION_ACCEPTANCE_IDS = {f"G0-3-{number:02d}" for number in range(1, 10)}
-ACTIVE_IMPLEMENTATION_GATES = {5, 7}
+ACTIVE_IMPLEMENTATION_GATES = {5, 7, 8}
 
 JSON_FILES = [
     "package.json",
@@ -521,6 +529,166 @@ def validate_sensor_server_provenance() -> None:
         )
 
 
+def validate_micyou_adapter_contract() -> None:
+    provenance = (ROOT / "third_party/THIRD_PARTY.yml").read_text(encoding="utf-8")
+    provenance_required = [
+        "upstream_repository: https://github.com/LanRhyme/MicYou",
+        "pinned_revision: b22c41fff3d3d1169c04c8acd1db7266cf9d4c62",
+        "license: GPL-3.0-only",
+        "integration_mode: external_process_adapter",
+        "device-stable-id-v1",
+        "tauri-app/crates/micyou-cli/src/capyio_windows_devices.rs",
+        "name: windows",
+        "version: 0.61.3",
+    ]
+    missing_provenance = [
+        entry for entry in provenance_required if entry not in provenance
+    ]
+    if missing_provenance:
+        fail(f"MicYou provenance/stable selector record is incomplete: {missing_provenance}")
+
+    adapter = (ROOT / "adapters/micyou/src/lib.rs").read_text(encoding="utf-8")
+    fixture = (
+        ROOT / "adapters/micyou/src/bin/capyio-micyou-fixture.rs"
+    ).read_text(encoding="utf-8")
+    readme = (ROOT / "adapters/micyou/README.md").read_text(encoding="utf-8")
+    required_adapter_markers = [
+        'REQUIRED_MICYOU_CAPABILITY: &str = "device-stable-id-v1"',
+        "output_device_id: String",
+        "pub id: String",
+        '"--device-id".to_owned()',
+        "resolve_configured_device",
+        'Some("audio output devices v2:")',
+        "MAX_DEVICE_ID_BYTES",
+    ]
+    missing_adapter = [
+        marker for marker in required_adapter_markers if marker not in adapter
+    ]
+    if missing_adapter:
+        fail(f"MicYou Adapter stable endpoint contract is incomplete: {missing_adapter}")
+    if "pub output_device_index:" in adapter:
+        fail("MicYou persisted configuration must not contain an output-device index")
+    if "device-stable-id-v1" not in fixture or "audio output devices v2:" not in fixture:
+        fail("MicYou fixture must expose the stable endpoint inventory contract")
+    if "device-stable-id-v1" not in readme or "stable endpoint ID" not in readme:
+        fail("MicYou README must document the stable endpoint identity contract")
+
+    adapter_manifest = (ROOT / "adapters/micyou/Cargo.toml").read_text(encoding="utf-8")
+    if 'capyio-process-presence = { path = "../../platform/windows/process-presence" }' not in adapter_manifest:
+        fail("MicYou Adapter must use the shared safe process-presence boundary")
+    if "windows-sys" in adapter_manifest:
+        fail("MicYou Adapter must not own unsafe Windows TCP table bindings")
+
+    presence = (
+        ROOT / "platform/windows/process-presence/src/lib.rs"
+    ).read_text(encoding="utf-8")
+    for marker in (
+        "GetExtendedTcpTable",
+        "MAX_TCP_TABLE_BYTES: usize = 16 * 1024 * 1024",
+        "row.dwOwningPid == process_id",
+        "u16::from_be(row.dwLocalPort as u16) == port",
+        "TcpPeerPresence::Established { connection_count }",
+    ):
+        if marker not in presence:
+            fail(f"process-presence boundary lacks required marker: {marker}")
+    if "dwRemoteAddr" in presence or "dwRemotePort" in presence:
+        fail("process-presence boundary must not retain or inspect peer addresses")
+
+    microphone_runtime = (
+        ROOT / "apps/desktop/src-tauri/src/micyou_runtime.rs"
+    ).read_text(encoding="utf-8")
+    for marker in (
+        "DEFAULT_STABLE_PHONE_POLLS: u8 = 3",
+        "DEFAULT_PHONE_WAIT_POLLS: u16 = 120",
+        "RouteBackend::AdapterManaged",
+        "CAPY.MICYOU.PHONE_TCP_LOST",
+        "CAPY.MICYOU.PHONE_WAIT_EXHAUSTED",
+        "CAPY.MICYOU.ENDPOINT_UNAVAILABLE",
+        "PermissionRequirement::ForegroundService",
+    ):
+        if marker not in microphone_runtime:
+            fail(f"MicYou Runtime composition lacks required marker: {marker}")
+
+    quick_action = (
+        ROOT / "apps/desktop/src-tauri/src/microphone_quick_action.rs"
+    ).read_text(encoding="utf-8")
+    for marker in (
+        'MICYOU_ACTION_ID: &str = "capyio.quick-action.remote-microphone"',
+        '"stable_phone_tcp_presence"',
+        "TrustedMicYouHostConfig",
+        "connection_hint",
+    ):
+        if marker not in quick_action:
+            fail(f"MicYou Quick Action lacks required marker: {marker}")
+
+    host_config = (
+        ROOT / "platform/windows/micyou-host-config/src/lib.rs"
+    ).read_text(encoding="utf-8")
+    host_config_cli = (
+        ROOT
+        / "platform/windows/micyou-host-config/src/bin/capyio-micyou-config.rs"
+    ).read_text(encoding="utf-8")
+    for marker in (
+        'CONFIG_SCHEMA_VERSION: u8 = 1',
+        '["CapyIO", "host", "micyou-v1.json"]',
+        'deny_unknown_fields',
+        'TrustedConfigSource::EnvironmentOverride',
+        'TrustedConfigSource::UserConfigFile',
+        'ConfigAlreadyExists',
+        'provision_from_inventory',
+        '"<redacted>"',
+    ):
+        if marker not in host_config:
+            fail(f"MicYou trusted-host configuration lacks required marker: {marker}")
+    for marker in (
+        'Some("provision")',
+        'Some("validate")',
+        '"--endpoint-id"',
+        'write_new_default_config',
+    ):
+        if marker not in host_config_cli:
+            fail(f"MicYou host configuration CLI lacks required marker: {marker}")
+    if "output_device_index" in host_config:
+        fail("MicYou trusted host configuration must not persist an endpoint index")
+    if "load_trusted_host_config" not in quick_action:
+        fail("MicYou Quick Action must automatically load trusted host configuration")
+
+    ui_types = (ROOT / "apps/desktop/src/lib/types.ts").read_text(encoding="utf-8")
+    browser_mock = (ROOT / "apps/desktop/src/lib/mock.ts").read_text(encoding="utf-8")
+    quick_action_card = (
+        ROOT / "apps/desktop/src/components/QuickActionCard.vue"
+    ).read_text(encoding="utf-8")
+    if "schemaVersion: 2" not in ui_types or "connectionHint: string | null" not in ui_types:
+        fail("Quick Action TypeScript contract must expose schema v2 connection guidance")
+    if "capyio.quick-action.remote-microphone" not in browser_mock:
+        fail("Browser Mock must expose the matching blocked microphone Quick Action")
+    if "isSpeakerAction && audioEndpoints?.supported" not in quick_action_card:
+        fail("Speaker endpoint selection must not appear on other Quick Actions")
+    if "isMicrophoneAction" not in quick_action_card or "CapyIO 麦克风输入" not in quick_action_card:
+        fail("Microphone Quick Action must explain ordinary Windows input selection")
+
+    microphone_guide = (
+        ROOT / "docs/MICROPHONE_SHARING_WINDOWS_ANDROID.md"
+    ).read_text(encoding="utf-8")
+    for marker in (
+        "capyio-micyou-config -- validate",
+        "corepack pnpm tauri dev",
+        "CapyIO Speaker with Render Bridge",
+        "341.33 ms",
+        "functional acceptance, not release qualification",
+    ):
+        if marker not in microphone_guide:
+            fail(f"Microphone operator guide lacks required marker: {marker}")
+    frontend = "\n".join(
+        path.read_text(encoding="utf-8")
+        for path in (ROOT / "apps/desktop/src").rglob("*")
+        if path.is_file()
+    )
+    for secret_host_field in ("CAPYIO_MICYOU_CLI", "CAPYIO_MICYOU_ENDPOINT_ID"):
+        if secret_host_field in frontend:
+            fail(f"WebView source must not receive trusted MicYou field {secret_host_field}")
+
+
 def validate_windows_audio_provenance() -> None:
     provenance = (ROOT / "third_party/THIRD_PARTY.yml").read_text(encoding="utf-8")
     required = [
@@ -613,8 +781,21 @@ def validate_windows_audio_endpoint_contract() -> None:
     if '<Configuration Condition="\'$(Configuration)\' == \'\'">Debug</Configuration>' not in package_project:
         fail("Windows audio package project must not override an explicit Release build")
 
+    apo_inf = inx_paths[0].read_text(encoding="utf-8")
     base_inf = inx_paths[1].read_text(encoding="utf-8")
     extension_inf = inx_paths[2].read_text(encoding="utf-8")
+    microphone_apo_header = (
+        ROOT / "drivers/windows-audio/sysvad/APO/SwapAPO/SwapAPO.h"
+    ).read_text(encoding="utf-8")
+    microphone_apo_source = (
+        ROOT / "drivers/windows-audio/sysvad/APO/SwapAPO/swapapomfx.cpp"
+    ).read_text(encoding="utf-8")
+    shared_bridge_source = (
+        ROOT / "drivers/windows-audio/sysvad/APO/SwapAPO/swapaposfx.cpp"
+    ).read_text(encoding="utf-8")
+    capture_ring_source = (
+        ROOT / "drivers/windows-audio/sysvad/APO/SwapAPO/CapyIOCaptureRing.cpp"
+    ).read_text(encoding="utf-8")
     topology = (
         ROOT / "drivers/windows-audio/sysvad/EndpointsCommon/speakertoptable.h"
     ).read_text(encoding="utf-8")
@@ -655,6 +836,41 @@ def validate_windows_audio_endpoint_contract() -> None:
     if "TopologyMicIngress%,CapyIOIngressExtension.Interface" not in extension_inf:
         fail("microphone ingress must use its independent render processing-mode contract")
     ingress_fx = extension_inf.split("[CapyIOIngressExtension.Interface.AddReg]", 1)[-1].split("[", 1)[0]
+    capture_fx = extension_inf.split("[CapyIOMicrophoneExtension.Interface.AddReg]", 1)[-1].split("[", 1)[0]
+    if "%CAPYIO_RENDER_MFX_CLSID%" not in ingress_fx:
+        fail("microphone ingress must use the proven shared render bridge APO class")
+    if extension_inf.count("TopologyMicIn%,CapyIOMicrophoneExtension.Interface") != 2:
+        fail("microphone capture bridge must cover both audio and topology interfaces")
+    if "%CAPYIO_RENDER_MFX_CLSID%" not in capture_fx:
+        fail("microphone capture must use the proven shared render bridge APO class")
+    capture_fx_cleanup = extension_inf.split("[CapyIOMicrophoneExtension.Interface.DelReg]", 1)[-1].split("[", 1)[0]
+    for stale_key in (
+        "%PKEY_CompositeFX_StreamEffectClsid%",
+        "%PKEY_SFX_ProcessingModes_Supported_For_Streaming%",
+        "%PKEY_CompositeFX_ModeEffectClsid%",
+        "%PKEY_MFX_ProcessingModes_Supported_For_Streaming%",
+        "%PKEY_CompositeFX_EndpointEffectClsid%",
+        "%PKEY_EFX_ProcessingModes_Supported_For_Streaming%",
+    ):
+        if stale_key not in capture_fx_cleanup:
+            fail(f"microphone capture bridge must delete stale FX key {stale_key}")
+    mic_wave_table = (tablet / "micinwavtable.h").read_text(encoding="utf-8")
+    capture_range = mic_wave_table.split("MicInPinDataRangesStream[]", 1)[-1].split("};", 1)[0]
+    if "KSDATARANGE_ATTRIBUTES" not in capture_range:
+        fail("microphone capture must retain the pinned SysVAD processing-mode attributes")
+    capture_range_pointers = mic_wave_table.split("MicInPinDataRangePointersStream[]", 1)[-1].split("};", 1)[0]
+    if "&PinDataRangeAttributeList" not in capture_range_pointers:
+        fail("microphone capture must retain the pinned SysVAD processing-mode attribute list")
+    for mode_format in (
+        "STATIC_AUDIO_SIGNALPROCESSINGMODE_SPEECH,\n        &MicInPinSupportedDeviceFormats[2].DataFormat",
+        "STATIC_AUDIO_SIGNALPROCESSINGMODE_COMMUNICATIONS,\n        &MicInPinSupportedDeviceFormats[4].DataFormat",
+        "STATIC_AUDIO_SIGNALPROCESSINGMODE_FAR_FIELD_SPEECH,\n        &MicInPinSupportedDeviceFormats[2].DataFormat",
+    ):
+        if mode_format not in mic_wave_table:
+            fail(f"microphone capture must retain pinned SysVAD mode mapping {mode_format}")
+    standard_apo_interface = '"APOInterface0",,"{FD7F2B29-24D0-4B5C-B177-592C39F9CA10}"'
+    if apo_inf.count(standard_apo_interface) != 2:
+        fail("both CapyIO APO registrations must declare the standard IAudioProcessingObject IID")
     for mode in (
         "%AUDIO_SIGNALPROCESSINGMODE_DEFAULT%",
         "%AUDIO_SIGNALPROCESSINGMODE_MEDIA%",
@@ -668,6 +884,43 @@ def validate_windows_audio_endpoint_contract() -> None:
     ):
         if capture_only_mode in ingress_fx:
             fail(f"microphone ingress processing modes must exclude {capture_only_mode}")
+    if "COM_INTERFACE_ENTRY(IAudioSystemEffectsCustomFormats)" in microphone_apo_header:
+        fail("microphone bridge must not advertise SysVAD custom formats")
+    if "CBaseAudioProcessingObject::IsOutputFormatSupported(" not in microphone_apo_source:
+        fail("microphone bridge format negotiation must delegate to the base APO contract")
+    if "m_fEnableSwapMFX = FALSE" not in microphone_apo_source:
+        fail("microphone capture bridge must keep inherited SysVAD DSP disabled")
+    for role_marker in (
+        "GetMicrophoneBridgeRole(candidate.get())",
+        "MicrophoneBridgeRole::IngressProducer",
+        "MicrophoneBridgeRole::CaptureConsumer",
+        "value.vt == VT_LPWSTR",
+        "CLSIDFromString(value.pwszVal, &association)",
+        "for (UINT32 index = 0; index < deviceCount; ++index)",
+    ):
+        if role_marker not in shared_bridge_source:
+            fail(f"shared audio bridge must retain role marker {role_marker}")
+    if "m_microphoneBridgeRole != MicrophoneBridgeRole::Detached" not in shared_bridge_source:
+        fail("microphone bridge roles must not register render endpoint-volume notifications")
+    for capture_lock_marker in (
+        "m_microphoneBridgeRole == MicrophoneBridgeRole::CaptureConsumer",
+        "outputFormat.dwSamplesPerFrame != capyio::capture_ring::kChannels",
+        "outputFormat.fFramesPerSecond",
+        "candidateOutput.dwSamplesPerFrame == capyio::capture_ring::kChannels",
+        "STDMETHODIMP CSwapAPOSFX::IsOutputFormatSupported",
+        "accept only the project's fixed mono 48 kHz engine-side contract",
+        "RecordDiagnostic(500, S_OK)",
+        "RecordDiagnostic(401, S_OK)",
+        "RecordDiagnostic(300, static_cast<LONG>(cbDataSize))",
+    ):
+        if capture_lock_marker not in shared_bridge_source:
+            fail(f"capture bridge lock contract must retain {capture_lock_marker}")
+    for fresh_attach_marker in (
+        "A microphone capture session is a live view, not a recording backlog.",
+        "InterlockedExchange64(&header_->read_frame_sequence, write)",
+    ):
+        if fresh_attach_marker not in capture_ring_source:
+            fail(f"capture ring must discard stale pre-attach frames: {fresh_attach_marker}")
     ingress_descriptor = topology.split(
         "PCFILTER_DESCRIPTOR CapyIoMicrophoneIngressTopoMiniportFilterDescriptor =", 1
     )[-1]
@@ -814,6 +1067,7 @@ def main() -> None:
     validate_proto_field_numbers()
     validate_architecture_dependencies()
     validate_sensor_server_provenance()
+    validate_micyou_adapter_contract()
     validate_windows_audio_provenance()
     validate_windows_audio_endpoint_contract()
     validate_hosted_ci_contract()

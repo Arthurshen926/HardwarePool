@@ -50,10 +50,26 @@ implementation scope automatically.
   are proven. Release qualification is deliberately not folded into the
   functional claim; signed installation, upgrade/uninstall, soak/reboot and
   production security continue under `CAPY-AUDIO-001C` before public alpha.
-- Gate 8 preparation `CAPY-AUDIO-CORE-001` is complete locally. `CAPY-MIC-000A`
-  then pinned/audited MicYou v2.0.1 and added a fixture-proven bounded external
-  process Adapter under ADR 0036. It does not yet claim a virtual microphone or
-  physical recording; `CAPY-MIC-001` is the next Gate 8 slice.
+- Gate 8 functional vertical slice is complete on the controlled lab.
+  `CAPY-AUDIO-CORE-001` provides direction-neutral audio contracts;
+  `CAPY-MIC-000A` pins/audits MicYou v2.0.1 behind the bounded external-process
+  boundary; `CAPY-MIC-001D` proves phone microphone PCM through the paired
+  ingress into an ordinary `CapyIO Microphone` capture client and exact silence
+  after disconnect. `CAPY-MIC-001E` replaces the reorderable persisted device
+  index with stable endpoint identity and repeats the physical regression.
+  `CAPY-MIC-001F` adds the Runtime-owned Route and schema-v2 desktop Quick
+  Action with stable process-owned phone TCP presence; its hardware-free
+  orchestration tests pass locally. `CAPY-MIC-001G` adds a fixed user-local,
+  versioned trusted-host configuration plus a provisioning/validation CLI, so
+  desktop restarts no longer require environment variables after one explicit
+  stable-ID setup. `CAPY-MIC-001H` physically proves that Quick Action through
+  non-zero ordinary-client PCM, bounded disconnect-to-exact-silence, fresh
+  process/epoch retry and terminal stop. Its eight-second ordinary-client WAV
+  contained non-zero samples in every one-second interval and the project owner
+  confirmed the phone microphone was audible. The functional slice is closed;
+  Android lock/background and permission-revocation tests, normal-reboot
+  survival, performance/soak and release/legal qualification remain in
+  `docs/plans/active/0021-microphone-release-qualification.md`.
 
 ## Public-alpha proof bar
 

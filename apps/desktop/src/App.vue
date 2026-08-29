@@ -147,7 +147,7 @@ onUnmounted(() => { if (livePoll) clearInterval(livePoll); });
 
     <section id="overview" class="hero-panel hero-panel--compact">
       <div class="hero-panel__copy">
-        <p class="eyebrow">Gate 5 groundwork · Fixture-first StandardPort</p>
+        <p class="eyebrow">Pre-alpha lab · Real audio and IMU paths</p>
         <h1>连接能力，不绑定设备角色。</h1>
         <p>两个对等 Node 通过有方向、强类型的 Route 组合音频、IMU 与视频能力。每条 Route 独立启动和停止。</p>
         <div class="hero-panel__summary">
@@ -233,7 +233,7 @@ onUnmounted(() => { if (livePoll) clearInterval(livePoll); });
 
     <template v-if="view === 'quick'">
       <section class="section-heading">
-        <div><p class="eyebrow">Quick Actions</p><h2>四条互不耦合的 Route</h2></div>
+        <div><p class="eyebrow">Quick Actions</p><h2>按需启动互不耦合的 Route</h2></div>
         <p>这里隐藏 Adapter 与 Port 细节，只呈现用户要完成的硬件组合。</p>
       </section>
       <section class="capability-grid">
@@ -296,6 +296,6 @@ onUnmounted(() => { if (livePoll) clearInterval(livePoll); });
       </article>
     </section>
 
-    <footer class="app-footer"><span>CapyIO pre-alpha</span><span>Protocol 1.0 · IMU fixture + physical lab</span><span>Live ws:// is trusted-LAN development only</span></footer>
+    <footer class="app-footer"><span>CapyIO pre-alpha</span><span>Protocol 1.0 · IMU + bidirectional audio lab</span><span>当前网络音频仅限可信实验网络</span></footer>
   </main>
 </template>

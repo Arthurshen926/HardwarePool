@@ -119,8 +119,10 @@ reboot is expected.
 
 1. Deploy signed `21.66.0.1` and prove CPAL/MicYou enumerate both CapyIO render
    endpoints with usable output configurations.
-2. Probe the pinned MicYou CLI with the reviewed `device-index-v1` patch and
+2. Probe the pinned MicYou CLI with the then-current `device-index-v1` patch and
    prove duplicate endpoint names select the intended ingress or fail closed.
+   CAPY-MIC-001E later superseded this interim selector with stable endpoint
+   identity.
 3. Play a deterministic 48 kHz tone into Microphone Ingress and record it from
    CapyIO Microphone through an ordinary WASAPI client.
 4. Verify Broker absence and ingress disconnect return capture to silence.

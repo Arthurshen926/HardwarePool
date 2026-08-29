@@ -4,7 +4,7 @@ Class       = Extension
 ClassGuid   = {e2f84ce7-8efa-411c-aa69-97454ca4cb57}
 Provider    = %ProviderName%
 ExtensionId = {AB84FE65-3D09-4C4B-BA5A-988CBAFF9692}
-DriverVer   = 08/28/2026,21.66.0.1
+DriverVer   = 08/29/2026,21.82.0.1
 CatalogFile = capyioaudio.cat
 PnpLockDown = 1
 
@@ -63,7 +63,7 @@ AddReg = CapyIOIngressExtension.Interface.AddReg
 
 [CapyIOIngressExtension.Interface.AddReg]
 HKR,FX\0,%PKEY_FX_Association%,,%KSNODETYPE_ANY%
-HKR,FX\0,%PKEY_CompositeFX_ModeEffectClsid%,0x00010000,%CAPYIO_MIC_BRIDGE_MFX_CLSID%
+HKR,FX\0,%PKEY_CompositeFX_ModeEffectClsid%,0x00010000,%CAPYIO_RENDER_MFX_CLSID%
 HKR,FX\0,%PKEY_MFX_ProcessingModes_Supported_For_Streaming%,%REG_MULTI_SZ%,%AUDIO_SIGNALPROCESSINGMODE_DEFAULT%,%AUDIO_SIGNALPROCESSINGMODE_MEDIA%,%AUDIO_SIGNALPROCESSINGMODE_MOVIE%
 
 [CapyIOMicrophoneExtension.Interface]
@@ -73,12 +73,14 @@ AddReg = CapyIOMicrophoneExtension.Interface.AddReg
 [CapyIOMicrophoneExtension.Interface.DelReg]
 HKR,FX\0,%PKEY_CompositeFX_StreamEffectClsid%
 HKR,FX\0,%PKEY_SFX_ProcessingModes_Supported_For_Streaming%
+HKR,FX\0,%PKEY_CompositeFX_ModeEffectClsid%
+HKR,FX\0,%PKEY_MFX_ProcessingModes_Supported_For_Streaming%
 HKR,FX\0,%PKEY_CompositeFX_EndpointEffectClsid%
 HKR,FX\0,%PKEY_EFX_ProcessingModes_Supported_For_Streaming%
 
 [CapyIOMicrophoneExtension.Interface.AddReg]
 HKR,FX\0,%PKEY_FX_Association%,,%KSNODETYPE_ANY%
-HKR,FX\0,%PKEY_CompositeFX_ModeEffectClsid%,0x00010000,%CAPYIO_MIC_BRIDGE_MFX_CLSID%
+HKR,FX\0,%PKEY_CompositeFX_ModeEffectClsid%,0x00010000,%CAPYIO_RENDER_MFX_CLSID%
 HKR,FX\0,%PKEY_MFX_ProcessingModes_Supported_For_Streaming%,%REG_MULTI_SZ%,%AUDIO_SIGNALPROCESSINGMODE_DEFAULT%,%AUDIO_SIGNALPROCESSINGMODE_COMMUNICATIONS%,%AUDIO_SIGNALPROCESSINGMODE_SPEECH%
 
 [Strings]

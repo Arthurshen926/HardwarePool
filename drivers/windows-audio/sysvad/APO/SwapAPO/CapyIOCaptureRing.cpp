@@ -2,6 +2,25 @@
 
 namespace capyio::capture_ring
 {
+void RecordDiagnostic(LONG stage, LONG error) noexcept
+{
+    HANDLE mapping = OpenFileMappingW(FILE_MAP_READ | FILE_MAP_WRITE, FALSE, kMappingName);
+    if (mapping == nullptr)
+    {
+        return;
+    }
+    auto* view = static_cast<std::uint8_t*>(
+        MapViewOfFile(mapping, FILE_MAP_READ | FILE_MAP_WRITE, 0, 0, kHeaderSize));
+    if (view != nullptr)
+    {
+        auto* header = reinterpret_cast<Header*>(view);
+        InterlockedExchange(&header->last_stage, stage);
+        InterlockedExchange(&header->last_error, error);
+        UnmapViewOfFile(view);
+    }
+    CloseHandle(mapping);
+}
+
 Mapping::~Mapping() noexcept
 {
     Detach();
@@ -139,7 +158,23 @@ bool Consumer::Attach(std::uint32_t sample_rate, std::uint32_t output_channels) 
     {
         return false;
     }
-    return AttachCommon(false);
+    if (!AttachCommon(false))
+    {
+        return false;
+    }
+
+    // A microphone capture session is a live view, not a recording backlog.
+    // The producer can keep the bounded ring full while no capture client is
+    // active. Discard those pre-attach frames so a later application never
+    // replays stale speech after the phone has already disconnected.
+    const LONG64 write = InterlockedCompareExchange64(&header_->write_frame_sequence, 0, 0);
+    if (write < 0)
+    {
+        Detach();
+        return false;
+    }
+    InterlockedExchange64(&header_->read_frame_sequence, write);
+    return true;
 }
 
 std::uint32_t Consumer::TryRead(float* output, std::uint32_t frame_count) noexcept
