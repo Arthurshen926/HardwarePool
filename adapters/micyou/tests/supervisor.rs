@@ -1,12 +1,16 @@
 use std::{
-    net::{IpAddr, Ipv4Addr, TcpListener, TcpStream},
+    net::{IpAddr, Ipv4Addr, TcpListener},
     path::PathBuf,
     time::Duration,
 };
 
+#[cfg(windows)]
+use std::net::TcpStream;
+
+#[cfg(windows)]
+use capyio_micyou_adapter::PeerTcpPresence;
 use capyio_micyou_adapter::{
-    MicYouConfig, MicYouProbe, MicYouSupervisor, PeerTcpPresence, ProbeLimits, SupervisorLimits,
-    SupervisorStatus,
+    MicYouConfig, MicYouProbe, MicYouSupervisor, ProbeLimits, SupervisorLimits, SupervisorStatus,
 };
 
 const DEVICE: &str = "CapyIO Fixture Microphone Ingress";
