@@ -1,0 +1,11 @@
+[package]
+name = "capyio-dsu-adapter"
+description = "Reserved CapyIO boundary for a reviewed DSU motion-controller projection."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[dependencies]
+capyio-data-plane = { path = "../../crates/capyio-data-plane" }
+capyio-input = { path = "../../crates/capyio-input" }

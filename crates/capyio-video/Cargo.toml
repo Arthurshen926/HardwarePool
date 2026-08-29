@@ -1,0 +1,15 @@
+[package]
+name = "capyio-video"
+description = "Platform- and transport-independent camera/video contracts for CapyIO."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[dependencies]
+capyio-core = { path = "../capyio-core" }
+serde.workspace = true
+thiserror.workspace = true
+
+[dev-dependencies]
+serde_json.workspace = true

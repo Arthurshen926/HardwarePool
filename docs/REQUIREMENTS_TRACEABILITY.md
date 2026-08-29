@@ -40,10 +40,10 @@ hardware, networking, security or performance behavior has run.
 |---|---|---|---|
 | `FR-SCEN-001` | planned | Gate 8 | MicYou phone microphone to desktop/system-microphone evidence. |
 | `FR-SCEN-002` | implemented | Gate 7 | Controlled-lab evidence: Gate 7A retains system-mix playback; Gate 7B proves a separately enumerated `CapyIO Speaker`, real post-mix PCM, Android playback, endpoint volume/mute and service-owned ordinary-user control. Release qualification, background/focus/performance and production security continue in `CAPY-AUDIO-001C`. |
-| `FR-SCEN-003` | planned | Gate 6 | Gamepad input plus independent reverse-haptics Routes. |
-| `FR-SCEN-004` | planned | Gate 9 | Camera preview and Windows virtual-camera evidence. |
+| `FR-SCEN-003` | planned | Gate 6 | `CAPY-IO-CONTRACTS-001` defines separate gamepad, IMU and haptics semantics; DSU/VIIPER and reverse-feedback evidence remain planned. |
+| `FR-SCEN-004` | planned | Gate 9 | `CAPY-IO-CONTRACTS-001` defines raw-video semantics; generated preview and Windows virtual-camera evidence remain active plan work. |
 | `FR-SCEN-005` | planned | Gates 10–11 | Mirror evidence at Gate 10 and separate extended-display evidence at Gate 11. |
-| `FR-SCEN-006` | planned | Gate 10 | Platform keyboard, pointer and touchpad projection tests. |
+| `FR-SCEN-006` | planned | Gate 10 | `CAPY-IO-CONTRACTS-001` defines pointer/touch/keyboard semantics; platform projection tests remain planned. |
 | `FR-SCEN-007` | planned | Gate 12 | Multi-stream provenance, visualization and recording evidence. |
 | `FR-SCEN-008` | planned | Gate 13 | Multi-node temporary-workspace composition evidence. |
 | `FR-SCEN-009` | verified | Gate 5 | Bounded recorded-style IMU fixture replay covers independent sinks, gaps, overflow, stale epochs and abnormal paths. |

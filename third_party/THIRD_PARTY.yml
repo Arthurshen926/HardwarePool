@@ -185,11 +185,32 @@ planned_integrations:
       retained only as fixed-revision design evidence for the PCM tap and
       bounded staging; its kernel transport is not reusable in CapyIO.
   - id: vcamdroid
-    upstream_repository: null
-    pinned_revision: null
-    license: pending_verification
-    integration_mode: planned_sidecar
+    upstream_repository: https://github.com/darusc/VCamdroid
+    pinned_revision: f53d2f67691d468d89697cbc0e4178d3ed1082c4
+    license: MIT
+    integration_mode: planned_external_adapter_reference
     source_imported: false
+    binary_imported: false
+    imported_paths: []
+    local_modifications: []
+    review_note: >-
+      Current upstream documents Camera2/OpenGL/MediaCodec to RTSP/RTP and an
+      FFmpeg/Softcam Windows path. CapyIO imports no source or binary; encoded
+      transport remains AdapterManaged pending dependency and protocol review.
+  - id: dsu-protocol-reference
+    upstream_repository: https://github.com/v1993/cemuhook-protocol
+    pinned_revision: 82bf8a837cc7d2254e9257729f462a233d9ad184
+    license: Unlicense
+    integration_mode: protocol_reference_only
+    source_imported: false
+    binary_imported: false
+    imported_paths: []
+    local_modifications: []
+    protocol_version: 1001
+    review_note: >-
+      Reference-only basis for a future deterministic DSU Adapter. No source,
+      server, UDP listener or emulator integration is present in the common
+      baseline.
   - id: sensor-server
     upstream_repository: https://github.com/UmerCodez/SensorServer
     pinned_revision: 5ae401780d99debcabb8dc259256c2652dada0a6

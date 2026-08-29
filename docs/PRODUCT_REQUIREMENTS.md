@@ -237,14 +237,18 @@ The product has two experiences:
 
 ## 9. Current non-goals
 
-- real MicYou, VCamdroid or VIIPER integration;
+- real VCamdroid or VIIPER integration; plan 0014 permits only portable
+  Video/Input contracts and a generated hardware-free camera fixture before a
+  separately reviewed external/system-projection slice;
 - Audio Share source import, vendoring or redistribution; the only current
   exception is the pinned, unmodified external-process remote-speaker Adapter
   scoped by `CAPY-AUDIO-000/001A` and ADR 0025;
 - vendoring, repackaging or production deployment of SensorServer; the only
   current exception is the externally installed, local-lab IMU protocol Adapter
   scoped by `CAPY-IMU-001B` and ADR 0021;
-- Windows virtual camera/display/HID implementation or installation;
+- Windows virtual display/HID implementation or installation; a Windows 11
+  user-mode virtual-camera spike is scoped only by active plan 0014 and still
+  requires its platform ADR, lifecycle/rollback tests and truthful evidence;
 - uncontrolled Windows virtual-audio installation on a daily-development host;
   ADRs 0027–0029 permit the dedicated `CapyIO Speaker` only in an identified
   isolated target or the explicitly approved `DESKTOP-AT8EVE9` local lab after

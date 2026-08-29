@@ -184,8 +184,33 @@ impl ProfileId {
     }
 
     #[must_use]
+    pub fn key_events_v1() -> Self {
+        Self::new("capyio.input.key-events", 1)
+    }
+
+    #[must_use]
+    pub fn pointer_events_v1() -> Self {
+        Self::new("capyio.input.pointer-events", 1)
+    }
+
+    #[must_use]
+    pub fn touch_events_v1() -> Self {
+        Self::new("capyio.input.touch-events", 1)
+    }
+
+    #[must_use]
+    pub fn gamepad_state_v1() -> Self {
+        Self::new("capyio.input.gamepad-state", 1)
+    }
+
+    #[must_use]
     pub fn imu_samples_v1() -> Self {
         Self::new("capyio.motion.imu-samples", 1)
+    }
+
+    #[must_use]
+    pub fn haptics_feedback_v1() -> Self {
+        Self::new("capyio.haptics.feedback", 1)
     }
 
     pub fn validate(&self) -> Result<(), CoreError> {

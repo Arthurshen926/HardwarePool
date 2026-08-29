@@ -124,6 +124,8 @@ capyio-core
    ^
    +--- capyio-data-plane
    +--- capyio-audio
+   +--- capyio-video
+   +--- capyio-input
    +--- capyio-protocol
    +--- capyio-runtime
    +--- capyio-adapter-sdk
@@ -154,6 +156,16 @@ Dependency rules:
 - Adapter Host owns process I/O and does not enter Core.
 - Profile-specific Adapters may depend on `capyio-data-plane`; the data-plane
   crate never depends on an Adapter or concrete transport.
+- `capyio-video` defines exact decoded packed-raw stream candidates, frame
+  descriptors, minimal camera metadata and optional metrics. It does not open a
+  camera, implement H.264/H.265/RTSP, register a virtual camera or choose a
+  platform/data-plane mechanism.
+- `capyio-input` defines normalized pointer/touch/keyboard/gamepad/haptics
+  semantics and allocation-free epoch/sequence guards. It does not inject
+  input, implement DSU/VIIPER/HID/USB-IP or depend on a platform SDK.
+- VCamdroid-compatible encoded video remains an `AdapterManaged` private data
+  plane until a complete codec/access-unit contract and explicit decode
+  Converter produce `capyio.video.frames/1`.
 - The Audio Share Adapter validates and supervises a pinned external executable;
   its TCP/UDP PCM contract does not become a Core, Protocol or StandardPort
   dependency.

@@ -70,6 +70,28 @@ Frontend uses `corepack pnpm typecheck` and `corepack pnpm build`.
 These tests require no phone and make no SensorServer, APK, network or physical
 timing claim.
 
+## Video and input contract tests
+
+- canonical video and input/haptics Profile helpers match the normative
+  registry and replace stale mock-only names;
+- packed NV12/BGRA candidates validate dimensions, reduced rational frame
+  rate, closed colorimetry and derived payload bounds;
+- negotiation requires exact complete candidates and performs no implicit
+  resize, rotation, decode, color conversion or QoS rewrite;
+- frame descriptors reject zero/stale epochs, wrong payload sizes and invalid
+  end-of-stream payloads;
+- input stream descriptors keep clock-domain allocation out of per-frame
+  headers;
+- the shared sequence guard rejects wrong stream, stale/future epoch,
+  duplicate/late sequence, non-advancing epoch and sequence exhaustion, while
+  reporting gaps;
+- pointer/keyboard reset, empty touch snapshots, fixed gamepad neutral state and
+  explicit haptics stop make fail-safe cleanup testable.
+
+These tests prove only deterministic semantic contracts. They do not capture a
+camera, inject OS input, register a virtual camera, start DSU/VIIPER, install a
+driver/APK or prove ordinary-application compatibility.
+
 ## SensorServer mapping contract tests
 
 - the pinned upstream three-field JSON shape maps exact finite axes, timestamp

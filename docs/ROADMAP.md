@@ -50,6 +50,11 @@ implementation scope automatically.
   are proven. Release qualification is deliberately not folded into the
   functional claim; signed installation, upgrade/uninstall, soak/reboot and
   production security continue under `CAPY-AUDIO-001C` before public alpha.
+- Gates 6 and 9 now share the in-progress `CAPY-IO-CONTRACTS-001` semantic
+  baseline. Canonical input/haptics names, raw-video negotiation and reserved
+  workspace ownership are implementation scaffolding only; no DSU emulator,
+  Android camera, virtual camera, HID or ordinary-application evidence is yet
+  claimed.
 
 ## Public-alpha proof bar
 
