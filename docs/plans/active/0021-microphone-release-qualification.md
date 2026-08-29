@@ -19,9 +19,11 @@ bounded capture-ring or stable endpoint-identity architecture.
 1. Build signed Windows installation/upgrade/rollback/uninstall ownership for
    the driver, APO/Extension, desktop/runtime binaries, trusted host
    configuration and narrowly scoped firewall policy.
-2. Decide whether the microphone Runtime belongs in the existing privileged
-   Broker/service or another least-privilege headless owner. The WebView must
-   never gain executable-path, endpoint-ID or arbitrary process authority.
+2. Complete ADR 0040's least-privilege per-user headless owner: signed install,
+   single-instance login autostart, crash recovery, hardened configuration ACL
+   and physical window-close/sign-out/multi-user acceptance. The privileged
+   Broker remains the global capture-ring owner; the WebView must never gain
+   executable-path, endpoint-ID or arbitrary process authority.
 3. Qualify clean reboot/autostart, sign-out/in, sleep/resume, Windows Audio
    restart, endpoint disable/enable, process crash, phone loss and reconnect.
 4. Qualify Android lock, long background, battery optimization, foreground-

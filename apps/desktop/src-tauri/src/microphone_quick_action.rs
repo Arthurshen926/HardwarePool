@@ -1,10 +1,15 @@
 use capyio_core::{RouteId, RouteState, SessionId};
-use capyio_micyou_adapter::MicYouSupervisor;
+use capyio_micyou_adapter::{MicYouSupervisor, PeerTcpPresence, SupervisorStatus};
 use capyio_micyou_host_config::{TrustedMicYouHostConfig, load_trusted_host_config};
 use capyio_runtime::NodeRuntime;
+#[cfg(windows)]
+use capyio_windows_service::{MicrophoneHostClient, MicrophoneHostSnapshot, MicrophoneHostState};
 
 use crate::{
-    micyou_runtime::{DEFAULT_PHONE_WAIT_POLLS, DEFAULT_STABLE_PHONE_POLLS, MicYouRouteController},
+    micyou_runtime::{
+        DEFAULT_PHONE_WAIT_POLLS, DEFAULT_STABLE_PHONE_POLLS, MicYouProcessBoundary,
+        MicYouRouteController, MicYouStartError,
+    },
     quick_actions::{
         InvokeQuickActionRequest, QUICK_ACTION_SCHEMA_VERSION, QuickActionOperation, UiQuickAction,
         action_status, bounded, latest_problem, operations, route_state_label,
@@ -14,45 +19,178 @@ use crate::{
 pub const MICYOU_ACTION_ID: &str = "capyio.quick-action.remote-microphone";
 
 pub struct MicrophoneQuickAction {
-    controller: Option<MicYouRouteController<MicYouSupervisor>>,
-    host_config: Option<TrustedMicYouHostConfig>,
+    controller: Option<MicYouRouteController<MicYouHostProcess>>,
+    connection_hint: Option<String>,
+    headless: bool,
     configuration_problem: Option<String>,
     orchestration_problem: Option<String>,
 }
 
-impl MicrophoneQuickAction {
-    pub fn install(runtime: &mut NodeRuntime, session_id: SessionId) -> Self {
-        let loaded = load_trusted_host_config()
-            .map(|loaded| loaded.config)
-            .map_err(|error| error.to_string());
-        Self::install_with_config(runtime, session_id, loaded)
+enum MicYouHostProcess {
+    Direct(Box<MicYouSupervisor>),
+    #[cfg(windows)]
+    Headless(HeadlessMicrophoneProcess),
+}
+
+impl MicYouProcessBoundary for MicYouHostProcess {
+    fn start(&mut self) -> Result<(), MicYouStartError> {
+        match self {
+            Self::Direct(process) => MicYouProcessBoundary::start(process.as_mut()),
+            #[cfg(windows)]
+            Self::Headless(process) => process.start(),
+        }
     }
 
+    fn status(&mut self) -> Result<SupervisorStatus, String> {
+        match self {
+            Self::Direct(process) => MicYouProcessBoundary::status(process.as_mut()),
+            #[cfg(windows)]
+            Self::Headless(process) => process.status(),
+        }
+    }
+
+    fn phone_presence(&mut self) -> Result<PeerTcpPresence, String> {
+        match self {
+            Self::Direct(process) => MicYouProcessBoundary::phone_presence(process.as_mut()),
+            #[cfg(windows)]
+            Self::Headless(process) => process.phone_presence(),
+        }
+    }
+
+    fn stop(&mut self) -> Result<(), String> {
+        match self {
+            Self::Direct(process) => MicYouProcessBoundary::stop(process.as_mut()),
+            #[cfg(windows)]
+            Self::Headless(process) => process.stop(),
+        }
+    }
+}
+
+#[cfg(windows)]
+struct HeadlessMicrophoneProcess {
+    client: Box<dyn MicrophoneHostControl>,
+}
+
+#[cfg(windows)]
+impl HeadlessMicrophoneProcess {
+    fn start(&self) -> Result<(), MicYouStartError> {
+        self.client.start().map(|_| ()).map_err(|problem| {
+            if problem == "CAPY.MICROPHONE_HOST.ENDPOINT_UNAVAILABLE" {
+                MicYouStartError::ConfiguredEndpointUnavailable
+            } else {
+                MicYouStartError::Other(problem)
+            }
+        })
+    }
+
+    fn status(&self) -> Result<SupervisorStatus, String> {
+        self.client.status().map(headless_supervisor_status)
+    }
+
+    fn phone_presence(&self) -> Result<PeerTcpPresence, String> {
+        self.client.status().map(|snapshot| match snapshot.state {
+            MicrophoneHostState::Active => PeerTcpPresence::Established {
+                connection_count: 1,
+            },
+            MicrophoneHostState::Stopped | MicrophoneHostState::Failed => {
+                PeerTcpPresence::SupervisorNotRunning
+            }
+            MicrophoneHostState::WaitingForPhone => PeerTcpPresence::Disconnected,
+        })
+    }
+
+    fn stop(&self) -> Result<(), String> {
+        self.client.stop().map(|_| ())
+    }
+}
+
+#[cfg(windows)]
+trait MicrophoneHostControl: Send {
+    fn start(&self) -> Result<MicrophoneHostSnapshot, String>;
+    fn status(&self) -> Result<MicrophoneHostSnapshot, String>;
+    fn stop(&self) -> Result<MicrophoneHostSnapshot, String>;
+}
+
+#[cfg(windows)]
+impl MicrophoneHostControl for MicrophoneHostClient {
+    fn start(&self) -> Result<MicrophoneHostSnapshot, String> {
+        MicrophoneHostClient::start(self)
+    }
+
+    fn status(&self) -> Result<MicrophoneHostSnapshot, String> {
+        MicrophoneHostClient::status(self)
+    }
+
+    fn stop(&self) -> Result<MicrophoneHostSnapshot, String> {
+        MicrophoneHostClient::stop(self)
+    }
+}
+
+#[cfg(windows)]
+fn headless_supervisor_status(snapshot: MicrophoneHostSnapshot) -> SupervisorStatus {
+    match snapshot.state {
+        MicrophoneHostState::Stopped => SupervisorStatus::Stopped,
+        MicrophoneHostState::WaitingForPhone | MicrophoneHostState::Active => {
+            SupervisorStatus::Running { process_id: 0 }
+        }
+        MicrophoneHostState::Failed => SupervisorStatus::Exited { exit_code: None },
+    }
+}
+
+struct ConfiguredMicYouHost {
+    process: MicYouHostProcess,
+    connection_hint: String,
+    headless: bool,
+    was_running: bool,
+}
+
+impl MicrophoneQuickAction {
+    pub fn install(runtime: &mut NodeRuntime, session_id: SessionId) -> Self {
+        Self::install_with_host(runtime, session_id, configured_host_process())
+    }
+
+    #[cfg(test)]
     fn install_with_config(
         runtime: &mut NodeRuntime,
         session_id: SessionId,
         loaded: Result<TrustedMicYouHostConfig, String>,
     ) -> Self {
-        match loaded.and_then(|host| {
-            let supervisor = host.supervisor().map_err(|error| error.to_string())?;
+        let host = loaded.and_then(direct_host);
+        Self::install_with_host(runtime, session_id, host)
+    }
+
+    fn install_with_host(
+        runtime: &mut NodeRuntime,
+        session_id: SessionId,
+        configured: Result<ConfiguredMicYouHost, String>,
+    ) -> Self {
+        match configured.and_then(|host| {
             MicYouRouteController::install(
                 runtime,
                 session_id,
-                supervisor,
+                host.process,
                 DEFAULT_STABLE_PHONE_POLLS,
                 DEFAULT_PHONE_WAIT_POLLS,
             )
-            .map(|controller| (host, controller))
+            .and_then(|mut controller| {
+                if host.was_running {
+                    controller.start(runtime, unix_time_ms()?)?;
+                    controller.poll(runtime)?;
+                }
+                Ok((host.connection_hint, host.headless, controller))
+            })
         }) {
-            Ok((host_config, controller)) => Self {
+            Ok((connection_hint, headless, controller)) => Self {
                 controller: Some(controller),
-                host_config: Some(host_config),
+                connection_hint: Some(connection_hint),
+                headless,
                 configuration_problem: None,
                 orchestration_problem: None,
             },
             Err(problem) => Self {
                 controller: None,
-                host_config: None,
+                connection_hint: None,
+                headless: false,
                 configuration_problem: Some(bounded(problem)),
                 orchestration_problem: None,
             },
@@ -145,10 +283,7 @@ impl MicrophoneQuickAction {
             } else {
                 "process_and_route_state"
             },
-            connection_hint: self
-                .host_config
-                .as_ref()
-                .map(TrustedMicYouHostConfig::connection_hint),
+            connection_hint: self.connection_hint.clone(),
             problem_code: problem.as_ref().map(|value| value.code.clone()),
             problem: self
                 .orchestration_problem
@@ -158,10 +293,57 @@ impl MicrophoneQuickAction {
     }
 
     pub fn shutdown(&mut self, runtime: &mut NodeRuntime) {
+        if self.headless {
+            return;
+        }
         if let Some(controller) = self.controller.as_mut() {
             let _ = controller.stop(runtime);
         }
     }
+}
+
+fn configured_host_process() -> Result<ConfiguredMicYouHost, String> {
+    #[cfg(windows)]
+    {
+        let client = MicrophoneHostClient::default();
+        if let Ok(snapshot) = client.try_status() {
+            let was_running = matches!(
+                snapshot.state,
+                MicrophoneHostState::WaitingForPhone | MicrophoneHostState::Active
+            );
+            return Ok(ConfiguredMicYouHost {
+                process: MicYouHostProcess::Headless(HeadlessMicrophoneProcess {
+                    client: Box::new(client),
+                }),
+                connection_hint: format!("在 Android MicYou 中连接 {}", snapshot.bind_address),
+                headless: true,
+                was_running,
+            });
+        }
+    }
+    let loaded = load_trusted_host_config()
+        .map(|loaded| loaded.config)
+        .map_err(|error| error.to_string())?;
+    direct_host(loaded)
+}
+
+fn direct_host(config: TrustedMicYouHostConfig) -> Result<ConfiguredMicYouHost, String> {
+    let connection_hint = config.connection_hint();
+    let supervisor = config.supervisor().map_err(|error| error.to_string())?;
+    Ok(ConfiguredMicYouHost {
+        process: MicYouHostProcess::Direct(Box::new(supervisor)),
+        connection_hint,
+        headless: false,
+        was_running: false,
+    })
+}
+
+fn unix_time_ms() -> Result<u64, String> {
+    let millis = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_err(|_| "system clock is before Unix epoch".to_owned())?
+        .as_millis();
+    u64::try_from(millis).map_err(|_| "system time exceeds Runtime range".to_owned())
 }
 
 #[cfg(test)]
@@ -171,6 +353,10 @@ mod tests {
         env,
         io::{self, Write},
         process::Command,
+        sync::{
+            Arc,
+            atomic::{AtomicUsize, Ordering},
+        },
         thread,
         time::Duration,
     };
@@ -184,7 +370,8 @@ mod tests {
         let lab = DemoLab::new().expect("demo Runtime");
         let action = MicrophoneQuickAction {
             controller: None,
-            host_config: None,
+            connection_hint: None,
+            headless: false,
             configuration_problem: Some("fixture host configuration missing".to_owned()),
             orchestration_problem: None,
         };
@@ -223,7 +410,8 @@ mod tests {
         let mut lab = DemoLab::new().expect("demo Runtime");
         let mut action = MicrophoneQuickAction {
             controller: None,
-            host_config: None,
+            connection_hint: None,
+            headless: false,
             configuration_problem: Some("fixture host configuration missing".to_owned()),
             orchestration_problem: None,
         };
@@ -263,6 +451,71 @@ mod tests {
         let serialized = serde_json::to_string(&dto).expect("serialize DTO");
         assert!(!serialized.contains("private-cli"));
         assert!(!serialized.contains("private-endpoint-id"));
+    }
+
+    #[cfg(target_os = "windows")]
+    struct FakeHeadlessControl {
+        snapshot: MicrophoneHostSnapshot,
+        stops: Arc<AtomicUsize>,
+    }
+
+    #[cfg(target_os = "windows")]
+    impl MicrophoneHostControl for FakeHeadlessControl {
+        fn start(&self) -> Result<MicrophoneHostSnapshot, String> {
+            Ok(self.snapshot.clone())
+        }
+
+        fn status(&self) -> Result<MicrophoneHostSnapshot, String> {
+            Ok(self.snapshot.clone())
+        }
+
+        fn stop(&self) -> Result<MicrophoneHostSnapshot, String> {
+            self.stops.fetch_add(1, Ordering::AcqRel);
+            Ok(MicrophoneHostSnapshot {
+                state: MicrophoneHostState::Stopped,
+                phone_present: false,
+                ..self.snapshot.clone()
+            })
+        }
+    }
+
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn already_running_headless_host_is_adopted_and_preserved_on_ui_shutdown() {
+        let stops = Arc::new(AtomicUsize::new(0));
+        let snapshot = MicrophoneHostSnapshot {
+            schema_version: 1,
+            state: MicrophoneHostState::Active,
+            generation: 7,
+            phone_present: true,
+            bind_address: "100.64.0.10:8554".parse().expect("address"),
+            problem_code: None,
+        };
+        let configured = ConfiguredMicYouHost {
+            process: MicYouHostProcess::Headless(HeadlessMicrophoneProcess {
+                client: Box::new(FakeHeadlessControl {
+                    snapshot,
+                    stops: Arc::clone(&stops),
+                }),
+            }),
+            connection_hint: "在 Android MicYou 中连接 100.64.0.10:8554".to_owned(),
+            headless: true,
+            was_running: true,
+        };
+        let mut lab = DemoLab::new().expect("demo Runtime");
+        let session_id = lab.session_id;
+        let mut action =
+            MicrophoneQuickAction::install_with_host(&mut lab.runtime, session_id, Ok(configured));
+        action.poll(&mut lab.runtime);
+        action.poll(&mut lab.runtime);
+        assert_eq!(action.dto(&lab.runtime).expect("DTO").status, "active");
+
+        action.shutdown(&mut lab.runtime);
+        assert_eq!(stops.load(Ordering::Acquire), 0);
+        assert_eq!(
+            action.dto(&lab.runtime).expect("preserved DTO").status,
+            "active"
+        );
     }
 
     #[cfg(target_os = "windows")]

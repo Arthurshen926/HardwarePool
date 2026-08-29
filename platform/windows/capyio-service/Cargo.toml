@@ -1,6 +1,6 @@
 [package]
 name = "capyio-windows-service"
-description = "Headless Windows service host for CapyIO audio projections."
+description = "Headless Windows hosts for CapyIO audio projections."
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -9,6 +9,8 @@ publish = false
 
 [dependencies]
 capyio-audio-share-adapter = { path = "../../../adapters/audio-share" }
+capyio-micyou-adapter = { path = "../../../adapters/micyou" }
+capyio-micyou-host-config = { path = "../micyou-host-config" }
 serde.workspace = true
 serde_json.workspace = true
 
