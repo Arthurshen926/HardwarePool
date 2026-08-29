@@ -2,7 +2,7 @@
 
 Date: 2026-08-29
 
-Status: local implementation, host provisioning and physical acceptance complete; merge pending
+Status: completed in PR #14; release qualification remains separate
 
 ## Outcome
 

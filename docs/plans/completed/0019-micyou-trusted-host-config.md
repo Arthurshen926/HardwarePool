@@ -1,10 +1,12 @@
 # CAPY-MIC-001G — Trusted MicYou host configuration
 
-Status: local functional acceptance complete; merge pending; release qualification moved to plan 0021
+Status: completed (controlled-lab functional Gate); release qualification moved to plan 0021
 
 Owner: Codex and project owner
 
 Created: 2026-08-29
+
+Completed: 2026-08-29 in PR #14, merge commit `2145f9f`
 
 Depends on: `CAPY-MIC-001E`, `CAPY-MIC-001F`
 

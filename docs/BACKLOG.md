@@ -215,6 +215,9 @@ the desktop owns a typed Android Source to Windows Sink Route and exposes it as
 a trusted-configured Quick Action. Physical evidence covers ordinary-client
 PCM and audible recording, phone-loss `Offline`, bounded exact silence, fresh-
 process retry and terminal stop. Evidence is in `docs/CAPY_MIC_001H_REPORT.md`.
+Exact-head Ubuntu, macOS, Windows, repository, UI and Windows Tauri checks passed
+on PR #14 before merge commit `2145f9f`; the functional plans are archived as
+`docs/plans/completed/0016` through `0020`.
 
 This does not claim public distribution or release readiness. Installer,
 signing, clean-machine lifecycle, Android background/permission behavior,
