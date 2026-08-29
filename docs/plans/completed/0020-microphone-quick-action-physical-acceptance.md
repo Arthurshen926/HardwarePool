@@ -1,10 +1,12 @@
 # CAPY-MIC-001H — Microphone Quick Action physical acceptance
 
-Status: local functional acceptance complete; merge pending; release qualification moved to plan 0021
+Status: completed (controlled-lab functional Gate); release qualification moved to plan 0021
 
 Owner: Codex and project owner
 
 Created: 2026-08-29
+
+Completed: 2026-08-29 in PR #14, merge commit `2145f9f`
 
 Depends on: `CAPY-MIC-001F`, `CAPY-MIC-001G`
 
@@ -67,5 +69,6 @@ deployment, permission/service/boot mutation, reboot, commit, push or PR.
 See `docs/CAPY_MIC_001H_REPORT.md` for retained command, PCM, lifecycle,
 firewall and unresolved-risk evidence. The final ignored eight-second WAV had
 non-zero samples in every one-second interval; the project owner listened to it
-on 2026-08-29 and confirmed audible phone microphone audio. Functional plans
-0016–0020 are ready to archive after exact-head hosted checks and merge.
+on 2026-08-29 and confirmed audible phone microphone audio. Exact-head hosted
+Linux, macOS, Windows, repository, UI and Windows Tauri checks then passed on
+PR #14 before merge commit `2145f9f`.

@@ -1,10 +1,12 @@
 # CAPY-MIC-001 — Windows `CapyIO Microphone`
 
-Status: local functional acceptance complete; merge pending; release qualification moved to plan 0021
+Status: completed (controlled-lab functional Gate); release qualification moved to plan 0021
 
 Owner: Codex and project owner
 
 Created: 2026-08-28
+
+Completed: 2026-08-29 in PR #14, merge commit `2145f9f`
 
 Depends on: `CAPY-MIC-000A`, completed Speaker Gate 7B
 
@@ -133,6 +135,7 @@ tool invocation still requires explicit approval for the exact package.
   ordinary-client PCM, bounded disconnect silence, fresh-process retry and
   stop. Its eight-second WAV contained non-zero audio in every one-second
   interval, and the project owner confirmed the recording was audible;
-- functional work is ready to archive after exact-head hosted checks and merge.
-  Installer, lifecycle, security, performance and distribution work continues
+- exact-head hosted Linux, macOS, Windows, repository, UI and Windows Tauri
+  checks passed on PR #14 before merge commit `2145f9f`;
+- installer, lifecycle, security, performance and distribution work continues
   only under plan 0021.

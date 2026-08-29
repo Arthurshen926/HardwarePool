@@ -2,7 +2,7 @@
 
 Date: 2026-08-29
 
-Status: local implementation and physical Quick Action acceptance complete; merge pending
+Status: completed in PR #14; release qualification remains separate
 
 ## Outcome
 
@@ -85,7 +85,8 @@ frontend typecheck/build.
 
 No driver or APK was installed or changed. No Android permission, Windows
 service, signing policy, boot setting or endpoint configuration was mutated. No
-reboot was requested. No commit, push or pull request was created.
+reboot was requested. The physical acceptance run itself created no commit,
+push or pull request; the retained implementation later merged through PR #14.
 
 ## Remaining work
 

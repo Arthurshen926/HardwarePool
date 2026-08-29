@@ -2,7 +2,7 @@
 
 Date: 2026-08-29
 
-Status: local functional acceptance complete; merge and release qualification pending
+Status: controlled-lab functional Gate complete in PR #14; release qualification remains separate
 
 ## Outcome
 
@@ -117,7 +117,12 @@ The following passed during this slice:
   five separately authorized physical tests ignored by default;
 - final `cargo xtask ci`, including workspace format/check/Clippy/tests,
   documentation/manifests, Adapter smoke, repository validation and frontend
-  typecheck/production build.
+  typecheck/production build;
+- exact-head PR #14 checks passed for Ubuntu, macOS and Windows Rust, static
+  repository validation, shared UI and Windows Tauri. The first hosted run
+  caught two Windows-only test imports that were unconditional on non-Windows;
+  commit `f513859` scoped them correctly, after which all six checks passed;
+- PR #14 merged head `f513859` into `main` as merge commit `2145f9f`.
 
 The local MicYou release build completed. Its Tauri library test executable did
 not terminate when invoked for the narrow mode-lock unit filter and had to be
@@ -135,7 +140,8 @@ retained rather than reported as a passing unit test.
 - The local trusted host configuration remains provisioned.
 - The physical test leaves the Android MicYou package and supervised receiver
   stopped.
-- No commit, push or pull request was created.
+- The physical run itself created no commit, push or pull request. The retained
+  source and evidence later merged through PR #14.
 
 ## Remaining work
 
@@ -149,3 +155,6 @@ controlled lab, but public/release qualification remains open:
 5. production installer, firewall, authentication/encryption and headless
    Runtime ownership;
 6. legal/distribution decision for the GPL source patch and executable.
+
+These items are tracked in
+`docs/plans/active/0021-microphone-release-qualification.md`.

@@ -335,3 +335,9 @@ Android lock/background and permission-revocation tests, reboot survival,
 performance/soak, production pairing/security, headless ownership and GPL
 distribution decisions remain in the release-qualification plan rather than
 being implied by the functional claim.
+
+PR #14 provided independent exact-head evidence: Ubuntu, macOS and Windows Rust,
+static repository validation, shared UI and Windows Tauri all passed on head
+`f513859`. It merged to `main` as merge commit `2145f9f`. Functional plans
+0016–0020 are archived under `docs/plans/completed/`; release work remains in
+`docs/plans/active/0021-microphone-release-qualification.md`.
