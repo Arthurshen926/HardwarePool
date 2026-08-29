@@ -1,6 +1,6 @@
 # CapyIO Build Status
 
-> Updated: 2026-08-28 after the `CAPY-AUDIO-001B` functional Gate.
+> Updated: 2026-08-29 after the `CAPY-MIC-001H` physical Quick Action acceptance.
 
 ## Verified baseline
 
@@ -159,8 +159,9 @@ are in `docs/CAPY_IMU_001B3B_REPORT.md`.
 
 - CapyIO-owned Android application/APK;
 - automated Android permission or foreground-service management;
-- CapyIO-owned microphone/speaker, camera or input data path;
-- Windows virtual devices, driver, WDK or isolated-VM driver test;
+- CapyIO-owned camera or input data path;
+- release-qualified Windows virtual devices, signed installer or stable
+  isolated-VM driver target;
 - production transport, pairing, encryption, Runtime-owned live audio Adapter
   transport or performance.
 
@@ -306,3 +307,31 @@ The Speaker functional Gate is therefore closed at the controlled-lab evidence
 level. Remaining distribution, qualification and production-security work is
 tracked without ambiguity in
 `docs/plans/active/0013-speaker-release-qualification.md`.
+
+## CAPY-MIC-001H trusted Quick Action physical acceptance
+
+The pinned MicYou v2.0.1 external-process path now reaches the independent
+installed `CapyIO Microphone` through the desktop Runtime's trusted-configured
+Quick Action. Stable process-owned phone TCP presence activates only the
+microphone Route; an ordinary Windows CPAL client received non-zero 48 kHz mono
+float32 PCM both before and after explicit retry. Active phone loss stops and
+reaps the receiver, reports the Route `Offline` and reaches exact digital
+silence after the bounded committed-frame drain. Stop remains terminal.
+
+An eight-second ordinary-client WAV contained non-zero samples in every
+one-second interval, and the project owner listened to it on 2026-08-29 and
+confirmed audible phone microphone audio. Raw microphone media remains ignored
+local evidence and is not committed or emitted through CI logs.
+
+The controlled-lab CLI carries reviewed stable-endpoint, exact-silence,
+per-session UDP-metric and Windows PID-plus-creation-time mode-lock patches. It
+is built from GPL-3.0-only source outside this repository and is not distributed
+by CapyIO. Local firewall access is limited to that exact executable, the
+Tailscale IPv4 range and TCP 8554/UDP 8555. Full evidence and current limits are
+in `docs/CAPY_MIC_001H_REPORT.md`.
+
+The Gate 8 functional slice is closed at the controlled-lab evidence level.
+Android lock/background and permission-revocation tests, reboot survival,
+performance/soak, production pairing/security, headless ownership and GPL
+distribution decisions remain in the release-qualification plan rather than
+being implied by the functional claim.

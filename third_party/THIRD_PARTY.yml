@@ -2,11 +2,115 @@ schema_version: 1
 foundation_source_imports: []
 planned_integrations:
   - id: micyou
-    upstream_repository: null
-    pinned_revision: null
-    license: pending_verification
-    integration_mode: planned_sidecar
+    upstream_repository: https://github.com/LanRhyme/MicYou
+    pinned_revision: b22c41fff3d3d1169c04c8acd1db7266cf9d4c62
+    pinned_release: v2.0.1
+    source_archive_sha256: 606a5c6fb717f2bbac4cd0571ad4e484e5602b20dcc8a5f76b55575eebc13f87
+    license: GPL-3.0-only
+    integration_mode: external_process_adapter
     source_imported: false
+    binary_imported: false
+    imported_paths: []
+    local_modifications:
+      - >-
+        local-lab-only CLI patch preserves CPAL enumeration order, pairs it
+        with bounded Windows Core Audio endpoint IDs, adds --device-id plus a
+        freshly resolved --device-index and exact expected-name validation,
+        removes explicit device fallback, validates identity before and after
+        audio startup, and exposes the device-stable-id-v1 capability
+      - >-
+        local-lab-only audio patch preserves exact digital silence during
+        float32-to-int16 quantization instead of injecting TPDF dither into
+        zero-valued underrun frames; non-zero audio remains dithered
+      - >-
+        local-lab-only UDP metrics patch stores packet loss as a per-session
+        bounded fraction, resets sequence tracking on epoch changes and avoids
+        moving the sequence watermark backwards for reordered packets
+      - >-
+        local-lab-only Windows mode-lock patch validates both the recorded PID
+        and its process creation time before treating a retained lock as live;
+        this prevents fast PID reuse after supervised termination from blocking
+        an explicit Route retry
+    fixed_revision_review:
+      reviewed_paths:
+        - LICENSE
+        - tauri-app/Cargo.toml
+        - tauri-app/crates/micyou-cli/src/main.rs
+        - tauri-app/crates/micyou-cli/src/serve.rs
+        - tauri-app/crates/micyou-cli/src/commands.rs
+        - tauri-app/crates/micyou-cli/src/capyio_windows_devices.rs
+        - tauri-app/crates/micyou-audio/src/engine.rs
+        - tauri-app/crates/micyou-protocol/src/lib.rs
+        - tauri-app/crates/micyou-protocol/proto/network.proto
+        - tauri-app/src-tauri/src/network.rs
+        - tauri-app/src-tauri/src/tcp_server.rs
+        - tauri-app/src-tauri/src/udp_server.rs
+        - tauri-app/src-tauri/src/jitter_buffer.rs
+        - tauri-app/src-tauri/src/audio_output.rs
+        - tauri-app/src-tauri/src/mode_lock.rs
+        - composeApp/src/main/kotlin/com/lanrhyme/micyou/audio/AudioEngine.kt
+      findings:
+        - private TCP control and UDP audio data planes with session identifiers
+        - PCM and Opus payload modes with bounded FEC and jitter structures
+        - explicit CLI Wi-Fi bind, port and output-device arguments
+        - upstream exact-name selection chooses the first duplicate and falls
+          back to the default output device when no exact match exists
+        - Windows output targets a separately installed render endpoint such as VB-CABLE input
+        - decoded desktop PCM currently crosses an unbounded standard mpsc channel upstream
+        - the Windows release publishes an installer but no standalone CLI artifact
+    private_contract:
+      control_transport: TCP
+      audio_transport: UDP
+      default_tcp_port: 8554
+      udp_port_rule: tcp_port_plus_one
+      capyio_route_backend: AdapterManaged
+    local_cli_dependency:
+      name: windows
+      version: 0.61.3
+      license: MIT OR Apache-2.0
+      enabled_features:
+        - Win32_Foundation
+        - Win32_Media_Audio
+        - Win32_System_Com
+      purpose: >-
+        Resolve the stable IMMDevice endpoint ID corresponding to each current
+        Windows CPAL output device and free the returned COM allocation.
+      alternatives_rejected:
+        - localized and duplicate Windows friendly names
+        - persisting a reorderable CPAL enumeration index
+        - a CapyIO-native replacement of the complete MicYou desktop receiver in this Gate
+    peer_presence_dependency:
+      name: windows-sys
+      version: 0.61.2
+      license: MIT OR Apache-2.0
+      enabled_features:
+        - Win32_NetworkManagement_IpHelper
+        - Win32_Networking_WinSock
+      purpose: >-
+        Observe only the count of process-owned established MicYou TCP peers
+        through the shared bounded CapyIO platform helper.
+      alternatives_rejected:
+        - localized MicYou log parsing
+        - treating the listener-readiness probe as a connected phone
+        - hand-written Windows declarations inside the unsafe-free MicYou Adapter
+    release_artifacts:
+      windows_installer:
+        name: MicYou-Win-2.0.1-installer.exe
+        sha256: 4f85b6ec4e917e91fb5b520142e1c2e7f6bd8e6043ab61f79c87554a5e41f0fe
+        distributed_by_capyio: false
+      android_apk:
+        name: MicYou-Android-2.0.1.apk
+        package: com.lanrhyme.micyou
+        sha256: 0c5537aef4321cef6ed65f99f4b92684c42bb67c6e96aeffa3f48444f32b564d
+        distributed_by_capyio: false
+    distribution_note: >-
+      CapyIO does not copy, link, vendor, repackage or distribute MicYou in this
+      slice. The Adapter launches only a user-supplied local build of exact
+      v2.0.1 carrying the reviewed device-stable-id-v1 patch, and rejects an
+      unmodified CLI. The GPL patch/source and binary remain outside this
+      repository. Installing the upstream APK remains an explicit local-lab
+      action; public redistribution and the Windows virtual-microphone package
+      require separate legal and release review.
   - id: audio-share
     upstream_repository: https://github.com/mkckr0/audio-share
     pinned_revision: 342751fe675367483170b002ec6054e243966dc0
@@ -112,8 +216,8 @@ planned_integrations:
       - drivers/windows-audio/sysvad/APO/SwapAPO
       - drivers/windows-audio/sysvad/Package
     local_modifications:
-      - retain only the speaker render endpoint in the runtime endpoint arrays
-      - remove keyword detector, capture, HDMI, SPDIF, headphone, delay, KWS and AEC package dependencies
+      - retain one speaker render endpoint and one microphone capture endpoint in the runtime arrays
+      - remove keyword detector, microphone arrays, HDMI, SPDIF, headphone, delay, KWS and AEC package dependencies
       - rename the device, service, binary and APO for CapyIO ownership
       - replace sample hardware identifiers and APO identifiers with CapyIO-owned values
       - add a bounded non-blocking render-APO staging bridge

@@ -13,9 +13,12 @@ members = [
     "adapters/mock-sink",
     "adapters/sensor-server",
     "adapters/audio-share",
+    "adapters/micyou",
     "apps/capyio-node",
     "apps/desktop/src-tauri",
     "platform/windows/capyio-service",
+    "platform/windows/micyou-host-config",
+    "platform/windows/process-presence",
     "xtask",
 ]
 default-members = [
@@ -29,7 +32,10 @@ default-members = [
     "crates/capyio-adapter-host",
     "adapters/sensor-server",
     "adapters/audio-share",
+    "adapters/micyou",
     "apps/capyio-node",
+    "platform/windows/micyou-host-config",
+    "platform/windows/process-presence",
     "xtask",
 ]
 

@@ -15,7 +15,7 @@ implementation scope automatically.
 | 6 — gamepad | IMU/touch to DSU and VIIPER, haptics feedback | universal USB classes | emulator/game recognition plus reverse feedback; driver work only in approved target | virtual-input distribution and licensing |
 | 7A — remote-speaker transport | Windows system mix to Android speaker through Audio Share AdapterManaged Route | production installer/security | real playback, disconnect/background/focus evidence | latency, protected audio and mobile lifecycle |
 | 7B — Windows virtual speaker | independent `CapyIO Speaker` render endpoint feeding the 7A transport | uncontrolled host deployment or kernel networking | unmodified SysVAD enumeration baseline plus bounded render-APO/Broker real-PCM bridge in an isolated target or ADR 0029 local lab, exclusive-route playback, restart/uninstall and failure evidence | WDK/APO packaging, signing, real-time safety and distribution |
-| 8 — remote microphone | MicYou engine to Windows system microphone Quick Action | new audio stack from scratch | ordinary-app recording, permission/revoke/lock tests | virtual audio packaging/signing |
+| 8 — remote microphone | audited MicYou-compatible Android Source to Windows system microphone through the shared audio contracts | copying GPL source without an approved boundary or duplicating Speaker media foundations | exact upstream/license record, ordinary-app recording, permission/revoke/lock tests and common audio metrics | licensing, virtual audio packaging/signing |
 | 9 — camera | VCamdroid to preview and Windows virtual camera | rewritten codec/FFmpeg stack | resolution/rotation/disconnect and ordinary-app enumeration evidence | upstream C++/FFmpeg/Softcam maintenance |
 | 10 — input and mirror | scrcpy composite, keyboard/pointer Adapters, screen mirror | extended display | independent input/display Routes and platform fallback tests | platform injection restrictions |
 | 11 — extended display | Windows IDD experiment to mobile Display Sink | conflate mirror with display extension | isolated driver target enumerates/stabilizes virtual display | WDK/IDD stability and signing |
@@ -50,6 +50,26 @@ implementation scope automatically.
   are proven. Release qualification is deliberately not folded into the
   functional claim; signed installation, upgrade/uninstall, soak/reboot and
   production security continue under `CAPY-AUDIO-001C` before public alpha.
+- Gate 8 functional vertical slice is complete on the controlled lab.
+  `CAPY-AUDIO-CORE-001` provides direction-neutral audio contracts;
+  `CAPY-MIC-000A` pins/audits MicYou v2.0.1 behind the bounded external-process
+  boundary; `CAPY-MIC-001D` proves phone microphone PCM through the paired
+  ingress into an ordinary `CapyIO Microphone` capture client and exact silence
+  after disconnect. `CAPY-MIC-001E` replaces the reorderable persisted device
+  index with stable endpoint identity and repeats the physical regression.
+  `CAPY-MIC-001F` adds the Runtime-owned Route and schema-v2 desktop Quick
+  Action with stable process-owned phone TCP presence; its hardware-free
+  orchestration tests pass locally. `CAPY-MIC-001G` adds a fixed user-local,
+  versioned trusted-host configuration plus a provisioning/validation CLI, so
+  desktop restarts no longer require environment variables after one explicit
+  stable-ID setup. `CAPY-MIC-001H` physically proves that Quick Action through
+  non-zero ordinary-client PCM, bounded disconnect-to-exact-silence, fresh
+  process/epoch retry and terminal stop. Its eight-second ordinary-client WAV
+  contained non-zero samples in every one-second interval and the project owner
+  confirmed the phone microphone was audible. The functional slice is closed;
+  Android lock/background and permission-revocation tests, normal-reboot
+  survival, performance/soak and release/legal qualification remain in
+  `docs/plans/active/0021-microphone-release-qualification.md`.
 
 ## Public-alpha proof bar
 

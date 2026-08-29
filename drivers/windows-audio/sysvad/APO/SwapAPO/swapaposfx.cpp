@@ -24,6 +24,62 @@
 #include <CustomPropKeys.h>
 #include <propvarutil.h>
 
+namespace
+{
+const PROPERTYKEY kAudioEndpointAssociation =
+{
+    {0x1da5d803, 0xd492, 0x4edd, {0x8c, 0x23, 0xe0, 0xc0, 0xff, 0xee, 0x7f, 0x0e}},
+    2
+};
+const GUID kCapyIoMicrophoneIngressCategory =
+    {0x6f13d5db, 0x0274, 0x4e66, {0xa1, 0x16, 0x34, 0x0b, 0x4c, 0x54, 0xeb, 0x38}};
+const GUID kMicrophoneCategory =
+    {0xdff21be1, 0xf70f, 0x11d0, {0xb9, 0x17, 0x00, 0xa0, 0xc9, 0x22, 0x31, 0x96}};
+
+MicrophoneBridgeRole GetMicrophoneBridgeRole(IMMDevice* endpoint)
+{
+    if (endpoint == nullptr)
+    {
+        return MicrophoneBridgeRole::Detached;
+    }
+
+    wil::com_ptr_nothrow<IPropertyStore> store;
+    if (FAILED(endpoint->OpenPropertyStore(STGM_READ, store.put())))
+    {
+        return MicrophoneBridgeRole::Detached;
+    }
+
+    PROPVARIANT value;
+    PropVariantInit(&value);
+    const HRESULT hr = store->GetValue(kAudioEndpointAssociation, &value);
+    MicrophoneBridgeRole role = MicrophoneBridgeRole::Detached;
+    GUID association = GUID_NULL;
+    bool hasAssociation = false;
+    if (SUCCEEDED(hr) && value.vt == VT_CLSID && value.puuid != nullptr)
+    {
+        association = *value.puuid;
+        hasAssociation = true;
+    }
+    else if (SUCCEEDED(hr) && value.vt == VT_LPWSTR && value.pwszVal != nullptr)
+    {
+        hasAssociation = SUCCEEDED(CLSIDFromString(value.pwszVal, &association));
+    }
+    if (hasAssociation)
+    {
+        if (IsEqualGUID(association, kCapyIoMicrophoneIngressCategory))
+        {
+            role = MicrophoneBridgeRole::IngressProducer;
+        }
+        else if (IsEqualGUID(association, kMicrophoneCategory))
+        {
+            role = MicrophoneBridgeRole::CaptureConsumer;
+        }
+    }
+    PropVariantClear(&value);
+    return role;
+}
+}
+
 
 // Static declaration of the APO_REG_PROPERTIES structure
 // associated with this APO.  The number in <> brackets is the
@@ -120,23 +176,48 @@ STDMETHODIMP_(void) CSwapAPOSFX::APOProcess(
                               GetSamplesPerFrame() );
             }
 
+            const UINT32 frameCount = ppInputConnections[0]->u32ValidFrameCount;
+            if (m_microphoneBridgeRole == MicrophoneBridgeRole::CaptureConsumer)
+            {
+                const std::uint32_t copied = m_captureConsumer.TryRead(
+                    pf32OutputFrames,
+                    frameCount);
+                ppOutputConnections[0]->u32BufferFlags =
+                    copied == 0 ? BUFFER_SILENT : BUFFER_VALID;
+                ppOutputConnections[0]->u32ValidFrameCount = frameCount;
+                break;
+            }
+
+            if (m_microphoneBridgeRole == MicrophoneBridgeRole::IngressProducer &&
+                ppInputConnections[0]->u32BufferFlags == BUFFER_VALID)
+            {
+                m_captureProducer.TryWrite(
+                    pf32InputFrames,
+                    frameCount,
+                    GetSamplesPerFrame());
+            }
+
             // The producer performs one bounded copy into pre-mapped shared
             // memory. Ring absence/full/oversize degrades to a silent drop and
             // never blocks the Windows audio-engine callback.
-            m_renderRing.TryWrite(
-                pf32InputFrames,
-                ppInputConnections[0]->u32ValidFrameCount,
-                GetSamplesPerFrame(),
-                InterlockedCompareExchange(&m_endpointGainMillion, 0, 0));
+            if (m_microphoneBridgeRole == MicrophoneBridgeRole::Detached)
+            {
+                m_renderRing.TryWrite(
+                    pf32InputFrames,
+                    frameCount,
+                    GetSamplesPerFrame(),
+                    InterlockedCompareExchange(&m_endpointGainMillion, 0, 0));
+            }
 
             // swap the input buffer in-place
             if (
+                m_microphoneBridgeRole == MicrophoneBridgeRole::Detached &&
                 !IsEqualGUID(m_AudioProcessingMode, AUDIO_SIGNALPROCESSINGMODE_RAW) &&
                 m_fEnableSwapSFX
             )
             {
                 ProcessSwap(pf32InputFrames, pf32InputFrames,
-                            ppInputConnections[0]->u32ValidFrameCount,
+                            frameCount,
                             m_u32SamplesPerFrame);
             }
 
@@ -145,7 +226,7 @@ STDMETHODIMP_(void) CSwapAPOSFX::APOProcess(
                   (ppOutputConnections[0]->pBuffer != ppInputConnections[0]->pBuffer) )
             {
                 CopyFrames( pf32OutputFrames, pf32InputFrames,
-                            ppInputConnections[0]->u32ValidFrameCount,
+                            frameCount,
                             GetSamplesPerFrame() );
             }
 
@@ -153,7 +234,7 @@ STDMETHODIMP_(void) CSwapAPOSFX::APOProcess(
             ppOutputConnections[0]->u32BufferFlags = ppInputConnections[0]->u32BufferFlags;
 
             // Set the valid frame count.
-            ppOutputConnections[0]->u32ValidFrameCount = ppInputConnections[0]->u32ValidFrameCount;
+            ppOutputConnections[0]->u32ValidFrameCount = frameCount;
 
             break;
         }
@@ -217,8 +298,57 @@ STDMETHODIMP CSwapAPOSFX::LockForProcess(UINT32 u32NumInputConnections,
     UINT32 u32NumOutputConnections, APO_CONNECTION_DESCRIPTOR** ppOutputConnections)
 {
     ASSERT_NONREALTIME();
+    capyio::capture_ring::RecordDiagnostic(500, S_OK);
     HRESULT hr = S_OK;
     UNCOMPRESSEDAUDIOFORMAT inputFormat = {};
+
+    // The capture consumer replaces the synthetic SysVAD input with frames
+    // from the shared microphone ring. CBaseAudioProcessingObject assumes an
+    // in-place DSP and rejects graphs whose driver-side and engine-side sample
+    // containers differ, even though this APO never consumes the former. Keep
+    // this exception restricted to the fixed mono 48 kHz capture contract.
+    if (m_microphoneBridgeRole == MicrophoneBridgeRole::Detached &&
+        u32NumOutputConnections == 1 &&
+        ppOutputConnections != nullptr &&
+        ppOutputConnections[0] != nullptr &&
+        ppOutputConnections[0]->pFormat != nullptr)
+    {
+        UNCOMPRESSEDAUDIOFORMAT candidateOutput = {};
+        if (SUCCEEDED(ppOutputConnections[0]->pFormat->GetUncompressedAudioFormat(
+                &candidateOutput)) &&
+            candidateOutput.dwSamplesPerFrame == capyio::capture_ring::kChannels &&
+            static_cast<std::uint32_t>(candidateOutput.fFramesPerSecond) ==
+                capyio::capture_ring::kSampleRate)
+        {
+            m_microphoneBridgeRole = MicrophoneBridgeRole::CaptureConsumer;
+        }
+    }
+    if (m_microphoneBridgeRole == MicrophoneBridgeRole::CaptureConsumer)
+    {
+        UNCOMPRESSEDAUDIOFORMAT outputFormat = {};
+        RETURN_HR_IF(E_INVALIDARG,
+                     m_bIsLocked ||
+                     u32NumInputConnections != 1 ||
+                     u32NumOutputConnections != 1 ||
+                     ppInputConnections == nullptr ||
+                     ppOutputConnections == nullptr ||
+                     ppInputConnections[0] == nullptr ||
+                     ppOutputConnections[0] == nullptr ||
+                     ppOutputConnections[0]->pFormat == nullptr);
+        RETURN_IF_FAILED(
+            ppOutputConnections[0]->pFormat->GetUncompressedAudioFormat(&outputFormat));
+        RETURN_HR_IF(APOERR_INVALID_CONNECTION_FORMAT,
+                     outputFormat.dwSamplesPerFrame != capyio::capture_ring::kChannels ||
+                     static_cast<std::uint32_t>(outputFormat.fFramesPerSecond) !=
+                         capyio::capture_ring::kSampleRate);
+
+        m_u32SamplesPerFrame = outputFormat.dwSamplesPerFrame;
+        m_bIsLocked = true;
+        m_captureConsumer.Attach(
+            static_cast<std::uint32_t>(outputFormat.fFramesPerSecond),
+            outputFormat.dwSamplesPerFrame);
+        return S_OK;
+    }
 
     hr = CBaseAudioProcessingObject::LockForProcess(u32NumInputConnections,
         ppInputConnections, u32NumOutputConnections, ppOutputConnections);
@@ -227,7 +357,8 @@ STDMETHODIMP CSwapAPOSFX::LockForProcess(UINT32 u32NumInputConnections,
     // Keep the callback lifetime bounded to the streaming lock. Registering
     // adds a COM reference to this APO, so unregistering in the destructor
     // would create the reference cycle documented by EndpointVolume.
-    if (m_endpointVolume != nullptr && !m_bRegisteredEndpointVolumeCallback)
+    if (m_microphoneBridgeRole == MicrophoneBridgeRole::Detached &&
+        m_endpointVolume != nullptr && !m_bRegisteredEndpointVolumeCallback)
     {
         if (SUCCEEDED(m_endpointVolume->RegisterControlChangeNotify(this)))
         {
@@ -253,9 +384,24 @@ STDMETHODIMP CSwapAPOSFX::LockForProcess(UINT32 u32NumInputConnections,
     // open/validation work is deliberately outside APOProcess.
     if (SUCCEEDED(ppInputConnections[0]->pFormat->GetUncompressedAudioFormat(&inputFormat)))
     {
-        m_renderRing.Attach(
-            static_cast<std::uint32_t>(inputFormat.fFramesPerSecond),
-            inputFormat.dwSamplesPerFrame);
+        if (m_microphoneBridgeRole == MicrophoneBridgeRole::CaptureConsumer)
+        {
+            m_captureConsumer.Attach(
+                static_cast<std::uint32_t>(inputFormat.fFramesPerSecond),
+                inputFormat.dwSamplesPerFrame);
+        }
+        else if (m_microphoneBridgeRole == MicrophoneBridgeRole::IngressProducer)
+        {
+            m_captureProducer.Attach(
+                static_cast<std::uint32_t>(inputFormat.fFramesPerSecond),
+                inputFormat.dwSamplesPerFrame);
+        }
+        else
+        {
+            m_renderRing.Attach(
+                static_cast<std::uint32_t>(inputFormat.fFramesPerSecond),
+                inputFormat.dwSamplesPerFrame);
+        }
     }
 
 Exit:
@@ -265,13 +411,60 @@ Exit:
 STDMETHODIMP CSwapAPOSFX::UnlockForProcess()
 {
     ASSERT_NONREALTIME();
+    if (m_microphoneBridgeRole == MicrophoneBridgeRole::CaptureConsumer)
+    {
+        m_captureConsumer.Detach();
+        m_bIsLocked = false;
+        m_u32SamplesPerFrame = 0;
+        return S_OK;
+    }
     if (m_bRegisteredEndpointVolumeCallback && m_endpointVolume != nullptr)
     {
         m_endpointVolume->UnregisterControlChangeNotify(this);
         m_bRegisteredEndpointVolumeCallback = FALSE;
     }
     m_renderRing.Detach();
+    m_captureProducer.Detach();
+    m_captureConsumer.Detach();
     return CBaseAudioProcessingObject::UnlockForProcess();
+}
+
+STDMETHODIMP CSwapAPOSFX::IsOutputFormatSupported(
+    IAudioMediaType* pInputFormat,
+    IAudioMediaType* pRequestedOutputFormat,
+    IAudioMediaType** ppSupportedOutputFormat)
+{
+    capyio::capture_ring::RecordDiagnostic(400, S_OK);
+    RETURN_HR_IF(E_POINTER,
+                 pRequestedOutputFormat == nullptr ||
+                 ppSupportedOutputFormat == nullptr);
+    *ppSupportedOutputFormat = nullptr;
+
+    // A capture MFX sits between the driver's fixed 16-bit PCM device format
+    // and the Audio Engine's 32-bit float mix format. The base APO helper only
+    // accepts an in-place format pair and therefore rejects this valid graph
+    // before LockForProcess. CapyIO replaces the synthetic driver frames, so
+    // accept only the project's fixed mono 48 kHz engine-side contract here.
+    UNCOMPRESSEDAUDIOFORMAT outputFormat = {};
+    if ((m_microphoneBridgeRole == MicrophoneBridgeRole::CaptureConsumer ||
+         m_microphoneBridgeRole == MicrophoneBridgeRole::Detached) &&
+        SUCCEEDED(pRequestedOutputFormat->GetUncompressedAudioFormat(&outputFormat)) &&
+        outputFormat.dwSamplesPerFrame == capyio::capture_ring::kChannels &&
+        static_cast<std::uint32_t>(outputFormat.fFramesPerSecond) ==
+            capyio::capture_ring::kSampleRate)
+    {
+        *ppSupportedOutputFormat = pRequestedOutputFormat;
+        (*ppSupportedOutputFormat)->AddRef();
+        capyio::capture_ring::RecordDiagnostic(401, S_OK);
+        return S_OK;
+    }
+
+    const HRESULT hr = CBaseAudioProcessingObject::IsOutputFormatSupported(
+        pInputFormat,
+        pRequestedOutputFormat,
+        ppSupportedOutputFormat);
+    capyio::capture_ring::RecordDiagnostic(402, hr);
+    return hr;
 }
 
 // The method that this long comment refers to is "Initialize()"
@@ -338,6 +531,7 @@ STDMETHODIMP CSwapAPOSFX::UnlockForProcess()
 
 HRESULT CSwapAPOSFX::Initialize(UINT32 cbDataSize, BYTE* pbyData)
 {
+    capyio::capture_ring::RecordDiagnostic(300, static_cast<LONG>(cbDataSize));
     GUID processingMode = GUID_NULL;
     IMMDeviceCollection* deviceCollection = nullptr;
 
@@ -361,33 +555,58 @@ HRESULT CSwapAPOSFX::Initialize(UINT32 cbDataSize, BYTE* pbyData)
     }
     else
     {
+        capyio::capture_ring::RecordDiagnostic(301, E_INVALIDARG);
         return E_INVALIDARG;
     }
 
     // Validate then save the processing mode. The bridge is registered as a
     // post-mix mode effect; retain GUID_NULL for compatibility with older
     // system-effects initialization data.
-    RETURN_HR_IF(E_INVALIDARG,
-                 processingMode != GUID_NULL                                 &&
-                 processingMode != AUDIO_SIGNALPROCESSINGMODE_DEFAULT        &&
-                 processingMode != AUDIO_SIGNALPROCESSINGMODE_RAW            &&
-                 processingMode != AUDIO_SIGNALPROCESSINGMODE_COMMUNICATIONS &&
-                 processingMode != AUDIO_SIGNALPROCESSINGMODE_SPEECH         &&
-                 processingMode != AUDIO_SIGNALPROCESSINGMODE_MEDIA          &&
-                 processingMode != AUDIO_SIGNALPROCESSINGMODE_MOVIE          &&
-                 processingMode != AUDIO_SIGNALPROCESSINGMODE_NOTIFICATION);
+    if (processingMode != GUID_NULL                                 &&
+        processingMode != AUDIO_SIGNALPROCESSINGMODE_DEFAULT        &&
+        processingMode != AUDIO_SIGNALPROCESSINGMODE_RAW            &&
+        processingMode != AUDIO_SIGNALPROCESSINGMODE_COMMUNICATIONS &&
+        processingMode != AUDIO_SIGNALPROCESSINGMODE_SPEECH         &&
+        processingMode != AUDIO_SIGNALPROCESSINGMODE_MEDIA          &&
+        processingMode != AUDIO_SIGNALPROCESSINGMODE_MOVIE          &&
+        processingMode != AUDIO_SIGNALPROCESSINGMODE_NOTIFICATION)
+    {
+        capyio::capture_ring::RecordDiagnostic(302, E_INVALIDARG);
+        return E_INVALIDARG;
+    }
     m_AudioProcessingMode = processingMode;
 
-    // Windows supplies the endpoint as the final item for SystemEffects2/3.
-    // Cache it outside the real-time path for endpoint-volume notifications.
-    // Failure leaves the bridge at unity gain instead of breaking playback.
+    // SystemEffects2/3 collections may contain both topology and endpoint
+    // devices. Find the item that actually exposes the endpoint Association;
+    // retain the final item only as the speaker-volume fallback.
     if (deviceCollection != nullptr)
     {
         UINT32 deviceCount = 0;
-        if (SUCCEEDED(deviceCollection->GetCount(&deviceCount)) && deviceCount > 0 &&
-            SUCCEEDED(deviceCollection->Item(deviceCount - 1, &m_audioEndpoint)))
+        if (SUCCEEDED(deviceCollection->GetCount(&deviceCount)) && deviceCount > 0)
         {
-            if (SUCCEEDED(m_audioEndpoint->Activate(
+            for (UINT32 index = 0; index < deviceCount; ++index)
+            {
+                wil::com_ptr_nothrow<IMMDevice> candidate;
+                if (FAILED(deviceCollection->Item(index, candidate.put())))
+                {
+                    continue;
+                }
+                const MicrophoneBridgeRole candidateRole =
+                    GetMicrophoneBridgeRole(candidate.get());
+                if (candidateRole != MicrophoneBridgeRole::Detached)
+                {
+                    m_audioEndpoint = candidate;
+                    m_microphoneBridgeRole = candidateRole;
+                    break;
+                }
+                if (index == deviceCount - 1)
+                {
+                    m_audioEndpoint = candidate;
+                }
+            }
+            if (m_microphoneBridgeRole == MicrophoneBridgeRole::Detached &&
+                m_audioEndpoint != nullptr &&
+                SUCCEEDED(m_audioEndpoint->Activate(
                     __uuidof(IAudioEndpointVolume),
                     CLSCTX_ALL,
                     nullptr,
@@ -415,6 +634,9 @@ HRESULT CSwapAPOSFX::Initialize(UINT32 cbDataSize, BYTE* pbyData)
     m_effectInfos[0] = { SwapEffectId, FALSE, AUDIO_SYSTEMEFFECT_STATE_ON };
 
     m_bIsInitialized = true;
+    capyio::capture_ring::RecordDiagnostic(
+        305,
+        static_cast<LONG>(m_microphoneBridgeRole));
     return S_OK;
 }
 
@@ -701,7 +923,8 @@ HRESULT CSwapAPOSFX::GetApoNotificationRegistrationInfo(_Out_writes_(*count) APO
 
     // Legacy initialization has no endpoint collection. Keep a valid empty
     // registration in that case; the render bridge remains at unity gain.
-    if (m_audioEndpoint == nullptr)
+    if (m_audioEndpoint == nullptr ||
+        m_microphoneBridgeRole != MicrophoneBridgeRole::Detached)
     {
         return S_OK;
     }

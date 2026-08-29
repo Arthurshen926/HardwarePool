@@ -1,0 +1,14 @@
+[package]
+name = "capyio-micyou-host-config"
+description = "Trusted host-only configuration for the CapyIO MicYou process boundary."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish = false
+
+[dependencies]
+capyio-micyou-adapter = { path = "../../../adapters/micyou" }
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true

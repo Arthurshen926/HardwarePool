@@ -149,7 +149,7 @@ export class BrowserMockCapyIOApi implements CapyIOApi {
   }
 
   async getQuickActions(): Promise<UiQuickAction[]> {
-    return [unsupportedAudioQuickAction()];
+    return [unsupportedAudioQuickAction(), unsupportedMicrophoneQuickAction()];
   }
 
   async invokeQuickAction(_actionId: string, _operation: QuickActionOperation): Promise<UiQuickAction> {
@@ -181,7 +181,7 @@ export class BrowserMockCapyIOApi implements CapyIOApi {
 
 function unsupportedAudioQuickAction(): UiQuickAction {
   return {
-    schemaVersion: 1,
+    schemaVersion: 2,
     id: "capyio.quick-action.remote-speaker",
     kind: "route_control",
     title: "将电脑声音镜像到手机",
@@ -193,8 +193,29 @@ function unsupportedAudioQuickAction(): UiQuickAction {
     routeEpoch: null,
     availableOperations: [],
     evidenceLevel: "not_started",
+    connectionHint: null,
     problemCode: "CAPY.UI.BROWSER_MOCK",
     problem: "请使用配置了 Audio Share 的 Tauri 桌面宿主。",
+  };
+}
+
+function unsupportedMicrophoneQuickAction(): UiQuickAction {
+  return {
+    schemaVersion: 2,
+    id: "capyio.quick-action.remote-microphone",
+    kind: "route_control",
+    title: "将手机麦克风用作电脑麦克风",
+    summary: "Android 麦克风 → CapyIO Microphone · Browser Mock 不启动外部进程",
+    status: "blocked",
+    simulated: true,
+    routeId: null,
+    routeState: null,
+    routeEpoch: null,
+    availableOperations: [],
+    evidenceLevel: "not_started",
+    connectionHint: null,
+    problemCode: "CAPY.UI.BROWSER_MOCK",
+    problem: "请使用配置了 MicYou 的 Tauri 桌面宿主。",
   };
 }
 

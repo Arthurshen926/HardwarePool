@@ -127,6 +127,21 @@ The product has two experiences:
 - **FR-DIAG-004**: Logs never contain raw microphone/video payloads, credentials,
   private keys or unrelated personal data by default.
 
+### Shared audio media contracts
+
+- **FR-AUDIO-001**: Microphone and speaker Routes use the same direction-neutral
+  audio stream specification, frame timing, bounded QoS policy and metrics
+  vocabulary without gaining a global Node audio role.
+- **FR-AUDIO-002**: Every audio Route selects one complete mutually advertised
+  stream candidate; format, encoding, processing or QoS is never silently
+  converted or downgraded without an explicit Converter.
+- **FR-AUDIO-003**: Voice-interactive, balanced-media and lossless-music policy
+  remain distinct. Voice processing is opt-in and is never silently applied to
+  media or lossless-music playback.
+- **FR-AUDIO-004**: Opposite-direction microphone and speaker Routes keep
+  independent authorization and lifecycle even when associated for an AEC
+  reference.
+
 ## 4. Protocol and control requirements
 
 - **FR-PROTO-001**: Node-to-node control uses an explicit major/minor version and

@@ -110,6 +110,11 @@ use explicit conversions.
 Android, Windows, Linux, macOS and iOS translate Runtime operations to platform
 permissions, lifecycle and APIs. Mobile platforms may require in-process work;
 desktop platforms prefer Sidecars for large or failure-prone components.
+The Windows `capyio-process-presence` helper confines bounded owner-PID TCP
+table FFI behind a safe count-only API. It never enters Core or Runtime and does
+not expose peer addresses. The Windows `capyio-micyou-host-config` boundary
+loads only a complete development override or a schema-versioned file below a
+fixed user-local CapyIO path. It is not a WebView filesystem API.
 
 ### UI
 
@@ -123,7 +128,7 @@ power.
 capyio-core
    ^
    +--- capyio-data-plane
-   +--- capyio-audio
+   +--- capyio-audio (shared direction-neutral audio contracts/algorithms)
    +--- capyio-protocol
    +--- capyio-runtime
    +--- capyio-adapter-sdk
@@ -142,7 +147,18 @@ capyio-data-plane
    +--- SensorServer protocol Adapter (bounded mapping; transport separate)
 
 Audio Share process Adapter
-   +--- pinned external as-cmd process (AdapterManaged TCP/UDP PCM)
+   +--- common selected Speaker stream specification and metrics
+   +--- pinned private AdapterManaged TCP/UDP PCM binding
+
+MicYou process Adapter
+   +--- common selected voice-interactive stream specification and metrics
+   +--- pinned private AdapterManaged TCP/UDP microphone binding
+
+capyio-process-presence
+   +--- bounded Windows process-owned TCP observation for platform hosts
+
+capyio-micyou-host-config
+   +--- fixed-path trusted MicYou launch configuration and provisioning CLI
 ```
 
 Dependency rules:
@@ -154,6 +170,15 @@ Dependency rules:
 - Adapter Host owns process I/O and does not enter Core.
 - Profile-specific Adapters may depend on `capyio-data-plane`; the data-plane
   crate never depends on an Adapter or concrete transport.
+- `capyio-audio` defines complete selected audio candidates, bounded QoS
+  policies, decoded frames, worker-thread reordering/clock estimates and common
+  metrics for both microphone and speaker Routes. It does not define a global
+  audio Source/Sink role, open sockets, access platform audio APIs, run codecs
+  or select a production transport.
+- Initial audio negotiation selects the first Source-preferred complete
+  candidate also advertised by the Sink. It never silently resamples, changes
+  encoding, enables processing or rewrites QoS; a later Converter must make any
+  such operation explicit.
 - The Audio Share Adapter validates and supervises a pinned external executable;
   its TCP/UDP PCM contract does not become a Core, Protocol or StandardPort
   dependency.
@@ -161,9 +186,10 @@ Dependency rules:
   default format. Its `AdapterManaged` Route therefore advertises an explicit
   private-negotiated format rather than claiming the requested sample format as
   an observed result.
-- Its initial Windows host may observe process-owned established TCP state via
-  IP Helper. That platform signal is transport presence only and never imports
-  peer addresses, Windows structs or lifecycle decisions into Core.
+- Initial Windows audio hosts may observe process-owned established TCP state
+  through the ADR 0038 platform helper. That signal is transport presence only
+  and never imports peer addresses, Windows structs or lifecycle decisions into
+  Core, Runtime or either Adapter.
 - The desktop composition layer maps that bounded process signal onto one
   Runtime-owned `AdapterManaged` Route. Consecutive receiver observations are
   required before activation; receiver loss and child exit submit typed
@@ -172,8 +198,11 @@ Dependency rules:
   effect.
 - The versioned Quick Action projection exposes only a stable action ID,
   lifecycle state, evidence label and finite start/retry/stop operations. The
-  executable path, endpoint ID and bind address remain trusted host
-  configuration. A host-owned worker polls independently of the WebView. A
+  executable path and endpoint ID remain trusted host configuration. A complete
+  environment override is accepted for development; otherwise the host reads a
+  deny-unknown-fields schema-v1 file at its fixed user-local path. MicYou may
+  show its validated bind IP/port only as phone connection guidance. A
+  host-owned worker polls independently of the WebView. A
   bounded number of receiver-wait polls transitions a stuck start to a typed,
   retryable `Offline` Problem and reaps the external process.
 - Every Audio Share start re-probes the pinned CLI and current endpoint
@@ -181,6 +210,19 @@ Dependency rules:
   audio-service re-enumeration maps to a sanitized, retryable
   `CAPY.AUDIO_SHARE.ENDPOINT_UNAVAILABLE` Problem; raw endpoint IDs remain
   trusted host configuration and do not enter the WebView DTO.
+- The MicYou desktop composition registers an Android microphone Source and a
+  Windows `CapyIO Microphone` Sink as an independent `AdapterManaged` Route.
+  Listener readiness leaves it `Starting`; consecutive process-owned phone TCP
+  observations activate it. Active peer loss stops and reaps the receiver
+  before reporting `Offline`, while bounded initial connection wait and
+  explicit retry use typed Problems and fresh epochs without mutating Speaker
+  or IMU Routes. The capture ring may drain only its bounded already committed
+  frames before exact silence. TCP presence is not recorded as PCM evidence.
+- The MicYou host configuration CLI probes the separately supplied executable,
+  selects an explicit stable endpoint ID and derives its expected name before
+  writing a new file. It never persists a device index and never silently
+  overwrites existing configuration. Every actual start still re-probes the
+  external process and freshly resolves ID to the current index.
 - The desktop may project the freshly enumerated endpoint display names through
   short-lived opaque selection tokens. Only tokens in the host-owned current
   generation map back to endpoint IDs; refresh and successful selection
@@ -250,6 +292,11 @@ are independent. Clock recovery and resampling remain in user mode.
 Real-time callbacks use fixed-capacity/preallocated structures. They do not
 block, wait on contended locks, allocate without bounds, log normally, parse
 JSON/Protobuf, call UI code, or perform network/file I/O.
+
+ADR 0035 applies one media contract to both audio directions while ADR 0004
+keeps microphone and speaker as independent Routes. A future duplex association
+may expose a render reference to a capture-side AEC implementation, but it does
+not merge permissions, stop state or failure state.
 
 ## 10. Platform projection strategy
 

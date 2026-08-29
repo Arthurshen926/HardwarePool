@@ -28,9 +28,12 @@ use serde::{Deserialize, Serialize};
 use tauri::State;
 
 pub mod audio_share_runtime;
+mod microphone_quick_action;
+pub mod micyou_runtime;
 mod physical_imu_runtime;
 mod quick_actions;
 
+use microphone_quick_action::{MICYOU_ACTION_ID, MicrophoneQuickAction};
 use physical_imu_runtime::PhysicalImuRoute;
 use quick_actions::{
     AudioShareQuickAction, InvokeQuickActionRequest, SelectAudioEndpointRequest,
@@ -43,6 +46,7 @@ struct AppState {
     live_imu: Arc<Mutex<UiLiveImu>>,
     live_imu_controller: Mutex<Option<LiveImuController>>,
     audio_share: Arc<Mutex<AudioShareQuickAction>>,
+    microphone: Arc<Mutex<MicrophoneQuickAction>>,
     audio_worker: AudioQuickActionWorker,
 }
 
@@ -62,6 +66,11 @@ impl Drop for AppState {
             && let Ok(mut lab) = self.lab.lock()
         {
             audio_share.shutdown(&mut lab.runtime);
+        }
+        if let Ok(mut microphone) = self.microphone.lock()
+            && let Ok(mut lab) = self.lab.lock()
+        {
+            microphone.shutdown(&mut lab.runtime);
         }
     }
 }
@@ -269,6 +278,16 @@ fn set_route(request: SetRouteRequest, state: State<'_, AppState>) -> Result<UiS
             "use the versioned Quick Action to control the physical speaker Route".to_owned(),
         );
     }
+    if state
+        .microphone
+        .lock()
+        .map_err(|_| "MicYou state lock poisoned")?
+        .owns_route(route_id)
+    {
+        return Err(
+            "use the versioned Quick Action to control the physical microphone Route".to_owned(),
+        );
+    }
     let mut lab = state.lab.lock().map_err(|_| "demo state lock poisoned")?;
     lab.set_route_active(route_id, request.active, unix_time_ms()?)
         .map_err(|error| error.to_string())?;
@@ -288,6 +307,16 @@ fn reset_demo(state: State<'_, AppState>) -> Result<UiSnapshot, String> {
         );
     }
     if state
+        .microphone
+        .lock()
+        .map_err(|_| "MicYou state lock poisoned")?
+        .is_configured()
+    {
+        return Err(
+            "restart the desktop host to reset a configured physical microphone Route".to_owned(),
+        );
+    }
+    if state
         .live_imu_controller
         .lock()
         .map_err(|_| "live IMU controller lock poisoned")?
@@ -304,12 +333,23 @@ fn reset_demo(state: State<'_, AppState>) -> Result<UiSnapshot, String> {
 
 #[tauri::command]
 fn get_quick_actions(state: State<'_, AppState>) -> Result<Vec<UiQuickAction>, String> {
-    let audio_share = state
-        .audio_share
-        .lock()
-        .map_err(|_| "Audio Share state lock poisoned")?;
-    let lab = state.lab.lock().map_err(|_| "demo state lock poisoned")?;
-    Ok(vec![audio_share.dto(&lab.runtime)?])
+    let speaker = {
+        let audio_share = state
+            .audio_share
+            .lock()
+            .map_err(|_| "Audio Share state lock poisoned")?;
+        let lab = state.lab.lock().map_err(|_| "demo state lock poisoned")?;
+        audio_share.dto(&lab.runtime)?
+    };
+    let microphone = {
+        let microphone = state
+            .microphone
+            .lock()
+            .map_err(|_| "MicYou state lock poisoned")?;
+        let lab = state.lab.lock().map_err(|_| "demo state lock poisoned")?;
+        microphone.dto(&lab.runtime)?
+    };
+    Ok(vec![speaker, microphone])
 }
 
 #[tauri::command]
@@ -317,12 +357,21 @@ fn invoke_quick_action(
     request: InvokeQuickActionRequest,
     state: State<'_, AppState>,
 ) -> Result<UiQuickAction, String> {
-    let mut audio_share = state
-        .audio_share
-        .lock()
-        .map_err(|_| "Audio Share state lock poisoned")?;
-    let mut lab = state.lab.lock().map_err(|_| "demo state lock poisoned")?;
-    audio_share.invoke(&mut lab.runtime, request, unix_time_ms()?)
+    if request.action_id == MICYOU_ACTION_ID {
+        let mut microphone = state
+            .microphone
+            .lock()
+            .map_err(|_| "MicYou state lock poisoned")?;
+        let mut lab = state.lab.lock().map_err(|_| "demo state lock poisoned")?;
+        microphone.invoke(&mut lab.runtime, request, unix_time_ms()?)
+    } else {
+        let mut audio_share = state
+            .audio_share
+            .lock()
+            .map_err(|_| "Audio Share state lock poisoned")?;
+        let mut lab = state.lab.lock().map_err(|_| "demo state lock poisoned")?;
+        audio_share.invoke(&mut lab.runtime, request, unix_time_ms()?)
+    }
 }
 
 #[tauri::command]
@@ -666,10 +715,15 @@ pub fn run() {
         &mut lab.runtime,
         session_id,
     )));
+    let microphone = Arc::new(Mutex::new(MicrophoneQuickAction::install(
+        &mut lab.runtime,
+        session_id,
+    )));
     let lab = Arc::new(Mutex::new(lab));
     let audio_stop = Arc::new(AtomicBool::new(false));
     let worker_stop = Arc::clone(&audio_stop);
     let worker_audio_share = Arc::clone(&audio_share);
+    let worker_microphone = Arc::clone(&microphone);
     let worker_lab = Arc::clone(&lab);
     let audio_worker = thread::spawn(move || {
         while !worker_stop.load(Ordering::Acquire) {
@@ -677,6 +731,10 @@ pub fn run() {
                 (worker_audio_share.lock(), worker_lab.lock())
             {
                 audio_share.poll(&mut lab.runtime);
+            }
+            if let (Ok(mut microphone), Ok(mut lab)) = (worker_microphone.lock(), worker_lab.lock())
+            {
+                microphone.poll(&mut lab.runtime);
             }
             thread::sleep(Duration::from_millis(250));
         }
@@ -688,6 +746,7 @@ pub fn run() {
             live_imu: Arc::new(Mutex::new(live_imu)),
             live_imu_controller: Mutex::new(None),
             audio_share,
+            microphone,
             audio_worker: AudioQuickActionWorker {
                 stop: audio_stop,
                 worker: Some(audio_worker),

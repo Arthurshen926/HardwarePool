@@ -290,6 +290,7 @@
     <ClCompile Include="..\kshelper.cpp" />
     <ClCompile Include="..\savedata.cpp" />
     <ClCompile Include="..\tonegenerator.cpp" />
+    <ClCompile Include="micintopo.cpp" />
     <ResourceCompile Include="TabletAudioSample.rc" />
   </ItemGroup>
   <ItemGroup>
@@ -298,7 +299,10 @@
     </ProjectReference>
   </ItemGroup>
   <ItemGroup>
-    <Inf Exclude="@(Inx)" Include="*.inx" />
+    <Inf Exclude="@(Inx)" Include="*.inx">
+      <DateStamp>08/29/2026</DateStamp>
+    <TimeStamp>21.82.0.1</TimeStamp>
+    </Inf>
     <FilesToPackage Include="$(TargetPath)" Condition="'$(ConfigurationType)'=='Driver' or '$(ConfigurationType)'=='DynamicLibrary'" />
   </ItemGroup>
   <ItemGroup>

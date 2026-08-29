@@ -329,6 +329,7 @@ name = "capyio-audio-share-adapter"
 version = "0.1.0"
 dependencies = [
  "capyio-audio",
+ "capyio-process-presence",
  "prost",
  "thiserror 2.0.20",
  "windows-sys 0.61.2",
@@ -361,6 +362,8 @@ dependencies = [
  "capyio-audio-share-adapter",
  "capyio-core",
  "capyio-data-plane",
+ "capyio-micyou-adapter",
+ "capyio-micyou-host-config",
  "capyio-runtime",
  "capyio-sensor-server-adapter",
  "capyio-testkit",
@@ -370,6 +373,25 @@ dependencies = [
  "tauri",
  "tauri-build",
  "tungstenite",
+]
+
+[[package]]
+name = "capyio-micyou-adapter"
+version = "0.1.0"
+dependencies = [
+ "capyio-audio",
+ "capyio-process-presence",
+ "thiserror 2.0.20",
+]
+
+[[package]]
+name = "capyio-micyou-host-config"
+version = "0.1.0"
+dependencies = [
+ "capyio-micyou-adapter",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.20",
 ]
 
 [[package]]
@@ -404,6 +426,14 @@ dependencies = [
  "serde_json",
  "tracing",
  "tracing-subscriber",
+]
+
+[[package]]
+name = "capyio-process-presence"
+version = "0.1.0"
+dependencies = [
+ "thiserror 2.0.20",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]

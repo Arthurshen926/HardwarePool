@@ -18,6 +18,13 @@ const tone = computed(() => {
   return "neutral" as const;
 });
 
+const isMicrophoneAction = computed(
+  () => props.action.id === "capyio.quick-action.remote-microphone",
+);
+const isSpeakerAction = computed(
+  () => props.action.id === "capyio.quick-action.remote-speaker",
+);
+
 function operationLabel(operation: QuickActionOperation): string {
   if (operation === "retry") return "重试";
   if (operation === "stop") return "停止";
@@ -34,7 +41,7 @@ function chooseEndpoint(event: Event): void {
   <article class="capability-card quick-action-card" :aria-labelledby="`${action.id}-title`">
     <header class="capability-card__header">
       <div class="capability-card__identity">
-        <div class="capability-card__icon" aria-hidden="true">AUD</div>
+        <div class="capability-card__icon" aria-hidden="true">{{ action.id.includes("microphone") ? "MIC" : "AUD" }}</div>
         <div><p class="eyebrow">Quick Action schema v{{ action.schemaVersion }}</p><h3 :id="`${action.id}-title`">{{ action.title }}</h3></div>
       </div>
       <StatusPill :tone="tone" :label="action.status" />
@@ -43,8 +50,10 @@ function chooseEndpoint(event: Event): void {
     <dl class="capability-card__facts">
       <div><dt>Runtime</dt><dd>{{ action.routeState ?? "not installed" }}<template v-if="action.routeEpoch !== null"> · epoch {{ action.routeEpoch }}</template></dd></div>
       <div><dt>Evidence</dt><dd>{{ action.evidenceLevel }}</dd></div>
+      <div v-if="action.connectionHint"><dt>手机端</dt><dd>{{ action.connectionHint }}</dd></div>
+      <div v-if="isMicrophoneAction"><dt>Windows 端</dt><dd>在录音或会议应用中选择 CapyIO 麦克风输入；当前实验室驱动也可能显示为“麦克风 (CapyIO Speaker with Render Bridge)”。</dd></div>
     </dl>
-    <div v-if="audioEndpoints?.supported" class="audio-endpoint-picker">
+    <div v-if="isSpeakerAction && audioEndpoints?.supported" class="audio-endpoint-picker">
       <label :for="`${action.id}-endpoint`">Windows 播放设备（本次运行）</label>
       <div class="audio-endpoint-picker__controls">
         <select :id="`${action.id}-endpoint`" :value="audioEndpoints.choices.find((choice) => choice.selected)?.selectionToken ?? ''" :disabled="busy || !audioEndpoints.canSelect || audioEndpoints.choices.length === 0" @change="chooseEndpoint">

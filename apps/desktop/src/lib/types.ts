@@ -112,7 +112,7 @@ export interface UiLiveImu {
 export type QuickActionOperation = "start" | "retry" | "stop";
 
 export interface UiQuickAction {
-  schemaVersion: 1;
+  schemaVersion: 2;
   id: string;
   kind: "route_control";
   title: string;
@@ -123,7 +123,8 @@ export interface UiQuickAction {
   routeState: RouteState | null;
   routeEpoch: number | null;
   availableOperations: QuickActionOperation[];
-  evidenceLevel: "not_started" | "process_and_route_state" | "stable_tcp_receiver_presence";
+  evidenceLevel: "not_started" | "process_and_route_state" | "stable_tcp_receiver_presence" | "stable_phone_tcp_presence";
+  connectionHint: string | null;
   problemCode: string | null;
   problem: string | null;
 }

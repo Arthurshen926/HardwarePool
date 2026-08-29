@@ -1,0 +1,17 @@
+[package]
+name = "capyio-micyou-adapter"
+description = "Bounded MicYou v2.0.1 external-process adapter boundary."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish = false
+
+[dependencies]
+capyio-audio = { path = "../../crates/capyio-audio" }
+capyio-process-presence = { path = "../../platform/windows/process-presence" }
+thiserror.workspace = true
+
+[[bin]]
+name = "capyio-micyou-fixture"
+path = "src/bin/capyio-micyou-fixture.rs"

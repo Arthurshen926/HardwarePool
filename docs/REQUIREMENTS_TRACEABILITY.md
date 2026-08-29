@@ -38,7 +38,7 @@ hardware, networking, security or performance behavior has run.
 
 | Requirement ID | Status | Target Gate | Evidence or planned proof |
 |---|---|---|---|
-| `FR-SCEN-001` | planned | Gate 8 | MicYou phone microphone to desktop/system-microphone evidence. |
+| `FR-SCEN-001` | implemented | Gate 8 | Controlled-lab evidence in CAPY-MIC-001D/001E proves the paired endpoint foundation; CAPY-MIC-001H drives the trusted-configured Runtime Quick Action through ordinary-client non-zero PCM, bounded disconnect-to-exact-silence, fresh-process retry and stop. Release qualification remains. |
 | `FR-SCEN-002` | implemented | Gate 7 | Controlled-lab evidence: Gate 7A retains system-mix playback; Gate 7B proves a separately enumerated `CapyIO Speaker`, real post-mix PCM, Android playback, endpoint volume/mute and service-owned ordinary-user control. Release qualification, background/focus/performance and production security continue in `CAPY-AUDIO-001C`. |
 | `FR-SCEN-003` | planned | Gate 6 | Gamepad input plus independent reverse-haptics Routes. |
 | `FR-SCEN-004` | planned | Gate 9 | Camera preview and Windows virtual-camera evidence. |
@@ -84,6 +84,10 @@ hardware, networking, security or performance behavior has run.
 | `FR-DIAG-002` | verified | Gate 2 | Runtime tests assert bounded monotonic events; B3B projects Route state, epoch and Problem code to the Tauri DTO. |
 | `FR-DIAG-003` | verified | Gate 3 | Adapter Host tests exercise bounded/truncated stderr retention. |
 | `FR-DIAG-004` | verified | Gate 3 | Sidecar stdout/stderr separation tests and repository secret scanning; finite sample data stays test-only. |
+| `FR-AUDIO-001` | implemented | Gate 8 | ADR 0035 and shared-contract tests define the direction-neutral model; controlled-lab Speaker and MicYou microphone paths now provide two-direction physical evidence while retaining distinct media/voice policies. |
+| `FR-AUDIO-002` | planned | Gate 8 | Bounded exact-intersection tests reject implicit conversion; endpoint capability evidence remains. |
+| `FR-AUDIO-003` | planned | Gate 8 | Preset tests separate voice/media/music policy; real processing-chain evidence remains. |
+| `FR-AUDIO-004` | planned | Gate 8 | ADR 0004/0035 retain independent Routes; a physical duplex/AEC association remains later work. |
 | `FR-PROTO-001` | verified | Gate 2 | `capyio.v1` Envelope constants and binary round-trip/version tests. |
 | `FR-PROTO-002` | verified | Gate 2 | Reserved Protobuf ranges plus offline duplicate/reserved-field validation. |
 | `FR-PROTO-003` | planned | Gate 14 | Production control additions still need heartbeat and complete authorization semantics. |
@@ -92,7 +96,7 @@ hardware, networking, security or performance behavior has run.
 | `FR-PROTO-006` | verified | Gate 2 | Unknown/zero enum and unsupported-major tests in `capyio-protocol`. |
 | `FR-PROTO-007` | verified | Gate 3 | NDJSON codec and Sidecar smoke verify stdin/stdout control with stderr-only logs. |
 | `FR-UX-001` | verified | Gate 2 | Quick Actions present task-oriented Route cards without Adapter/Port details. |
-| `FR-UX-002` | planned | Gate 4 | Versioned Route Templates and permission/result status UX. |
+| `FR-UX-002` | planned | Gate 4 | Quick Action schema v2 projects independent Speaker/microphone Route actions, bounded status and trusted-host connection guidance; CAPY-MIC-001H physically validates the persisted microphone action without exposing host secrets. Reusable Route Templates and complete permission/result UX remain. |
 | `FR-UX-003` | planned | Gate 4 | Complete Workspace navigation for all required object families. |
 | `FR-UX-004` | planned | Gate 4 | Accessible list/card Route Builder implementation and tests. |
 | `FR-UX-005` | verified | Gate 2 | Browser/Tauri Mock share TypeScript DTOs and visibly label simulated mode/metrics. |
@@ -109,7 +113,7 @@ hardware, networking, security or performance behavior has run.
 | `NFR-SEC-003` | verified | Gate 1 | Architecture/driver boundary docs and offline Core/driver dependency rules. |
 | `NFR-SEC-004` | verified | Gate 2 | Narrow Tauri command surface/CSP and repository rule exclude shell/updater and arbitrary networking; the physical lab accepts only a typed IP literal and port. |
 | `NFR-SEC-005` | verified | Gate 1 | PRD, Security Model, Build Status and UI explicitly label the foundation insecure/mock. |
-| `NFR-STAB-001` | planned | Gate 8 | Real system-audio endpoint disconnect/restart evidence in an approved target. |
+| `NFR-STAB-001` | implemented | Gate 8 | Controlled-lab Speaker and microphone evidence covers receiver/phone disconnect, bounded drain to exact microphone silence, fresh-process retry, Broker/audio-service recovery and bounded endpoint failure without crashing Windows audio services; soak and release qualification remain. |
 | `NFR-STAB-002` | verified | Gate 3 | Bounded Runtime events, RPC messages/correlations, line readers and stderr retention tests. |
 | `NFR-STAB-003` | verified | Gate 3 | Catalog tests and B3B disconnect/retry tests invalidate failed epochs and require explicit recovery with a later epoch. |
 | `NFR-STAB-004` | verified | Gate 3 | Scoped Adapter failure, unrelated Route isolation and B3B explicit worker stop/join tests. |

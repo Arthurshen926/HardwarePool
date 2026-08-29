@@ -21,6 +21,8 @@ tauri-build = { version = "2.6.2", features = [] }
 capyio-audio-share-adapter = { path = "../../../adapters/audio-share" }
 capyio-core = { path = "../../../crates/capyio-core" }
 capyio-data-plane = { path = "../../../crates/capyio-data-plane" }
+capyio-micyou-adapter = { path = "../../../adapters/micyou" }
+capyio-micyou-host-config = { path = "../../../platform/windows/micyou-host-config" }
 capyio-runtime = { path = "../../../crates/capyio-runtime" }
 capyio-sensor-server-adapter = { path = "../../../adapters/sensor-server" }
 capyio-testkit = { path = "../../../crates/capyio-testkit" }

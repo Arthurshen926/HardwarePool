@@ -9,14 +9,13 @@ publish = false
 
 [dependencies]
 capyio-audio = { path = "../../crates/capyio-audio" }
+capyio-process-presence = { path = "../../platform/windows/process-presence" }
 prost.workspace = true
 thiserror.workspace = true
 
 [target.'cfg(windows)'.dependencies]
 windows-sys = { workspace = true, features = [
     "Win32_Foundation",
-    "Win32_NetworkManagement_IpHelper",
-    "Win32_Networking_WinSock",
     "Win32_Security",
     "Win32_Security_Authorization",
     "Win32_System_Memory",

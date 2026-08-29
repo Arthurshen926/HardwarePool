@@ -101,6 +101,31 @@ Implementation slices:
   physical activation plus explicit stop. Evidence is in
   `docs/CAPY_IMU_001B3B_REPORT.md`.
 
+## Completed audio foundation
+
+### CAPY-AUDIO-CORE-001 — Unified audio media contracts
+
+Goal: make the existing transport-neutral audio primitives the common contract
+for independent microphone and speaker Routes before beginning MicYou work.
+
+Completed: selected stream candidates, three initial QoS presets, processing
+requests, bounded exact negotiation, common metrics, Audio Share mapping,
+automated regression and an authorized physical Speaker regression. Concrete
+codecs/transports, MicYou import, 96 kHz claims and driver/APK changes remain
+out of scope. Evidence is in `docs/CAPY_AUDIO_CORE_001_REPORT.md`; the completed
+plan is `docs/plans/completed/0014-unified-audio-media-engine.md` and the
+architecture decision is ADR 0035.
+
+Follow-up `CAPY-MIC-000A` pinned/audited MicYou v2.0.1 and implemented the
+bounded external-process boundary under ADR 0036. `CAPY-MIC-001A..H` then added
+the paired private ingress and application-facing Windows capture endpoint,
+bounded capture ring/APOs, stable endpoint identity, Runtime-owned Quick Action,
+trusted host configuration and physical Android-to-Windows acceptance. An
+ordinary capture client received non-zero PCM, the project owner confirmed an
+eight-second recording was audible, disconnect returned to bounded exact
+silence and explicit retry created a fresh process/Route epoch. Release work is
+tracked separately in `docs/plans/active/0021-microphone-release-qualification.md`.
+
 ## Active product slice
 
 ### CAPY-AUDIO-000/001A — Audio Share remote-speaker spike and external Adapter
@@ -180,11 +205,29 @@ plan is `docs/plans/completed/0012-windows-virtual-speaker.md`. Signed installer
 qualification, production security and Android distribution continue separately
 in `docs/plans/active/0013-speaker-release-qualification.md`.
 
+## Completed microphone functional slice
+
+### CAPY-MIC-001/002 — Android microphone to Windows virtual microphone
+
+The controlled-lab functional slice is complete. The independent installed
+Windows capture endpoint receives bounded PCM from the private MicYou ingress;
+the desktop owns a typed Android Source to Windows Sink Route and exposes it as
+a trusted-configured Quick Action. Physical evidence covers ordinary-client
+PCM and audible recording, phone-loss `Offline`, bounded exact silence, fresh-
+process retry and terminal stop. Evidence is in `docs/CAPY_MIC_001H_REPORT.md`.
+
+This does not claim public distribution or release readiness. Installer,
+signing, clean-machine lifecycle, Android background/permission behavior,
+performance/soak, production security, service ownership and GPL distribution
+decisions continue in
+`docs/plans/active/0021-microphone-release-qualification.md`.
+
 ## Later small tasks
 
 - `CAPY-GAMEPAD-001`: DSU projection from recorded IMU fixture.
 - `CAPY-GAMEPAD-002`: VIIPER sidecar probe and license/build spike.
-- `CAPY-AUDIO-002`: MicYou AdapterManaged Android→Windows path.
+- `CAPY-MIC-003`: microphone release qualification and distributable product
+  boundary (plan 0021).
 - `CAPY-CAMERA-001`: VCamdroid sidecar catalog/probe spike.
 - `CAPY-UX-001`: versioned Quick Action template schema.
 - `CAPY-SEC-001`: authenticated control-channel design spike.

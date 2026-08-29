@@ -1,7 +1,8 @@
 # CapyIO
 
-> **Pre-alpha foundation. No real hardware Adapter, system virtual device or
-> production network path is connected yet.**
+> **Pre-alpha controlled lab. Real IMU, remote-speaker and remote-microphone
+> paths now exist, but installation, security and release qualification are not
+> complete.**
 
 **CapyIO — Cross-device I/O Capability Fabric**
 **CapyIO 跨设备 I/O 能力织网平台**
@@ -20,17 +21,23 @@ Routes, lifecycle and diagnostics.
 
 ## Current executable scope
 
-The repository currently provides deterministic foundation code only:
+The repository combines deterministic foundation code with three controlled-
+lab vertical slices:
 
 - pure Rust domain/runtime/protocol crates;
 - typed Port and independent Route lifecycle tests;
-- a browser/Tauri Mock UI with Quick Actions and Workspace views;
-- an Adapter manifest and local sidecar-control test path;
+- a browser Mock UI and a Tauri host with Quick Actions and Workspace views;
+- real Android IMU to Windows Panel/Recorder operation through SensorServer;
+- a dedicated Windows `CapyIO Speaker` path to an Android receiver;
+- an Android MicYou microphone path into a Windows virtual capture endpoint;
+- Adapter manifests, bounded external-process supervision and local platform
+  helpers;
 - offline repository validation and CI commands.
 
-It does **not** capture a phone microphone, play remote audio, open a camera,
-read IMU hardware, install a driver, create a Windows endpoint, pair devices or
-secure a network connection.
+The real paths above are accepted only on the identified local lab. CapyIO does
+**not** yet provide a production installer, signed public packages, first-party
+Android app, pairing/authenticated transport, WAN support, camera sharing or a
+release-qualified background/reboot lifecycle.
 
 ## Repository map
 
@@ -44,9 +51,12 @@ crates/capyio-adapter-host  desktop sidecar supervision
 crates/capyio-testkit       stable fixtures
 apps/capyio-node            headless four-Route demo
 apps/desktop                Vue + Tauri control surface
+adapters/audio-share        bounded remote-speaker process boundary
+adapters/micyou             bounded remote-microphone process boundary
 adapters/mock-source        finite test Source Sidecar and manifest
 adapters/mock-sink          finite test Sink Sidecar and manifest
-adapters/                   planned integration boundaries
+platform/windows            Windows Broker, presence and host-config helpers
+drivers/windows-audio       CapyIO Speaker/microphone controlled-lab package
 protocol/                   Protobuf and JSON Schema sources
 docs/                       normative requirements, architecture and plans
 ```
@@ -63,8 +73,11 @@ cargo xtask adapter-smoke
 pnpm dev
 ```
 
-`cargo xtask demo` and the UI are explicitly simulated. Metrics and Route state
-do not represent physical devices.
+`cargo xtask demo` and the browser-only UI remain explicitly simulated. The
+Tauri shell can expose real lab Quick Actions when their separately approved
+host dependencies are installed and configured. See
+[First Run on Windows](docs/FIRST_RUN_WINDOWS.md) and
+[Android microphone sharing](docs/MICROPHONE_SHARING_WINDOWS_ANDROID.md).
 
 ## Product modes
 
@@ -74,12 +87,15 @@ do not represent physical devices.
 
 ## Safety
 
-No repository command installs a driver or APK. Windows driver testing must use
-an isolated VM or dedicated machine. Microphone capture requires visible,
+Ordinary validation commands do not install a driver or APK. Driver/APK
+deployment and permission changes remain separately approved operations under
+the repository safety rules. Microphone capture requires visible,
 platform-compliant permission and lifecycle handling.
 
 ## License
 
-The foundation remains Apache-2.0. No third-party vertical-project source is
-vendored in the current Gates. Future integration provenance and licenses are
-tracked in `third_party/THIRD_PARTY.yml` before code import.
+CapyIO source remains Apache-2.0. Third-party vertical programs stay behind
+recorded process boundaries and keep their own licenses; in particular, the
+locally patched GPL-3.0-only MicYou executable is not distributed by CapyIO.
+Provenance, pins and local modifications are tracked in
+`third_party/THIRD_PARTY.yml`.

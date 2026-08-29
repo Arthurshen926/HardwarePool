@@ -1,7 +1,8 @@
 # CapyIO Audio Frames Profile v1
 
 > Profile: `capyio.audio.frames/1`
-> Status: semantic baseline; no real Audio Adapter is connected.
+> Status: shared semantic baseline; the Audio Share Speaker compatibility
+> Adapter maps to it without claiming StandardPort interoperability.
 
 ## Role and direction
 
@@ -39,11 +40,44 @@ Audio can map to `Basic`, `Interactive` or `Measurement` intent plus
 audio-specific descriptors such as media playback, voice interactive and raw
 capture. QoS does not imply a transport or codec.
 
+The first selected-stream contract exposes three bounded policy presets:
+
+- `VoiceInteractive`: 48 kHz mono PCM baseline and low-latency voice policy;
+- `MediaBalanced`: 48 kHz stereo PCM baseline for ordinary playback;
+- `MusicLossless`: lossless PCM policy with voice processing disabled.
+
+These are distinct complete candidates. The first negotiation revision selects
+the first Source-preferred candidate also advertised exactly by the Sink. It
+does not silently resample, transcode, enable processing or alter buffer policy.
+Representing 96 kHz or discrete channels is not evidence that an endpoint or
+physical Android path supports them.
+
 ## Processing
 
 AEC, noise suppression, gain control and raw capture support/enabled state are
 explicit negotiated metadata. A host reports actual accepted platform state,
 not merely requested flags. Unsupported processing is not silently advertised.
+
+Voice processing or raw capture may be requested only for a
+`VoiceInteractive` candidate. Raw capture cannot be combined with AEC, noise
+suppression or AGC. Media and lossless-music candidates reject these flags.
+
+## Encoding boundary
+
+The semantic contract can identify PCM or an explicitly configured Opus
+candidate, but `capyio-audio` contains no codec implementation. A concrete
+Adapter must record the codec implementation, version, license, packet bounds
+and failure behavior. The current Audio Share compatibility transport accepts
+only PCM and preserves its pinned private wire bytes.
+
+## Common metrics
+
+Adapters map observable counters into a common snapshot covering produced
+blocks, unconsumed blocks, payload bytes, packets, loss/duplicate/late data,
+queue underrun/overrun, transport errors, discontinuities and optional jitter,
+buffer-fill and clock-drift estimates. An unavailable metric remains
+unavailable; a default zero is not evidence that a private transport measured
+zero loss.
 
 ## Receiver behavior
 
