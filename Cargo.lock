@@ -484,6 +484,8 @@ name = "capyio-windows-service"
 version = "0.1.0"
 dependencies = [
  "capyio-audio-share-adapter",
+ "capyio-micyou-adapter",
+ "capyio-micyou-host-config",
  "serde",
  "serde_json",
  "windows-service",

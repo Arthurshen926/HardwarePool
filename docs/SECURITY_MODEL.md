@@ -74,6 +74,17 @@ deadlines. No request can change executable paths, bind addresses, ports or
 endpoint identity. Any interactive user can currently control the machine-wide
 Route, so multi-user authorization remains unresolved release work.
 
+ADR 0040 does not put MicYou in that LocalSystem service. The privileged
+service owns the fixed global capture mapping, while an ordinary-user headless
+host reads the fixed user-local MicYou configuration and launches the external
+process. Its separate local-only pipe uses the same 4 KiB bounded framing but a
+protected DACL granting the object owner, LocalSystem and Administrators rather
+than all interactive users. Requests remain closed to `status`, `start` and
+`stop`; responses expose only typed state, generation, validated bind address
+and stable problem codes. They never carry an executable path, endpoint
+identity or arbitrary argument. This isolates local-user process authority but
+does not authenticate the Android peer or encrypt MicYou traffic.
+
 The desktop Quick Action never accepts an executable path, endpoint identifier,
 bind address or port from the WebView. Those values come only from the trusted
 host environment, while the versioned UI request is closed to unknown fields

@@ -91,6 +91,13 @@ child lifecycle. ADR 0034 gives ordinary CapyIO Desktop a bounded local
 start/stop/status boundary; Tauri is not privileged and does not own the
 service Route's lifetime. Its direct supervisor remains a development fallback.
 
+ADR 0040 deliberately splits microphone ownership by privilege. The same
+`CapyIOBroker` service owns the global capture mapping required by AudioDG,
+while an ordinary-user `capyio-microphone-host` owns the user-local MicYou
+configuration and child process. Desktop controls that host through a separate
+bounded owner-scoped pipe and does not stop it on window shutdown. Direct
+desktop supervision remains a development fallback.
+
 ### Protocol
 
 `capyio.v1` is a versioned semantic control protocol. It does not select a
@@ -115,6 +122,8 @@ table FFI behind a safe count-only API. It never enters Core or Runtime and does
 not expose peer addresses. The Windows `capyio-micyou-host-config` boundary
 loads only a complete development override or a schema-versioned file below a
 fixed user-local CapyIO path. It is not a WebView filesystem API.
+`capyio-microphone-host` consumes that boundary as the ordinary user and never
+accepts a launch path or endpoint identity from its local control client.
 
 ### UI
 
@@ -159,6 +168,11 @@ capyio-process-presence
 
 capyio-micyou-host-config
    +--- fixed-path trusted MicYou launch configuration and provisioning CLI
+
+capyio-windows-service
+   +--- privileged Speaker/global-ring service host
+   +--- ordinary-user headless microphone-host binary
+   +--- shared bounded local named-pipe transport
 ```
 
 Dependency rules:
@@ -218,6 +232,12 @@ Dependency rules:
   explicit retry use typed Problems and fresh epochs without mutating Speaker
   or IMU Routes. The capture ring may drain only its bounded already committed
   frames before exact silence. TCP presence is not recorded as PCM evidence.
+- When the ADR 0040 per-user host is present, desktop maps its typed snapshot
+  back through the same `MicYouProcessBoundary` and Runtime Route rather than
+  creating a second lifecycle model. The host independently bounds phone wait
+  and disconnect cleanup; desktop adopts an already-running host and does not
+  stop it during UI shutdown. The local request remains finite
+  `status`/`start`/`stop` and carries no executable or endpoint authority.
 - The MicYou host configuration CLI probes the separately supplied executable,
   selects an explicit stable endpoint ID and derives its expected name before
   writing a new file. It never persists a device index and never silently
@@ -341,6 +361,14 @@ service snapshot into its existing Runtime Route. Service launch paths and
 network settings remain administrator configuration. Closing the UI does not
 stop a service-owned Route; the legacy direct process path is a development
 fallback when the service boundary is absent.
+
+The microphone projection uses two cooperating Windows principals. The
+privileged `CapyIOBroker` owns only the fixed global capture ring; an
+ordinary-user `capyio-microphone-host` owns the MicYou process and ADR 0039
+configuration. Its remote-rejecting owner-scoped named pipe exposes only typed
+status/start/stop state. This source slice does not yet install or register the
+per-user host at logon, so direct Tauri ownership remains a development
+fallback until installer work is completed.
 
 ## 12. Android boundary
 

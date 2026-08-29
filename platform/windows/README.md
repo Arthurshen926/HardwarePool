@@ -30,3 +30,22 @@ target\release\capyio-windows-service.exe --control stop
 
 Service/driver installation and configuration still require an administrator
 and are not yet integrated into a signed product installer.
+
+`capyio-microphone-host` is the ordinary-user headless owner selected by ADR
+0040. It reads the fixed trusted MicYou host configuration and exposes a
+separate owner-scoped local pipe with only `status`, `start` and `stop`. The
+privileged service still owns the global capture ring; it does not launch the
+third-party MicYou process.
+
+For source/development inspection after starting the host in the same user
+session:
+
+```powershell
+target\release\capyio-microphone-host.exe --control status
+target\release\capyio-microphone-host.exe --control start
+target\release\capyio-microphone-host.exe --control stop
+```
+
+Login autostart and signed installation are intentionally deferred. Until that
+deployment slice is complete, CapyIO Desktop retains its direct MicYou
+supervisor as a development fallback.

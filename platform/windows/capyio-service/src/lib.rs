@@ -13,11 +13,25 @@ use serde::{Deserialize, Serialize};
 mod capture_ring;
 #[cfg(windows)]
 mod control;
+#[cfg(windows)]
+mod local_pipe;
+mod microphone;
+#[cfg(windows)]
+mod microphone_control;
 
 #[cfg(windows)]
 pub use capture_ring::{CaptureRingMetrics, CaptureRingOwner};
 #[cfg(windows)]
 pub use control::{BrokerServiceClient, control_server_loop, wake_control_server};
+pub use microphone::{
+    DEFAULT_PHONE_WAIT_POLLS, DEFAULT_STABLE_PHONE_POLLS, MicrophoneHostProcess,
+    MicrophoneHostRuntime, MicrophoneHostSnapshot, MicrophoneHostStartError, MicrophoneHostState,
+};
+#[cfg(windows)]
+pub use microphone_control::{
+    MICROPHONE_CONTROL_PIPE_NAME, MicrophoneHostClient, microphone_control_server_loop,
+    wake_microphone_control_server,
+};
 
 pub const SERVICE_NAME: &str = "CapyIOBroker";
 pub const DEFAULT_POLL_INTERVAL: Duration = Duration::from_millis(250);

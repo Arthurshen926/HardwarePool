@@ -182,6 +182,17 @@ Route while the serialized Quick Action still excludes executable and endpoint
 identity. These tests use synthetic paths/inventories and do not run MicYou or
 write the real user configuration.
 
+The per-user microphone-host tests use a fake MicYou process boundary to prove
+stable peer activation, bounded initial wait, active-peer fail-closed cleanup,
+typed endpoint failure, retry generation and invalid address/poll rejection.
+Closed-schema tests reject unknown fields and versions and assert that bounded
+responses contain neither executable nor endpoint authority. A Windows-only
+test creates the owner-scoped remote-rejecting named pipe and performs real
+status/start/stop round trips against the fake Runtime. These tests do not run
+MicYou, send PCM, modify services/autostart or access a phone. Desktop tests
+continue to cover direct trusted-config fallback; physical persistence across
+window closure remains a separately authorized deployment acceptance step.
+
 Audio Share regression tests require the `MediaBalanced` common PCM
 specification to produce the unchanged pinned protobuf bytes and map only
 observable transport counters into common metrics.
