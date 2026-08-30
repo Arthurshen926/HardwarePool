@@ -38,6 +38,12 @@ CapyIO sequence, epoch and timestamps and is unauthenticated, so it is limited
 to an explicitly trusted local/Tailscale lab. Production use requires a new
 authenticated transport or a versioned extension plus Android receiver work.
 
+ADR 0042 later adds a common media wrapper without changing these bytes. The
+wrapper validates one `AudioMediaPacket` against its Session/Route/Stream/epoch
+binding and selected PCM specification, then deliberately passes only payload
+bytes into this private sender. Its typed backend declaration records every
+stripped field and the absence of transport security.
+
 Use the existing locked `prost` 0.14 dependency (Apache-2.0 OR MIT) rather than
 hand-writing Protobuf varints. The dependency is already used by
 `capyio-protocol`, maintained by the Tokio project and avoids importing the

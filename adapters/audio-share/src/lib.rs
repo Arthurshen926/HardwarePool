@@ -30,8 +30,9 @@ pub use supervisor::{
     SupervisorStartReport, SupervisorStatus, SupervisorStopReport,
 };
 pub use transport::{
-    AudioSharePrivateFormat, AudioShareTransport, AudioShareTransportConfig,
-    AudioShareTransportError, AudioShareTransportSender, AudioShareTransportStats,
+    AUDIO_SHARE_COMPAT_BACKEND_ID, AudioShareMediaSender, AudioSharePrivateFormat,
+    AudioShareTransport, AudioShareTransportConfig, AudioShareTransportError,
+    AudioShareTransportSender, AudioShareTransportStats, audio_share_compatibility_contract,
 };
 
 pub const PINNED_AUDIO_SHARE_VERSION: &str = "0.3.4";

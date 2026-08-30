@@ -43,6 +43,8 @@ enum Task {
     ValidateManifests,
     /// Builds and supervises the finite Mock Source/Sink Sidecars.
     AdapterSmoke,
+    /// Runs the Android node contract, Lint, and debug APK build without a device.
+    AndroidCheck,
     /// Verifies one explicitly selected Android device using read-only ADB calls.
     AndroidDoctor {
         /// Exact serial from `adb devices`; never inferred from device order.
@@ -79,11 +81,48 @@ fn main() -> Result<()> {
         Task::ValidateDocs => validate_docs(),
         Task::ValidateManifests => validate_manifests(),
         Task::AdapterSmoke => adapter_smoke(&root),
+        Task::AndroidCheck => android_check(&root),
         Task::AndroidDoctor { serial } => android_doctor(&serial),
         Task::AndroidBaseline { serial } => android_baseline(&serial).map(|value| {
             println!("{value}");
         }),
         Task::AndroidCollect { serial } => android_collect(&root, &serial),
+    }
+}
+
+fn android_check(root: &Path) -> Result<()> {
+    let project_dir = root.join("platform/android");
+    #[cfg(windows)]
+    {
+        let wrapper = project_dir.join("gradlew.bat");
+        if !wrapper.is_file() {
+            bail!("Android Gradle wrapper is missing: {}", wrapper.display());
+        }
+        run_path(
+            &wrapper,
+            [
+                OsString::from("--project-dir"),
+                project_dir.into_os_string(),
+                OsString::from("capyioCheck"),
+            ],
+        )
+    }
+
+    #[cfg(not(windows))]
+    {
+        let wrapper = project_dir.join("gradlew");
+        if !wrapper.is_file() {
+            bail!("Android Gradle wrapper is missing: {}", wrapper.display());
+        }
+        run(
+            "sh",
+            [
+                wrapper.into_os_string(),
+                OsString::from("--project-dir"),
+                project_dir.into_os_string(),
+                OsString::from("capyioCheck"),
+            ],
+        )
     }
 }
 

@@ -63,6 +63,11 @@ The route is `AdapterManaged` and maps semantically to
 codec, FEC, jitter, DSP and TCP/UDP bytes, so the Adapter does not claim a
 `capyio.audio.frames/1` wire or expose MicYou media on the control path.
 
+ADR 0042 later formalizes this as an opaque compatibility backend. CapyIO can
+associate the process with one validated conservative voice Route/epoch for
+lifecycle, but exposes no `AudioMediaPacket` API and declares common identity,
+payload and exact private codec negotiation unobservable or absent.
+
 The paired CapyIO Windows capture endpoint and bounded PCM ingress are specified
 separately by ADR 0037. They do not change MicYou's private wire contract.
 

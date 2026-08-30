@@ -16,7 +16,11 @@ use std::{
     time::{Duration, Instant},
 };
 
-use capyio_audio::AudioStreamSpec;
+use capyio_audio::{
+    AudioMediaStreamBinding, AudioStreamSpec, AudioTransportBackendContract,
+    AudioTransportEncodingSupport, AudioTransportFieldFidelity, AudioTransportInteroperability,
+    AudioTransportMediaAccess, AudioTransportMetadataFidelity, AudioTransportSecurity,
+};
 use thiserror::Error;
 
 mod peer_presence;
@@ -31,6 +35,51 @@ pub const MAX_DEVICE_ID_BYTES: usize = 512;
 pub const MAX_DEVICE_NAME_BYTES: usize = 512;
 pub const MAX_PROBE_OUTPUT_BYTES: usize = 64 * 1024;
 pub const MAX_PROBE_LINE_BYTES: usize = 1024;
+pub const MICYOU_COMPAT_BACKEND_ID: &str = "dev.capyio.compat.micyou/2.0.1";
+
+#[must_use]
+pub fn micyou_compatibility_contract() -> AudioTransportBackendContract {
+    let contract = AudioTransportBackendContract {
+        backend_id: MICYOU_COMPAT_BACKEND_ID,
+        interoperability: AudioTransportInteroperability::AdapterManaged,
+        media_access: AudioTransportMediaAccess::OpaqueProcess,
+        encodings: AudioTransportEncodingSupport {
+            pcm: true,
+            opus: true,
+        },
+        metadata: AudioTransportMetadataFidelity {
+            session_route_binding: AudioTransportFieldFidelity::Absent,
+            stream_identity: AudioTransportFieldFidelity::Absent,
+            stream_epoch: AudioTransportFieldFidelity::Absent,
+            sequence: AudioTransportFieldFidelity::Opaque,
+            source_timestamp: AudioTransportFieldFidelity::Opaque,
+            sample_timeline: AudioTransportFieldFidelity::Opaque,
+            discontinuity: AudioTransportFieldFidelity::Opaque,
+            selected_stream_spec: AudioTransportFieldFidelity::Partial,
+            payload: AudioTransportFieldFidelity::Opaque,
+        },
+        security: AudioTransportSecurity::default(),
+    };
+    debug_assert!(contract.validate().is_ok());
+    contract
+}
+
+/// Control-plane association for the opaque MicYou compatibility process.
+///
+/// The binding gives the CapyIO Runtime one Route/epoch identity, but MicYou's
+/// process does not consume `AudioMediaPacket` and does not carry those IDs on
+/// its private wire.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct MicYouCompatibilityBinding {
+    binding: AudioMediaStreamBinding,
+}
+
+impl MicYouCompatibilityBinding {
+    #[must_use]
+    pub const fn binding(&self) -> &AudioMediaStreamBinding {
+        &self.binding
+    }
+}
 
 #[derive(Clone, Eq, PartialEq)]
 pub struct MicYouConfig {
@@ -123,6 +172,22 @@ impl MicYouConfig {
     /// `capyio.audio.frames/1` StandardPort.
     pub fn audio_stream_spec(&self) -> AudioStreamSpec {
         AudioStreamSpec::voice_interactive()
+    }
+
+    /// Associates the opaque external process with one conservative CapyIO
+    /// voice stream. This validates lifecycle identity but does not claim media
+    /// packet visibility or exact private codec negotiation.
+    pub fn bind_media_stream(
+        &self,
+        binding: AudioMediaStreamBinding,
+    ) -> Result<MicYouCompatibilityBinding, MicYouError> {
+        binding
+            .validate()
+            .map_err(|error| MicYouError::InvalidMediaBinding(error.to_string()))?;
+        if binding.selected_spec != self.audio_stream_spec() {
+            return Err(MicYouError::UnsupportedMediaSpec);
+        }
+        Ok(MicYouCompatibilityBinding { binding })
     }
 }
 
@@ -623,6 +688,10 @@ pub enum MicYouError {
     InvalidBindAddress,
     #[error("MicYou TCP port {port} cannot reserve its following UDP port")]
     InvalidPort { port: u16 },
+    #[error("invalid CapyIO media binding for MicYou: {0}")]
+    InvalidMediaBinding(String),
+    #[error("MicYou compatibility binding accepts only the conservative voice stream mapping")]
+    UnsupportedMediaSpec,
     #[error("MicYou output device ID is empty")]
     EmptyDeviceId,
     #[error("MicYou output device ID is {actual} bytes; limit is {limit}")]
@@ -712,6 +781,58 @@ mod tests {
             device,
         )
         .expect("valid config")
+    }
+
+    fn media_binding(spec: AudioStreamSpec) -> AudioMediaStreamBinding {
+        AudioMediaStreamBinding {
+            session_id: "00000000-0000-4000-8000-00000000b101".parse().unwrap(),
+            route_id: "00000000-0000-4000-8000-00000000b102".parse().unwrap(),
+            stream_id: "00000000-0000-4000-8000-00000000b103".parse().unwrap(),
+            stream_epoch: 4,
+            selected_spec: spec,
+        }
+    }
+
+    #[test]
+    fn compatibility_contract_is_opaque_adapter_managed_and_insecure() {
+        let contract = micyou_compatibility_contract()
+            .validate()
+            .expect("contract");
+        assert_eq!(
+            contract.media_access,
+            AudioTransportMediaAccess::OpaqueProcess
+        );
+        assert_eq!(
+            contract.interoperability,
+            AudioTransportInteroperability::AdapterManaged
+        );
+        assert!(contract.encodings.pcm);
+        assert!(contract.encodings.opus);
+        assert_eq!(
+            contract.metadata.payload,
+            AudioTransportFieldFidelity::Opaque
+        );
+        assert_eq!(
+            contract.metadata.session_route_binding,
+            AudioTransportFieldFidelity::Absent
+        );
+        assert!(!contract.security.meets_production_baseline());
+    }
+
+    #[test]
+    fn opaque_process_binding_accepts_only_conservative_voice_semantics() {
+        let config = config("CapyIO Microphone Ingress");
+        let voice = media_binding(AudioStreamSpec::voice_interactive());
+        let bound = config
+            .bind_media_stream(voice.clone())
+            .expect("voice binding");
+        assert_eq!(bound.binding(), &voice);
+
+        let speaker = media_binding(AudioStreamSpec::media_balanced());
+        assert!(matches!(
+            config.bind_media_stream(speaker),
+            Err(MicYouError::UnsupportedMediaSpec)
+        ));
     }
 
     #[test]

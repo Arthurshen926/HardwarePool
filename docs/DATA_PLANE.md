@@ -1,7 +1,8 @@
 # CapyIO Data-Plane Bootstrap
 
 > Status: bounded semantic foundation; no production network binding selected;
-> one AdapterManaged Audio Share compatibility binding exists for trusted labs
+> Audio Share and MicYou AdapterManaged compatibility bindings exist for trusted
+> labs, and ADR 0041 defines their future common platform/transport seam
 
 ## 1. Purpose
 
@@ -9,8 +10,10 @@
 envelopes, per-consumer queues and fan-out used after a transport has
 authenticated and decoded data. `capyio-audio` retains audio-specific frame,
 selected-stream candidates, bounded QoS policy, common metrics, reordering and
-drift primitives. Neither crate opens sockets, accesses hardware, runs codecs
-or executes inside a Windows driver.
+drift primitives. It also owns the direction-neutral media-stream binding,
+PCM/encoded packet and bounded worker-thread reference queue selected by ADR
+0041. Neither crate opens sockets, accesses hardware, runs codecs or executes
+inside a Windows driver.
 
 The semantic envelope is not a public wire layout. It carries Profile identity,
 typed stream identity, stream epoch, sequence, source/receive timestamps, clock
@@ -24,6 +27,12 @@ StandardPort implementation or a candidate production binding.
 It validates the common `MediaBalanced` PCM stream specification and maps only
 its observable counters into common metrics; this mapping does not add metadata
 to or alter the private wire.
+
+The MicYou compatibility path has the same architectural status: its private
+TCP/UDP PCM/Opus transport remains AdapterManaged and does not become a
+`capyio.audio.frames/1` network implementation. Both private paths remain
+physical golden baselines while `CAPY-AUDIO-NATIVE-001` replaces their default
+product dependencies one direction at a time.
 
 ## 2. StandardPort queue and fan-out semantics
 
@@ -100,7 +109,39 @@ sample_count × channel_count × bytes_per_sample
 
 The bootstrap code rejects zero-sample frames, arithmetic overflow, payload-size mismatch and payloads over the conservative one-megabyte semantic limit. A concrete transport must impose a smaller MTU/fragmentation policy where appropriate.
 
-## 5. Reordering and loss
+## 5. Audio media binding and packets
+
+Before a platform audio engine enters a concrete transport, one
+`AudioMediaStreamBinding` fixes the typed Session, directed Route, Stream,
+positive epoch and exact `AudioStreamSpec`. The value has no microphone,
+Speaker, Source or Sink role. Two opposite Routes can therefore share one
+Session while retaining independent binding, queue, authorization and failure
+state.
+
+`AudioMediaPacket` carries sequence, source timestamp, first-sample index,
+sample count, discontinuity and bounded payload. Encoding is fixed by the
+binding rather than repeated per packet. PCM payload length is exact; encoded
+payload is opaque, non-empty and bounded until an Adapter-owned codec handles
+it. PCM packet/frame conversion preserves every field and byte.
+
+`BoundedAudioPacketQueue` rejects wrong Stream and epoch data before insertion,
+has independent packet-count and aggregate-byte limits and never silently
+evicts an accepted packet. It is a deterministic worker-thread/conformance
+implementation, not a final callback ring or a network jitter buffer.
+
+`AudioTransportBackendContract` describes what happens after this seam. It
+distinguishes full common-packet access, decoded-PCM payload-only access and an
+opaque external process; records PCM/Opus capability; and declares each common
+identity/timing/spec/payload field exact, partial, absent or opaque. The
+contract also records observable transport-security properties. Validation
+prevents a partial/opaque backend from advertising StandardPort semantics.
+
+The Audio Share compatibility wrapper validates one bound common packet and
+then sends only its PCM payload through the unchanged private queue/wire. The
+MicYou compatibility binding carries Route/epoch identity only in CapyIO
+lifecycle state; the external process does not expose a packet/payload boundary.
+
+## 6. Reordering and loss
 
 `ReorderBuffer` is bound to exactly one `stream_id` and one `stream_epoch`. It has a fixed frame capacity and accepts only sequences inside the current reorder window.
 
@@ -118,7 +159,7 @@ The queue never silently evicts an earlier frame. A caller may wait for its jitt
 
 This container is intended for a worker/network thread. It is not the final lock-free platform audio-callback ring.
 
-## 6. Clock drift
+## 7. Clock drift
 
 `ClockDriftEstimator` correlates source sample index with receiver monotonic time and reports:
 
@@ -128,7 +169,7 @@ This container is intended for a worker/network thread. It is not the final lock
 
 It establishes a measurable baseline for later dynamic resampling. Production work still needs robust filtering, window rotation, outlier handling and integration with buffer-fill control.
 
-## 7. Deferred wire encoding
+## 8. Deferred wire encoding
 
 The semantic frame is not itself the public binary wire layout. A transport ADR must define:
 

@@ -17,7 +17,12 @@ use std::{
     time::{Duration, Instant},
 };
 
-use capyio_audio::{AudioEncoding, AudioMetricsSnapshot, AudioSampleFormat, AudioStreamSpec};
+use capyio_audio::{
+    AudioEncoding, AudioMediaPacket, AudioMediaStreamBinding, AudioMetricsSnapshot,
+    AudioSampleFormat, AudioStreamSpec, AudioTransportBackendContract,
+    AudioTransportEncodingSupport, AudioTransportFieldFidelity, AudioTransportInteroperability,
+    AudioTransportMediaAccess, AudioTransportMetadataFidelity, AudioTransportSecurity,
+};
 use prost::Message;
 use thiserror::Error;
 
@@ -32,6 +37,35 @@ const IO_TIMEOUT: Duration = Duration::from_millis(100);
 const HEARTBEAT_INTERVAL: Duration = Duration::from_secs(3);
 const HEARTBEAT_TIMEOUT: Duration = Duration::from_secs(5);
 const MAX_SHARED_EPHEMERAL_BIND_ATTEMPTS: usize = 32;
+
+pub const AUDIO_SHARE_COMPAT_BACKEND_ID: &str = "dev.capyio.compat.audio-share/0.3.4";
+
+#[must_use]
+pub fn audio_share_compatibility_contract() -> AudioTransportBackendContract {
+    let contract = AudioTransportBackendContract {
+        backend_id: AUDIO_SHARE_COMPAT_BACKEND_ID,
+        interoperability: AudioTransportInteroperability::AdapterManaged,
+        media_access: AudioTransportMediaAccess::PcmPayloadOnly,
+        encodings: AudioTransportEncodingSupport {
+            pcm: true,
+            opus: false,
+        },
+        metadata: AudioTransportMetadataFidelity {
+            session_route_binding: AudioTransportFieldFidelity::Absent,
+            stream_identity: AudioTransportFieldFidelity::Absent,
+            stream_epoch: AudioTransportFieldFidelity::Absent,
+            sequence: AudioTransportFieldFidelity::Absent,
+            source_timestamp: AudioTransportFieldFidelity::Absent,
+            sample_timeline: AudioTransportFieldFidelity::Absent,
+            discontinuity: AudioTransportFieldFidelity::Absent,
+            selected_stream_spec: AudioTransportFieldFidelity::Partial,
+            payload: AudioTransportFieldFidelity::Exact,
+        },
+        security: AudioTransportSecurity::default(),
+    };
+    debug_assert!(contract.validate().is_ok());
+    contract
+}
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct AudioSharePrivateFormat {
@@ -165,6 +199,67 @@ impl AudioShareTransportSender {
             }
             Err(TrySendError::Disconnected(_)) => Err(AudioShareTransportError::Stopped),
         }
+    }
+
+    /// Binds the compatibility sender to one common media Route epoch.
+    ///
+    /// Only the validated PCM payload reaches the private Audio Share wire. The
+    /// backend contract explicitly declares every stripped common metadata field.
+    pub fn bind_media_stream(
+        self,
+        binding: AudioMediaStreamBinding,
+    ) -> Result<AudioShareMediaSender, AudioShareTransportError> {
+        binding
+            .validate()
+            .map_err(|error| AudioShareTransportError::InvalidMediaBinding(error.to_string()))?;
+        let format = AudioSharePrivateFormat::from_stream_spec(&binding.selected_spec)?;
+        if format != self.format {
+            return Err(AudioShareTransportError::MediaBindingFormatMismatch);
+        }
+        let samples =
+            usize::try_from(binding.samples_per_packet().map_err(|error| {
+                AudioShareTransportError::InvalidMediaBinding(error.to_string())
+            })?)
+            .map_err(|_| {
+                AudioShareTransportError::InvalidMediaBinding(
+                    "sample count does not fit the platform size".to_owned(),
+                )
+            })?;
+        let required = samples.checked_mul(format.block_align()).ok_or_else(|| {
+            AudioShareTransportError::InvalidMediaBinding(
+                "PCM packet size arithmetic overflowed".to_owned(),
+            )
+        })?;
+        if required > self.max_block_bytes {
+            return Err(AudioShareTransportError::MediaPacketExceedsSenderLimit {
+                required,
+                limit: self.max_block_bytes,
+            });
+        }
+        Ok(AudioShareMediaSender {
+            sender: self,
+            binding,
+        })
+    }
+}
+
+#[derive(Clone)]
+pub struct AudioShareMediaSender {
+    sender: AudioShareTransportSender,
+    binding: AudioMediaStreamBinding,
+}
+
+impl AudioShareMediaSender {
+    pub fn try_send(&self, packet: &AudioMediaPacket) -> Result<(), AudioShareTransportError> {
+        packet
+            .validate_against(&self.binding)
+            .map_err(|error| AudioShareTransportError::InvalidMediaPacket(error.to_string()))?;
+        self.sender.try_send_pcm(&packet.payload)
+    }
+
+    #[must_use]
+    pub const fn binding(&self) -> &AudioMediaStreamBinding {
+        &self.binding
     }
 }
 
@@ -663,6 +758,14 @@ pub enum AudioShareTransportError {
     InvalidPeerLimit,
     #[error("Audio Share private transport requires an explicit IPv4 bind address")]
     InvalidBindAddress,
+    #[error("invalid CapyIO media binding for Audio Share: {0}")]
+    InvalidMediaBinding(String),
+    #[error("CapyIO media binding format does not match the running Audio Share sender")]
+    MediaBindingFormatMismatch,
+    #[error("CapyIO PCM media packet requires {required} bytes; sender limit is {limit}")]
+    MediaPacketExceedsSenderLimit { required: usize, limit: usize },
+    #[error("invalid CapyIO media packet for Audio Share: {0}")]
+    InvalidMediaPacket(String),
     #[error("could not bind Audio Share {protocol}: {source}")]
     Bind {
         protocol: &'static str,
@@ -693,6 +796,53 @@ pub enum AudioShareTransportError {
 mod tests {
     use super::*;
 
+    fn media_binding(spec: AudioStreamSpec) -> AudioMediaStreamBinding {
+        AudioMediaStreamBinding {
+            session_id: "00000000-0000-4000-8000-00000000a101".parse().unwrap(),
+            route_id: "00000000-0000-4000-8000-00000000a102".parse().unwrap(),
+            stream_id: "00000000-0000-4000-8000-00000000a103".parse().unwrap(),
+            stream_epoch: 7,
+            selected_spec: spec,
+        }
+    }
+
+    fn media_packet(binding: &AudioMediaStreamBinding, payload: Vec<u8>) -> AudioMediaPacket {
+        AudioMediaPacket {
+            stream_id: binding.stream_id,
+            stream_epoch: binding.stream_epoch,
+            sequence: 11,
+            source_timestamp_micros: 110_000,
+            first_sample_index: 5_280,
+            sample_count: 480,
+            discontinuity: false,
+            payload,
+        }
+    }
+
+    #[test]
+    fn compatibility_contract_declares_payload_only_and_no_security() {
+        let contract = audio_share_compatibility_contract()
+            .validate()
+            .expect("contract");
+        assert_eq!(
+            contract.media_access,
+            AudioTransportMediaAccess::PcmPayloadOnly
+        );
+        assert_eq!(
+            contract.interoperability,
+            AudioTransportInteroperability::AdapterManaged
+        );
+        assert_eq!(
+            contract.metadata.sequence,
+            AudioTransportFieldFidelity::Absent
+        );
+        assert_eq!(
+            contract.metadata.payload,
+            AudioTransportFieldFidelity::Exact
+        );
+        assert!(!contract.security.meets_production_baseline());
+    }
+
     #[test]
     fn speaker_baseline_matches_pinned_protobuf_wire_format() {
         let format = AudioSharePrivateFormat::from_stream_spec(&AudioStreamSpec::media_balanced())
@@ -706,7 +856,8 @@ mod tests {
 
     #[test]
     fn private_transport_negotiates_and_delivers_segmented_pcm() {
-        let format = AudioSharePrivateFormat::from_stream_spec(&AudioStreamSpec::media_balanced())
+        let binding = media_binding(AudioStreamSpec::media_balanced());
+        let format = AudioSharePrivateFormat::from_stream_spec(&binding.selected_spec)
             .expect("baseline format");
         let transport = AudioShareTransport::bind(
             AudioShareTransportConfig::local_lab("127.0.0.1:0".parse().unwrap()),
@@ -732,13 +883,16 @@ mod tests {
         udp.set_read_timeout(Some(Duration::from_millis(250)))
             .unwrap();
         udp.send_to(&id.to_le_bytes(), address).unwrap();
-        let pcm = (0..2_000_u16)
-            .flat_map(u16::to_le_bytes)
-            .collect::<Vec<_>>();
+        let pcm = (0..960_u16).flat_map(u16::to_le_bytes).collect::<Vec<_>>();
+        let packet = media_packet(&binding, pcm.clone());
+        let media_sender = transport
+            .sender()
+            .bind_media_stream(binding.clone())
+            .expect("media sender");
         let mut received = Vec::new();
         let deadline = Instant::now() + Duration::from_secs(2);
         while received.len() < pcm.len() && Instant::now() < deadline {
-            transport.sender().try_send_pcm(&pcm).unwrap();
+            media_sender.try_send(&packet).unwrap();
             let mut datagram = [0_u8; 2_048];
             while let Ok((count, _)) = udp.recv_from(&mut datagram) {
                 assert!(count <= MAX_UDP_PCM_BYTES);
@@ -755,7 +909,7 @@ mod tests {
         assert_eq!(&received[..pcm.len()], pcm);
         let stats = transport.stats();
         assert!(stats.blocks_enqueued >= 1);
-        assert!(stats.datagrams_sent >= 3);
+        assert!(stats.datagrams_sent >= 2);
         assert!(stats.pcm_bytes_sent >= pcm.len() as u64);
         assert_eq!(stats.datagram_send_errors, 0);
         let common = stats.common_metrics();
@@ -763,6 +917,34 @@ mod tests {
         assert_eq!(common.packets_transmitted, stats.datagrams_sent);
         assert_eq!(common.payload_bytes_transmitted, stats.pcm_bytes_sent);
         assert_eq!(common.estimated_jitter_micros, None);
+        transport.shutdown();
+    }
+
+    #[test]
+    fn media_sender_rejects_wrong_stream_and_mismatched_format_before_private_wire() {
+        let binding = media_binding(AudioStreamSpec::media_balanced());
+        let format = AudioSharePrivateFormat::from_stream_spec(&binding.selected_spec).unwrap();
+        let transport = AudioShareTransport::bind(
+            AudioShareTransportConfig::local_lab("127.0.0.1:0".parse().unwrap()),
+            format,
+        )
+        .unwrap();
+        let sender = transport
+            .sender()
+            .bind_media_stream(binding.clone())
+            .unwrap();
+        let mut wrong_stream = media_packet(&binding, vec![0; 1_920]);
+        wrong_stream.stream_id = "00000000-0000-4000-8000-00000000a999".parse().unwrap();
+        assert!(matches!(
+            sender.try_send(&wrong_stream),
+            Err(AudioShareTransportError::InvalidMediaPacket(_))
+        ));
+
+        let voice_binding = media_binding(AudioStreamSpec::voice_interactive());
+        assert!(matches!(
+            transport.sender().bind_media_stream(voice_binding),
+            Err(AudioShareTransportError::MediaBindingFormatMismatch)
+        ));
         transport.shutdown();
     }
 

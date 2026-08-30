@@ -42,6 +42,20 @@ explicitly approved trusted lab. A Tailscale address can protect overlay transit
 but does not supply CapyIO Capability authorization, application identity,
 message replay protection or downgrade binding.
 
+ADR 0041 now represents Session/Route/Stream/epoch and the exact selected audio
+specification as one validated media-stream binding before any transport
+backend. This prevents platform and codec code from inventing a second identity
+model, but the in-process binding and bounded packet queue provide no peer
+authentication, encryption or replay defense by themselves. A network backend
+must cryptographically bind that control-approved value before production use.
+
+ADR 0042 makes backend security claims explicit alongside metadata fidelity.
+The current Audio Share and MicYou compatibility contracts set peer
+authentication, confidentiality, integrity, replay protection and downgrade
+binding to false. The descriptor prevents UI/runtime code from mistaking a
+private compatibility path for a production-secure backend, but does not add
+security to either wire.
+
 The SensorServer lab client rejects DNS names, arbitrary paths, credentials,
 redirects, binary sensor payloads and frames/messages above 4 KiB. TCP and
 WebSocket operations have deadlines. These controls limit attack surface but do
@@ -160,6 +174,21 @@ Default logs may include typed IDs, states, timings, counters and sanitized
 errors. They exclude raw content, pairing codes after use, private/session keys,
 tokens, unrelated process lists and personal filenames. Recordings are explicit
 artifacts with retention/deletion policy.
+
+### Android audio shell
+
+ADR 0043 requires a visible user action plus granted recording and notification
+permission before the 001C microphone Source starts. The non-exported service
+uses the microphone/media-playback foreground types, a persistent notification
+with Stop action and `START_NOT_STICKY`; Activity closure is not implicit
+authorization to restart capture.
+
+The 001C APK declares no Internet permission, disables cleartext traffic and
+backup, never stores or logs microphone bytes and exposes only an app-private
+Node UUID. Captured bytes are counted then discarded. This is a local privacy
+boundary, not transport security. Permission revoke, indicator, lock/background
+and vendor process-management behavior still require physical evidence before
+release claims.
 
 ## Milestones
 

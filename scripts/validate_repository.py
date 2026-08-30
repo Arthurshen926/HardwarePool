@@ -53,6 +53,13 @@ REQUIRED_FILES = [
     "apps/desktop/src-tauri/tauri.conf.json",
     "apps/desktop/src-tauri/src/micyou_runtime.rs",
     "apps/desktop/src-tauri/src/microphone_quick_action.rs",
+    "platform/android/gradlew",
+    "platform/android/gradlew.bat",
+    "platform/android/gradle/wrapper/gradle-wrapper.jar",
+    "platform/android/gradle/wrapper/gradle-wrapper.properties",
+    "platform/android/app/src/main/AndroidManifest.xml",
+    "platform/android/app/src/main/java/dev/capyio/android/AudioNodeService.java",
+    "platform/android/node-contract/src/main/java/dev/capyio/android/contract/AudioNodeController.java",
 ]
 
 REQUIREMENT_ID_RE = re.compile(r"(?:FR|NFR)-[A-Z]+-\d{3}")
@@ -92,8 +99,11 @@ TEXT_SUFFIXES = {
     ".h",
     ".hpp",
     ".html",
+    ".java",
     ".json",
     ".md",
+    ".gradle",
+    ".properties",
     ".proto",
     ".ps1",
     ".py",
@@ -104,6 +114,7 @@ TEXT_SUFFIXES = {
     ".vue",
     ".yaml",
     ".yml",
+    ".xml",
 }
 TEXT_NAMES = {
     ".editorconfig",
@@ -119,14 +130,76 @@ IGNORED_DIRECTORY_NAMES = {
     ".agent-cache",
     ".codex",
     ".git",
+    ".gradle",
     ".pnpm-store",
     ".vite",
     "artifacts",
+    "build",
     "dist",
     "node_modules",
     "target",
     "test-results",
 }
+
+
+def validate_android_audio_shell() -> None:
+    manifest = (ROOT / "platform/android/app/src/main/AndroidManifest.xml").read_text(
+        encoding="utf-8"
+    )
+    required_manifest = [
+        'android.permission.RECORD_AUDIO',
+        'android.permission.POST_NOTIFICATIONS',
+        'android.permission.FOREGROUND_SERVICE',
+        'android.permission.FOREGROUND_SERVICE_MICROPHONE',
+        'android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK',
+        'android:foregroundServiceType="microphone|mediaPlayback"',
+        'android:exported="false"',
+        'android:stopWithTask="false"',
+        'android:usesCleartextTraffic="false"',
+        'android:allowBackup="false"',
+    ]
+    missing = [token for token in required_manifest if token not in manifest]
+    if missing:
+        fail(f"Android audio shell manifest is incomplete: {missing}")
+    if 'android.permission.INTERNET' in manifest:
+        fail("001C Android audio shell must not declare network access")
+
+    root_build = (ROOT / "platform/android/build.gradle").read_text(encoding="utf-8")
+    if "com.android.application' version '9.3.1'" not in root_build:
+        fail("Android Gradle Plugin pin changed without updating the 001C contract")
+
+    wrapper = (
+        ROOT / "platform/android/gradle/wrapper/gradle-wrapper.properties"
+    ).read_text(encoding="utf-8")
+    wrapper_required = [
+        "gradle-9.5.0-all.zip",
+        "distributionSha256Sum="
+        "a3c4ba4aca8f0075688b9c5b18939fd28e8cb4357c227da5c1d9f38343791439",
+        "validateDistributionUrl=true",
+    ]
+    missing_wrapper = [token for token in wrapper_required if token not in wrapper]
+    if missing_wrapper:
+        fail(f"Android Gradle wrapper pin is incomplete: {missing_wrapper}")
+
+    sources = "\n".join(
+        (ROOT / relative_path).read_text(encoding="utf-8")
+        for relative_path in [
+            "platform/android/app/src/main/java/dev/capyio/android/AudioNodeService.java",
+            "platform/android/app/src/main/java/dev/capyio/android/MicrophoneSourceAdapter.java",
+            "platform/android/app/src/main/java/dev/capyio/android/SpeakerSinkAdapter.java",
+        ]
+    )
+    source_required = [
+        "START_NOT_STICKY",
+        "startForeground(",
+        "new AudioRecord.Builder()",
+        "new AudioTrack.Builder()",
+    ]
+    missing_source = [token for token in source_required if token not in sources]
+    if missing_source:
+        fail(f"Android platform audio shell is incomplete: {missing_source}")
+    if "android.util.Log" in sources or "java.net." in sources:
+        fail("001C Android audio callbacks must not log or use a network API")
 
 
 def fail(message: str) -> None:
@@ -1068,6 +1141,7 @@ def main() -> None:
     validate_architecture_dependencies()
     validate_sensor_server_provenance()
     validate_micyou_adapter_contract()
+    validate_android_audio_shell()
     validate_windows_audio_provenance()
     validate_windows_audio_endpoint_contract()
     validate_hosted_ci_contract()

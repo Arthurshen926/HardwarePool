@@ -117,6 +117,19 @@ Sidecar JSON-RPC. Audio Share retains TCP negotiation and UDP PCM delivery to
 its independently installed Android receiver. This private contract is not a
 `capyio.audio.frames/1` interoperability claim.
 
+The Gate 8 MicYou integration is likewise an `AdapterManaged` compatibility
+boundary. Its separately built Windows process and independently installed
+Android application retain their private TCP/UDP PCM/Opus contract. The two
+compatibility transports are physical regression baselines, not a shared wire.
+
+ADR 0041 adds a common CapyIO-authored media seam above concrete audio
+transports. ADR 0042 makes every mapping machine-checkable: backends declare
+media access, supported encodings, field-by-field fidelity and security. Audio
+Share now accepts a validated common PCM packet before deliberately stripping
+unsupported metadata; MicYou declares an opaque external-process boundary and
+has no common-packet API. Sharing the seam does not turn either private
+AdapterManaged protocol into a StandardPort or make them interoperable.
+
 ## Failure isolation
 
 Adapter Host owns child process handles, stdin/stdout/stderr tasks, deadlines

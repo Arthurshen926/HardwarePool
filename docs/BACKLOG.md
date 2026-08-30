@@ -126,6 +126,41 @@ eight-second recording was audible, disconnect returned to bounded exact
 silence and explicit retry created a fresh process/Route epoch. Release work is
 tracked separately in `docs/plans/active/0021-microphone-release-qualification.md`.
 
+## Active audio consolidation
+
+### CAPY-AUDIO-NATIVE-001 — CapyIO-owned common audio subsystem
+
+Goal: move the default Speaker and microphone product paths from two external
+Android applications/private protocols to one CapyIO Android Node and one
+replaceable, direction-neutral media subsystem without regressing the proven
+Windows virtual devices.
+
+`CAPY-AUDIO-NATIVE-001A` is the first hardware-free slice. ADR 0041 and
+`capyio-audio` bind Session, Route, Stream, positive epoch and the exact
+selected specification; define a bounded PCM/encoded media packet; and provide
+a packet-count/aggregate-byte bounded worker queue. Compatibility backend
+adaptation, Android service/permissions, a native network backend and physical
+switchover remain later slices in
+`docs/plans/active/0022-native-audio-subsystem.md`.
+
+`CAPY-AUDIO-NATIVE-001B` is implemented locally under ADR 0042. The common
+backend contract now validates media access, encoding support, field fidelity
+and security claims. Audio Share consumes a bound common PCM packet before
+stripping unsupported metadata into its unchanged wire; MicYou exposes only an
+opaque process/lifecycle binding. Neither private backend can claim
+StandardPort interoperability or production security. The CapyIO Android Node
+shell and first native transport backend are tracked as `001C/001D`.
+
+`CAPY-AUDIO-NATIVE-001C` is implemented locally under ADR 0043. The repository
+now builds one `dev.capyio.android` application with a non-exported visible
+audio service, independent generation-bound microphone Source and speaker Sink,
+real `AudioRecord`/`AudioTrack` initialization and actual-format observation.
+The microphone worker discards bytes and the speaker has no media writer; the
+manifest deliberately lacks network access. Contract tests, Lint, APK assembly
+and merged-manifest inspection pass, but no APK was installed and no physical
+Android behavior is claimed. `001D` must select and measure the first replaceable
+native backend before either compatibility application can be displaced.
+
 ## Active product slice
 
 ### CAPY-AUDIO-000/001A — Audio Share remote-speaker spike and external Adapter

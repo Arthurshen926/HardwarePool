@@ -56,6 +56,7 @@ adapters/micyou             bounded remote-microphone process boundary
 adapters/mock-source        finite test Source Sidecar and manifest
 adapters/mock-sink          finite test Sink Sidecar and manifest
 platform/windows            Windows Broker, presence and host-config helpers
+platform/android            CapyIO Android audio Node/service shell
 drivers/windows-audio       CapyIO Speaker/microphone controlled-lab package
 protocol/                   Protobuf and JSON Schema sources
 docs/                       normative requirements, architecture and plans
@@ -70,10 +71,13 @@ cargo xtask doctor
 cargo xtask ci
 cargo xtask demo
 cargo xtask adapter-smoke
+cargo xtask android-check
 pnpm dev
 ```
 
-`cargo xtask demo` and the browser-only UI remain explicitly simulated. The
+`cargo xtask android-check` builds and Lints an uninstalled debug APK without
+ADB or device mutation. `cargo xtask demo` and the browser-only UI remain
+explicitly simulated. The
 Tauri shell can expose real lab Quick Actions when their separately approved
 host dependencies are installed and configured. See
 [First Run on Windows](docs/FIRST_RUN_WINDOWS.md) and

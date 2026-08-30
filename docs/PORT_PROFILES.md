@@ -69,9 +69,11 @@ Unix wall time alone is insufficient for multi-sensor synchronization.
 
 ## Audio specialization
 
-PCM and audio callback rules are retained in `docs/AUDIO_PROFILE.md` and
-`docs/DATA_PLANE.md`. Audio types live in `capyio-audio` or Profile-specific
-descriptors rather than dominating Core.
+PCM, encoded-media and audio callback rules are retained in
+`docs/AUDIO_PROFILE.md` and `docs/DATA_PLANE.md`. `capyio-audio` owns the
+direction-neutral selected specification and Session/Route/Stream/epoch media
+binding; concrete network framing remains transport-owned. Audio types live in
+that crate or Profile-specific descriptors rather than dominating Core.
 
 ## IMU samples v1
 

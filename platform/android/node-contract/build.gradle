@@ -1,0 +1,32 @@
+plugins {
+    id 'java-library'
+}
+
+java {
+    sourceCompatibility = JavaVersion.VERSION_17
+    targetCompatibility = JavaVersion.VERSION_17
+}
+
+def contractTestOutput = layout.buildDirectory.dir('classes/java/contractTest')
+
+tasks.register('compileContractTest', JavaCompile) {
+    group = 'verification'
+    dependsOn tasks.named('compileJava')
+    source = fileTree('src/contractTest/java')
+    classpath = files(sourceSets.main.output)
+    destinationDirectory = contractTestOutput
+    options.release = 17
+}
+
+tasks.register('contractTest', JavaExec) {
+    group = 'verification'
+    description = 'Runs dependency-free Android audio node lifecycle contract tests.'
+    dependsOn tasks.named('compileContractTest')
+    classpath = files(contractTestOutput, sourceSets.main.output)
+    mainClass = 'dev.capyio.android.contract.AudioNodeContractTest'
+    enableAssertions = true
+}
+
+tasks.named('check') {
+    dependsOn tasks.named('contractTest')
+}

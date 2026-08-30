@@ -20,14 +20,18 @@ difference is recorded in ADR 0007.
 ## optional-android
 
 - Android Studio;
-- compatible JBR/JDK, Android SDK command-line tools, platform/build tools, NDK;
-- Rust Android targets;
+- compatible JBR/JDK and Android SDK platform/build/command-line tools;
+- Gradle wrapper and Android Gradle Plugin pinned by the Android project;
+- NDK and Rust Android targets when the later JNI slice requires them;
 - ADB and an explicitly designated physical device.
 
-The current machine has Android Studio 2026.1.3.7 and JBR 25.0.2, plus the
-command-line-tools shell under the user SDK directory. Foundation Gates 0–3 do
-not require SDK packages, ADB, Android project generation, APK installation or
-permissions, so no additional Android component is installed by this task.
+The 001C project pins Gradle 9.5.0 by distribution SHA-256, Android Gradle Plugin
+9.3.1, compile/target SDK 36, min SDK 26 and Java 17 source/target bytecode. The
+current host has SDK Platform 36, Build Tools 36.x and a compatible JDK. Run
+`cargo xtask android-check` for contract tests, Lint and debug APK assembly.
+This command never invokes ADB or installs/grants/starts anything on a device.
+Core CI continues to treat the SDK as optional and runs a static Android source
+contract when it is absent.
 
 ## optional-windows-native
 

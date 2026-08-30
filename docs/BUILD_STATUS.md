@@ -1,6 +1,6 @@
 # CapyIO Build Status
 
-> Updated: 2026-08-29 after the `CAPY-MIC-001H` physical Quick Action acceptance.
+> Updated: 2026-08-31 after the `CAPY-AUDIO-NATIVE-001C` Android service-shell slice.
 
 ## Verified baseline
 
@@ -157,8 +157,9 @@ are in `docs/CAPY_IMU_001B3B_REPORT.md`.
 
 ## Not built or tested
 
-- CapyIO-owned Android application/APK;
-- automated Android permission or foreground-service management;
+- installed/physically qualified CapyIO Android APK or native audio transport;
+- real-device Android permission, indicator, foreground/background, focus and
+  route-change behavior;
 - CapyIO-owned camera or input data path;
 - release-qualified Windows virtual devices, signed installer or stable
   isolated-VM driver target;
@@ -341,3 +342,99 @@ static repository validation, shared UI and Windows Tauri all passed on head
 `f513859`. It merged to `main` as merge commit `2145f9f`. Functional plans
 0016–0020 are archived under `docs/plans/completed/`; release work remains in
 `docs/plans/active/0021-microphone-release-qualification.md`.
+
+## CAPY-AUDIO-NATIVE-001A backend-neutral media seam
+
+The first CapyIO-native audio-consolidation slice is complete locally. ADR 0041
+and `capyio-audio` now bind one typed Session, directed Route, Stream, positive
+epoch and exact selected `AudioStreamSpec` before a platform engine enters any
+concrete transport. The same direction-neutral packet represents exact PCM or
+bounded opaque encoded payload, and the reference worker queue has independent
+packet-count and aggregate-byte limits.
+
+Twenty-four `capyio-audio` tests cover lossless PCM frame/packet conversion,
+encoded-payload bounds without a codec, nil/epoch/spec/timeline rejection,
+wrong-Stream and wrong-epoch drops, invalid payloads, both queue capacity modes
+and opposite microphone/Speaker Routes sharing one Session without sharing
+state. Full `cargo xtask ci` passed format, workspace check, Clippy with warnings
+denied, 165 Rust tests (4 separately ignored physical/external tests), IMU demo,
+88-ID documentation/structure validation, two manifests, Adapter smoke and
+desktop typecheck/build.
+
+This is an in-process media seam, not a public network byte layout. It does not
+add a socket, codec, AOO dependency, Android service, permission or APK, and it
+does not change either proven Audio Share or MicYou wire. Compatibility-backend
+mapping is the next slice; CapyIO Android capture/playback and native transport
+remain later separately tested work under
+`docs/plans/active/0022-native-audio-subsystem.md`.
+
+## CAPY-AUDIO-NATIVE-001B compatibility backends
+
+The compatibility paths now sit behind a machine-checkable common backend
+contract rather than merely sharing audio terminology. The contract records
+media visibility, PCM/Opus support, field-by-field metadata fidelity and
+observable transport security, and rejects a partial/opaque backend that claims
+StandardPort interoperability.
+
+Audio Share now has an executable common-media wrapper: one bound PCM packet is
+validated against Session/Route/Stream/epoch/spec, then only its payload enters
+the unchanged Audio Share queue and TCP/UDP wire. Its contract truthfully marks
+the remaining identity/timing metadata absent, the format mapping partial and
+all production security false. The loopback test proves exact PCM payload and
+private datagram segmentation through this wrapper.
+
+MicYou is deliberately not given a fake packet API. Its Adapter can associate
+the external process with one conservative voice Route/epoch for lifecycle, but
+declares media opaque, private PCM/Opus negotiation partial and production
+security absent. Replacing that boundary requires native Android capture and a
+native transport rather than another wrapper.
+
+Full `cargo xtask ci` passed format, workspace check, Clippy with warnings
+denied, 173 Rust tests (4 separately ignored physical/external tests), IMU demo,
+88-ID docs/structure validation, two manifests, Adapter smoke and desktop
+typecheck/build. No APK, phone, driver, service or installed virtual endpoint was
+changed or exercised in this slice. Evidence is in
+`docs/CAPY_AUDIO_NATIVE_001B_REPORT.md`.
+
+## CAPY-AUDIO-NATIVE-001C Android audio Node shell
+
+The first CapyIO-owned Android application now builds locally as
+`dev.capyio.android`. ADR 0043 gives one app-private Node two independent Ports:
+an Android microphone Source and speaker Sink under
+`capyio.audio.frames/1`. A non-exported `START_NOT_STICKY` foreground service
+owns both resources while the Activity observes a schema-v1 payload-free
+snapshot.
+
+The microphone path requests recording/notification consent, opens a real
+48 kHz mono PCM16 `AudioRecord`, records the actual granted parameters and
+counts frames on one bounded/preallocated worker before discarding bytes. The
+speaker path opens a real requested 48 kHz stereo PCM16 `AudioTrack` and waits
+empty for the future backend. Each direction has independent generation,
+state, actual format, metrics and sanitized Problem code; stale completions and
+one-direction failures cannot mutate the other slot.
+
+The manifest declares the approved recording and dual foreground-service
+permissions, requires a persistent notification, exports no service, disables
+backup/cleartext and deliberately omits Internet permission. The APK has no
+third-party runtime dependency. Gradle 9.5.0 is wrapper/checksum pinned with AGP
+9.3.1 and SDK 36.
+
+`cargo xtask android-check` passed 36 lifecycle/validation assertions, Android
+Java/resource/manifest compilation, Lint with warnings denied and debug APK
+assembly. APK manifest analysis confirmed application ID, SDK bounds, five
+permission names and foreground type mask. `cargo test -p xtask` and the
+88-ID offline repository validator also passed. Full `cargo xtask ci` passed
+173 Rust tests with 4 explicit ignores plus every existing Core, Adapter,
+documentation and frontend Gate.
+
+The checksum-identified debug APK was subsequently installed under explicit
+authorization on one Android 16/API 36 vivo V2419A. System permission UI,
+48 kHz mono PCM16 `AudioRecord`, 48 kHz stereo PCM16 `AudioTrack`, simultaneous
+activation, both independent Stop orders, foreground type-mask transitions,
+Activity-finish survival and notification `全部停止` cleanup passed. Android
+AudioService recorded capture start/stop and player start/release, with no
+remaining CapyIO service or running recording AppOp after cleanup. This is one
+device's platform-endpoint/lifecycle evidence, not remote sound, network,
+focus/routing, lock, revoke, latency, quality or vendor-power qualification.
+Evidence and remaining risks are in
+`docs/CAPY_AUDIO_NATIVE_001C_REPORT.md`.

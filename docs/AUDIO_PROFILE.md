@@ -1,8 +1,9 @@
 # CapyIO Audio Frames Profile v1
 
 > Profile: `capyio.audio.frames/1`
-> Status: shared semantic baseline; the Audio Share Speaker compatibility
-> Adapter maps to it without claiming StandardPort interoperability.
+> Status: shared semantic/media baseline; Audio Share and MicYou compatibility
+> Adapters map only preserved semantics without claiming StandardPort
+> interoperability.
 
 ## Role and direction
 
@@ -69,6 +70,24 @@ candidate, but `capyio-audio` contains no codec implementation. A concrete
 Adapter must record the codec implementation, version, license, packet bounds
 and failure behavior. The current Audio Share compatibility transport accepts
 only PCM and preserves its pinned private wire bytes.
+
+ADR 0041 binds each active media channel to one Session, Route, Stream, positive
+epoch and exact selected specification. `AudioMediaPacket` can contain PCM or
+encoded payload without repeating or changing encoding per packet. PCM converts
+losslessly to the decoded `AudioFrame`; encoded payload stays opaque until an
+Adapter-owned codec decodes it. The packet is an in-process contract, not a
+network byte layout and not evidence that Opus is implemented.
+
+The reference `BoundedAudioPacketQueue` applies both packet-count and aggregate
+payload-byte limits and rejects wrong Stream/epoch data. It is a worker-thread
+boundary, not the lock-free platform callback ring.
+
+ADR 0042 adds a typed backend declaration for media visibility, PCM/Opus
+support, metadata fidelity and security. Full-packet StandardPort audio must
+preserve the common contract exactly. The Audio Share compatibility backend is
+PCM-payload-only and strips common packet metadata after validation. MicYou is
+opaque to CapyIO: its private PCM/Opus capability and voice mapping do not prove
+the exact codec, timing or packet metadata selected for a common stream.
 
 ## Common metrics
 

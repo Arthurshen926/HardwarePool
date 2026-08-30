@@ -22,6 +22,7 @@ cargo xtask adapter-smoke
 cargo xtask ci
 cargo xtask demo
 cargo xtask imu-demo
+cargo xtask android-check
 cargo xtask android-doctor --serial <explicit-serial>
 cargo xtask android-baseline --serial <explicit-serial>
 cargo xtask android-collect --serial <explicit-serial>
@@ -130,6 +131,25 @@ The shared audio-contract tests validate microphone, balanced-speaker and
 lossless-music presets; reject voice processing on media playback, invalid QoS,
 empty/duplicate/unbounded candidate inventories and unsupported use cases; and
 prove deterministic exact candidate intersection without implicit conversion.
+
+The ADR 0041 media-channel tests bind typed Session, Route, Stream and positive
+epoch identity to one exact selected stream specification. They prove lossless
+PCM frame/packet conversion, bounded opaque encoded packets, wrong-Stream and
+wrong-epoch rejection, independent packet-count and aggregate-byte queue
+limits, and explicit invalid-payload counters. An integration test drives
+opposite microphone and Speaker Routes through separate queues under one
+Session and proves pressure on one Route does not mutate the other. These tests
+open no socket, run no codec, access no platform API and make no latency or
+security claim.
+
+ADR 0042 backend-contract tests reject malformed IDs, empty encoding support,
+partial StandardPort declarations, overstated payload visibility and
+inconsistent security claims. Audio Share tests drive a bound common PCM packet
+through the unchanged TCP/UDP loopback fixture, prove payload preservation and
+private-wire segmentation, reject wrong Stream/spec before enqueue, and assert
+absent metadata/no security. MicYou tests accept only the conservative voice
+lifecycle binding and assert opaque payload/private PCM+Opus/no security; they
+do not claim access to or decode a MicYou packet.
 
 The MicYou Adapter tests verify exact v2.0.1 CLI identity plus the required
 `device-stable-id-v1` capability, bounded structural output-device parsing that
@@ -307,6 +327,31 @@ contract, data plane or performance test.
   Verifier remains isolated by default and requires separate approval;
 - end to end: IMU Panel/Recorder, audio both directions, camera, gamepad,
   independent Routes, disconnect/reconnect and clock epochs.
+
+## Android audio node shell Gate
+
+`cargo xtask android-check` is the explicit hardware-free 001C Gate. It runs a
+dependency-free Java contract executable, Android Lint with warnings denied and
+debug APK assembly. The 36 contract assertions cover Port direction, independent
+microphone/speaker activation, one-direction Stop, failure isolation, later
+generation Retry, stale completion rejection and bounded actual-format/Problem
+fields.
+
+Offline repository validation additionally pins the Gradle/AGP contract and
+checks the source manifest for the approved recording/notification/foreground
+permissions, a non-exported dual-type service, disabled backup/cleartext and no
+Internet permission. It also requires real `AudioRecord`/`AudioTrack` builders,
+`START_NOT_STICKY` and foreground notification ownership. This static check is
+not an APK or hardware result.
+
+The local debug APK build and merged-manifest inspection do not themselves
+prove device behavior. A separately authorized one-device run now proves the
+positive permission flow, actual 48 kHz `AudioRecord`/`AudioTrack` parameters,
+concurrent and independent Stop behavior, Activity-finish survival, persistent
+notification action and complete service/audio cleanup. Permission denial and
+revoke, visible indicator inspection, lock/process death, focus/routing,
+long-duration background and vendor power policy remain physical tests. No
+microphone recording is retained by the 001C shell.
 
 Gate 7B first proves an unchanged pinned SysVAD build and an approved-target
 install as a toolchain/enumeration baseline; synthetic SysVAD

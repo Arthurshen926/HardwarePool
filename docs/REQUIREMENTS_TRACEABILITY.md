@@ -1,6 +1,6 @@
 # CapyIO Requirements Traceability
 
-> Updated: 2026-08-28 for the completed Speaker functional Gate.
+> Updated: 2026-08-31 for the native-audio media-contract slice.
 >
 > Scope: the 84 normative Requirement IDs in `PRODUCT_REQUIREMENTS.md`.
 
@@ -84,7 +84,7 @@ hardware, networking, security or performance behavior has run.
 | `FR-DIAG-002` | verified | Gate 2 | Runtime tests assert bounded monotonic events; B3B projects Route state, epoch and Problem code to the Tauri DTO. |
 | `FR-DIAG-003` | verified | Gate 3 | Adapter Host tests exercise bounded/truncated stderr retention. |
 | `FR-DIAG-004` | verified | Gate 3 | Sidecar stdout/stderr separation tests and repository secret scanning; finite sample data stays test-only. |
-| `FR-AUDIO-001` | implemented | Gate 8 | ADR 0035 and shared-contract tests define the direction-neutral model; controlled-lab Speaker and MicYou microphone paths now provide two-direction physical evidence while retaining distinct media/voice policies. |
+| `FR-AUDIO-001` | implemented | Gate 8 | ADR 0035 defines the shared direction-neutral model; ADR 0041 and media-channel tests bind Session/Route/Stream/epoch plus exact specification and prove common bounded PCM/encoded packet handling. ADR 0042 validates backend access/fidelity/security: Audio Share consumes a common PCM packet while MicYou truthfully remains opaque. Controlled-lab paths provide two-direction physical evidence; native transport parity remains planned. |
 | `FR-AUDIO-002` | planned | Gate 8 | Bounded exact-intersection tests reject implicit conversion; endpoint capability evidence remains. |
 | `FR-AUDIO-003` | planned | Gate 8 | Preset tests separate voice/media/music policy; real processing-chain evidence remains. |
 | `FR-AUDIO-004` | planned | Gate 8 | ADR 0004/0035 retain independent Routes; a physical duplex/AEC association remains later work. |
@@ -103,18 +103,18 @@ hardware, networking, security or performance behavior has run.
 | `FR-UX-006` | verified | Gate 2 | Per-Route UI actions and Runtime tests prove independent toggles. |
 | `FR-UX-007` | verified | Gate 2 | Built-in preview/Panel representation only; repository contains no dynamic Panel market. |
 | `FR-PLAT-001` | verified | Gate 3 | Desktop Sidecar deployment boundary and hosted Adapter-smoke workflow on Windows/Linux/macOS. |
-| `FR-PLAT-002` | planned | Gate 5 | First mobile in-process/platform-managed Adapter lifecycle evidence. |
-| `FR-PLAT-003` | planned | Gate 4 | Headless Runtime/service lifecycle separated from UI/window closure. |
+| `FR-PLAT-002` | verified | Gate 8 | ADR 0043 and the 001C Android shell implement one platform-managed service; an authorized Android 16 run physically proves independent microphone Source and speaker Sink activation/Stop plus exact foreground-type transitions. |
+| `FR-PLAT-003` | verified | Gate 8 | The Activity is an observing/bound client; a speaker foreground service physically remained active after Back finished the Activity, then the notification action stopped and released it without reopening UI. |
 | `FR-PLAT-004` | planned | Gate 4 | Product fallback selection and observable Projection support levels. |
 | `FR-PLAT-005` | verified | Gate 1 | PRD, platform support and UI disclaim unsupported Android global virtual devices. |
-| `FR-PLAT-006` | planned | Gate 8 | Android microphone permission, indicator and foreground lifecycle tests. |
+| `FR-PLAT-006` | implemented | Gate 8 | 001C fails closed on recording/notification consent; the authorized device run proves positive system permission UI, active recording AppOp and visible foreground notification. Denial/revoke and explicit microphone-indicator inspection remain. |
 | `NFR-SEC-001` | planned | Gate 14 | Mutual authentication, encryption, replay defense and downgrade binding. |
 | `NFR-SEC-002` | planned | Gate 14 | Time-bound per-Capability/Route grant and immediate revoke tests. |
 | `NFR-SEC-003` | verified | Gate 1 | Architecture/driver boundary docs and offline Core/driver dependency rules. |
 | `NFR-SEC-004` | verified | Gate 2 | Narrow Tauri command surface/CSP and repository rule exclude shell/updater and arbitrary networking; the physical lab accepts only a typed IP literal and port. |
 | `NFR-SEC-005` | verified | Gate 1 | PRD, Security Model, Build Status and UI explicitly label the foundation insecure/mock. |
 | `NFR-STAB-001` | implemented | Gate 8 | Controlled-lab Speaker and microphone evidence covers receiver/phone disconnect, bounded drain to exact microphone silence, fresh-process retry, Broker/audio-service recovery and bounded endpoint failure without crashing Windows audio services; soak and release qualification remain. |
-| `NFR-STAB-002` | verified | Gate 3 | Bounded Runtime events, RPC messages/correlations, line readers and stderr retention tests. |
+| `NFR-STAB-002` | verified | Gate 3 | Bounded Runtime events, RPC messages/correlations, line readers and stderr retention tests; ADR 0041 media tests additionally enforce packet-count, packet-payload and aggregate queue-byte limits. |
 | `NFR-STAB-003` | verified | Gate 3 | Catalog tests and B3B disconnect/retry tests invalidate failed epochs and require explicit recovery with a later epoch. |
 | `NFR-STAB-004` | verified | Gate 3 | Scoped Adapter failure, unrelated Route isolation and B3B explicit worker stop/join tests. |
 | `NFR-STAB-005` | verified | Gate 1 | Testing/evidence rules and Build Status prohibit unrun soak/hardware claims. |
@@ -123,7 +123,7 @@ hardware, networking, security or performance behavior has run.
 | `NFR-RT-003` | planned | Gate 7 | Clock-domain timestamps and user-mode recovery/resampling evidence. |
 | `NFR-MAINT-001` | verified | Gate 3 | PR #10 passed exact-head Windows/Linux/macOS Rust/Adapter, UI, repository and Windows Tauri hosted checks. |
 | `NFR-MAINT-002` | verified | Gate 3 | Cargo dependency boundaries and validator rules include the minimal SensorServer Tungstenite feature set. |
-| `NFR-MAINT-003` | verified | Gate 3 | ADRs, compatibility documentation and protocol/Core tests cover foundation public changes. |
+| `NFR-MAINT-003` | verified | Gate 3 | ADRs, compatibility documentation and protocol/Core tests cover foundation public changes; ADRs 0041/0042 and conformance tests cover the common media seam and loss-declared compatibility backends without declaring one private wire public. |
 | `NFR-MAINT-004` | verified | Gate 5 | Validator-checked SensorServer repository, pinned commit, GPL-3.0-only external-service mode, empty imported paths and distribution risk record. |
 | `NFR-MAINT-005` | verified | Gate 1 | `xtask` commands are non-privileged; AGENTS and offline rules exclude deployment operations. |
 

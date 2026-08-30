@@ -58,6 +58,18 @@ transport and is unsafe for untrusted networks.
 High-rate audio/video/sensor data never travels in an Envelope. A Route backend
 selects CapyDataPlane, AdapterManaged, LocalPipeline or ExternalProtocol.
 
+For audio, ADR 0041 defines a separate in-process media binding containing the
+typed Session, Route, Stream, epoch and exact selected stream specification.
+That binding is the control-to-data seam; `AudioMediaPacket` is not a
+`capyio.v1` payload or a public network serialization. A future transport must
+authenticate and bind the same identities rather than trusting values supplied
+by an unauthenticated media peer.
+
+ADR 0042 adds a backend contract beside that seam. It records full-packet,
+PCM-payload-only or opaque access plus field fidelity and observable security;
+it is neither serialized in `capyio.v1` nor permission to claim a partial
+compatibility wire as a StandardPort.
+
 ## Sidecar protocol
 
 Sidecar control is a separate JSON-RPC 2.0/NDJSON request/response contract on

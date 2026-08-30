@@ -13,7 +13,8 @@
 - `protocol/proto/capyio/v1` — canonical node control schema.
 - `protocol/schemas` — Adapter manifest JSON Schema.
 - `third_party` / `LICENSES` — provenance and license tracking.
-- `platform` / `drivers` — platform boundaries; no deployed driver.
+- `platform/android` — CapyIO Android audio Node/service shell and contract Gate.
+- `platform/windows` / `drivers` — Windows platform and controlled-lab driver boundaries.
 - `panels` — built-in Panel policy.
 - `xtask` / `scripts` — safe unified checks and repository validation.
 - `docs` — normative requirements, architecture, ADRs, plans and evidence.
