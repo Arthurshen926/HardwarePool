@@ -1,8 +1,13 @@
+#[cfg(any(windows, test))]
 use std::collections::VecDeque;
 
+#[cfg(any(windows, test))]
 const BYTES_PER_FRAME: usize = 4;
+#[cfg(any(windows, test))]
 const FRAMES_PER_PACKET: u32 = 480;
+#[cfg(any(windows, test))]
 const PACKET_BYTES: usize = FRAMES_PER_PACKET as usize * BYTES_PER_FRAME;
+#[cfg(any(windows, test))]
 const MAX_PENDING_BYTES: usize = 64 * 1024;
 
 #[cfg(windows)]
@@ -180,12 +185,14 @@ fn is_concrete_unicast(ip: std::net::Ipv4Addr) -> bool {
     !ip.is_unspecified() && !ip.is_multicast() && ip != std::net::Ipv4Addr::BROADCAST
 }
 
+#[cfg(any(windows, test))]
 struct PcmPacketAccumulator {
     pending: VecDeque<u8>,
     discontinuity: bool,
     dropped_bytes: u64,
 }
 
+#[cfg(any(windows, test))]
 impl PcmPacketAccumulator {
     fn new() -> Self {
         Self {
@@ -223,6 +230,7 @@ impl PcmPacketAccumulator {
         Some((payload, discontinuity))
     }
 
+    #[cfg(windows)]
     fn mark_discontinuity(&mut self) {
         self.discontinuity = true;
     }
