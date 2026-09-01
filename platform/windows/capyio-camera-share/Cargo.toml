@@ -1,0 +1,27 @@
+[package]
+name = "capyio-windows-camera-share"
+description = "Versioned Windows shared-memory boundary for decoded CapyIO camera frames."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish = false
+
+[features]
+lab-support = []
+test-support = []
+
+[dependencies]
+capyio-core = { path = "../../../crates/capyio-core" }
+capyio-video = { path = "../../../crates/capyio-video" }
+capyio-windows-camera = { path = "../capyio-camera" }
+uuid.workspace = true
+
+[target.'cfg(windows)'.dependencies]
+windows-sys = { workspace = true, features = [
+    "Win32_Foundation",
+    "Win32_Security",
+    "Win32_Security_Authorization",
+    "Win32_System_Memory",
+    "Win32_System_Threading",
+] }

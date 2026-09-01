@@ -160,6 +160,64 @@ Dependency rules:
   descriptors, minimal camera metadata and optional metrics. It does not open a
   camera, implement H.264/H.265/RTSP, register a virtual camera or choose a
   platform/data-plane mechanism.
+- `capyio-windows-camera` owns the user-mode Media Foundation Projection seam.
+  Its first plan is one exact NV12 1280x720 30 fps stream with session lifetime
+  and current-user access. Packed frames are copied into bounded platform
+  buffers and timestamped from a QPC-correlated 100 ns anchor. The background
+  Runtime/Service, not the UI, will eventually own registration and cleanup.
+  Its source core has one fixed stream and at most four outstanding sample
+  requests. `capyio-windows-camera-mf` is the Windows-only unsafe boundary that
+  projects those contracts as an in-process `IMFMediaSourceEx` and
+  `IMFMediaStream2`, with separate event queues, a Frame Server-provided sample
+  allocator, a Legacy sensor profile and Media Foundation 2D NV12 samples. The
+  001B1B gate had no class factory, DLL export or system
+  registration backend. CAPY-CAMERA-001B1C adds that boundary in the sibling
+  crate as a standard in-process COM server with mandatory
+  `IMFGetService`/`IKsControl`/`IMFSampleAllocatorControl`, a fixed
+  `IMFActivate` class factory and a closed session/current-user registrar.
+  System deployment and activation stay outside normal builds/tests and require
+  a hash-recorded lab command plus rollback. CAPY-CAMERA-001B1D adds only a
+  validation harness: while the registrar owns one session camera, two bounded
+  child processes run sequentially and each independently enumerates and
+  activates the public device and consumes two frames. Repeated source `Start`
+  calls preserve the active generation, pending requests, allocator and sample
+  timeline while publishing the required updated/start events. The host result
+  does not establish simultaneous multi-consumer fan-out. Child orchestration
+  is not the production video data plane, Runtime owner or future remote-frame
+  ingress. CAPY-CAMERA-001B1E adds the first decoded-frame ingress seam without
+  changing that process boundary: a worker may submit only the canonical
+  720p30 packed NV12 frame contract into a fixed-capacity drop-oldest queue.
+  Stream identity, epoch, sequence, timestamp, payload size and live-frame
+  flags are validated before ownership transfers. The non-registered MF test
+  constructor consumes that queue with non-blocking locks and propagates a
+  queue gap as `MFSampleExtension_Discontinuity`. Registered COM activation
+  remains fixture-backed until a separate shared-memory/Adapter slice defines
+  ownership and security across the Frame Server process boundary.
+  CAPY-CAMERA-001B1F defines that first local process boundary without yet
+  switching registered activation: a single producer owns the versioned
+  `Global\\CapyIO.CameraIngress.v1` mapping, while one or more Frame Server-side
+  consumers open read-only views. A fixed 256-byte header and three fixed NV12
+  slots consume exactly 4,147,648 bytes. Stream identity, epoch, generation,
+  format and every publication are validated; two atomic publication markers
+  allow a reader to reject an in-progress/overwritten slot and take only the
+  newest stable frame. Consumer cursors are independent and skipped
+  publications become discontinuities. The non-registered MF constructor can
+  use this provider, but Runtime ownership, registered class-factory selection,
+  Android capture, network transport and decoding remain later slices.
+  CAPY-CAMERA-001B1G composes the same boundary across two real processes: a
+  parent owns and publishes the mapping, while a child opens only the read view,
+  starts the non-registered Media Foundation source, allocates a platform video
+  sample and observes the published NV12 byte. This establishes composition of
+  the IPC and MF sample paths without making the general `capyio-runtime` depend
+  on Win32 or extending the audio-specific `CapyIOBroker`.
+  CAPY-CAMERA-001B1H performs that dependency extraction.
+  `capyio-windows-camera-share` now owns only the fixed Win32 ABI, producer and
+  consumer; `capyio-windows-camera-mf` depends on its read side, while
+  `capyio-windows-camera-host` owns explicit start/publish/stop lifecycle for
+  the write side. The MF consumer can adopt the ACL-protected producer header's
+  stream ID and epoch, so registered activation will not need a command-line or
+  environment identity channel. The host has no transport, codec, Android API
+  or service executable yet.
 - `capyio-input` defines normalized pointer/touch/keyboard/gamepad/haptics
   semantics and allocation-free epoch/sequence guards. It does not inject
   input, implement DSU/VIIPER/HID/USB-IP or depend on a platform SDK.
@@ -311,8 +369,162 @@ fallback when the service boundary is absent.
 
 Android platform code owns permissions, microphone indicators, foreground
 service, audio focus/routing and hardware APIs. Activity/window lifecycle is not
-session lifecycle. The current foundation contains no permission or service
-implementation and makes no hardware claim.
+the eventual Node session lifecycle.
+
+`platform/android/capyio-camera-app` began as the isolated Camera2 lab. Its
+Android-free `camera-contract` module owns a deterministic permission/start/
+stream/stop state machine. The current `app` module owns one visible `Activity`,
+a `TextureView`, one Camera2 device/session and one bounded MediaCodec AVC input
+Surface. The repeating request targets only the preview and encoder Surfaces;
+the Activity lifecycle still closes the complete capture/encode/export session.
+
+The observation DTO carries only dimensions, source timestamp, sequence,
+orientation and facing. Camera2's potentially strided YUV planes are not
+claimed to be packed NV12 and are not a `capyio.video.frames/1` data plane. The
+lab has no JNI, persistence, foreground service or Node Runtime ownership.
+Camera and codec callbacks do not perform socket I/O. Therefore build success
+alone establishes the Android boundary, not production pairing, encrypted
+transport or background behavior.
+
+CAPY-CAMERA-001C1 adds a sibling `MediaCodecSurfaceEncoder` boundary without
+yet connecting it to the Camera2 session. It fixes surface-input AVC at the
+selected dimensions/rate/bitrate, requests no B-frames and BT.709 limited SDR,
+owns the codec callback thread/input Surface, and copies each output into an
+owned access unit capped at 4 MiB. A queue of at most eight access units uses a
+non-waiting lock attempt: it drops the incoming unit on contention and drops
+the oldest on capacity, with both losses observable. Codec parameter sets are
+bounded to 64 KiB each. The encoded output remains a private
+`AdapterManaged` payload; it is not yet an RTSP/RTP or StandardPort contract.
+
+CAPY-CAMERA-001C2 composes the two Android boundaries. Camera inventory selects
+one positive even size advertised for both `SurfaceTexture` and `MediaCodec`,
+preferring the largest common size at or below 1280×720. The repeating Camera2
+request targets only the visible preview and encoder input Surface. Capture
+results provide the sensor timestamp/sequence observation; the camera thread
+drains at most eight encoded queue entries per result and forwards only
+metadata to the Activity. Camera session/device shutdown precedes codec/input-
+Surface release. This removes raw YUV conversion from the intended encoded
+path, but actual HAL stream-combination and encoder negotiation remain device
+facts rather than build-time guarantees.
+
+CAPY-CAMERA-001C3 fixes the first cross-language encoded-camera boundary without
+selecting a network. `camera-contract` encodes a private 56-byte-header AVC
+config/access-unit record; `adapters/vcamdroid` decodes the same golden bytes
+and guards config-first, exact stream/epoch, advancing sequence/timestamp,
+key-frame discontinuity and terminal EOS semantics. The format remains wholly
+`AdapterManaged`; Core, `capyio-video`, Protobuf, JSON-RPC and Windows camera
+mapping code do not parse it. A later authenticated transport owns delivery,
+while a decoder Adapter converts accepted access units into the existing packed
+NV12 Windows camera-host boundary.
+
+CAPY-CAMERA-001C4 adds a deliberately narrow transport lab around that record.
+`AvcWireSessionEncoder` detects Annex-B, four-byte-length-prefixed and AVC
+decoder-configuration layouts off the codec callback, emits config before the
+first accepted key frame and converts observed sequence loss into key-frame
+discontinuity recovery. `LoopbackAvcSender` accepts access units through an
+eight-entry non-waiting queue, while its worker alone allocates wire records and
+writes a socket. The Android destination is fixed to device loopback port 38173;
+an explicitly configured ADB reverse tunnel carries it to a Rust executable
+listening only on Windows loopback. The Rust stream reader caps the payload
+length before allocation, rejects short records and applies the C3 guard before
+reporting counters. This is an authenticated-debug-channel lab boundary, not a
+LAN listener, reconnect protocol, production Route transport or decoder. No
+network or codec logic enters Core, JSON-RPC, shared-memory/MF code or a driver.
+
+CAPY-CAMERA-001C23 adds an opt-in ADB-free trusted-LAN lab without changing the
+CAVC record or any Core boundary. Android keeps blank input mapped to the C4
+loopback destination. A non-empty destination is accepted only as a canonical
+IPv4 literal in RFC1918, link-local or 100.64.0.0/10 space and remains fixed to
+port 38173. Windows trusted-LAN mode is representable only when an exact local
+bind IPv4 and a different exact allowed peer IPv4 are both supplied; wildcard
+binds, DNS, discovery, public addresses and caller-selected ports are absent.
+The closed `trusted-lan-live-hold` command passes only those two addresses to
+the fixed sibling receiver and otherwise retains C14 registration, liveness and
+cleanup behavior. This is a plaintext trusted-lab transport, not a production
+Route: mutual authentication, authenticated encryption, Route/Session binding,
+replay protection and downgrade binding remain required before untrusted use.
+
+CAPY-CAMERA-001C24 hardens only the foreground lab lifecycle. Android retains a
+fixed-capacity media path but extends its fixed connection budget to 120
+attempts and keeps the display awake while the visible capture state is active;
+pause still closes the whole session. Windows waits at most 120 seconds for the
+first validated mapping and retains the same publisher for a fixed 60-second
+peer-reconnect grace. The orchestrator always evaluates child and mapping
+cleanup, and a cleanup failure takes precedence over an earlier validation
+error. No timeout is caller-controlled and no reconnect logic enters Core, the
+COM callback or a driver. Camera choices remain directly openable Camera2 IDs
+plus explicitly labelled vendor Zoom targets; a Zoom target is not physical-
+sensor identity.
+
+CAPY-CAMERA-001C25 keeps configuration-only rotation inside the same visible
+Android Activity. The manifest delegates orientation, screen-size and smallest-
+screen-size changes to `MainActivity`; its handler refreshes UI state without
+changing the Camera2/MediaCodec/export session. A true Activity pause or preview
+surface loss still crosses the existing foreground boundary and closes the
+complete session. The Activity does not lock orientation, persist the trusted-
+LAN address, introduce a service or move lifecycle state into Core.
+
+CAPY-CAMERA-001C5 adds the first decoder Adapter on Windows without widening the
+transport. After the C3 guard accepts an Annex-B config, the Adapter configures
+the inbox H.264 Media Foundation Transform with bounded frame metadata and SPS/
+PPS, prefixes those parameter sets to the first key frame after each stream
+start/discontinuity, and requests NV12 output. It handles backpressure, bounded
+output type changes, flush and drain while mapping output timestamps back to
+the accepted source sequence. Strided output is copied into a bounded packed
+NV12 allocation. The loopback executable immediately hashes and drops each
+decoded frame. Core, JSON-RPC, the Android callback, shared-memory mapping and
+the virtual-camera COM source do not run the codec; connecting these decoded
+frames to the existing camera-host producer is a subsequent slice.
+
+CAPY-CAMERA-001C6 composes that decoder with `CameraProducerHost`. Decoded
+identity, epoch, source sequence, timestamp, discontinuity and payload move into
+the existing canonical `GeneratedVideoFrame` and then the versioned triple-slot
+mapping. A compile-time lab feature exposes one exact current-session Local
+name for unprivileged cross-process evidence; it accepts no arbitrary name and
+registered activation never opens it. Production activation opens only the
+fixed Global mapping, uses its validated header when present, falls back to the
+fixture only for file-not-found and fails every other open/header error. The
+current user token cannot create that Global mapping, so its owner must be a
+separately controlled privileged camera host/service rather than the portable
+Runtime or ordinary Adapter process.
+
+CAPY-CAMERA-001C7 closes the registered live-source scheduling gap. The shared
+provider accepts at most four `RequestSample` calls into a Media Foundation
+serial work queue. A request that arrives between 30 fps publications retains
+its FIFO token and is retried by a 5 ms scheduled work item; the COM callback
+does not sleep, grow an unbounded queue or treat normal producer cadence as a
+fatal stream error. Fixture and process-local ingress providers retain their
+existing synchronous behavior. The controlled Global roundtrip proved Frame
+Server can activate this source and return advancing V2419A-backed NV12 samples.
+
+CAPY-CAMERA-001C26 closes only the registered late-producer selection gap. If
+activation finds the fixed Global mapping absent, the registered source uses an
+asynchronous late-bound provider instead of permanently selecting its fixture.
+That provider emits the existing deterministic 720p30 fixture as an offline
+placeholder and, after a fixed 15-placeholder-frame countdown, attempts only
+the production mapping from the existing MF serial work queue. The first
+validated shared frame is rebased onto the active virtual-camera stream/epoch,
+sequence and timeline and is marked discontinuous; later empty reads retain the
+bounded shared-sample retry and never insert placeholder frames into live mode.
+An already-present mapping still selects the direct shared provider, and every
+open/header error except exact file-not-found fails activation or the pending
+request. This does not create persistent registration, service ownership,
+producer-loss detection or any new control/network path.
+
+CAPY-CAMERA-001C27 supersedes that one-way provider selection for registered
+activation. Both the initially present and initially absent mapping cases now
+enter one asynchronous provider lifecycle. While live, 400 consecutive empty
+polls on the existing 5 ms serial sample pump form a bounded nominal two-second
+stall window. Expiry releases this consumer's mapping handle and resumes the
+deterministic fixture at the virtual timeline's next sequence and timestamp;
+the transition is discontinuous. The existing fixed 15-placeholder-frame probe
+interval then permits a newer publication from the paused producer or a new
+mapping generation to reattach without recreating the Media Foundation source.
+Producer generation/source identity plus pre-rebase source sequence/timestamp
+prevent a reopened mapping's last publication from being replayed. Direct
+caller-owned in-process shared providers remain unchanged. The mechanism is a
+sample-demand-driven liveness policy, not a heartbeat, service owner or new IPC
+ABI; another consumer may still keep an abandoned mapping alive.
 
 ## 13. Failure isolation
 

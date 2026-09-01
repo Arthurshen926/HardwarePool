@@ -485,7 +485,12 @@ dependencies = [
 name = "capyio-vcamdroid-adapter"
 version = "0.1.0"
 dependencies = [
+ "capyio-core",
  "capyio-video",
+ "capyio-windows-camera",
+ "capyio-windows-camera-host",
+ "uuid",
+ "windows",
 ]
 
 [[package]]
@@ -509,7 +514,40 @@ dependencies = [
 name = "capyio-windows-camera"
 version = "0.1.0"
 dependencies = [
+ "capyio-core",
  "capyio-video",
+ "windows",
+]
+
+[[package]]
+name = "capyio-windows-camera-host"
+version = "0.1.0"
+dependencies = [
+ "capyio-core",
+ "capyio-windows-camera",
+ "capyio-windows-camera-share",
+]
+
+[[package]]
+name = "capyio-windows-camera-mf"
+version = "0.1.0"
+dependencies = [
+ "capyio-core",
+ "capyio-windows-camera",
+ "capyio-windows-camera-share",
+ "windows",
+ "windows-core 0.61.2",
+]
+
+[[package]]
+name = "capyio-windows-camera-share"
+version = "0.1.0"
+dependencies = [
+ "capyio-core",
+ "capyio-video",
+ "capyio-windows-camera",
+ "uuid",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]

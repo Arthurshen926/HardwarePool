@@ -12,6 +12,7 @@ import json
 import re
 import sys
 import tomllib
+import xml.etree.ElementTree as ElementTree
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -45,6 +46,28 @@ REQUIRED_FILES = [
     "apps/desktop/package.json",
     "apps/desktop/src/App.vue",
     "apps/desktop/src-tauri/tauri.conf.json",
+    "platform/android/capyio-camera-app/app/src/main/AndroidManifest.xml",
+    "platform/android/capyio-camera-app/app/src/main/java/io/capyio/camera/lab/MainActivity.java",
+    "platform/android/capyio-camera-app/app/src/main/java/io/capyio/camera/lab/MediaCodecSurfaceEncoder.java",
+    "platform/android/capyio-camera-app/app/src/main/java/io/capyio/camera/lab/LoopbackAvcSender.java",
+    "platform/android/capyio-camera-app/camera-contract/src/main/java/io/capyio/camera/contract/CaptureStateMachine.java",
+    "platform/android/capyio-camera-app/camera-contract/src/main/java/io/capyio/camera/contract/CaptureOwnershipStateMachine.java",
+    "platform/android/capyio-camera-app/camera-contract/src/main/java/io/capyio/camera/contract/CameraFacingPolicy.java",
+    "platform/android/capyio-camera-app/camera-contract/src/main/java/io/capyio/camera/contract/AvcQualityPreset.java",
+    "platform/android/capyio-camera-app/camera-contract/src/main/java/io/capyio/camera/contract/LoopbackConnectRetryPolicy.java",
+    "platform/android/capyio-camera-app/camera-contract/src/main/java/io/capyio/camera/contract/CameraTransportEndpoint.java",
+    "platform/android/capyio-camera-app/camera-contract/src/main/java/io/capyio/camera/contract/AvcWireRecordEncoder.java",
+    "platform/android/capyio-camera-app/camera-contract/src/main/java/io/capyio/camera/contract/AvcWireSessionEncoder.java",
+    "platform/windows/capyio-camera-mf/src/bin/capyio-camera-virtual-lab.rs",
+    "scripts/capyio-camera-live-lab-preflight.ps1",
+    "adapters/vcamdroid/src/avc_stream.rs",
+    "adapters/vcamdroid/src/avc_wire.rs",
+    "docs/AVC_ADAPTER_WIRE.md",
+    "docs/CAPY_CAMERA_001C4_REPORT.md",
+    "docs/CAPY_CAMERA_001C5_REPORT.md",
+    "docs/CAPY_CAMERA_001C6_REPORT.md",
+    "docs/CAPY_CAMERA_001C14_REPORT.md",
+    "docs/CAPY_CAMERA_001C15_REPORT.md",
 ]
 
 REQUIREMENT_ID_RE = re.compile(r"(?:FR|NFR)-[A-Z]+-\d{3}")
@@ -84,7 +107,9 @@ TEXT_SUFFIXES = {
     ".h",
     ".hpp",
     ".html",
+    ".java",
     ".json",
+    ".kts",
     ".md",
     ".proto",
     ".ps1",
@@ -94,6 +119,7 @@ TEXT_SUFFIXES = {
     ".ts",
     ".tsx",
     ".vue",
+    ".xml",
     ".yaml",
     ".yml",
 }
@@ -110,10 +136,12 @@ TEXT_NAMES = {
 IGNORED_DIRECTORY_NAMES = {
     ".agent-cache",
     ".codex",
+    ".gradle",
     ".git",
     ".pnpm-store",
     ".vite",
     "artifacts",
+    "build",
     "dist",
     "node_modules",
     "target",
@@ -485,6 +513,586 @@ def validate_architecture_dependencies() -> None:
         fail("root Cargo metadata contains an unresolved repository placeholder")
 
 
+def validate_android_camera_boundary() -> None:
+    manifest_path = (
+        ROOT
+        / "platform/android/capyio-camera-app/app/src/main/AndroidManifest.xml"
+    )
+    try:
+        manifest = ElementTree.parse(manifest_path).getroot()
+    except ElementTree.ParseError as error:
+        fail(f"invalid Android camera manifest: {error}")
+
+    android = "{http://schemas.android.com/apk/res/android}"
+    permissions = [
+        element.get(f"{android}name")
+        for tag in ("uses-permission", "uses-permission-sdk-23")
+        for element in manifest.findall(tag)
+    ]
+    expected_permissions = [
+        "android.permission.CAMERA",
+        "android.permission.INTERNET",
+        "android.permission.FOREGROUND_SERVICE",
+        "android.permission.FOREGROUND_SERVICE_CAMERA",
+    ]
+    if permissions != expected_permissions:
+        fail(
+            "Android camera lab must declare exactly CAMERA and INTERNET, got: "
+            f"{permissions}"
+        )
+
+    application = manifest.find("application")
+    if application is None:
+        fail("Android camera manifest has no application")
+    if application.get(f"{android}allowBackup") != "false":
+        fail("Android camera lab must disable application backup")
+    services = manifest.findall(".//service")
+    if len(services) != 1:
+        fail("Android camera app must declare exactly one capture service")
+    service = services[0]
+    if service.get(f"{android}name") != ".CameraCaptureService":
+        fail("Android camera service class is not the reviewed capture owner")
+    if service.get(f"{android}exported") != "false":
+        fail("Android camera service must not be exported")
+    if service.get(f"{android}foregroundServiceType") != "camera":
+        fail("Android camera foreground service must declare camera type")
+    if service.get(f"{android}stopWithTask") != "false":
+        fail("Android camera service must survive Activity task removal")
+
+    activity = manifest.find(".//activity")
+    if activity is None:
+        fail("Android camera lab must declare its visible Activity")
+    config_changes = set(
+        activity.get(f"{android}configChanges", "").split("|")
+    )
+    required_config_changes = {"orientation", "screenSize", "smallestScreenSize"}
+    if not required_config_changes.issubset(config_changes):
+        fail(
+            "Android camera Activity must retain its foreground session across rotation: "
+            f"missing {sorted(required_config_changes - config_changes)}"
+        )
+    if activity.get(f"{android}screenOrientation") is not None:
+        fail("Android camera Activity must not hide the rotation defect by locking orientation")
+
+    source = (
+        ROOT
+        / "platform/android/capyio-camera-app/app/src/main/java/io/capyio/camera/lab/MainActivity.java"
+    ).read_text(encoding="utf-8")
+    required_lifecycle_tokens = [
+        "requestPermissions(",
+        "WindowManager.LayoutParams.FLAG_SECURE",
+        "onConfigurationChanged(Configuration newConfig)",
+        "CameraCaptureService.start(",
+        "CameraCaptureService.stop(this)",
+        "SERVICE_POLL_MILLIS = 250",
+        "registerReceiver(",
+        "RECEIVER_NOT_EXPORTED",
+        "CameraCaptureService.ACTION_STATE_CHANGED",
+        "CameraFacingPolicy.toggle(preferredFacing)",
+        "preferredQuality.next()",
+        "restartAfterStop",
+        "R.string.camera_source_zoom_target",
+        "source.cameraId()",
+    ]
+    missing = [token for token in required_lifecycle_tokens if token not in source]
+    if missing:
+        fail(f"Android camera Activity lacks service lifecycle controls: {missing}")
+    forbidden_activity_ownership = [
+        "new Camera2Session(",
+        "stateMachine.handle(Event.HOST_PAUSED)",
+        "onSurfaceTextureDestroyed",
+    ]
+    present = [token for token in forbidden_activity_ownership if token in source]
+    if present:
+        fail(f"Android Activity still owns capture lifecycle: {present}")
+
+    capture_service = (
+        ROOT
+        / "platform/android/capyio-camera-app/app/src/main/java/io/capyio/camera/lab/CameraCaptureService.java"
+    ).read_text(encoding="utf-8")
+    required_service_tokens = [
+        "startForegroundService(intent)",
+        "ServiceInfo.FOREGROUND_SERVICE_TYPE_CAMERA",
+        "return START_NOT_STICKY",
+        "new Camera2Session(",
+        "stopForeground(STOP_FOREGROUND_REMOVE)",
+        "android.app.Service",
+        "mainHandler.post(announceState)",
+        "sendBroadcast(new Intent(ACTION_STATE_CHANGED).setPackage(getPackageName()))",
+    ]
+    missing = [token for token in required_service_tokens if token not in capture_service]
+    if missing:
+        fail(f"Android foreground camera service is incomplete: {missing}")
+
+    gradle_root = (
+        ROOT / "platform/android/capyio-camera-app/build.gradle.kts"
+    ).read_text(encoding="utf-8")
+    if 'id("com.android.application") version "9.3.1"' not in gradle_root:
+        fail("Android camera Gradle plugin must remain explicitly pinned to 9.3.1")
+
+    encoder = (
+        ROOT
+        / "platform/android/capyio-camera-app/app/src/main/java/io/capyio/camera/lab/MediaCodecSurfaceEncoder.java"
+    ).read_text(encoding="utf-8")
+    forbidden_encoder_tokens = ["java.net.", "java.io.File", "android.util.Log"]
+    present = [token for token in forbidden_encoder_tokens if token in encoder]
+    if present:
+        fail(f"Android MediaCodec callback contains forbidden I/O/logging: {present}")
+    queue = (
+        ROOT
+        / "platform/android/capyio-camera-app/camera-contract/src/main/java/io/capyio/camera/contract/BoundedAvcAccessUnitQueue.java"
+    ).read_text(encoding="utf-8")
+    if "tryLock()" not in queue:
+        fail("Android AVC output queue must remain non-waiting")
+
+    camera_session = (
+        ROOT
+        / "platform/android/capyio-camera-app/app/src/main/java/io/capyio/camera/lab/Camera2Session.java"
+    ).read_text(encoding="utf-8")
+    required_composition_tokens = [
+        "getOutputSizes(MediaCodec.class)",
+        "request.addTarget(encoded)",
+        "if (display != null)",
+        "captureCallback",
+        "qualityPreset.bitrateForDimensions",
+    ]
+    missing = [
+        token for token in required_composition_tokens if token not in camera_session
+    ]
+    if missing:
+        fail(f"Android Camera2/MediaCodec composition is incomplete: {missing}")
+
+    ownership_policy = (
+        ROOT
+        / "platform/android/capyio-camera-app/camera-contract/src/main/java/io/capyio/camera/contract/CaptureOwnershipStateMachine.java"
+    ).read_text(encoding="utf-8")
+    required_ownership_tokens = [
+        "START_FOREGROUND_SERVICE",
+        "SERVICE_OWNED",
+        "case ACTIVITY_PAUSED, ACTIVITY_RESUMED, CONFIGURATION_CHANGED",
+        "Activity lifecycle is deliberately not capture lifecycle",
+    ]
+    missing = [
+        token for token in required_ownership_tokens if token not in ownership_policy
+    ]
+    if missing:
+        fail(f"Android service-ownership foundation is incomplete: {missing}")
+
+    facing_policy = (
+        ROOT
+        / "platform/android/capyio-camera-app/camera-contract/src/main/java/io/capyio/camera/contract/CameraFacingPolicy.java"
+    ).read_text(encoding="utf-8")
+    required_facing_tokens = [
+        "MAX_CAMERA_CANDIDATES = 32",
+        "case BACK -> FrameObservation.LensFacing.FRONT",
+        "camera candidate count is outside the bound",
+    ]
+    missing = [token for token in required_facing_tokens if token not in facing_policy]
+    if missing:
+        fail(f"Android camera-facing policy is incomplete: {missing}")
+
+    quality_policy = (
+        ROOT
+        / "platform/android/capyio-camera-app/camera-contract/src/main/java/io/capyio/camera/contract/AvcQualityPreset.java"
+    ).read_text(encoding="utf-8")
+    required_quality_tokens = [
+        "ECONOMY(2_000_000)",
+        "BALANCED(4_000_000)",
+        "CLEAR(6_000_000)",
+        "bitrateForDimensions",
+        "case CLEAR -> ECONOMY",
+    ]
+    missing = [token for token in required_quality_tokens if token not in quality_policy]
+    if missing:
+        fail(f"Android camera-quality policy is incomplete: {missing}")
+
+    inventory_contract = (
+        ROOT
+        / "platform/android/capyio-camera-app/camera-contract/src/main/java/io/capyio/camera/contract/CameraInventory.java"
+    ).read_text(encoding="utf-8")
+    required_inventory_tokens = [
+        "MAX_CAMERAS = 32",
+        "MAX_PHYSICAL_CAMERAS = 16",
+        "MAX_CONCURRENT_GROUPS = 16",
+        "MAX_JSON_CHARS = 65_536",
+        "physical camera detail is not declared by the logical camera",
+    ]
+    missing = [
+        token for token in required_inventory_tokens if token not in inventory_contract
+    ]
+    if missing:
+        fail(f"Android camera inventory contract is incomplete: {missing}")
+
+    inventory_collector = (
+        ROOT
+        / "platform/android/capyio-camera-app/app/src/main/java/io/capyio/camera/lab/CameraInventoryCollector.java"
+    ).read_text(encoding="utf-8")
+    required_collector_tokens = [
+        "getCameraIdList()",
+        "getPhysicalCameraIds()",
+        "LENS_INFO_AVAILABLE_FOCAL_LENGTHS",
+        "SENSOR_INFO_PHYSICAL_SIZE",
+        "CONTROL_ZOOM_RATIO_RANGE",
+        "getConcurrentCameraIds()",
+    ]
+    missing = [
+        token for token in required_collector_tokens if token not in inventory_collector
+    ]
+    if missing:
+        fail(f"Android Camera2 inventory collector is incomplete: {missing}")
+    forbidden_inventory_tokens = [
+        "openCamera(",
+        "android.media.Image",
+        "java.io.File",
+        "android.util.Log",
+    ]
+    present = [
+        token for token in forbidden_inventory_tokens if token in inventory_collector
+    ]
+    if present:
+        fail(f"Android Camera2 inventory collector contains capture or storage: {present}")
+
+    source_selection = (
+        ROOT
+        / "platform/android/capyio-camera-app/camera-contract/src/main/java/io/capyio/camera/contract/CameraSourceSelection.java"
+    ).read_text(encoding="utf-8")
+    required_source_selection_tokens = [
+        "MAX_ZOOM_TARGETS_PER_CAMERA = 3",
+        "MAX_SOURCES",
+        "cameraId + \"@auto\"",
+        "targetZoomRatioMilli",
+        "if (minimum < 1_000)",
+        "addIfSupportedAndUnique(targets, 1_000, minimum, maximum)",
+        "addIfSupportedAndUnique(targets, 2_000, minimum, maximum)",
+        "public static CameraSourceSelection next",
+        "return List.copyOf(sources)",
+    ]
+    missing = [
+        token
+        for token in required_source_selection_tokens
+        if token not in source_selection
+    ]
+    if missing:
+        fail(f"Android camera-source selection contract is incomplete: {missing}")
+
+    camera_session = (
+        ROOT
+        / "platform/android/capyio-camera-app/app/src/main/java/io/capyio/camera/lab/Camera2Session.java"
+    ).read_text(encoding="utf-8")
+    required_zoom_source_tokens = [
+        "Build.VERSION.SDK_INT >= 30",
+        "CaptureRequest.CONTROL_ZOOM_RATIO",
+        "targetZoomRatioMilli / 1_000.0f",
+    ]
+    missing = [
+        token for token in required_zoom_source_tokens if token not in camera_session
+    ]
+    if missing:
+        fail(f"Android camera lens-target boundary is incomplete: {missing}")
+    forbidden_physical_output_tokens = [
+        "setPhysicalCameraId",
+        "getPhysicalCameraIds().contains",
+    ]
+    present = [
+        token for token in forbidden_physical_output_tokens if token in camera_session
+    ]
+    if present:
+        fail(f"Android camera lens-target boundary retained stalled physical outputs: {present}")
+
+    progress_watchdog = (
+        ROOT
+        / "platform/android/capyio-camera-app/camera-contract/src/main/java/io/capyio/camera/contract/CameraProgressWatchdog.java"
+    ).read_text(encoding="utf-8")
+    required_watchdog_tokens = [
+        "CHECK_INTERVAL_MILLIS = 1_000",
+        "STALL_TIMEOUT_MILLIS = 5_000",
+        "nowMillis < lastProgressMillis",
+        "nowMillis - lastProgressMillis >= STALL_TIMEOUT_MILLIS",
+    ]
+    missing = [
+        token for token in required_watchdog_tokens if token not in progress_watchdog
+    ]
+    if missing:
+        fail(f"Android camera progress-watchdog contract is incomplete: {missing}")
+    required_session_watchdog_tokens = [
+        "SystemClock.elapsedRealtime()",
+        "handler.postDelayed(",
+        "Camera stream stalled: no encoded progress for ",
+        "handler.removeCallbacks(progressWatchdog)",
+    ]
+    missing = [
+        token for token in required_session_watchdog_tokens if token not in camera_session
+    ]
+    if missing:
+        fail(f"Android camera session watchdog boundary is incomplete: {missing}")
+
+    android_wire = (
+        ROOT
+        / "platform/android/capyio-camera-app/camera-contract/src/main/java/io/capyio/camera/contract/AvcWireRecordEncoder.java"
+    ).read_text(encoding="utf-8")
+    required_android_wire_tokens = [
+        "HEADER_BYTES = 56",
+        "ByteOrder.BIG_ENDIAN",
+        "codec-config buffers must use the dedicated config record",
+        "AVC stream ID must not be all zero",
+    ]
+    missing = [
+        token for token in required_android_wire_tokens if token not in android_wire
+    ]
+    if missing:
+        fail(f"Android private AVC record encoder is incomplete: {missing}")
+    forbidden_wire_tokens = ["java.net.", "java.io.File", "android.util.Log"]
+    present = [token for token in forbidden_wire_tokens if token in android_wire]
+    if present:
+        fail(f"Android private AVC record encoder contains I/O/logging: {present}")
+
+    android_session = (
+        ROOT
+        / "platform/android/capyio-camera-app/camera-contract/src/main/java/io/capyio/camera/contract/AvcWireSessionEncoder.java"
+    ).read_text(encoding="utf-8")
+    required_session_tokens = [
+        "detectAccessUnitLayout",
+        "codec config cannot change inside one stream epoch",
+        "discontinuity",
+        "!unit.keyFrame()",
+    ]
+    missing = [
+        token for token in required_session_tokens if token not in android_session
+    ]
+    if missing:
+        fail(f"Android AVC stream-state encoder is incomplete: {missing}")
+
+    transport_endpoint = (
+        ROOT
+        / "platform/android/capyio-camera-app/camera-contract/src/main/java/io/capyio/camera/contract/CameraTransportEndpoint.java"
+    ).read_text(encoding="utf-8")
+    required_endpoint_tokens = [
+        "public static final int PORT = 38_173",
+        "Mode.ADB_REVERSE",
+        "Mode.TRUSTED_LAN",
+        "first == 100 && second >= 64 && second <= 127",
+        "first == 169 && second == 254",
+        "IPv4 segments must be canonical decimal",
+    ]
+    missing = [
+        token for token in required_endpoint_tokens if token not in transport_endpoint
+    ]
+    if missing:
+        fail(f"Android camera transport endpoint contract is incomplete: {missing}")
+    forbidden_endpoint_tokens = [
+        "InetAddress.getByName",
+        "URI(",
+        "URL(",
+        "0.0.0.0",
+    ]
+    present = [
+        token for token in forbidden_endpoint_tokens if token in transport_endpoint
+    ]
+    if present:
+        fail(f"Android camera transport endpoint can escape its closed boundary: {present}")
+
+    lab_sender = (
+        ROOT
+        / "platform/android/capyio-camera-app/app/src/main/java/io/capyio/camera/lab/LoopbackAvcSender.java"
+    ).read_text(encoding="utf-8")
+    required_sender_tokens = [
+        "InetAddress.getByAddress(endpoint.addressBytes())",
+        "endpoint.port()",
+        "CameraTransportEndpoint endpoint",
+        "BoundedAvcAccessUnitQueue",
+        "static final int QUEUE_CAPACITY = 2",
+        "accessUnits.offer(",
+        "result.droppedOldest()",
+        "runConnection(sent)",
+        'endpoint.modeLabel() + " interrupted; retrying"',
+        "LoopbackConnectRetryPolicy.MAX_ATTEMPTS",
+        'new Thread(this::runWorker, "CapyIO-AVC-Lab-Export")',
+    ]
+    missing = [token for token in required_sender_tokens if token not in lab_sender]
+    if missing:
+        fail(f"Android AVC lab exporter is incomplete: {missing}")
+    forbidden_sender_tokens = ["android.util.Log", "java.io.File", "ServerSocket"]
+    present = [token for token in forbidden_sender_tokens if token in lab_sender]
+    if present:
+        fail(f"Android AVC lab exporter contains forbidden behavior: {present}")
+
+    retry_policy = (
+        ROOT
+        / "platform/android/capyio-camera-app/camera-contract/src/main/java/io/capyio/camera/contract/LoopbackConnectRetryPolicy.java"
+    ).read_text(encoding="utf-8")
+    required_retry_tokens = [
+        "MAX_ATTEMPTS = 120",
+        "CONNECT_TIMEOUT_MILLIS = 500",
+        "RETRY_DELAY_MILLIS = 500",
+    ]
+    missing = [token for token in required_retry_tokens if token not in retry_policy]
+    if missing:
+        fail(f"Android camera retry window is incomplete: {missing}")
+
+    rust_wire = (ROOT / "adapters/vcamdroid/src/avc_wire.rs").read_text(
+        encoding="utf-8"
+    )
+    required_rust_wire_tokens = [
+        'const MAGIC: [u8; 4] = *b"CAVC"',
+        "pub const AVC_WIRE_HEADER_BYTES: usize = 56",
+        "pub fn decode_record(",
+        "pub struct AvcRecordGuard",
+        "access-unit sequence is duplicate or replayed",
+    ]
+    missing = [token for token in required_rust_wire_tokens if token not in rust_wire]
+    if missing:
+        fail(f"Rust private AVC record decoder is incomplete: {missing}")
+
+    rust_stream = (ROOT / "adapters/vcamdroid/src/avc_stream.rs").read_text(
+        encoding="utf-8"
+    )
+    required_rust_stream_tokens = [
+        "pub fn read_avc_record",
+        "AVC_WIRE_MAX_ACCESS_UNIT_BYTES",
+        "TruncatedHeader",
+        "TruncatedPayload",
+    ]
+    missing = [token for token in required_rust_stream_tokens if token not in rust_stream]
+    if missing:
+        fail(f"Rust bounded AVC stream reader is incomplete: {missing}")
+
+    rust_receiver = (
+        ROOT / "adapters/vcamdroid/src/bin/capyio-avc-lab-receiver.rs"
+    ).read_text(encoding="utf-8")
+    required_rust_receiver_tokens = [
+        "MAX_RECONNECT_GRACE_MILLIS: u64 = 60_000",
+        "listener.set_nonblocking(true)?",
+        "stream.set_nonblocking(false)?",
+        "thread::sleep(Duration::from_millis(50))",
+        "accepted.read_exact(&mut byte)",
+        '"--trusted-lan-bind"',
+        '"--trusted-lan-peer"',
+        "peer_is_authorized(peer, options.allowed_peer_ip)",
+        "SocketAddrV4::new(options.bind_ip, options.port)",
+        "trusted LAN camera lab is fixed to TCP port 38173",
+    ]
+    missing = [
+        token for token in required_rust_receiver_tokens if token not in rust_receiver
+    ]
+    if missing:
+        fail(f"Rust AVC receiver transport boundary is incomplete: {missing}")
+    forbidden_receiver_tokens = [
+        'TcpListener::bind(("0.0.0.0"',
+        "Ipv4Addr::UNSPECIFIED",
+    ]
+    present = [
+        token for token in forbidden_receiver_tokens if token in rust_receiver
+    ]
+    if present:
+        fail(f"Rust AVC receiver contains a wildcard listener: {present}")
+
+    windows_live_lab = (
+        ROOT
+        / "platform/windows/capyio-camera-mf/src/bin/capyio-camera-virtual-lab.rs"
+    ).read_text(encoding="utf-8")
+    required_live_lab_tokens = [
+        '"live-hold" => Ok(LabCommand::LiveHold)',
+        'if command == "trusted-lan-live-hold"',
+        '"--trusted-lan-bind".to_owned()',
+        '"--trusted-lan-peer".to_owned()',
+        'const LIVE_RECEIVER_EXECUTABLE: &str = "capyio-avc-lab-receiver.exe"',
+        "const LIVE_RECEIVER_START_TIMEOUT: Duration = Duration::from_secs(120)",
+        "const LIVE_RECONNECT_GRACE_MILLIS: u64 = 60_000",
+        '"--reconnect-grace-millis",',
+        "LIVE_RECONNECT_GRACE_MILLIS.to_string()",
+        "refusing to reuse an existing production camera mapping",
+        "CameraSharedIngressConsumer::open_current()",
+        ".terminate_and_reap()",
+        "wait_for_live_mapping_removal()",
+        "finish_live_hold(validation, receiver_cleanup, mapping_cleanup)",
+    ]
+    missing = [token for token in required_live_lab_tokens if token not in windows_live_lab]
+    if missing:
+        fail(f"Windows live camera lab orchestration is incomplete: {missing}")
+
+    windows_registered_source = (
+        ROOT / "platform/windows/capyio-camera-mf/src/windows_impl.rs"
+    ).read_text(encoding="utf-8")
+    required_late_shared_tokens = [
+        "LATE_SHARED_PROBE_INTERVAL_PLACEHOLDER_FRAMES: u32 = 15",
+        "LATE_SHARED_MAX_EMPTY_LIVE_POLLS: u32 = 400",
+        "FrameProvider::LateShared(LateSharedFrameProvider::production(shared))",
+        "Self::Shared(_) | Self::LateShared(_)",
+        "RegisteredSharedMappingTarget::Production",
+        "resume_placeholder_source",
+        "DeterministicNv12Source::new_at_sequence",
+        "fall_back_to_placeholder",
+        "rebase_live_frame(frame, first_live_frame)",
+        "live mode must not interleave placeholder frames",
+        "bounded stall interval must retain the pending request",
+        "stale publication must leave placeholder active",
+        "invalid mapping target must not fall back",
+    ]
+    missing = [
+        token
+        for token in required_late_shared_tokens
+        if token not in windows_registered_source
+    ]
+    if missing:
+        fail(f"Windows registered camera late-shared boundary is incomplete: {missing}")
+
+    camera_admin = (ROOT / "scripts/capyio-camera-virtual-lab-admin.ps1").read_text(
+        encoding="utf-8"
+    )
+    if (
+        "$expectedSha256 = "
+        "'4C236858C5223B4A1303E825496EBE6799C52E9EAE366DC6DE41C8E9A88F70F0'"
+        not in camera_admin
+    ):
+        fail("Windows camera lab deployment script does not pin the C27 COM DLL")
+    required_camera_admin_cleanup = [
+        "'RemoveWithFrameServerRestart'",
+        "Get-Service -Name 'FrameServer'",
+        "Stop-Service -Name 'FrameServer'",
+        "Start-Service -Name 'FrameServer'",
+        "frameserver_restart=pass",
+    ]
+    missing = [
+        token for token in required_camera_admin_cleanup if token not in camera_admin
+    ]
+    if missing:
+        fail(f"Windows camera lab locked-DLL cleanup is incomplete: {missing}")
+
+    camera_preflight = (
+        ROOT / "scripts/capyio-camera-live-lab-preflight.ps1"
+    ).read_text(encoding="utf-8")
+    required_camera_preflight = [
+        "[CmdletBinding()]\nparam()",
+        "85C2164E3530F2790AB092D07EE5C7C82C5A106CA3F99A6F71B580703E4F149B",
+        "6FE25371377680761C3A0F65F0BD5048AF3B796C63D20F1136C4CFABDB846CD8",
+        "4C236858C5223B4A1303E825496EBE6799C52E9EAE366DC6DE41C8E9A88F70F0",
+        "Get-FileHash -Algorithm SHA256",
+        "Get-NetTCPConnection -State Listen -LocalPort 38173",
+        "Get-Process -Name $labProcessNames",
+        "camera_live_lab_preflight=pass",
+    ]
+    missing = [
+        token for token in required_camera_preflight if token not in camera_preflight
+    ]
+    if missing:
+        fail(f"Windows camera live-lab read-only preflight is incomplete: {missing}")
+    forbidden_camera_preflight = [
+        "New-Item",
+        "Remove-Item",
+        "Set-Item",
+        "Copy-Item",
+        "Start-Process",
+        "Stop-Process",
+        "adb.exe",
+        "reverse tcp:",
+    ]
+    present = [
+        token for token in forbidden_camera_preflight if token in camera_preflight
+    ]
+    if present:
+        fail(f"Windows camera read-only preflight contains mutation: {present}")
+
+
 def validate_sensor_server_provenance() -> None:
     provenance = (ROOT / "third_party/THIRD_PARTY.yml").read_text(encoding="utf-8")
     required = [
@@ -720,6 +1328,7 @@ def main() -> None:
     requirement_count = validate_requirement_ids()
     validate_proto_field_numbers()
     validate_architecture_dependencies()
+    validate_android_camera_boundary()
     validate_sensor_server_provenance()
     validate_windows_audio_provenance()
     validate_hosted_ci_contract()

@@ -1,6 +1,7 @@
 # CapyIO Build Status
 
-> Updated: 2026-08-28 after the `CAPY-AUDIO-001B` functional Gate.
+> Updated: 2026-08-31 after the `CAPY-CAMERA-001C27` registered producer-stall
+> recovery slice.
 
 ## Verified baseline
 
@@ -155,12 +156,73 @@ thread shutdown. The ignored physical test passed against the authorized phone
 after a stale SensorServer listener was restarted. Exact evidence and limits
 are in `docs/CAPY_IMU_001B3B_REPORT.md`.
 
+## CAPY-CAMERA-001 local-lab MVP
+
+Complete on the authorized V2419A/Windows lab pair as a bounded local-lab MVP.
+The CapyIO Android app captures a visible Camera2 preview, encodes 720p30 AVC,
+switches front/back, quality and directly openable Camera2 ID/vendor Zoom
+targets, retries the fixed exporter and fails a configured stream after five
+seconds without encoded progress. Zoom targets let a vendor logical camera
+choose a lens; they do not guarantee one physical sensor. The Windows path
+validates the private CAVC stream,
+uses the inbox H.264 decoder, publishes bounded NV12 shared memory and can expose
+one temporary Session/CurrentUser Media Foundation virtual camera. Windows
+inbox Camera displayed live phone pixels in controlled runs, and the C20
+portable 0.670x/2x endpoints each decoded changing frames without backlog.
+The final continuity regression exposed and fixed Windows accepted sockets
+inheriting nonblocking mode after the bounded front/back reconnect poll.
+The C23 build also supports an explicit trusted-LAN destination with one exact
+Windows bind and phone IPv4 allowlist, fixed port and no DNS/wildcard/discovery.
+An authorized no-ADB run accepted, decoded and Global-published 358 changing
+frames and enumerated one temporary camera; ordinary Windows Camera pixels and
+complete same-run cleanup were not captured. C24 extends Android connection
+startup to a fixed roughly two-minute budget, Windows mapping readiness to 120
+seconds and post-connection recovery to 60 seconds. It also prevents cleanup
+errors from being hidden and keeps the display awake only while the visible
+foreground capture state is active. Its authorized exact-hash run reached a
+trusted-LAN config, Global mapping, one temporary camera and complete automatic
+cleanup. Ordinary Windows Camera evidence was interrupted when rotation
+recreated the Android Activity and stopped the foreground session. C25 now
+handles rotation and bounded display-size changes in the same Activity without
+locking orientation; true pause/surface loss still stops capture. Its authorized
+exact-hash regression retained the same Activity record and CAVC stream/epoch
+across portrait/landscape/portrait, and ordinary Windows Camera displayed two
+visibly different live frames. A real background transition released Camera2.
+The unrelated `tcp:61000` reverse remained, no camera reverse was created, and
+the temporary Windows processes, port, ProgramData deployment and CLSID all
+returned to a preflight-clean state. C26 closes the next hardware-free startup
+gap: if registered activation occurs before the fixed Global mapping exists, it
+emits a deterministic offline fixture and checks the fixed mapping after a
+fixed 15-placeholder-frame countdown. C27 closes that provider's one-way
+lifecycle gap. All registered activations now use the same asynchronous
+provider; 400 consecutive empty 5 ms live polls cause it to release its mapping
+handle, resume the fixture at the next output sequence/timestamp and mark the
+fallback discontinuous. It continues fixed-name probing, rejects replay of an
+old producer's last publication and reattaches either a fresh publication or a
+replacement producer onto the same virtual timeline. Focused tests cover
+pause, producer exit, same-name replacement and reattachment. The exact C27
+release package, read-only clean-host preflight and full repository CI pass; a
+hash-recorded ordinary Windows Camera three-transition regression remains
+pending.
+
+This does not provide production pairing/encryption, a production ADB-free
+pairing/discovery workflow, installer/signing, unified Runtime lifecycle,
+unattended background capture, long-duration reliability or broad
+Android/Windows compatibility. The closure boundary, reconnect correction and
+trusted-LAN and reconnect/cleanup evidence are in
+`docs/CAPY_CAMERA_001C21_REPORT.md`, `docs/CAPY_CAMERA_001C22_REPORT.md`,
+`docs/CAPY_CAMERA_001C23_REPORT.md` and
+`docs/CAPY_CAMERA_001C24_REPORT.md`, with rotation follow-up in
+`docs/CAPY_CAMERA_001C25_REPORT.md`, registered late-start follow-up in
+`docs/CAPY_CAMERA_001C26_REPORT.md` and producer-stall recovery in
+`docs/CAPY_CAMERA_001C27_REPORT.md`.
+
 ## Not built or tested
 
-- CapyIO-owned Android application/APK;
 - automated Android permission or foreground-service management;
-- CapyIO-owned microphone/speaker, camera or input data path;
-- Windows virtual devices, driver, WDK or isolated-VM driver test;
+- CapyIO-owned microphone or input data path;
+- production-installed Windows camera/audio/input virtual devices, driver, WDK
+  or isolated-VM driver test;
 - production transport, pairing, encryption, Runtime-owned live audio Adapter
   transport or performance.
 

@@ -197,6 +197,97 @@ planned_integrations:
       Current upstream documents Camera2/OpenGL/MediaCodec to RTSP/RTP and an
       FFmpeg/Softcam Windows path. CapyIO imports no source or binary; encoded
       transport remains AdapterManaged pending dependency and protocol review.
+  - id: android-gradle-plugin-camera-lab
+    upstream_repository: https://android.googlesource.com/platform/tools/base
+    pinned_release: 9.3.1
+    artifact_sha256: 4ae9f55cef115978de7f502e49ea163e89c78a8ab40943504a37c948b94eadb5
+    license: Apache-2.0
+    license_evidence: published Maven POM
+    integration_mode: build_only_plugin
+    source_imported: false
+    binary_imported: false
+    imported_paths: []
+    local_modifications: []
+    purpose: >-
+      Compile, package and lint the isolated Android Camera2 lab using the
+      official Android application build plugin without hand-written aapt,
+      manifest merge, D8 or APK packaging commands.
+    maintenance_status: >-
+      Official Google Android build tooling, explicitly pinned by the root
+      Android build script and used only outside the normal Rust CI gate.
+    external_toolchain:
+      gradle: 9.5.0
+      compile_sdk: 36
+      target_sdk: 36
+      min_sdk: 29
+      build_tools: 36.0.0
+      redistributed_by_capyio: false
+    alternatives_rejected:
+      - hand-written aapt2, javac, D8 and APK signing orchestration
+      - adding CameraX and AndroidX dependencies for the first Camera2 seam
+      - generating the camera lab inside the Tauri mobile project
+  - id: microsoft-windows-rs-camera-bindings
+    upstream_repository: https://github.com/microsoft/windows-rs
+    pinned_release: windows-0.61.3
+    license: MIT OR Apache-2.0
+    integration_mode: target_specific_optional_api_binding
+    source_imported: false
+    binary_imported: false
+    imported_paths: []
+    local_modifications: []
+    enabled_features:
+      - Win32_Foundation
+      - Win32_Media_KernelStreaming
+      - Win32_Media_MediaFoundation
+      - Win32_System_Com
+      - Win32_System_Com_StructuredStorage
+      - Win32_System_Variant
+    resolved_packages:
+      - name: windows
+        version: 0.61.3
+      - name: windows-core
+        version: 0.61.2
+      - name: windows-sys
+        version: 0.61.2
+    camera_shared_mapping_dependency:
+      name: windows-sys
+      version: 0.61.2
+      license: MIT OR Apache-2.0
+      upstream_repository: https://github.com/microsoft/windows-rs
+      enabled_features:
+        - Win32_Foundation
+        - Win32_Security
+        - Win32_Security_Authorization
+        - Win32_System_Memory
+        - Win32_System_Threading
+      purpose: >-
+        Create and open the fixed decoded-camera file mapping, apply its SDDL,
+        map read/write or read-only views and identify the single producer
+        process without hand-written Win32 FFI. This package/version was already
+        resolved by the workspace before the camera slice.
+      maintenance_status: >-
+        Official Microsoft windows-rs raw bindings; version is locked by
+        Cargo.lock and the dependency is Windows-target-specific.
+      alternatives_rejected:
+        - hand-written CreateFileMapping/OpenFileMapping/security FFI
+        - high-bandwidth frame payloads over JSON-RPC or sidecar stdout
+        - a new kernel camera transport
+    purpose: >-
+      Provide typed Windows Media Foundation and COM bindings for the opt-in
+      read-only SoftwareCameraSource support probe and the local non-registered
+      source/stream projection, COM class factory and closed virtual-camera
+      registration backend without hand-written unsafe declarations.
+    alternatives_rejected:
+      - hand-written Windows FFI and COM declarations
+      - importing the Microsoft Windows-Camera C++ sample
+      - placing Media Foundation bindings in portable capyio-video or Core
+    security_note: >-
+      The binding is Windows-only, optional and locked by Cargo.lock. Camera
+      creation and registration APIs are not called in CAPY-CAMERA-001B0 or
+      CAPY-CAMERA-001B1B; their COM tests construct objects only in-process.
+      CAPY-CAMERA-001B1C calls MFCreateVirtualCamera during an opt-in preflight,
+      while Start/Stop/Remove and HKLM deployment remain separately authorized
+      host-lab operations outside CI.
   - id: dsu-protocol-reference
     upstream_repository: https://github.com/v1993/cemuhook-protocol
     pinned_revision: 82bf8a837cc7d2254e9257729f462a233d9ad184

@@ -8,3 +8,16 @@ license.workspace = true
 
 [dependencies]
 capyio-video = { path = "../../crates/capyio-video" }
+
+[target.'cfg(windows)'.dependencies]
+capyio-core = { path = "../../crates/capyio-core" }
+capyio-windows-camera = { path = "../../platform/windows/capyio-camera" }
+capyio-windows-camera-host = { path = "../../platform/windows/capyio-camera-host", features = ["lab-support"] }
+uuid.workspace = true
+windows = { version = "0.61.3", features = [
+  "Win32_Foundation",
+  "Win32_Media_MediaFoundation",
+  "Win32_System_Com",
+  "Win32_System_Ole",
+  "Win32_System_Variant",
+] }

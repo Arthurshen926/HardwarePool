@@ -16,6 +16,11 @@ __pycache__/
 apps/desktop/src-tauri/gen/
 apps/desktop/src-tauri/target/
 
+# Standalone Android labs
+platform/android/capyio-camera-app/.gradle/
+platform/android/capyio-camera-app/**/build/
+platform/android/capyio-camera-app/local.properties
+
 # IDE and OS
 .idea/
 .vscode/settings.json

@@ -25,9 +25,12 @@ difference is recorded in ADR 0007.
 - ADB and an explicitly designated physical device.
 
 The current machine has Android Studio 2026.1.3.7 and JBR 25.0.2, plus the
-command-line-tools shell under the user SDK directory. Foundation Gates 0–3 do
-not require SDK packages, ADB, Android project generation, APK installation or
-permissions, so no additional Android component is installed by this task.
+command-line-tools shell under the user SDK directory. The standalone Camera2
+lab pins Android Gradle Plugin 9.3.1, Gradle 9.5, compile/target SDK 36, minimum
+SDK 29 and Java bytecode level 17. JBR 25 performs the Java 17-targeted build.
+Its first approved build downloaded AGP's missing build-time artifacts and the
+official Android SDK Build Tools 36.0.0 alongside the already installed 36.1.0.
+No APK was installed and ADB was not invoked.
 
 ## optional-windows-native
 

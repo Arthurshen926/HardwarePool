@@ -1,0 +1,29 @@
+[package]
+name = "capyio-windows-camera-mf"
+description = "Non-registered Media Foundation COM projection for CapyIO camera frames."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[lib]
+crate-type = ["rlib", "cdylib"]
+
+[dependencies]
+capyio-core = { path = "../../../crates/capyio-core" }
+capyio-windows-camera = { path = "../capyio-camera" }
+capyio-windows-camera-share = { path = "../capyio-camera-share" }
+
+[dev-dependencies]
+capyio-windows-camera-share = { path = "../capyio-camera-share", features = ["test-support"] }
+
+[target.'cfg(windows)'.dependencies]
+windows = { version = "0.61.3", features = [
+    "Win32_Foundation",
+    "Win32_Media_KernelStreaming",
+    "Win32_Media_MediaFoundation",
+    "Win32_System_Com",
+    "Win32_System_Com_StructuredStorage",
+    "Win32_System_Variant",
+] }
+windows-core = "0.61.2"
