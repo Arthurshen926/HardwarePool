@@ -131,6 +131,30 @@ The semantic frame is not itself the public binary wire layout. A transport ADR 
 - maximum packet and aggregate rates;
 - fuzz and golden-fixture strategy.
 
+ADR 0044's 152-byte remote-touchpad packet is deliberately narrower than this
+future public binding. It is a private `AdapterManaged` record codec with no
+socket, authentication, encryption, cryptographic replay window or
+cross-Adapter interoperability claim. Its Adapter receiver enforces bounded
+single-session sequence/rate/idle lifecycle policy after Route binding. A
+fixed-capacity ingress rechecks the current Runtime-owned Route before enqueue
+and pump, but still chooses no transport and grants no network trust. It
+exists to test and later connect the two touchpad platform boundaries without
+changing the transport-independent semantic envelope contract.
+
+The private touchpad worker makes scheduling inputs explicit without choosing a
+transport. Each caller-driven packet or tick reads one current Route snapshot
+and one coherent local clock sample before entering the fixed queue. This closes
+manual Route/time injection at the Adapter API boundary, detects lifecycle and
+clock rollback, and still leaves authentication, socket I/O, reconnect and task
+scheduling to a future composition slice.
+
+ADR 0045 additionally fixes a private bounded record envelope for a future
+pre-authenticated reliable stream: a 160-byte full-binding Hello, up to 176-byte
+Data, and exact 24-byte Ack/Close. This does not select authentication,
+encryption, socket or public CapyDataPlane interoperability. Its purpose is to
+make stream framing, binding confirmation and delivery ambiguity testable before
+the live Android transport composition is introduced.
+
 The Windows kernel driver and render APO never receive this network frame. For
 a virtual render endpoint, the preferred first path is a bounded copy from the
 endpoint-associated render APO into a pre-opened shared-memory/SPSC staging

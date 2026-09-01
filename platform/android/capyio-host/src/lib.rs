@@ -1,5 +1,18 @@
 #![forbid(unsafe_code)]
 
-//! Reserved Android host seam. No JNI, Gradle, manifest, permission, service, or APK exists.
+//! Android-owned pure data mappings. No JNI, Gradle, manifest, permission,
+//! service, or APK exists.
 
-pub const IMPLEMENTATION_STATUS: &str = "planned-no-android-runtime";
+mod touchpad;
+mod touchpad_capture;
+
+pub use touchpad::{
+    AndroidMotionAction, AndroidMotionSample, AndroidPointerSample, AndroidToolType,
+    AndroidTouchSurface, AndroidTouchpadMapper, AndroidTouchpadMappingError,
+    AndroidTouchpadMotionPolicy,
+};
+pub use touchpad_capture::{
+    AndroidTouchpadCaptureError, AndroidTouchpadCaptureSession, AndroidTouchpadCaptureState,
+};
+
+pub const IMPLEMENTATION_STATUS: &str = "touchpad-runtime-capture-boundary-no-jni-or-apk";

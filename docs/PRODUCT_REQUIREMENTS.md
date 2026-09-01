@@ -246,9 +246,30 @@ The product has two experiences:
 - vendoring, repackaging or production deployment of SensorServer; the only
   current exception is the externally installed, local-lab IMU protocol Adapter
   scoped by `CAPY-IMU-001B` and ADR 0021;
-- Windows virtual display/HID implementation or installation; a Windows 11
-  user-mode virtual-camera spike is scoped only by active plan 0014 and still
-  requires its platform ADR, lifecycle/rollback tests and truthful evidence;
+- Windows virtual display or VHF/HID driver installation. ADRs
+  0041, 0043, 0044 and 0045 plus `CAPY-PTP-000..002T` permit the bounded user-mode
+  synthetic Precision Touchpad feasibility path: platform contracts/mapping,
+  controlled fixed-fixture injection, a reusable Sink, private packet codec and
+  hardware-free receiver/authorized-Route ingress and deterministic Runtime
+  worker lifecycle, authorized preflight-before-Sink-open composition and
+  controlled zero-frame create/close and one- through four-finger composed
+  native-submission acceptance, plus a hardware-free Android runtime-facing
+  pointer-lifecycle capture boundary and Adapter-owned transactional private
+  packet Source, fail-closed admitted-channel delivery handoff and Runtime-owned
+  sender Route/clock revalidation before every delivery operation, plus a
+  concrete bounded in-process host channel joining both Runtime workers to the
+  Windows projector, and controlled real Windows submission through that same
+  channel, plus bounded Hello/Data/Ack/Close records for a future
+  pre-authenticated reliable stream. Only the approved fixed fixtures have composed native-
+  submission evidence; Android OS/JNI wiring, visible three-/four-finger
+  behavior and authenticated live transport remain separate
+  acceptance slices. ADR 0048 and `CAPY-PTP-003A` additionally permit a
+  compile-only, non-deployed KMDF/VHF Precision Touchpad compatibility baseline
+  after physical evidence showed incomplete three-/four-finger Shell behavior;
+  driver installation and every boot/security-policy change remain excluded. A
+  Windows 11 user-mode virtual-camera
+  spike is scoped only by active plan 0014 and still requires its platform ADR,
+  lifecycle/rollback tests and truthful evidence;
 - uncontrolled Windows virtual-audio installation on a daily-development host;
   ADRs 0027–0029 permit the dedicated `CapyIO Speaker` only in an identified
   isolated target or the explicitly approved `DESKTOP-AT8EVE9` local lab after

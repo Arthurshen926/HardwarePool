@@ -1,0 +1,75 @@
+#pragma once
+
+#include <ntddk.h>
+
+#define CAPY_PTP_BROKER_MAGIC 0x31505443UL // "CTP1" in little endian
+#define CAPY_PTP_BROKER_VERSION 1U
+#define CAPY_PTP_BROKER_MAX_CONTACTS 5U
+#define CAPY_PTP_BROKER_CONTACT_CONFIDENCE 0x01U
+#define CAPY_PTP_BROKER_CONTACT_TIP 0x02U
+#define CAPY_PTP_BROKER_CONTACT_FLAGS_MASK 0x03U
+#define CAPY_PTP_BROKER_BUTTONS_MASK 0x07U
+
+#define IOCTL_CAPY_PTP_BROKER_RECORD \
+    CTL_CODE(FILE_DEVICE_UNKNOWN, 0x800U, METHOD_BUFFERED, FILE_WRITE_DATA)
+
+typedef enum _CAPY_PTP_BROKER_RECORD_KIND {
+    CapyPtpBrokerHello = 1,
+    CapyPtpBrokerData = 2,
+    CapyPtpBrokerAck = 3,
+    CapyPtpBrokerClose = 4
+} CAPY_PTP_BROKER_RECORD_KIND;
+
+#pragma pack(push, 1)
+
+typedef struct _CAPY_PTP_BROKER_HEADER {
+    ULONG Magic;
+    USHORT Version;
+    USHORT Kind;
+    ULONG PayloadLength;
+    ULONG Sequence;
+} CAPY_PTP_BROKER_HEADER;
+
+typedef struct _CAPY_PTP_BROKER_HELLO {
+    ULONGLONG Generation;
+} CAPY_PTP_BROKER_HELLO;
+
+typedef struct _CAPY_PTP_BROKER_CONTACT {
+    UCHAR ContactId;
+    UCHAR Flags;
+    USHORT X;
+    USHORT Y;
+} CAPY_PTP_BROKER_CONTACT;
+
+typedef struct _CAPY_PTP_BROKER_DATA {
+    USHORT ScanTime;
+    UCHAR ContactCount;
+    UCHAR Buttons;
+    CAPY_PTP_BROKER_CONTACT Contacts[CAPY_PTP_BROKER_MAX_CONTACTS];
+} CAPY_PTP_BROKER_DATA;
+
+typedef struct _CAPY_PTP_BROKER_ACK {
+    ULONG AcceptedSequence;
+    ULONG Reserved;
+} CAPY_PTP_BROKER_ACK;
+
+typedef union _CAPY_PTP_BROKER_PAYLOAD {
+    CAPY_PTP_BROKER_HELLO Hello;
+    CAPY_PTP_BROKER_DATA Data;
+    CAPY_PTP_BROKER_ACK Ack;
+    UCHAR Bytes[sizeof(CAPY_PTP_BROKER_DATA)];
+} CAPY_PTP_BROKER_PAYLOAD;
+
+typedef struct _CAPY_PTP_BROKER_RECORD {
+    CAPY_PTP_BROKER_HEADER Header;
+    CAPY_PTP_BROKER_PAYLOAD Payload;
+} CAPY_PTP_BROKER_RECORD, *PCAPY_PTP_BROKER_RECORD;
+
+#pragma pack(pop)
+
+C_ASSERT(sizeof(CAPY_PTP_BROKER_HEADER) == 16U);
+C_ASSERT(sizeof(CAPY_PTP_BROKER_HELLO) == 8U);
+C_ASSERT(sizeof(CAPY_PTP_BROKER_CONTACT) == 6U);
+C_ASSERT(sizeof(CAPY_PTP_BROKER_DATA) == 34U);
+C_ASSERT(sizeof(CAPY_PTP_BROKER_ACK) == 8U);
+C_ASSERT(sizeof(CAPY_PTP_BROKER_RECORD) == 50U);

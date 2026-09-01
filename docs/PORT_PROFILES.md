@@ -20,6 +20,7 @@ capyio.display.frames/1
 capyio.input.key-events/1
 capyio.input.pointer-events/1
 capyio.input.touch-events/1
+capyio.input.touchpad-frames/1
 capyio.input.gamepad-state/1
 capyio.motion.imu-samples/1
 capyio.location.fixes/1
@@ -83,11 +84,27 @@ until a complete codec/access-unit contract and Converter are explicit.
 
 ## Input and haptics specialization
 
-Pointer, touch snapshot, semantic keyboard, fixed gamepad state, haptics and
-shared epoch/sequence behavior are defined in `docs/INPUT_PROFILE.md` and
-`capyio-input`. Canonical names are `capyio.input.gamepad-state/1` and
+Pointer, generic touch snapshot, physical touchpad frames, semantic keyboard,
+fixed gamepad state, haptics and shared epoch/sequence behavior are defined in
+`docs/INPUT_PROFILE.md` and `capyio-input`. Generic touch and touchpad frames
+are distinct Profiles and are never silently reinterpreted. Canonical names
+include `capyio.input.touchpad-frames/1`, `capyio.input.gamepad-state/1` and
 `capyio.haptics.feedback/1`; the earlier mock-only `gamepad` and
 `haptics.pattern` spellings are invalid.
+
+ADR 0044's remote-touchpad packet preserves the touchpad frame semantics but is
+a private AdapterManaged framing. Its existence does not make that byte layout
+the interoperable StandardPort wire representation.
+
+The accompanying private receiver adds bounded sequence, fixed-window rate,
+local-arrival-clock and active-idle lifecycle enforcement for one already-bound
+Route/Sink. These Adapter policies do not change the StandardPort Profile or
+establish peer trust.
+
+The fixed private ingress further binds those policies to one current
+AdapterManaged Core Route and expected Sink Port. Route authorization/epoch
+checks and queue bounds are lifecycle constraints, not additional Profile
+semantics or StandardPort interoperability.
 
 ## IMU samples v1
 

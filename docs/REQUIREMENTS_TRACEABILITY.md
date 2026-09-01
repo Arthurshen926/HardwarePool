@@ -43,7 +43,7 @@ hardware, networking, security or performance behavior has run.
 | `FR-SCEN-003` | planned | Gate 6 | `CAPY-IO-CONTRACTS-001` defines separate gamepad, IMU and haptics semantics; DSU/VIIPER and reverse-feedback evidence remain planned. |
 | `FR-SCEN-004` | planned | Gate 9 | `CAPY-IO-CONTRACTS-001` defines raw-video semantics; generated preview and Windows virtual-camera evidence remain active plan work. |
 | `FR-SCEN-005` | planned | Gates 10–11 | Mirror evidence at Gate 10 and separate extended-display evidence at Gate 11. |
-| `FR-SCEN-006` | planned | Gate 10 | `CAPY-IO-CONTRACTS-001` defines pointer/touch/keyboard semantics; platform projection tests remain planned. |
+| `FR-SCEN-006` | planned | Gate 10 | `CAPY-IO-CONTRACTS-001` and `CAPY-PTP-000..002W` define contracts and the bounded Android-to-Windows path; physical evidence proves tap, one-finger motion, two-finger pan and four contacts on the synthetic path. ADR 0048 and completed `CAPY-PTP-003A..003T` add the KMDF/VHF fallback, protected fixed Broker ABI, exact Win32 client, fail-closed Runtime factory, corrected running device, live four-contact Android submission and bounded multi-contact motion tuning. Exact VHF desktop acceptance proves cursor motion, one click, one wheel event and Windows Shell reactions to both fixed three-/four-finger fixtures; the user also confirms both live gesture classes affect Windows. OEM gesture-conflict qualification, authenticated production transport and production lifecycle integration remain planned. |
 | `FR-SCEN-007` | planned | Gate 12 | Multi-stream provenance, visualization and recording evidence. |
 | `FR-SCEN-008` | planned | Gate 13 | Multi-node temporary-workspace composition evidence. |
 | `FR-SCEN-009` | verified | Gate 5 | Bounded recorded-style IMU fixture replay covers independent sinks, gaps, overflow, stale epochs and abnormal paths. |
@@ -77,8 +77,8 @@ hardware, networking, security or performance behavior has run.
 | `FR-ROUTE-003` | verified | Gate 2 | Route tests cover all eight states; B3B Adapter completions exercise staged Starting/Active/Offline/recovery/Stopping/Stopped in Runtime. |
 | `FR-ROUTE-004` | verified | Gate 2 | Invalid transitions return typed Core errors; B3B platform callbacks mutate lifecycle only through Runtime commands. |
 | `FR-ROUTE-005` | verified | Gate 2 | Runtime multi-Route tests prove independent stop/failure behavior. |
-| `FR-ROUTE-006` | verified | Gate 2 | Deterministic fixture activates opposite-direction Routes simultaneously. |
-| `FR-ROUTE-007` | verified | Gate 2 | RouteBackend enum is explicit; backend support/interoperability rejection is tested. |
+| `FR-ROUTE-006` | verified | Gate 2 | Deterministic fixture activates opposite-direction Routes simultaneously; private touchpad ingress is scoped to one exact Route/Session/endpoints tuple. |
+| `FR-ROUTE-007` | verified | Gate 2 | RouteBackend enum is explicit; backend support/interoperability rejection is tested and touchpad ingress accepts only AdapterManaged. |
 | `FR-ROUTE-008` | verified | Gate 2 | Route descriptor/snapshot round trips retain format, QoS, authorization, diagnostics and epoch. |
 | `FR-DIAG-001` | verified | Gate 2 | Problem validation/protocol tests plus B3B retain stable Route-related SensorServer disconnect diagnostics. |
 | `FR-DIAG-002` | verified | Gate 2 | Runtime tests assert bounded monotonic events; B3B projects Route state, epoch and Problem code to the Tauri DTO. |
@@ -101,25 +101,25 @@ hardware, networking, security or performance behavior has run.
 | `FR-PLAT-001` | verified | Gate 3 | Desktop Sidecar deployment boundary and hosted Adapter-smoke workflow on Windows/Linux/macOS. |
 | `FR-PLAT-002` | planned | Gate 5 | First mobile in-process/platform-managed Adapter lifecycle evidence. |
 | `FR-PLAT-003` | planned | Gate 4 | Headless Runtime/service lifecycle separated from UI/window closure. |
-| `FR-PLAT-004` | planned | Gate 4 | Product fallback selection and observable Projection support levels. |
+| `FR-PLAT-004` | planned | Gate 4 | Windows user-mode synthetic PTP probe, mapping, fail-safe Sink, receiver and authorized-Route ingress are hardware-free tested; the VHF fallback has a protected Broker ABI, exact Win32 transport, fail-closed typed Sink lifecycle and validate-before-open Adapter factory. The corrected lower-filter device is installed/running, exposes exactly one protected interface and passes Hello/Close plus fixed one-/two-/three-/four-finger desktop acceptance. Product fallback selection, least-privilege Broker hosting, production worker wiring and observable Projection support levels remain planned. |
 | `FR-PLAT-005` | verified | Gate 1 | PRD, platform support and UI disclaim unsupported Android global virtual devices. |
 | `FR-PLAT-006` | planned | Gate 8 | Android microphone permission, indicator and foreground lifecycle tests. |
-| `NFR-SEC-001` | planned | Gate 14 | Mutual authentication, encryption, replay defense and downgrade binding. |
-| `NFR-SEC-002` | planned | Gate 14 | Time-bound per-Capability/Route grant and immediate revoke tests. |
-| `NFR-SEC-003` | verified | Gate 1 | Architecture/driver boundary docs and offline Core/driver dependency rules. |
+| `NFR-SEC-001` | planned | Gate 14 | Touchpad receiver rejects duplicate/late sequences and its ingress bounds one current authorized Route, but mutual authentication, encryption, cryptographic replay defense and downgrade binding remain planned. |
+| `NFR-SEC-002` | planned | Gate 14 | Touchpad ingress rechecks the current Route grant and expiry at enqueue/pump; authenticated issuance and immediate revoke integration remain planned. |
+| `NFR-SEC-003` | verified | Gate 1 | Architecture/driver boundary docs and offline Core/driver dependency rules; private touchpad packet, queue and receiver parsing remains user mode and only semantic batches reach projection. ADR 0049 additionally proves exact Hello before platform open, Ack after Sink acceptance and fail-closed transport cleanup. |
 | `NFR-SEC-004` | verified | Gate 2 | Narrow Tauri command surface/CSP and repository rule exclude shell/updater and arbitrary networking; the physical lab accepts only a typed IP literal and port. |
 | `NFR-SEC-005` | verified | Gate 1 | PRD, Security Model, Build Status and UI explicitly label the foundation insecure/mock. |
-| `NFR-STAB-001` | planned | Gate 8 | Real system-audio endpoint disconnect/restart evidence in an approved target. |
-| `NFR-STAB-002` | verified | Gate 3 | Bounded Runtime events, RPC messages/correlations, line readers and stderr retention tests. |
-| `NFR-STAB-003` | verified | Gate 3 | Catalog tests and B3B disconnect/retry tests invalidate failed epochs and require explicit recovery with a later epoch. |
-| `NFR-STAB-004` | verified | Gate 3 | Scoped Adapter failure, unrelated Route isolation and B3B explicit worker stop/join tests. |
+| `NFR-STAB-001` | planned | Gate 8 | Private touchpad disconnect/timeout/fault/drop, malformed transport and Route expiry/offline/overflow paths attempt bounded Sink close; real system-audio endpoint disconnect/restart evidence in an approved target remains planned. |
+| `NFR-STAB-002` | verified | Gate 3 | Bounded Runtime events/RPC/logs plus private touchpad records at most 152 bytes, a preallocated 1..=64 packet queue, 1..=1000 packets/s and 10 ms..=30 s queue/active-idle bounds. |
+| `NFR-STAB-003` | verified | Gate 3 | Catalog/B3B and touchpad ingress tests invalidate stale epochs, discard old queued records and require explicit recovery with a strictly later epoch. |
+| `NFR-STAB-004` | verified | Gate 3 | Scoped Adapter/Route failure isolation plus touchpad receiver/ingress poisoning keep failures explicit and local to the affected lifecycle. |
 | `NFR-STAB-005` | verified | Gate 1 | Testing/evidence rules and Build Status prohibit unrun soak/hardware claims. |
 | `NFR-RT-001` | planned | Gate 7 | First real-time audio callback audit and stress evidence. |
 | `NFR-RT-002` | planned | Gate 7 | Fixed-capacity callback-path data structures and overflow tests. |
 | `NFR-RT-003` | planned | Gate 7 | Clock-domain timestamps and user-mode recovery/resampling evidence. |
 | `NFR-MAINT-001` | verified | Gate 3 | PR #10 passed exact-head Windows/Linux/macOS Rust/Adapter, UI, repository and Windows Tauri hosted checks. |
-| `NFR-MAINT-002` | verified | Gate 3 | Cargo dependency boundaries and validator rules include the minimal SensorServer Tungstenite feature set. |
-| `NFR-MAINT-003` | verified | Gate 3 | ADRs, compatibility documentation and protocol/Core tests cover foundation public changes. |
+| `NFR-MAINT-002` | verified | Gate 3 | Cargo dependency boundaries and validator rules include the minimal SensorServer feature set; private touchpad framing/receiver/ingress remains in its Adapter with local Core and Windows-target platform dependencies only. |
+| `NFR-MAINT-003` | verified | Gate 3 | ADRs, compatibility documentation and protocol/Core tests cover public changes; ADR 0044 and hardware-free packet/receiver/Route-ingress tests keep touchpad framing explicitly private. |
 | `NFR-MAINT-004` | verified | Gate 5 | Validator-checked SensorServer repository, pinned commit, GPL-3.0-only external-service mode, empty imported paths and distribution risk record. |
 | `NFR-MAINT-005` | verified | Gate 1 | `xtask` commands are non-privileged; AGENTS and offline rules exclude deployment operations. |
 

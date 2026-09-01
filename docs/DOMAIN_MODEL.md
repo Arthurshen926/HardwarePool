@@ -25,8 +25,8 @@ Adapter owner, class, display name, availability, permission requirement,
 metadata and one or more Ports.
 
 Core classes are deliberately broad: `Microphone`, `Speaker`, `Camera`,
-`Display`, `Keyboard`, `Pointer`, `Touchscreen`, `Gamepad`, `Imu`, `Gnss`,
-`SensorSuite`, `Haptics`, `Recorder`, `Panel`, `Bridge`, and `Custom`.
+`Display`, `Keyboard`, `Pointer`, `Touchscreen`, `Touchpad`, `Gamepad`, `Imu`,
+`Gnss`, `SensorSuite`, `Haptics`, `Recorder`, `Panel`, `Bridge`, and `Custom`.
 
 ## Port
 

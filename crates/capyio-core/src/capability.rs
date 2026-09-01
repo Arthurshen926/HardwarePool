@@ -121,6 +121,7 @@ pub enum CapabilityClass {
     Keyboard,
     Pointer,
     Touchscreen,
+    Touchpad,
     Gamepad,
     Imu,
     Gnss,
@@ -196,6 +197,11 @@ impl ProfileId {
     #[must_use]
     pub fn touch_events_v1() -> Self {
         Self::new("capyio.input.touch-events", 1)
+    }
+
+    #[must_use]
+    pub fn touchpad_frames_v1() -> Self {
+        Self::new("capyio.input.touchpad-frames", 1)
     }
 
     #[must_use]

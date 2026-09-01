@@ -60,6 +60,203 @@ PR #10 passed repository, UI, Windows/Linux/macOS Rust/Adapter and Windows
 Tauri exact-head checks before merge commit `5f5b81f`. Linux/macOS native Tauri
 packaging remains an explicit skip; their Rust/Adapter jobs did pass.
 
+## CAPY-PTP-000..002W user-mode touchpad path
+
+The dedicated `codex/capyio-touchpad` worktree now contains the direction-
+neutral five-contact contract, Android DTO mapping, bounded Windows projection,
+controlled injection harness, reusable synthetic-touchpad Sink, private
+AdapterManaged packet codec and fail-closed receiver lifecycle. The separately
+approved fixed one-finger native submission succeeded on the interactive host.
+The receiver is now bound to a current authorized Core Route through a
+preallocated, explicitly pumped queue; Route expiry/offline/epoch drift and
+queue deadline/overflow fail closed. A caller-driven worker now reads immutable
+Route snapshots and coherent clock samples itself; real `NodeRuntime` tests
+cover activation, enqueue/tick, epoch recovery, stop and fail-closed
+provider/clock/Route drift. All additions remain hardware-free and full local
+CI passes. A validate-before-open factory now connects the worker type path to
+Windows `SyntheticTouchpadSession`; rejected Route/contract preflight opens no
+Sink, and this slice performs no actual device creation.
+With explicit approval, the exact ignored 002I test subsequently created and
+closed that real Windows Sink through an authorized `NodeRuntime` Route while
+submitting zero packets/frames. Default CI still creates no device.
+After separate approval, the exact ignored 002J test activated that Route and
+successfully submitted four closed one-finger packets through codec, queue,
+worker pump and the real Windows Sink. API submission and cleanup passed;
+visual pointer observation was not independently recorded.
+After another separate approval, the exact ignored 002K test successfully
+submitted a stable two-contact vertical pan and release through the same path.
+Native submission passed; visible foreground scrolling was not independently
+recorded by automation. The user subsequently confirmed that scrolling was
+visible during the controlled run.
+After separate approval, the exact ignored 002L test submitted the fixed
+three-contact horizontal swipe through that composed path. All 11 packets were
+processed, the contacts were explicitly released and cancelled, and cleanup
+completed. Native submission passed; visible desktop/application switching was
+not independently recorded.
+After a further separate approval, the exact ignored 002M test submitted the
+fixed four-contact horizontal swipe. All 11 packets were processed and the same
+release/cancellation and cleanup sequence completed. Native submission passed;
+the configured Windows four-finger system action was not independently observed.
+The 002N Android runtime-facing capture session now enforces a bounded
+cross-event pointer lifecycle, rejects identity drift transactionally and emits
+explicit cancellation at start, stop/restart and close. It is hardware-free and
+creates no JNI runtime, Android component, permission, thread, queue or socket.
+The 002O Adapter packet Source now composes that capture output with the private
+codec while enforcing initial cancellation, contiguous sequence and released
+contacts at close. A seven-frame Android multi-touch lifecycle passes through
+encode/decode without adding a socket or transport dependency. At that slice the
+Java/Gradle/Kotlin/Android build toolchain had not been verified, so no
+unbuildable Kotlin or Gradle scaffold was added; 002T records the later partial
+SDK discovery and remaining JDK/Gradle/Kotlin/NDK gap.
+The 002P delivery session now revalidates the full admitted Route binding before
+each send. Definite pre-write rejection is transactionally retryable; admission
+loss, binding drift and unknown delivery close the channel exactly once and
+fault the session. This is verified with fake channels only and does not claim
+that pairing, cryptography or a live network transport exists.
+The 002Q sender worker now obtains its Route snapshots and coherent clock
+samples from Runtime-owned providers at construction, before every frame and
+before normal close. It derives the exact Active Source binding itself; Route
+stop, authorization expiry, provider/clock failure, rollback or binding drift
+fail closed. Tests use a real `NodeRuntime` with a fake admitted channel and
+perform no network or platform-device operation.
+The 002R concrete host channel now joins that sender to the existing receiver
+worker through a preallocated 1..=64 packet queue. Full/disconnected sends are
+definite pre-write rejections; denial, binding replacement and receiver close
+discard stale queued packets. A real local Runtime test carries cancel, active
+contact and release through both workers into the Windows projector without a
+socket, synthetic device or desktop input.
+With explicit approval, the exact 002S test then replaced the projector with a
+real `SyntheticTouchpadSession`. CancelAll, down, horizontal move and release
+crossed the Runtime sender, bounded host channel and Runtime receiver; all four
+packets were processed before device and Route cleanup. Native API submission
+passed, while visible pointer movement was not independently observed.
+The 002T record codec now fixes bounded Hello/Data/Ack/Close bytes for a future
+pre-authenticated reliable stream. Hello binds the complete Runtime tuple, Data
+outer identity must equal the private packet, and Ack ambiguity requires
+cancellation/new epoch. Four codec tests pass; no socket, key or authentication
+implementation was added. The 002U slice adds the first real Android OS/JNI
+capture boundary: one- and two-finger composition tests pass, the Rust library
+links as `arm64-v8a`, and Gradle packages Kotlin classes plus that library in a
+release AAR with no permission or Android component. Wireless ADB is connected
+to the API-36 ARM64 test phone for read-only verification; no APK was created or
+installed. The explicitly approved 002V lab then added a debug touch-surface
+APK with only `INTERNET`, carried exact records through a loopback-only ADB
+reverse tunnel, validated Hello before creating the real Windows device and
+acknowledged Data only after native submission. A 350 ms Android-generated
+single-finger swipe completed 44 frames, 43 native batches/contact records and
+closed the device cleanly. The mixed elapsed/uptime timestamp bug and sandboxed
+Windows error 5 both failed closed before the approved final run succeeded.
+The installed APK hash matches the inspected local build; reverse mapping,
+Activity, temporary APK and virtual device were cleaned up. The active 002W
+slice fixes the reported no-response case: the Activity now consumes and draws
+touch while waiting, retries the initial loopback connection without advancing
+the packet session, and applies best-effort immersive and system-gesture
+exclusion controls. Sustained physical input then exposed queue pressure, so
+version 5 adds pre-JNI 60 Hz/high-water MOVE sampling while retaining all
+lifecycle events. A separately selected receiver mode provides a bounded
+10-minute manual idle deadline. The v5 APK starts on the vivo device and the
+listener accepted Hello and created the real synthetic touchpad. Final
+physical testing confirmed one-finger motion and two-finger scrolling without a
+new queue fault. The cursor was not visually observed even though the
+interactive Windows cursor API reported it showing at `(960, 540)`. Three- and
+four-finger Windows actions were not observed, and vivo intercepted a
+three-finger downward swipe as a screenshot. Version 6 is built with Android and
+receiver contact-count telemetry, graceful close draining and a bounded centered
+click target. Version 6 was installed through the renewed endpoint; the
+installed APK hash matched, a 785-frame run reached four contacts and the
+device closed cleanly. Windows reported the live device as an active, enabled
+five-contact Precision Touchpad. Tap, one-finger movement and two-finger pan
+are user-confirmed; system cursor coordinates move even though its image is not
+visible. Windows Advanced Gestures has explicit three-/four-finger Shell
+actions, but neither physical nor fixed raw fixtures trigger them. ADR 0048
+therefore activates the VHF compatibility fallback. `CAPY-PTP-003A` now builds
+an unsigned 17,920-byte x64 KMDF/VHF source driver with both mandatory HID
+collections; its 214-byte descriptor test and InfVerif pass. `CAPY-PTP-003B`
+adds a protected exclusive device interface, canonical 50-byte Broker records,
+complete-snapshot validation, bounded lift/replacement reporting and the
+Microsoft-documented 256-byte default pre-certification blob. WDK code analysis
+and user-mode ABI tests pass. `CAPY-PTP-003C` adds bounded SetupAPI enumeration,
+an exclusive RAII Win32 transport, exact synchronous IOCTL/Ack handling and
+himetric-to-HID complete-snapshot projection. The read-only probe reports no
+installed VHF interface, and the driver has not been installed or signed.
+`CAPY-PTP-003D` composes that projector and client into a typed VHF Sink
+session with Active/Failed/Closed states, terminal unknown-delivery handling,
+explicit Close release and bounded Drop cleanup. Its direct Win32 opener is
+callable only by a trusted composition layer; hardware-free lifecycle tests
+pass and no real interface was opened.
+`CAPY-PTP-003E` adds the side-effect-free VHF Adapter factory behind the same
+Runtime validate-before-open boundary used by the synthetic path. Invalid
+Route preflight cannot enumerate/open the interface; accepted epoch advance
+releases the old Broker generation and rebinds the new one. Hardware-free
+factory and lifecycle tests pass, while the exact real-interface acceptance is
+compiled but ignored.
+`CAPY-PTP-003F` generated an exact WDK-validated local test package. Its first
+separately approved no-restart deployment created the root device but failed
+PnP add with problem 31/status `0xc0000010`; device, package, service and trusted
+certificates were fully rolled back without restarting Windows. The cause was
+the missing mandatory VHF `vhf.sys` lower-filter registration. `003H` corrects
+the INF, passes WDK code analysis, Universal ApiValidator, InfVerif, descriptor
+validation and Inf2Cat, and provides exact-package install/rollback scripts.
+The materially changed 0.0.2.0 package was subsequently approved by exact hash,
+installed without a restart request and reached a running PnP state with the
+`vhf` lower filter attached. Exactly one protected Broker interface is present;
+an elevated Runtime-factory acceptance completed Hello/Close with zero frames.
+`CAPY-PTP-003J..003N` then proved real VHF contact submission and observable
+Windows behavior: one-finger motion changed cursor coordinates by `(+106,+8)`,
+one tap produced exactly one isolated-target click, two-finger pan produced a
+wheel event, and fixed three-/four-finger horizontal swipes both deactivated an
+isolated foreground target through Windows Shell handling. The current profile
+does not expose a virtual-desktop GUID, so the four-finger destination desktop
+was not independently identified. No test installed/removed a package or
+restarted Windows. Authenticated production transport, least-privilege Broker
+hosting and live Runtime task/transport wiring remain open. The Android endpoint
+`100.66.157.119:46143` is connected again; the separately gated loopback `--vhf`
+mode first carried one physical `0 -> 1 -> 0` phone gesture as 80 acknowledged
+VHF frames and closed cleanly. `CAPY-PTP-003P` subsequently carried 830 physical
+frames, reached both three and four contacts, submitted every accepted frame to
+VHF and closed normally. Its automated transport/device gate passed, and the
+user confirmed that both live gesture classes affected Windows while reporting
+excessive speed and difficult contact formation. `CAPY-PTP-003Q` adds a
+hardware-free composed transport receiver that
+opens a selected Sink only after exact Hello, acknowledges only after bounded
+receiver/Sink acceptance and fails closed on malformed transport. The Android
+lab now reuses it for both synthetic-default and explicit-VHF modes; five new
+lifecycle tests pass.
+`CAPY-PTP-003T` completes the resulting Android tuning: one-/two-contact motion is
+unchanged, reaching three contacts continuously arms 700-per-mille spatial gain,
+and the Activity reserves 72 ms after added contacts before forwarding MOVE.
+Six capture tests, four mapping tests, four JNI tests, arm64 JNI build, APK build
+and Android lint pass. The exact v0.7 APK was installed with a matching hash and
+the same sole `INTERNET` permission. Its live comparative VHF run submitted all
+2,165 accepted frames, reached four contacts and closed cleanly. Tuning made
+Windows effects easier to trigger, but rapid simultaneous placement exposed an
+OriginOS boundary: the third/fourth pointer is often followed within 1--3 ms by
+`ACTION_CANCEL`, while raw sampling also finds light-contact tracking-ID loss.
+`CAPY-PTP-003U` adds an in-app probable-system-interception counter, explanation
+and user-initiated vivo Super Screenshot settings route; v0.8 builds, lints and
+was installed with a matching hash and no added permission. After the user
+disabled the conflicting OEM gestures, the accepted run submitted all 2,050
+frames, repeatedly reached four contacts and closed cleanly; the user confirmed
+working three-/four-finger Windows effects.
+
+`CAPY-PTP-003V` resolves the cursor observation question. The VHF-only exact
+one-contact/motion gate ignored three raw two-contact gestures, accepted 18
+single-contact motion frames and moved the interactive Windows cursor from
+`(960,600)` to `(794,239)`. All 155 frames were submitted to VHF. Earlier
+unchanged sampling was later classified as invalid for the reported topology
+because CapyIO was not the resumed phone Activity during that sample. Android
+v1.0 fixes sender initialization ordering and closes a foreground-lost Activity
+instead of retaining a false connected state. `CAPY-PTP-003Z` now separates
+bounded continuous lab use from the one-shot cursor diagnostic. Its accepted
+Android 1.2 run submitted all 4,356 frames, remained active across one- through
+four-contact gestures and closed the VHF device cleanly after Android Close.
+The user reported every requested interaction working except double-tap followed
+by drag; Windows reports that tap-and-drag is enabled, so that input shape is a
+separate remaining diagnostic. The separate-computer UU cursor-rendering
+discrepancy is no longer a project blocker after the user disabled UU smart
+mouse. Detailed evidence is in `docs/CAPY_PTP_000_REPORT.md` through
+`docs/CAPY_PTP_003Z_REPORT.md`.
+
 ## CAPY-IMU-001A fixture-first path
 
 The active branch adds a real in-process semantic data path, not a live phone

@@ -40,6 +40,7 @@ Thumbs.db
 artifacts/
 test-results/
 drivers/windows-audio/sysvad/**/x64/
+drivers/windows-touchpad/x64/
 drivers/windows-audio/sysvad/.vs/
 *.dmp
 *.etl

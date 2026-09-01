@@ -25,6 +25,7 @@ members = [
     "platform/windows/capyio-camera",
     "platform/windows/capyio-input",
     "platform/android/capyio-host",
+    "platform/android/capyio-jni",
     "xtask",
 ]
 default-members = [
@@ -66,6 +67,7 @@ tungstenite = { version = "0.30.0", default-features = false, features = ["hands
 uuid = { version = "1.18", features = ["serde", "v4"] }
 windows-sys = { version = "0.61.2", default-features = false }
 windows-service = "0.8.1"
+jni = "0.22.4"
 
 [profile.release]
 panic = "abort"

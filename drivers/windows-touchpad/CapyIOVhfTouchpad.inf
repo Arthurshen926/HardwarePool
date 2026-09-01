@@ -1,0 +1,64 @@
+; Compile/static-validation baseline only. Do not install without ADR 0029 Gate 7B approval.
+
+[Version]
+Signature = "$WINDOWS NT$"
+Class = System
+ClassGuid = {4d36e97d-e325-11ce-bfc1-08002be10318}
+Provider = %ProviderName%
+DriverVer = 08/30/2026,0.0.2.0
+CatalogFile = CapyIOVhfTouchpad.cat
+PnpLockdown = 1
+
+[Manufacturer]
+%ManufacturerName% = CapyIO,NTamd64.10.0...22000
+
+[CapyIO.NTamd64.10.0...22000]
+%DeviceDescription% = CapyIO_Install, Root\CapyIOVhfTouchpad
+
+[SourceDisksFiles]
+CapyIOVhfTouchpad.sys = 1
+
+[SourceDisksNames]
+1 = %DiskName%
+
+[DestinationDirs]
+CapyIO_CopyFiles = 13
+
+[CapyIO_Install.NT]
+CopyFiles = CapyIO_CopyFiles
+
+[CapyIO_Install.NT.HW]
+AddReg = CapyIO_DeviceSecurity, CapyIO_VhfLowerFilter
+
+[CapyIO_DeviceSecurity]
+HKR,,Security,,"D:P(A;;GA;;;SY)(A;;GA;;;BA)"
+HKR,,Exclusive,0x00010001,1
+
+[CapyIO_VhfLowerFilter]
+HKR,,"LowerFilters",0x00010000,"vhf"
+
+[CapyIO_CopyFiles]
+CapyIOVhfTouchpad.sys
+
+[CapyIO_Install.NT.Services]
+AddService = CapyIOVhfTouchpad,0x00000002,CapyIO_Service
+
+[CapyIO_Service]
+DisplayName = %ServiceDescription%
+ServiceType = 1
+StartType = 3
+ErrorControl = 1
+ServiceBinary = %13%\CapyIOVhfTouchpad.sys
+
+[CapyIO_Install.NT.Wdf]
+KmdfService = CapyIOVhfTouchpad,CapyIO_Wdf
+
+[CapyIO_Wdf]
+KmdfLibraryVersion = 1.33
+
+[Strings]
+ProviderName = "CapyIO"
+ManufacturerName = "CapyIO"
+DeviceDescription = "CapyIO VHF Precision Touchpad Source"
+ServiceDescription = "CapyIO VHF Precision Touchpad Source Driver"
+DiskName = "CapyIO VHF Precision Touchpad Driver"

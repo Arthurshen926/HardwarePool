@@ -1,5 +1,6 @@
 use capyio_core::{
-    AdapterInstanceId, NodeDescriptor, Problem, ProblemCategory, ProblemId, ProblemSeverity, Route,
+    AdapterInstanceId, CapabilityClass, NodeDescriptor, Problem, ProblemCategory, ProblemId,
+    ProblemSeverity, Route,
 };
 use capyio_protocol::{
     PROTOCOL_MAJOR, ProtocolError, decode_envelope, encode_envelope, new_envelope, v1,
@@ -10,6 +11,26 @@ use capyio_testkit::{DemoLab, android_node};
 fn generic_node_catalog_round_trips_through_protobuf() {
     let original = android_node();
     let wire = v1::NodeDescriptor::try_from(&original).expect("to wire");
+    let decoded = NodeDescriptor::try_from(wire).expect("to Core");
+    assert_eq!(original, decoded);
+}
+
+#[test]
+fn touchpad_capability_uses_appended_wire_value_16() {
+    let mut original = android_node();
+    let capability = original
+        .capabilities
+        .values_mut()
+        .next()
+        .expect("fixture capability");
+    capability.class = CapabilityClass::Touchpad;
+
+    let wire = v1::NodeDescriptor::try_from(&original).expect("to wire");
+    assert!(
+        wire.capabilities
+            .iter()
+            .any(|capability| capability.capability_class == 16)
+    );
     let decoded = NodeDescriptor::try_from(wire).expect("to Core");
     assert_eq!(original, decoded);
 }

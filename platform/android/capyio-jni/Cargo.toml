@@ -1,0 +1,19 @@
+[package]
+name = "capyio-android-jni"
+description = "Narrow JNI bridge from Android MotionEvent DTOs to private CapyIO touchpad packets."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+capyio-android-host = { path = "../capyio-host" }
+capyio-core = { path = "../../../crates/capyio-core" }
+capyio-input = { path = "../../../crates/capyio-input" }
+capyio-remote-touchpad-adapter = { path = "../../../adapters/remote-touchpad" }
+
+[target.'cfg(target_os = "android")'.dependencies]
+jni.workspace = true

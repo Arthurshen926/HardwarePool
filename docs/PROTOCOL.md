@@ -33,6 +33,11 @@ shape does not make IDs substitutable.
 - catalog updates may replace an Adapter-owned subset after restart;
 - both peers send catalogs; neither is structurally provider-only.
 
+Protocol v1 appends `CAPABILITY_CLASS_TOUCHPAD = 16` without changing existing
+enum numbers. It identifies an Adapter-owned touchpad Capability in catalogs;
+continuous `capyio.input.touchpad-frames/1` data remains outside Protobuf
+control envelopes.
+
 ## Route control
 
 - `OpenSessionRequest/Response`;
@@ -57,6 +62,17 @@ transport and is unsafe for untrusted networks.
 
 High-rate audio/video/sensor data never travels in an Envelope. A Route backend
 selects CapyDataPlane, AdapterManaged, LocalPipeline or ExternalProtocol.
+
+Remote touchpad packet v1 is a private `AdapterManaged` data record, not a
+Protobuf Envelope or sidecar message. Its surrounding transport must bind an
+authenticated/authorized Route and Stream before decoding; the packet codec
+itself opens no transport and supplies no trust policy. The Adapter receiver
+adds bounded per-session sequence, fixed-window rate and active-idle guards,
+but those do not replace authenticated transport replay defense or admission.
+The private Adapter ingress additionally binds a fixed-capacity queue to a
+current Runtime-owned Core Route snapshot and rechecks its Active,
+authorization/expiry and epoch state; this remains process-local lifecycle
+validation, not a public wire or bearer credential.
 
 ## Sidecar protocol
 
