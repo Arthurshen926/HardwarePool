@@ -330,6 +330,7 @@ version = "0.1.0"
 dependencies = [
  "capyio-audio",
  "capyio-process-presence",
+ "capyio-windows-render-ring",
  "prost",
  "thiserror 2.0.20",
  "windows-sys 0.61.2",
@@ -412,6 +413,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "capyio-native-audio-lan"
+version = "0.1.0"
+dependencies = [
+ "capyio-audio",
+ "capyio-core",
+ "capyio-windows-capture-ring",
+ "capyio-windows-render-ring",
+ "thiserror 2.0.20",
+ "uuid",
+]
+
+[[package]]
 name = "capyio-node"
 version = "0.1.0"
 dependencies = [
@@ -480,12 +493,30 @@ dependencies = [
 ]
 
 [[package]]
+name = "capyio-windows-capture-ring"
+version = "0.1.0"
+dependencies = [
+ "thiserror 2.0.20",
+ "windows-sys 0.61.2",
+]
+
+[[package]]
+name = "capyio-windows-render-ring"
+version = "0.1.0"
+dependencies = [
+ "thiserror 2.0.20",
+ "windows-sys 0.61.2",
+]
+
+[[package]]
 name = "capyio-windows-service"
 version = "0.1.0"
 dependencies = [
  "capyio-audio-share-adapter",
  "capyio-micyou-adapter",
  "capyio-micyou-host-config",
+ "capyio-native-audio-lan",
+ "capyio-windows-capture-ring",
  "serde",
  "serde_json",
  "windows-service",

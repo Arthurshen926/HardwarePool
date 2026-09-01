@@ -1,8 +1,9 @@
 use capyio_audio::{
-    AudioFormat, AudioFrame, AudioStreamCapabilities, AudioStreamSpec, AudioUseCase,
-    ClockDriftEstimator, InsertOutcome, ReorderBuffer, negotiate_audio_stream,
+    AudioFormat, AudioFrame, AudioMediaPacket, AudioMediaStreamBinding, AudioStreamCapabilities,
+    AudioStreamSpec, AudioUseCase, BoundedAudioPacketQueue, ClockDriftEstimator, InsertOutcome,
+    PacketQueuePushOutcome, ReorderBuffer, negotiate_audio_stream,
 };
-use capyio_core::StreamId;
+use capyio_core::{RouteId, SessionId, StreamId};
 
 #[test]
 fn decoded_frames_can_be_validated_reordered_and_measured() {
@@ -51,4 +52,69 @@ fn microphone_and_speaker_use_one_contract_without_merging_specs() {
         negotiate_audio_stream(&both, &both, AudioUseCase::MediaBalanced).expect("speaker"),
         speaker
     );
+}
+
+#[test]
+fn opposite_audio_routes_share_a_session_without_sharing_media_state() {
+    let session_id = SessionId::new();
+    let microphone = AudioMediaStreamBinding {
+        session_id,
+        route_id: RouteId::new(),
+        stream_id: StreamId::new(),
+        stream_epoch: 3,
+        selected_spec: AudioStreamSpec::voice_interactive(),
+    };
+    let speaker = AudioMediaStreamBinding {
+        session_id,
+        route_id: RouteId::new(),
+        stream_id: StreamId::new(),
+        stream_epoch: 8,
+        selected_spec: AudioStreamSpec::media_balanced(),
+    };
+
+    let mut microphone_queue =
+        BoundedAudioPacketQueue::new(microphone.clone(), 1, 960).expect("microphone queue");
+    let mut speaker_queue =
+        BoundedAudioPacketQueue::new(speaker.clone(), 2, 3_840).expect("speaker queue");
+
+    let packet =
+        |binding: &AudioMediaStreamBinding, sequence: u64, payload_bytes: usize| AudioMediaPacket {
+            stream_id: binding.stream_id,
+            stream_epoch: binding.stream_epoch,
+            sequence,
+            source_timestamp_micros: sequence * 10_000,
+            first_sample_index: sequence * 480,
+            sample_count: 480,
+            discontinuity: false,
+            payload: vec![0; payload_bytes],
+        };
+
+    assert_eq!(
+        microphone_queue
+            .try_push(packet(&microphone, 0, 960))
+            .expect("microphone packet"),
+        PacketQueuePushOutcome::Accepted
+    );
+    assert_eq!(
+        microphone_queue
+            .try_push(packet(&microphone, 1, 960))
+            .expect("bounded microphone queue"),
+        PacketQueuePushOutcome::PacketCapacityReached
+    );
+    assert_eq!(
+        speaker_queue
+            .try_push(packet(&speaker, 0, 1_920))
+            .expect("speaker packet"),
+        PacketQueuePushOutcome::Accepted
+    );
+
+    assert_eq!(microphone.session_id, speaker.session_id);
+    assert_ne!(microphone.route_id, speaker.route_id);
+    assert_ne!(microphone.stream_id, speaker.stream_id);
+    assert_eq!(
+        speaker_queue.pop().expect("speaker stays usable").sequence,
+        0
+    );
+    assert_eq!(speaker_queue.stats().packet_capacity_drops, 0);
+    assert_eq!(microphone_queue.stats().packet_capacity_drops, 1);
 }

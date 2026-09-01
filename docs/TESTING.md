@@ -22,6 +22,7 @@ cargo xtask adapter-smoke
 cargo xtask ci
 cargo xtask demo
 cargo xtask imu-demo
+cargo xtask android-check
 cargo xtask android-doctor --serial <explicit-serial>
 cargo xtask android-baseline --serial <explicit-serial>
 cargo xtask android-collect --serial <explicit-serial>
@@ -130,6 +131,55 @@ The shared audio-contract tests validate microphone, balanced-speaker and
 lossless-music presets; reject voice processing on media playback, invalid QoS,
 empty/duplicate/unbounded candidate inventories and unsupported use cases; and
 prove deterministic exact candidate intersection without implicit conversion.
+
+The ADR 0041 media-channel tests bind typed Session, Route, Stream and positive
+epoch identity to one exact selected stream specification. They prove lossless
+PCM frame/packet conversion, bounded opaque encoded packets, wrong-Stream and
+wrong-epoch rejection, independent packet-count and aggregate-byte queue
+limits, and explicit invalid-payload counters. An integration test drives
+opposite microphone and Speaker Routes through separate queues under one
+Session and proves pressure on one Route does not mutate the other. These tests
+open no socket, run no codec, access no platform API and make no latency or
+security claim.
+
+ADR 0042 backend-contract tests reject malformed IDs, empty encoding support,
+partial StandardPort declarations, overstated payload visibility and
+inconsistent security claims. Audio Share tests drive a bound common PCM packet
+through the unchanged TCP/UDP loopback fixture, prove payload preservation and
+private-wire segmentation, reject wrong Stream/spec before enqueue, and assert
+absent metadata/no security. MicYou tests accept only the conservative voice
+lifecycle binding and assert opaque payload/private PCM+Opus/no security; they
+do not claim access to or decode a MicYou packet.
+
+ADR 0044 native-LAN tests use one shared Rust/Java golden datagram to lock the
+104-byte version-1 header and preserve complete unsigned 64-bit counter
+patterns. Rust tests cover single/multi-fragment PCM and encoded payloads,
+reverse-order reassembly, duplicates, conflicting metadata, a bounded partial-
+packet eviction, wrong binding, malformed/reserved fields, explicit-peer UDP
+loopback, spoofed peer rejection and receive timeout. Dependency-free Java
+contract tests cover the same codec constants/golden packet, a 1,920-byte
+stereo packet split into two datagrams, malformed fields, explicit peer and
+UDP loopback. These are local transport-conformance tests: they do not call
+Android audio APIs, install an APK or prove remote sound, latency, codec,
+loss-recovery or security behavior.
+
+ADR 0045 extends the dependency-free Java contract with packet-count and byte-
+capacity queue pressure, wrong-binding rejection, exact PCM packetization,
+partial-read handling, sample/time advancement and discontinuity after drops.
+The worker composition test moves two 48 kHz stereo packets through bounded
+send queue, one-shot UDP sender, two-fragment packets, receiver/reassembly and
+bounded sink queue, then checks exact payload/timeline and a two-second-bounded
+terminal stop. This still does not invoke `AudioRecord` or `AudioTrack`; Android
+application compilation/Lint ensures the worker layer can ship in the APK while
+the physical adapters remain disconnected.
+
+ADR 0046 raises the dependency-free native-LAN contract to 107 assertions.
+Additional tests cover partial PCM Sink writes, sequence/sample discontinuity
+reset, invalid PCM geometry, terminal worker restart and closed literal speaker
+configuration. Rust tests cover exact/non-silent tone packets plus bounded
+cross-block render accumulation and pressure discontinuity. Android compile and
+Lint cover the real `SpeakerSinkAdapter` composition. None of these automated
+checks is audible or substitutes for the pending exact-device acceptance.
 
 The MicYou Adapter tests verify exact v2.0.1 CLI identity plus the required
 `device-stable-id-v1` capability, bounded structural output-device parsing that
@@ -308,6 +358,31 @@ contract, data plane or performance test.
 - end to end: IMU Panel/Recorder, audio both directions, camera, gamepad,
   independent Routes, disconnect/reconnect and clock epochs.
 
+## Android audio node shell Gate
+
+`cargo xtask android-check` is the explicit hardware-free 001C Gate. It runs a
+dependency-free Java contract executable, Android Lint with warnings denied and
+debug APK assembly. The 36 contract assertions cover Port direction, independent
+microphone/speaker activation, one-direction Stop, failure isolation, later
+generation Retry, stale completion rejection and bounded actual-format/Problem
+fields.
+
+Offline repository validation additionally pins the Gradle/AGP contract and
+checks the source manifest for the approved recording/notification/foreground
+permissions, a non-exported dual-type service, disabled backup/cleartext and no
+Internet permission. It also requires real `AudioRecord`/`AudioTrack` builders,
+`START_NOT_STICKY` and foreground notification ownership. This static check is
+not an APK or hardware result.
+
+The local debug APK build and merged-manifest inspection do not themselves
+prove device behavior. A separately authorized one-device run now proves the
+positive permission flow, actual 48 kHz `AudioRecord`/`AudioTrack` parameters,
+concurrent and independent Stop behavior, Activity-finish survival, persistent
+notification action and complete service/audio cleanup. Permission denial and
+revoke, visible indicator inspection, lock/process death, focus/routing,
+long-duration background and vendor power policy remain physical tests. No
+microphone recording is retained by the 001C shell.
+
 Gate 7B first proves an unchanged pinned SysVAD build and an approved-target
 install as a toolchain/enumeration baseline; synthetic SysVAD
 WASAPI loopback is not real-PCM evidence. It then requires `CapyIO Speaker`
@@ -319,6 +394,49 @@ or ordinary logging. Repository validation prevents driver source from
 appearing while the SysVAD record still declares `source_imported: false`.
 ADR 0029 permits `DESKTOP-AT8EVE9` for the approved-target install only after
 its recovery, exact-package and rollback preflight passes.
+
+ADR 0051 adds a remote-recording compatibility regression. The speaker-only
+case must keep the Android microphone `STOPPED` at zero frames, prove non-zero
+Android speaker frames with zero malformed/wrong-source/drop counters, and
+verify that a host-audio recorder cannot obtain SysVAD's synthetic tone from
+`CapyIO Speaker`. The 21.85 build candidate intentionally rejects that WASAPI
+loopback activation; silence or unsupported activation is acceptable, but a
+tone is a failure. This test does not claim genuine system-loopback support.
+
+The native Speaker service supervisor is tested independently from physical
+audio. Configuration tests reject missing, unspecified, duplicate or
+mode-incompatible endpoints. Readiness parsing accepts only the bounded
+`native_virtual_speaker=true` first record, output readers remain bounded and
+the Runtime can become `active` from native transport readiness while keeping
+`receiverPresent=false`. Physical Android counters, not UDP process liveness,
+prove remote receipt.
+
+The native microphone slice tests the two halves independently before physical
+composition. Capture-ring tests prove its fixed ABI, live-owner/stale-reclaim
+rule, whole-block pressure behavior and exact S16LE-mono conversion. Native LAN
+tests prove the microphone binding, explicit-peer UDP reassembly and a distinct
+bounded readiness record. Service tests require an all-or-none microphone child
+configuration, reject it outside native mode and keep startup transactional.
+Android contract tests require `AudioRecord` to hand off only through the
+bounded packetizer/queue/sender worker. Physical media acceptance requires
+non-zero receiver/ring counters with MicYou absent; final projection acceptance
+additionally requires a normal Windows recording client to produce a non-silent
+WAV from the matching deployed service build.
+
+The controlled 001F2 acceptance records exact Release/APK hashes rather than a
+friendly endpoint name alone. It requires 384,000 samples for each eight-second
+48 kHz mono run, a non-zero sample count plus RMS/peak, zero client errors,
+release of both native UDP ports on Stop, new owners after Start and another
+non-silent capture in the new generation. Android sender counters independently
+confirm generated/sent packets, datagrams, pressure drops and partial bytes;
+raw microphone WAVs remain ignored and are never repository evidence.
+
+The 001G1 orchestration Gate additionally distinguishes pair readiness from
+liveness. Unit tests require transactional initial startup, no Stop call on a
+surviving child after partial health loss, transition from `active` back to
+`starting` without a terminal Problem and unchanged failure/reap behavior when
+no child remains. These tests do not replace physical simultaneous-media,
+child-exit or reconnect evidence.
 
 ## Android read-only lab commands
 

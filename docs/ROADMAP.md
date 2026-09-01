@@ -70,6 +70,31 @@ implementation scope automatically.
   Android lock/background and permission-revocation tests, normal-reboot
   survival, performance/soak and release/legal qualification remain in
   `docs/plans/active/0021-microphone-release-qualification.md`.
+- Audio consolidation is active under `CAPY-AUDIO-NATIVE-001`. Slice `001A`
+  adds the backend-neutral Session/Route/Stream/epoch media binding, bounded
+  PCM/encoded packet and reference queue selected by ADR 0041. Later slices
+  retain Audio Share and MicYou as golden baselines while one CapyIO Android
+  Node and replaceable native transport are implemented and physically compared.
+  No CapyIO Android service, native network backend or production-security
+  claim is implied by `001A`.
+  Slice `001B` now makes compatibility loss explicit: Audio Share exercises the
+  common PCM packet boundary while declaring stripped identity/timing, and
+  MicYou declares its media opaque. Both remain AdapterManaged, insecure golden
+  baselines; this is not the native Android or network switchover.
+  Slice `001C` adds the buildable CapyIO Android Node/service shell with
+  independent real platform audio handles, permissions, persistent notification
+  and generation-bound state. Its authorized one-device lifecycle acceptance
+  passed while payload remained discarded/empty.
+  Slice `001D1` adds a bounded direction-neutral UDP reference backend, common
+  Rust/Java golden wire and the approved Android network permission. Slice
+  `001D2` adds exact PCM packetization, bounded queues/reassembly and one-shot
+  Android sender/receiver workers with synthetic end-to-end evidence. `001E`
+  now joins the Speaker direction to Android `AudioTrack` and the Windows
+  render ring; controlled native tone and ordinary Windows-application
+  playback reached the phone with zero reported transport/queue drops. The
+  path remains explicitly insecure, fixed to the lab binding and subject to
+  endpoint cleanup, lifecycle and quality qualification. Native microphone
+  switchover remains `001F`.
 
 ## Public-alpha proof bar
 

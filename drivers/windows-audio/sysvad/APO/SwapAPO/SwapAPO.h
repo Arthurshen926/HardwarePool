@@ -50,7 +50,6 @@ LONG GetCurrentEffectsSetting(IPropertyStore* properties, PROPERTYKEY pkeyEnable
 enum class MicrophoneBridgeRole : std::uint8_t
 {
     Detached,
-    IngressProducer,
     CaptureConsumer,
 };
 
@@ -211,7 +210,6 @@ public:
     FLOAT32                                 *m_pf32Coefficients;
 
 private:
-    capyio::capture_ring::Producer m_captureProducer;
     capyio::capture_ring::Consumer m_captureConsumer;
     MicrophoneBridgeRole m_microphoneBridgeRole = MicrophoneBridgeRole::Detached;
     CCriticalSection                        m_EffectsLock;
@@ -349,7 +347,6 @@ public:
 
 private:
     capyio::render_ring::Producer m_renderRing;
-    capyio::capture_ring::Producer m_captureProducer;
     capyio::capture_ring::Consumer m_captureConsumer;
     MicrophoneBridgeRole m_microphoneBridgeRole = MicrophoneBridgeRole::Detached;
     volatile LONG m_endpointGainMillion;

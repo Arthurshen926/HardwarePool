@@ -1,0 +1,81 @@
+plugins {
+    id 'com.android.application'
+}
+
+android {
+    namespace = 'dev.capyio.android'
+    compileSdk = 36
+
+    defaultConfig {
+        applicationId = 'dev.capyio.android'
+        minSdk = 26
+        targetSdk = 36
+        versionCode = 11
+        versionName = '0.4.3-dev'
+        manifestPlaceholders = [
+            capyioSpeakerLabEnabled: System.getenv('CAPYIO_ANDROID_SPEAKER_PEER_IPV4') == null
+                    ? 'false' : 'true',
+            capyioSpeakerPeerIpv4: System.getenv('CAPYIO_ANDROID_SPEAKER_PEER_IPV4') ?: '127.0.0.1',
+            capyioSpeakerLocalPort: System.getenv('CAPYIO_ANDROID_SPEAKER_LOCAL_PORT') ?: '46000',
+            capyioSpeakerPeerPort: System.getenv('CAPYIO_ANDROID_SPEAKER_PEER_PORT') ?: '46001',
+            capyioSpeakerSessionId: 'a1000000-0000-4000-8000-000000000001',
+            capyioSpeakerRouteId: 'a1000000-0000-4000-8000-000000000002',
+            capyioSpeakerStreamId: 'a1000000-0000-4000-8000-000000000003',
+            capyioSpeakerStreamEpoch: '1',
+            capyioMicrophoneLabEnabled: System.getenv('CAPYIO_ANDROID_MICROPHONE_PEER_IPV4') == null
+                    ? 'false' : 'true',
+            capyioMicrophonePeerIpv4: System.getenv('CAPYIO_ANDROID_MICROPHONE_PEER_IPV4') ?: '127.0.0.1',
+            capyioMicrophoneLocalPort: System.getenv('CAPYIO_ANDROID_MICROPHONE_LOCAL_PORT') ?: '46010',
+            capyioMicrophonePeerPort: System.getenv('CAPYIO_ANDROID_MICROPHONE_PEER_PORT') ?: '46011',
+            capyioMicrophoneSessionId: 'a2000000-0000-4000-8000-000000000001',
+            capyioMicrophoneRouteId: 'a2000000-0000-4000-8000-000000000002',
+            capyioMicrophoneStreamId: 'a2000000-0000-4000-8000-000000000003',
+            capyioMicrophoneStreamEpoch: '1',
+        ]
+    }
+
+    buildTypes {
+        release {
+            minifyEnabled = false
+            proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro'
+        }
+    }
+
+    compileOptions {
+        sourceCompatibility = JavaVersion.VERSION_17
+        targetCompatibility = JavaVersion.VERSION_17
+    }
+
+    sourceSets {
+        main.java.srcDir 'src/main/java'
+        main.java.srcDir '../node-contract/src/main/java'
+        main.java.srcDir '../native-lan-contract/src/main/java'
+    }
+
+    lint {
+        abortOnError = true
+        warningsAsErrors = true
+        checkReleaseBuilds = true
+        // API 36, AGP 9.3.1 and checksum-pinned Gradle 9.5.0 are deliberate.
+        disable += ['GradleDependency', 'OldTargetApi', 'AndroidGradlePluginVersion']
+    }
+}
+
+tasks.register('verifyDebugEntrypoints') {
+    group = 'verification'
+    description = 'Fails when Android manifest entrypoint classes are absent from the debug build.'
+    dependsOn 'compileDebugJavaWithJavac'
+
+    doLast {
+        def classesDirectory = tasks.named('compileDebugJavaWithJavac').get()
+                .destinationDirectory.get().asFile
+        [
+            'dev/capyio/android/MainActivity.class',
+            'dev/capyio/android/AudioNodeService.class',
+        ].each { relativePath ->
+            if (!new File(classesDirectory, relativePath).isFile()) {
+                throw new GradleException("Android entrypoint class is missing: ${relativePath}")
+            }
+        }
+    }
+}

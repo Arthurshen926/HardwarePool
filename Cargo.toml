@@ -14,11 +14,14 @@ members = [
     "adapters/sensor-server",
     "adapters/audio-share",
     "adapters/micyou",
+    "adapters/native-audio-lan",
     "apps/capyio-node",
     "apps/desktop/src-tauri",
     "platform/windows/capyio-service",
     "platform/windows/micyou-host-config",
     "platform/windows/process-presence",
+    "platform/windows/capture-ring",
+    "platform/windows/render-ring",
     "xtask",
 ]
 default-members = [
@@ -33,9 +36,12 @@ default-members = [
     "adapters/sensor-server",
     "adapters/audio-share",
     "adapters/micyou",
+    "adapters/native-audio-lan",
     "apps/capyio-node",
     "platform/windows/micyou-host-config",
     "platform/windows/process-presence",
+    "platform/windows/capture-ring",
+    "platform/windows/render-ring",
     "xtask",
 ]
 

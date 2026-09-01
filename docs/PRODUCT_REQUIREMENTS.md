@@ -252,10 +252,12 @@ The product has two experiences:
 
 ## 9. Current non-goals
 
-- real MicYou, VCamdroid or VIIPER integration;
-- Audio Share source import, vendoring or redistribution; the only current
-  exception is the pinned, unmodified external-process remote-speaker Adapter
-  scoped by `CAPY-AUDIO-000/001A` and ADR 0025;
+- unscoped copying, bundling or redistribution of MicYou, Audio Share,
+  VCamdroid or VIIPER; the physically proven Audio Share/MicYou compatibility
+  paths remain limited to their recorded AdapterManaged integration modes;
+- removing either audio compatibility baseline before the corresponding
+  CapyIO-native direction reaches physical parity under
+  `CAPY-AUDIO-NATIVE-001` and ADR 0041;
 - vendoring, repackaging or production deployment of SensorServer; the only
   current exception is the externally installed, local-lab IMU protocol Adapter
   scoped by `CAPY-IMU-001B` and ADR 0021;
@@ -268,7 +270,9 @@ The product has two experiences:
   operations; every approved lab action remains target-specific and retained as
   evidence;
 - production pairing/encryption, WAN relay, Mesh or NAT traversal;
-- unified WebRTC/media/data plane, ROS 2, MCAP, FFmpeg or USB/IP implementation;
+- a public audio network byte layout or production AOO/RTP/QUIC/WebRTC binding
+  in `CAPY-AUDIO-NATIVE-001A`; its media packet is an in-process semantic seam;
+- unified WebRTC media plane, ROS 2, MCAP, FFmpeg or USB/IP implementation;
 - plugin marketplace, cloud service or professional audio/video guarantees.
 
 ## 10. Public-alpha proof bar

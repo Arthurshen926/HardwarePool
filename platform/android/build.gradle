@@ -1,0 +1,10 @@
+plugins {
+    id 'com.android.application' version '9.3.1' apply false
+}
+
+tasks.register('capyioCheck') {
+    group = 'verification'
+    description = 'Runs the Android node contract, lint, and debug APK build gates.'
+    dependsOn ':node-contract:check', ':app:lintDebug', ':app:assembleDebug',
+            ':app:verifyDebugEntrypoints'
+}

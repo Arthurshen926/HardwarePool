@@ -42,6 +42,36 @@ explicitly approved trusted lab. A Tailscale address can protect overlay transit
 but does not supply CapyIO Capability authorization, application identity,
 message replay protection or downgrade binding.
 
+ADR 0041 now represents Session/Route/Stream/epoch and the exact selected audio
+specification as one validated media-stream binding before any transport
+backend. This prevents platform and codec code from inventing a second identity
+model, but the in-process binding and bounded packet queue provide no peer
+authentication, encryption or replay defense by themselves. A network backend
+must cryptographically bind that control-approved value before production use.
+
+ADR 0042 makes backend security claims explicit alongside metadata fidelity.
+The current Audio Share and MicYou compatibility contracts set peer
+authentication, confidentiality, integrity, replay protection and downgrade
+binding to false. The descriptor prevents UI/runtime code from mistaking a
+private compatibility path for a production-secure backend, but does not add
+security to either wire.
+
+ADR 0044's native LAN reference also sets every production-security property
+to false. It accepts one configured unicast IP/port, rejects a different UDP
+source and validates Session/Route/Stream/epoch plus canonical fragmentation,
+but source-address filtering and self-asserted header IDs are not
+authentication. The wire has no encryption, integrity tag, replay window,
+downgrade binding, pairing, Capability grant or key lifecycle. It is allowed
+only on an explicitly trusted local/Tailscale lab; Tailscale transport does not
+replace CapyIO application authorization. Android cleartext app traffic remains
+disabled, but that setting is not cryptographic protection for raw UDP.
+
+ADR 0046's speaker build metadata is closed and outside Activity input, but it
+is still only trusted-lab configuration. A matching source IP, port and
+self-declared Route tuple do not prove peer identity. The default Android build
+disables the lab receiver unless an explicit peer IPv4 is supplied at build
+time.
+
 The SensorServer lab client rejects DNS names, arbitrary paths, credentials,
 redirects, binary sensor payloads and frames/messages above 4 KiB. TCP and
 WebSocket operations have deadlines. These controls limit attack surface but do
@@ -84,6 +114,16 @@ than all interactive users. Requests remain closed to `status`, `start` and
 and stable problem codes. They never carry an executable path, endpoint
 identity or arbitrary argument. This isolates local-user process authority but
 does not authenticate the Android peer or encrypt MicYou traffic.
+
+ADR 0047 adds a separate native microphone mode to the same privileged Broker.
+Its executable and literal local/peer UDP endpoints remain administrator-set
+service configuration and cannot be supplied through the control pipe or
+WebView. The child accepts only one fixed common-packet binding and explicit
+peer, but ADR 0044 still provides no authentication, confidentiality, integrity,
+replay protection or downgrade binding. Explicit peer filtering is not peer
+identity. The capture ring is SPSC, so the native receiver and MicYou ingress
+are mutually exclusive producers. The service does not launch both; manually
+starting a compatibility producer beside native mode remains unsupported.
 
 The desktop Quick Action never accepts an executable path, endpoint identifier,
 bind address or port from the WebView. Those values come only from the trusted
@@ -160,6 +200,21 @@ Default logs may include typed IDs, states, timings, counters and sanitized
 errors. They exclude raw content, pairing codes after use, private/session keys,
 tokens, unrelated process lists and personal filenames. Recordings are explicit
 artifacts with retention/deletion policy.
+
+### Android audio shell
+
+ADR 0043 requires a visible user action plus granted recording and notification
+permission before the 001C microphone Source starts. The non-exported service
+uses the microphone/media-playback foreground types, a persistent notification
+with Stop action and `START_NOT_STICKY`; Activity closure is not implicit
+authorization to restart capture.
+
+The 001C APK declares no Internet permission, disables cleartext traffic and
+backup, never stores or logs microphone bytes and exposes only an app-private
+Node UUID. Captured bytes are counted then discarded. This is a local privacy
+boundary, not transport security. Permission revoke, indicator, lock/background
+and vendor process-management behavior still require physical evidence before
+release claims.
 
 ## Milestones
 

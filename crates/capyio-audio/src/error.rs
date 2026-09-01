@@ -38,4 +38,39 @@ pub enum AudioDataError {
 
     #[error("source and sink have no compatible audio stream candidate")]
     NoCompatibleAudioStream,
+
+    #[error("invalid audio media-stream binding: {0}")]
+    InvalidMediaBinding(String),
+
+    #[error("audio media packet belongs to a different stream")]
+    WrongMediaStream,
+
+    #[error("audio media packet epoch {actual} does not match bound epoch {expected}")]
+    WrongMediaEpoch { expected: u32, actual: u32 },
+
+    #[error("audio media packet contains {actual} samples; expected {expected}")]
+    MediaPacketSampleCount { expected: u32, actual: u32 },
+
+    #[error("encoded audio media packet payload must not be empty")]
+    EmptyEncodedMediaPacket,
+
+    #[error("audio media packet payload exceeds the {limit}-byte contract limit")]
+    MediaPacketPayloadTooLarge { limit: usize },
+
+    #[error("decoded AudioFrame conversion requires a PCM stream binding")]
+    NonPcmFrameConversion,
+
+    #[error("audio packet queue capacity must be inside 1..={limit} packets")]
+    InvalidPacketQueueCapacity { limit: usize },
+
+    #[error("audio packet queue payload capacity must be inside 1..={limit} bytes")]
+    InvalidPacketQueueByteCapacity { limit: usize },
+
+    #[error(
+        "audio packet queue payload capacity {capacity} cannot hold one {required}-byte PCM packet"
+    )]
+    PacketQueueCannotHoldPcmFrame { capacity: usize, required: usize },
+
+    #[error("invalid audio transport backend contract: {0}")]
+    InvalidTransportBackendContract(String),
 }

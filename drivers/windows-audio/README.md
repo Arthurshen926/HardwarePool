@@ -3,10 +3,12 @@
 This directory contains the Gate 7B Windows system-projection spike that exposes:
 
 - `CapyIO Speaker` as a Windows render endpoint;
-- `CapyIO Microphone Ingress` as the private render-side PCM entry selected by
-  the MicYou Adapter;
 - `CapyIO Microphone` as the application-facing capture endpoint backed by the
   service-owned bounded capture ring.
+
+ADR 0049 retires the former MicYou-only render ingress from the default native
+package. Network microphone PCM now enters the capture ring through the
+user-mode native Broker, leaving exactly one render and one capture endpoint.
 
 The speaker implementation is a minimized MS-PL SysVAD derivative with
 CapyIO-owned device, service, APO and extension identifiers. Its source and
@@ -37,6 +39,12 @@ WASAPI loopback is a synthetic tone, not the application's real render PCM.
 The APO may only copy into preallocated bounded staging and update counters;
 all transport behavior remains in the Broker. `IPC_CONTRACT.md` defines this
 user-mode bridge and retains a custom driver IPC as a deferred fallback.
+
+ADR 0051 makes the inherited SysVAD system-loopback pin fail closed on
+`CapyIO Speaker`. Remote-recording tools must not receive SysVAD's synthetic
+sine tone and mistake it for the real render stream. This does not yet provide
+a real WASAPI loopback capture source: such clients receive an unsupported
+activation result, while phone-bound PCM continues through the APO ring.
 
 ## Intended milestones
 

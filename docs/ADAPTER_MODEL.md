@@ -117,6 +117,33 @@ Sidecar JSON-RPC. Audio Share retains TCP negotiation and UDP PCM delivery to
 its independently installed Android receiver. This private contract is not a
 `capyio.audio.frames/1` interoperability claim.
 
+The Gate 8 MicYou integration is likewise an `AdapterManaged` compatibility
+boundary. Its separately built Windows process and independently installed
+Android application retain their private TCP/UDP PCM/Opus contract. The two
+compatibility transports are physical regression baselines, not a shared wire.
+
+ADR 0041 adds a common CapyIO-authored media seam above concrete audio
+transports. ADR 0042 makes every mapping machine-checkable: backends declare
+media access, supported encodings, field-by-field fidelity and security. Audio
+Share now accepts a validated common PCM packet before deliberately stripping
+unsupported metadata; MicYou declares an opaque external-process boundary and
+has no common-packet API. Sharing the seam does not turn either private
+AdapterManaged protocol into a StandardPort or make them interoperable.
+
+ADR 0044 adds a third `AdapterManaged` backend as a CapyIO-authored reference,
+not another compatibility wrapper. It consumes the complete common packet and
+preserves its metadata over a fixed, bounded UDP lab wire. Rust and Android
+implementations share a golden datagram, but the absence of peer
+authentication, encryption, replay defense and production loss/clock behavior
+prevents a StandardPort claim. Platform audio callbacks never own its socket;
+the fixed-capacity workers added by 001D2 mediate its Android composition.
+
+ADR 0045 implements that mediation on Android as exact PCM packetization,
+packet/aggregate-byte bounded queues, bounded reassembly and independently
+owned one-shot UDP workers. This remains an Adapter-internal lab mechanism;
+neither the Activity nor the current platform audio Adapters receive raw peer
+or Route authority in this slice.
+
 ## Failure isolation
 
 Adapter Host owns child process handles, stdin/stdout/stderr tasks, deadlines

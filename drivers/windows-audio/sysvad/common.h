@@ -370,6 +370,7 @@ typedef struct _SYSVAD_DEVPROPERTY {
 #define ENDPOINT_SOUNDDETECTOR_SUPPORTED        0x00000004
 #define ENDPOINT_CELLULAR_PROVIDER1             0x00000008
 #define ENDPOINT_CELLULAR_PROVIDER2             0x00000010
+#define ENDPOINT_SYNTHETIC_LOOPBACK_DISABLED    0x00000020
 
 //
 // Endpoint miniport pair (wave/topology) descriptor.

@@ -111,51 +111,15 @@ static ENDPOINT_MINIPAIR CapyIoSpeakerMiniports =
     SIZEOF_ARRAY(SpeakerPinDeviceFormatsAndModes),
     CapyIoSpeakerTopologyPhysicalConnections,
     SIZEOF_ARRAY(CapyIoSpeakerTopologyPhysicalConnections),
-    ENDPOINT_OFFLOAD_SUPPORTED,
+    ENDPOINT_OFFLOAD_SUPPORTED | ENDPOINT_SYNTHETIC_LOOPBACK_DISABLED,
     SpeakerModulesWaveFilter,
     SIZEOF_ARRAY(SpeakerModulesWaveFilter),
     &SpeakerModuleNotificationDeviceId,
 };
 
-static PHYSICALCONNECTIONTABLE CapyIoMicrophoneIngressTopologyPhysicalConnections[] =
-{
-    {
-        KSPIN_TOPO_WAVEOUT_SOURCE,
-        KSPIN_WAVE_RENDER_SOURCE,
-        CONNECTIONTYPE_WAVE_OUTPUT
-    }
-};
-
-// MicYou selects a Windows render device. This dedicated endpoint supplies
-// that role without reusing the user-facing CapyIO Speaker route. Its MFX
-// downmixes decoded audio into the capture ring selected by ADR 0037.
-static ENDPOINT_MINIPAIR CapyIoMicrophoneIngressMiniports =
-{
-    eSpeakerDevice,
-    L"TopologyMicIngress",
-    NULL,
-    CreateMiniportTopologySYSVAD,
-    &CapyIoMicrophoneIngressTopoMiniportFilterDescriptor,
-    0, NULL,
-    L"WaveMicIngress",
-    NULL,
-    CreateMiniportWaveRTSYSVAD,
-    &SpeakerWaveMiniportFilterDescriptor,
-    ARRAYSIZE(CapyIoWaveFilterInterfacePropertiesRender),
-    CapyIoWaveFilterInterfacePropertiesRender,
-    SPEAKER_DEVICE_MAX_CHANNELS,
-    SpeakerPinDeviceFormatsAndModes,
-    SIZEOF_ARRAY(SpeakerPinDeviceFormatsAndModes),
-    CapyIoMicrophoneIngressTopologyPhysicalConnections,
-    SIZEOF_ARRAY(CapyIoMicrophoneIngressTopologyPhysicalConnections),
-    ENDPOINT_OFFLOAD_SUPPORTED,
-    NULL, 0, NULL,
-};
-
 static PENDPOINT_MINIPAIR g_RenderEndpoints[] =
 {
     &CapyIoSpeakerMiniports,
-    &CapyIoMicrophoneIngressMiniports,
 };
 
 #define g_cRenderEndpoints (SIZEOF_ARRAY(g_RenderEndpoints))

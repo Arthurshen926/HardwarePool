@@ -16,6 +16,11 @@ __pycache__/
 apps/desktop/src-tauri/gen/
 apps/desktop/src-tauri/target/
 
+# Native Android project output and machine-local SDK selection
+platform/android/.gradle/
+platform/android/local.properties
+platform/android/**/build/
+
 # IDE and OS
 .idea/
 .vscode/settings.json

@@ -163,6 +163,12 @@ MicYou process Adapter
    +--- common selected voice-interactive stream specification and metrics
    +--- pinned private AdapterManaged TCP/UDP microphone binding
 
+CapyIO audio media seam
+   +--- Session/Route/Stream/epoch/exact-spec binding
+   +--- direction-neutral bounded PCM/encoded packets
+   +--- bounded worker-thread reference queue
+   +--- replaceable compatibility/native transport Adapters
+
 capyio-process-presence
    +--- bounded Windows process-owned TCP observation for platform hosts
 
@@ -185,10 +191,17 @@ Dependency rules:
 - Profile-specific Adapters may depend on `capyio-data-plane`; the data-plane
   crate never depends on an Adapter or concrete transport.
 - `capyio-audio` defines complete selected audio candidates, bounded QoS
-  policies, decoded frames, worker-thread reordering/clock estimates and common
-  metrics for both microphone and speaker Routes. It does not define a global
-  audio Source/Sink role, open sockets, access platform audio APIs, run codecs
-  or select a production transport.
+  policies, decoded frames, a direction-neutral Session/Route/Stream/epoch
+  media binding, bounded PCM/encoded packets, worker-thread queues,
+  reordering/clock estimates and common metrics for both microphone and speaker
+  Routes. Its packet is a semantic in-process value rather than a network byte
+  layout. The crate does not define a global audio Source/Sink role, open
+  sockets, access platform audio APIs, run codecs or select a production
+  transport.
+- ADR 0042 requires every audio transport Adapter to expose one validated
+  backend contract covering interoperability, media access, supported encodings,
+  per-field metadata fidelity and observable security. A StandardPort backend
+  cannot validate unless it carries the full common packet exactly.
 - Initial audio negotiation selects the first Source-preferred complete
   candidate also advertised by the Sink. It never silently resamples, changes
   encoding, enables processing or rewrites QoS; a later Converter must make any
@@ -200,6 +213,14 @@ Dependency rules:
   default format. Its `AdapterManaged` Route therefore advertises an explicit
   private-negotiated format rather than claiming the requested sample format as
   an observed result.
+- The CapyIO-authored Audio Share-compatible sender additionally binds a common
+  media Route epoch and validates each PCM packet before stripping the metadata
+  its pinned private wire cannot carry. Its backend contract declares exact
+  payload only, partial format mapping and absent common identity/timing.
+- The MicYou backend contract is explicitly opaque: CapyIO binds its process to
+  one conservative voice Route epoch for lifecycle but neither observes nor
+  claims a common media packet. Private PCM/Opus capability is not exact common
+  stream negotiation evidence.
 - Initial Windows audio hosts may observe process-owned established TCP state
   through the ADR 0038 platform helper. That signal is transport presence only
   and never imports peer addresses, Windows structs or lifecycle decisions into
@@ -314,9 +335,12 @@ block, wait on contended locks, allocate without bounds, log normally, parse
 JSON/Protobuf, call UI code, or perform network/file I/O.
 
 ADR 0035 applies one media contract to both audio directions while ADR 0004
-keeps microphone and speaker as independent Routes. A future duplex association
-may expose a render reference to a capture-side AEC implementation, but it does
-not merge permissions, stop state or failure state.
+keeps microphone and speaker as independent Routes. ADR 0041 binds every media
+channel to one Session, directed Route, Stream, positive epoch and exact
+selected specification before a concrete transport is entered. Opposite Routes
+may share a Session but never a media queue, epoch or failure state. A future
+duplex association may expose a render reference to a capture-side AEC
+implementation, but it does not merge permissions, stop state or failure state.
 
 ## 10. Platform projection strategy
 
@@ -362,20 +386,74 @@ network settings remain administrator configuration. Closing the UI does not
 stop a service-owned Route; the legacy direct process path is a development
 fallback when the service boundary is absent.
 
-The microphone projection uses two cooperating Windows principals. The
-privileged `CapyIOBroker` owns only the fixed global capture ring; an
-ordinary-user `capyio-microphone-host` owns the MicYou process and ADR 0039
-configuration. Its remote-rejecting owner-scoped named pipe exposes only typed
-status/start/stop state. This source slice does not yet install or register the
-per-user host at logon, so direct Tauri ownership remains a development
-fallback until installer work is completed.
+The microphone projection now has two mutually exclusive producer modes. In
+compatibility mode, privileged `CapyIOBroker` owns only the fixed global
+capture ring while an ordinary-user `capyio-microphone-host` owns the MicYou
+process and ADR 0039 configuration. In native mode, the Broker owns that ring
+and supervises `capyio-native-virtual-microphone` beside the native speaker
+child. The service configuration, not the WebView, fixes both explicit peer
+endpoints. The ring remains single-producer/single-consumer: compatibility and
+native capture producers must never run concurrently. Independent native
+microphone Route control and per-user compatibility-host installation remain
+future work.
+
+ADR 0048 distinguishes native-audio pair readiness from process liveness after
+transactional startup. If exactly one native child exits, the Broker returns to
+`starting` but does not stop the child that still owns the opposite Route. Only
+loss of both children is treated as a terminal pair exit. Automatic
+per-direction restart and direction-specific public diagnostics remain 001G
+work rather than implicit behavior.
 
 ## 12. Android boundary
 
 Android platform code owns permissions, microphone indicators, foreground
 service, audio focus/routing and hardware APIs. Activity/window lifecycle is not
-session lifecycle. The current foundation contains no permission or service
-implementation and makes no hardware claim.
+session lifecycle. `CAPY-AUDIO-NATIVE-001` targets one CapyIO Android Node
+service with independent microphone Source and speaker Sink Adapters behind the
+ADR 0041 media seam.
+
+ADR 0043 and `CAPY-AUDIO-NATIVE-001C` now provide the first buildable platform
+shell. A non-exported, `START_NOT_STICKY` foreground service owns real
+`AudioRecord` and `AudioTrack` handles; the Activity observes a narrow
+schema-v1 snapshot and requests independent operations. Each capability has a
+separate generation so a late platform completion cannot reverse Stop or fail
+the opposite direction. Actual Android parameters are retained rather than
+assuming the requested 48 kHz PCM mode was granted.
+
+ADR 0044 subsequently adds the approved network permission and a separate
+dependency-free LAN codec/socket worker boundary. ADRs 0046 and 0047 now attach
+the speaker Sink and microphone Source respectively: `AudioTrack` consumes the
+bounded receive queue, while `AudioRecord` feeds the bounded packetizer/send
+queue. Network I/O remains on dedicated media workers rather than either audio
+worker. The Java lifecycle DTO remains neither Rust memory nor a wire layout.
+
+The 001D1 reference backend is direction-neutral and `AdapterManaged`. One
+endpoint is pre-bound to the control-approved Session, directed Route, Stream,
+epoch and exact selected audio specification, then accepts only canonical
+versioned UDP fragments from one explicit peer. Rust provides bounded
+reassembly and metrics; Android mirrors the fixed codec and worker socket. This
+is a conformance/reference boundary, not the Runtime-owned product composition
+or a production transport.
+
+ADR 0045 adds the bounded Android media-worker composition around that
+reference: exact PCM packetization, count/byte bounded queues, bounded
+reassembly and one-shot sender/receiver threads. Queue pressure is explicit and
+the next accepted packet carries discontinuity after a drop. Every component
+must share the same binding before start. These workers still stop on either
+side of the platform Adapters; `AudioRecord` and `AudioTrack` integration is
+owned by the later independent speaker/microphone switching slices.
+
+ADR 0046 connects the speaker half without changing that callback rule. A
+build-time closed lab configuration creates the Android UDP receiver; complete
+packets cross a bounded queue into a separate non-blocking PCM Sink worker and
+then `AudioTrack`. On Windows the protocol-neutral render-ring reader is an
+internal platform crate shared by the Audio Share rollback Broker and a new
+native Broker. The APO and driver still contain no network or packet logic.
+Controlled physical acceptance now proves both a deterministic native tone and
+ordinary Windows application playback through this composition. The Windows
+service has a separate native launch mode whose readiness record proves only
+the Broker/ring boundary; UDP does not provide receiver-presence evidence, so
+Android packet/render counters remain the physical acceptance source.
 
 ## 13. Failure isolation
 
@@ -397,7 +475,9 @@ implementation and makes no hardware claim.
 
 ## 15. Foundation status
 
-Gates 0–3 implement and test the domain, Mock UI and mock Sidecar only. Real
-hardware Adapters, production networking/security, Android services, Windows
-virtual devices, third-party source and performance claims are deferred to the
-roadmap.
+Gates 0–3 remain the domain, Mock UI and mock Sidecar foundation. Later slices
+now include controlled Windows virtual-audio evidence, physical 001C Android
+endpoint/lifecycle evidence, the bounded 001D1/001D2 native LAN wire and 001E
+Windows-application-to-Android Speaker evidence. Native microphone switching,
+other hardware Adapters, production security/distribution and performance
+claims remain on the roadmap.

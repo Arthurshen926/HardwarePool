@@ -1,4 +1,4 @@
-//! Versioned bounded bridge from the render APO's shared-memory ring.
+//! Versioned bounded Windows bridge from the render APO shared-memory ring.
 
 use thiserror::Error;
 
@@ -46,14 +46,14 @@ mod windows {
         io,
         mem::size_of,
         ptr::{self, NonNull},
-        sync::atomic::{AtomicI64, AtomicU32, Ordering},
+        sync::atomic::{AtomicBool, AtomicI64, AtomicU32, Ordering},
         time::{SystemTime, UNIX_EPOCH},
     };
 
     use windows_sys::Win32::{
         Foundation::{
             CloseHandle, ERROR_ALREADY_EXISTS, GetLastError, HANDLE, INVALID_HANDLE_VALUE,
-            LocalFree,
+            LocalFree, WAIT_ABANDONED, WAIT_OBJECT_0, WAIT_TIMEOUT,
         },
         Security::{
             Authorization::{
@@ -65,9 +65,12 @@ mod windows {
             CreateFileMappingW, FILE_MAP_ALL_ACCESS, MEMORY_MAPPED_VIEW_ADDRESS, MapViewOfFile,
             PAGE_READWRITE, UnmapViewOfFile,
         },
+        System::Threading::{CreateMutexW, ReleaseMutex, WaitForSingleObject},
     };
 
     use super::{MAX_PAYLOAD_BYTES, RenderRingError, f32le_to_s16le};
+    #[cfg(test)]
+    use windows_sys::Win32::System::Memory::OpenFileMappingW;
 
     const MAGIC: u32 = 0x524f_4950;
     const VERSION: u16 = 1;
@@ -83,7 +86,29 @@ mod windows {
     const MAPPING_NAME: &str = "Global\\CapyIO.RenderRing.v1";
     #[cfg(test)]
     const MAPPING_NAME: &str = "Local\\CapyIO.RenderRing.v1.test";
+    #[cfg(not(test))]
+    const OWNER_MUTEX_NAME: &str = "Global\\CapyIO.RenderRing.Owner.v1";
+    #[cfg(test)]
+    const OWNER_MUTEX_NAME: &str = "Local\\CapyIO.RenderRing.Owner.v1.test";
     const MAPPING_SDDL: &str = "D:P(A;;GA;;;SY)(A;;GRGW;;;LS)(A;;GA;;;BA)(A;;GA;;;OW)";
+    static PROCESS_OWNER_CLAIMED: AtomicBool = AtomicBool::new(false);
+
+    struct ProcessOwnerClaim;
+
+    impl ProcessOwnerClaim {
+        fn acquire() -> Result<Self, RenderRingError> {
+            PROCESS_OWNER_CLAIMED
+                .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
+                .map(|_| Self)
+                .map_err(|_| RenderRingError::AlreadyOwned)
+        }
+    }
+
+    impl Drop for ProcessOwnerClaim {
+        fn drop(&mut self) {
+            PROCESS_OWNER_CLAIMED.store(false, Ordering::Release);
+        }
+    }
 
     #[repr(C, align(64))]
     struct Header {
@@ -114,6 +139,8 @@ mod windows {
     const _: () = assert!(size_of::<Header>() == HEADER_SIZE);
 
     pub struct RenderRingConsumer {
+        _process_owner: ProcessOwnerClaim,
+        owner_mutex: HANDLE,
         mapping: HANDLE,
         view: NonNull<u8>,
         generation: u64,
@@ -122,8 +149,10 @@ mod windows {
 
     impl RenderRingConsumer {
         pub fn create_baseline() -> Result<Self, RenderRingError> {
+            let process_owner = ProcessOwnerClaim::acquire()?;
             let size = u32::try_from(TOTAL_SIZE).expect("bounded render mapping fits u32");
             let mapping_name = wide_null(MAPPING_NAME);
+            let owner_mutex_name = wide_null(OWNER_MUTEX_NAME);
             let mapping_sddl = wide_null(MAPPING_SDDL);
             let mut security_descriptor: PSECURITY_DESCRIPTOR = ptr::null_mut();
             if unsafe {
@@ -144,6 +173,34 @@ mod windows {
                 lpSecurityDescriptor: security_descriptor,
                 bInheritHandle: 0,
             };
+            let owner_mutex =
+                unsafe { CreateMutexW(&security_attributes, 1, owner_mutex_name.as_ptr()) };
+            let mutex_error = unsafe { GetLastError() };
+            if owner_mutex.is_null() {
+                unsafe { LocalFree(security_descriptor) };
+                return Err(RenderRingError::Windows {
+                    operation: "CreateMutexW",
+                    code: mutex_error,
+                });
+            }
+            if mutex_error == ERROR_ALREADY_EXISTS {
+                let wait = unsafe { WaitForSingleObject(owner_mutex, 0) };
+                if wait == WAIT_TIMEOUT {
+                    unsafe {
+                        CloseHandle(owner_mutex);
+                        LocalFree(security_descriptor);
+                    }
+                    return Err(RenderRingError::AlreadyOwned);
+                }
+                if wait != WAIT_OBJECT_0 && wait != WAIT_ABANDONED {
+                    let error = last_error("WaitForSingleObject");
+                    unsafe {
+                        CloseHandle(owner_mutex);
+                        LocalFree(security_descriptor);
+                    }
+                    return Err(error);
+                }
+            }
             let mapping = unsafe {
                 CreateFileMappingW(
                     INVALID_HANDLE_VALUE,
@@ -157,20 +214,23 @@ mod windows {
             let mapping_error = unsafe { GetLastError() };
             unsafe { LocalFree(security_descriptor) };
             if mapping.is_null() {
+                unsafe {
+                    ReleaseMutex(owner_mutex);
+                    CloseHandle(owner_mutex);
+                }
                 return Err(RenderRingError::Windows {
                     operation: "CreateFileMappingW",
                     code: mapping_error,
                 });
             }
-            if mapping_error == ERROR_ALREADY_EXISTS {
-                unsafe { CloseHandle(mapping) };
-                return Err(RenderRingError::AlreadyOwned);
-            }
-
             let mapped = unsafe { MapViewOfFile(mapping, FILE_MAP_ALL_ACCESS, 0, 0, TOTAL_SIZE) };
             let Some(view) = NonNull::new(mapped.Value.cast::<u8>()) else {
                 let error = last_error("MapViewOfFile");
-                unsafe { CloseHandle(mapping) };
+                unsafe {
+                    CloseHandle(mapping);
+                    ReleaseMutex(owner_mutex);
+                    CloseHandle(owner_mutex);
+                }
                 return Err(error);
             };
             unsafe { ptr::write_bytes(view.as_ptr(), 0, TOTAL_SIZE) };
@@ -206,6 +266,8 @@ mod windows {
             unsafe { ptr::write(view.as_ptr().cast::<Header>(), header) };
 
             Ok(Self {
+                _process_owner: process_owner,
+                owner_mutex,
                 mapping,
                 view,
                 generation,
@@ -293,6 +355,8 @@ mod windows {
                     Value: self.view.as_ptr().cast(),
                 });
                 CloseHandle(self.mapping);
+                ReleaseMutex(self.owner_mutex);
+                CloseHandle(self.owner_mutex);
             }
         }
     }
@@ -351,6 +415,22 @@ mod windows {
             ));
             drop(first);
             RenderRingConsumer::create_baseline().unwrap();
+        }
+
+        #[test]
+        fn stale_mapping_handle_does_not_impersonate_a_live_broker() {
+            let _guard = TEST_MAPPING_LOCK.lock().unwrap();
+            let consumer = RenderRingConsumer::create_baseline().unwrap();
+            let mapping_name = wide_null(MAPPING_NAME);
+            let observer =
+                unsafe { OpenFileMappingW(FILE_MAP_ALL_ACCESS, 0, mapping_name.as_ptr()) };
+            assert!(!observer.is_null());
+            drop(consumer);
+
+            let replacement = RenderRingConsumer::create_baseline().unwrap();
+            assert_eq!(replacement.counters(), (0, 0));
+            drop(replacement);
+            unsafe { CloseHandle(observer) };
         }
 
         #[test]

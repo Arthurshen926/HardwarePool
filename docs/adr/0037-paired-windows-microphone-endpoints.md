@@ -1,6 +1,6 @@
 # ADR 0037: Project microphone audio through paired Windows endpoints
 
-Status: accepted
+Status: superseded by ADR 0049 for the default CapyIO-native runtime
 
 ## Context
 
