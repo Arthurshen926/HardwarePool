@@ -7,13 +7,16 @@ java {
     targetCompatibility = JavaVersion.VERSION_17
 }
 
+sourceSets {
+    main.java.srcDir '../native-lan-contract/src/main/java'
+}
+
 def contractTestOutput = layout.buildDirectory.dir('classes/java/contractTest')
 
 tasks.register('compileContractTest', JavaCompile) {
     group = 'verification'
-    dependsOn tasks.named('compileJava')
-    source = fileTree('src/contractTest/java')
-    classpath = files(sourceSets.main.output)
+    source = sourceSets.main.allJava.plus(fileTree('src/contractTest/java'))
+    classpath = files()
     destinationDirectory = contractTestOutput
     options.release = 17
 }
@@ -22,11 +25,22 @@ tasks.register('contractTest', JavaExec) {
     group = 'verification'
     description = 'Runs dependency-free Android audio node lifecycle contract tests.'
     dependsOn tasks.named('compileContractTest')
-    classpath = files(contractTestOutput, sourceSets.main.output)
+    classpath = files(contractTestOutput)
     mainClass = 'dev.capyio.android.contract.AudioNodeContractTest'
     enableAssertions = true
 }
 
+tasks.register('nativeLanContractTest', JavaExec) {
+    group = 'verification'
+    description = 'Runs dependency-free CapyIO native LAN wire and UDP loopback tests.'
+    dependsOn tasks.named('compileContractTest')
+    classpath = files(contractTestOutput)
+    mainClass = 'dev.capyio.android.lan.NativeLanContractTest'
+    enableAssertions = true
+    systemProperty 'capyio.nativeLanFixture',
+            rootProject.file('../../fixtures/audio/native_lan_v1_opus_single.hex').absolutePath
+}
+
 tasks.named('check') {
-    dependsOn tasks.named('contractTest')
+    dependsOn tasks.named('contractTest'), tasks.named('nativeLanContractTest')
 }

@@ -386,13 +386,23 @@ network settings remain administrator configuration. Closing the UI does not
 stop a service-owned Route; the legacy direct process path is a development
 fallback when the service boundary is absent.
 
-The microphone projection uses two cooperating Windows principals. The
-privileged `CapyIOBroker` owns only the fixed global capture ring; an
-ordinary-user `capyio-microphone-host` owns the MicYou process and ADR 0039
-configuration. Its remote-rejecting owner-scoped named pipe exposes only typed
-status/start/stop state. This source slice does not yet install or register the
-per-user host at logon, so direct Tauri ownership remains a development
-fallback until installer work is completed.
+The microphone projection now has two mutually exclusive producer modes. In
+compatibility mode, privileged `CapyIOBroker` owns only the fixed global
+capture ring while an ordinary-user `capyio-microphone-host` owns the MicYou
+process and ADR 0039 configuration. In native mode, the Broker owns that ring
+and supervises `capyio-native-virtual-microphone` beside the native speaker
+child. The service configuration, not the WebView, fixes both explicit peer
+endpoints. The ring remains single-producer/single-consumer: compatibility and
+native capture producers must never run concurrently. Independent native
+microphone Route control and per-user compatibility-host installation remain
+future work.
+
+ADR 0048 distinguishes native-audio pair readiness from process liveness after
+transactional startup. If exactly one native child exits, the Broker returns to
+`starting` but does not stop the child that still owns the opposite Route. Only
+loss of both children is treated as a terminal pair exit. Automatic
+per-direction restart and direction-specific public diagnostics remain 001G
+work rather than implicit behavior.
 
 ## 12. Android boundary
 
@@ -410,11 +420,40 @@ separate generation so a late platform completion cannot reverse Stop or fail
 the opposite direction. Actual Android parameters are retained rather than
 assuming the requested 48 kHz PCM mode was granted.
 
-The shell deliberately has no network permission. Microphone bytes are read on
-a bounded/preallocated worker and discarded, while the empty speaker Track
-waits for 001D. Java DTOs are not Rust memory or wire layouts. No physical
-permission, background, focus, routing, quality or native transport claim is
-made until a separately authorized APK/device run.
+ADR 0044 subsequently adds the approved network permission and a separate
+dependency-free LAN codec/socket worker boundary. ADRs 0046 and 0047 now attach
+the speaker Sink and microphone Source respectively: `AudioTrack` consumes the
+bounded receive queue, while `AudioRecord` feeds the bounded packetizer/send
+queue. Network I/O remains on dedicated media workers rather than either audio
+worker. The Java lifecycle DTO remains neither Rust memory nor a wire layout.
+
+The 001D1 reference backend is direction-neutral and `AdapterManaged`. One
+endpoint is pre-bound to the control-approved Session, directed Route, Stream,
+epoch and exact selected audio specification, then accepts only canonical
+versioned UDP fragments from one explicit peer. Rust provides bounded
+reassembly and metrics; Android mirrors the fixed codec and worker socket. This
+is a conformance/reference boundary, not the Runtime-owned product composition
+or a production transport.
+
+ADR 0045 adds the bounded Android media-worker composition around that
+reference: exact PCM packetization, count/byte bounded queues, bounded
+reassembly and one-shot sender/receiver threads. Queue pressure is explicit and
+the next accepted packet carries discontinuity after a drop. Every component
+must share the same binding before start. These workers still stop on either
+side of the platform Adapters; `AudioRecord` and `AudioTrack` integration is
+owned by the later independent speaker/microphone switching slices.
+
+ADR 0046 connects the speaker half without changing that callback rule. A
+build-time closed lab configuration creates the Android UDP receiver; complete
+packets cross a bounded queue into a separate non-blocking PCM Sink worker and
+then `AudioTrack`. On Windows the protocol-neutral render-ring reader is an
+internal platform crate shared by the Audio Share rollback Broker and a new
+native Broker. The APO and driver still contain no network or packet logic.
+Controlled physical acceptance now proves both a deterministic native tone and
+ordinary Windows application playback through this composition. The Windows
+service has a separate native launch mode whose readiness record proves only
+the Broker/ring boundary; UDP does not provide receiver-presence evidence, so
+Android packet/render counters remain the physical acceptance source.
 
 ## 13. Failure isolation
 
@@ -437,7 +476,8 @@ made until a separately authorized APK/device run.
 ## 15. Foundation status
 
 Gates 0–3 remain the domain, Mock UI and mock Sidecar foundation. Later slices
-now include controlled Windows virtual-audio evidence and the compile-validated
-001C Android audio service shell. Native Android networking, physical APK
-evidence, other hardware Adapters, production security/distribution and
-performance claims remain on the roadmap.
+now include controlled Windows virtual-audio evidence, physical 001C Android
+endpoint/lifecycle evidence, the bounded 001D1/001D2 native LAN wire and 001E
+Windows-application-to-Android Speaker evidence. Native microphone switching,
+other hardware Adapters, production security/distribution and performance
+claims remain on the roadmap.

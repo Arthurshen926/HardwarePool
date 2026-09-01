@@ -151,15 +151,58 @@ opaque process/lifecycle binding. Neither private backend can claim
 StandardPort interoperability or production security. The CapyIO Android Node
 shell and first native transport backend are tracked as `001C/001D`.
 
-`CAPY-AUDIO-NATIVE-001C` is implemented locally under ADR 0043. The repository
+`CAPY-AUDIO-NATIVE-001C` is complete under ADR 0043. The repository
 now builds one `dev.capyio.android` application with a non-exported visible
 audio service, independent generation-bound microphone Source and speaker Sink,
 real `AudioRecord`/`AudioTrack` initialization and actual-format observation.
-The microphone worker discards bytes and the speaker has no media writer; the
-manifest deliberately lacks network access. Contract tests, Lint, APK assembly
-and merged-manifest inspection pass, but no APK was installed and no physical
-Android behavior is claimed. `001D` must select and measure the first replaceable
-native backend before either compatibility application can be displaced.
+The microphone worker discards bytes and the speaker has no media writer. Its
+authorized one-device endpoint/lifecycle acceptance passed, without remote
+sound. `001D` must connect a replaceable native backend before either
+compatibility application can be displaced.
+
+`CAPY-AUDIO-NATIVE-001D1` is implemented locally under ADR 0044. The
+`capyio-native-audio-lan` reference backend preserves the common packet over a
+bounded explicit-peer UDP wire, with canonical 1,200-byte datagrams, bounded
+reassembly, observable drops and one shared Rust/Java golden fixture. Android
+now has the approved `INTERNET` permission and a dependency-free worker-only
+codec/endpoint mirror. All production security properties remain false. The
+reference is not yet connected to `AudioRecord`, `AudioTrack` or Windows
+virtual audio; media-worker and product switching remain separate slices.
+
+`CAPY-AUDIO-NATIVE-001D2` is implemented locally under ADR 0045. Android now
+has exact PCM packetization, packet-count/aggregate-byte bounded queues, the
+bounded reassembler and one-shot sender/receiver workers with stable failure
+codes and a two-second stop bound. A dependency-free loopback test moves two
+stereo packets across the full Java worker composition and proves timeline,
+payload, pressure/discontinuity and binding behavior. Platform audio adapters
+still do not use it, so native remote sound and compatibility replacement begin
+speaker-first in `001E` and microphone-second in `001F`.
+
+`CAPY-AUDIO-NATIVE-001E` is functionally accepted on the controlled lab pair
+under ADR 0046. The Android Speaker Sink owns the native UDP receiver and a
+bounded non-blocking PCM writer; Windows has independent tone and render-ring
+native senders, and the render-ring sender now runs behind `CapyIOBroker`.
+Tone, ordinary-client virtual-speaker input, Android Stop/Start and Windows
+service stop/restart all delivered exact non-zero counters with no observed
+transport/reassembly/queue drops. Sender-loss recovery, soak, stale duplicate
+endpoint cleanup and installer/abrupt-termination qualification remain release
+work rather than blockers for the functional slice.
+
+`CAPY-AUDIO-NATIVE-001F1` is implemented under ADR 0047. Android microphone
+reads now enter the same common packet, bounded queue and native LAN backend;
+the Windows receiver converts exact mono S16LE packets into the extracted
+capture ring. A physical no-MicYou run committed 228,960 frames from 477
+packets with zero observed drops. The dual-child Broker lifecycle is covered by
+source tests, while deployment of its matching capture-owner ABI and ordinary
+Windows-client WAV proof remain `001F2` rather than a completed Gate claim.
+
+`CAPY-AUDIO-NATIVE-001F2` is physically accepted on the controlled pair. The
+exact dual-child service Release reached `active`; three ordinary Windows
+recordings contained non-zero microphone samples. Stop released UDP 46001 and
+46011, generation 2 reacquired both, and recording recovery passed. Android
+0.4.1-dev exposed 2,088 generated/sent microphone packets with zero queue drops
+while microphone and speaker were simultaneously active. Production security,
+independent Route controls, soak and signed distribution remain later work.
 
 ## Active product slice
 

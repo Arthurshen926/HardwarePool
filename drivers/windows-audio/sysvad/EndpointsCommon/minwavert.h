@@ -579,6 +579,10 @@ protected:
 
     BOOL IsLoopbackSupported()
     {
+        if (m_DeviceFlags & ENDPOINT_SYNTHETIC_LOOPBACK_DISABLED)
+        {
+            return FALSE;
+        }
 
         //
         // It is assumed that loopback is supported when offload is supported

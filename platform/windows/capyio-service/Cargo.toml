@@ -11,10 +11,12 @@ publish = false
 capyio-audio-share-adapter = { path = "../../../adapters/audio-share" }
 capyio-micyou-adapter = { path = "../../../adapters/micyou" }
 capyio-micyou-host-config = { path = "../micyou-host-config" }
+capyio-native-audio-lan = { path = "../../../adapters/native-audio-lan" }
 serde.workspace = true
 serde_json.workspace = true
 
 [target.'cfg(windows)'.dependencies]
+capyio-windows-capture-ring = { path = "../capture-ring" }
 windows-service.workspace = true
 windows-sys = { workspace = true, features = [
     "Win32_Foundation",

@@ -30,14 +30,17 @@ lab vertical slices:
 - real Android IMU to Windows Panel/Recorder operation through SensorServer;
 - a dedicated Windows `CapyIO Speaker` path to an Android receiver;
 - an Android MicYou microphone path into a Windows virtual capture endpoint;
+- one first-party Android audio Node shell and bounded native-LAN
+  wire/packetizer/worker reference, plus a speaker implementation awaiting
+  exact-device audible acceptance;
 - Adapter manifests, bounded external-process supervision and local platform
   helpers;
 - offline repository validation and CI commands.
 
 The real paths above are accepted only on the identified local lab. CapyIO does
-**not** yet provide a production installer, signed public packages, first-party
-Android app, pairing/authenticated transport, WAN support, camera sharing or a
-release-qualified background/reboot lifecycle.
+**not** yet provide a production installer, signed public packages, a complete
+first-party Android media path, pairing/authenticated transport, WAN support,
+camera sharing or a release-qualified background/reboot lifecycle.
 
 ## Repository map
 
@@ -53,6 +56,7 @@ apps/capyio-node            headless four-Route demo
 apps/desktop                Vue + Tauri control surface
 adapters/audio-share        bounded remote-speaker process boundary
 adapters/micyou             bounded remote-microphone process boundary
+adapters/native-audio-lan   bounded native audio UDP lab reference
 adapters/mock-source        finite test Source Sidecar and manifest
 adapters/mock-sink          finite test Sink Sidecar and manifest
 platform/windows            Windows Broker, presence and host-config helpers

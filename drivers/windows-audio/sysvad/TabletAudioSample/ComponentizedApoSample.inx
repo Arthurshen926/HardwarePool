@@ -3,7 +3,7 @@ Signature   = "$Windows NT$"
 Class       = AudioProcessingObject
 ClassGuid   = {5989fce8-9cd0-467d-8a6a-5419e31529d4}
 Provider    = %ProviderName%
-DriverVer   = 08/29/2026,21.82.0.1
+DriverVer   = 09/01/2026,21.85.0.1
 CatalogFile = capyioaudio.cat
 PnpLockDown = 1
 

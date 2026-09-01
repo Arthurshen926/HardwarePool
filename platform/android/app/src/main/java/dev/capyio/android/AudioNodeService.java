@@ -22,6 +22,8 @@ import dev.capyio.android.contract.AudioCapabilitySnapshot;
 import dev.capyio.android.contract.AudioNodeController;
 import dev.capyio.android.contract.AudioNodeSnapshot;
 import dev.capyio.android.contract.TransitionToken;
+import dev.capyio.android.lan.NativeLanSpeakerSessionConfig;
+import dev.capyio.android.lan.NativeLanMicrophoneSessionConfig;
 
 /** Owns Android audio resources independently of the Activity lifecycle. */
 public final class AudioNodeService extends Service {
@@ -80,10 +82,22 @@ public final class AudioNodeService extends Service {
         super.onCreate();
         nodeId = NodeIdentityStore.loadOrCreate(this);
         createNotificationChannel();
+        NativeLanMicrophoneSessionConfig microphoneConfig;
+        try {
+            microphoneConfig = NativeMicrophoneConfigLoader.load(this);
+        } catch (RuntimeException invalidConfig) {
+            microphoneConfig = null;
+        }
         microphoneAdapter = new MicrophoneSourceAdapter(
-                listenerFor(AudioCapabilityKind.MICROPHONE_SOURCE));
+                listenerFor(AudioCapabilityKind.MICROPHONE_SOURCE), microphoneConfig);
+        NativeLanSpeakerSessionConfig speakerConfig;
+        try {
+            speakerConfig = NativeSpeakerConfigLoader.load(this);
+        } catch (RuntimeException invalidConfig) {
+            speakerConfig = null;
+        }
         speakerAdapter = new SpeakerSinkAdapter(
-                listenerFor(AudioCapabilityKind.SPEAKER_SINK));
+                listenerFor(AudioCapabilityKind.SPEAKER_SINK), speakerConfig);
     }
 
     @Override
@@ -330,6 +344,14 @@ public final class AudioNodeService extends Service {
 
         public int speakerUnderrunCount() {
             return speakerAdapter.underrunCount();
+        }
+
+        public SpeakerSinkAdapter.TransportMetrics speakerTransportMetrics() {
+            return speakerAdapter.transportMetrics();
+        }
+
+        public MicrophoneSourceAdapter.TransportMetrics microphoneTransportMetrics() {
+            return microphoneAdapter.transportMetrics();
         }
 
         public void setStateListener(Runnable listener) {

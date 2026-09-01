@@ -268,18 +268,6 @@ STDMETHODIMP_(void) CSwapAPOMFX::APOProcess(
                 break;
             }
 
-            if (m_microphoneBridgeRole == MicrophoneBridgeRole::IngressProducer &&
-                ppInputConnections[0]->u32BufferFlags == BUFFER_VALID)
-            {
-                m_captureProducer.TryWrite(
-                    pf32InputFrames,
-                    frameCount,
-                    GetSamplesPerFrame());
-            }
-
-            // The ingress remains a valid render endpoint even if the service
-            // mapping is absent. Its Windows buffer is passed through while the
-            // bridge independently drops the callback.
             if ( (0 != u32NumOutputConnections) &&
                   (ppOutputConnections[0]->pBuffer != ppInputConnections[0]->pBuffer) )
             {
@@ -385,13 +373,6 @@ STDMETHODIMP CSwapAPOMFX::LockForProcess(UINT32 u32NumInputConnections,
                 static_cast<std::uint32_t>(inputFormat.fFramesPerSecond),
                 inputFormat.dwSamplesPerFrame);
         }
-        else if (inputFormat.dwSamplesPerFrame == 2)
-        {
-            m_microphoneBridgeRole = MicrophoneBridgeRole::IngressProducer;
-            m_captureProducer.Attach(
-                static_cast<std::uint32_t>(inputFormat.fFramesPerSecond),
-                inputFormat.dwSamplesPerFrame);
-        }
     }
     else if (GetSamplesPerFrame() == capyio::capture_ring::kChannels)
     {
@@ -408,7 +389,6 @@ Exit:
 STDMETHODIMP CSwapAPOMFX::UnlockForProcess()
 {
     ASSERT_NONREALTIME();
-    m_captureProducer.Detach();
     m_captureConsumer.Detach();
     m_microphoneBridgeRole = MicrophoneBridgeRole::Detached;
     return CBaseAudioProcessingObject::UnlockForProcess();

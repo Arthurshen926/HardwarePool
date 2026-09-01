@@ -141,6 +141,49 @@ then sends only its PCM payload through the unchanged private queue/wire. The
 MicYou compatibility binding carries Route/epoch identity only in CapyIO
 lifecycle state; the external process does not expose a packet/payload boundary.
 
+### Native audio LAN reference
+
+ADR 0044 defines the first executable CapyIO-owned audio transport fixture.
+`dev.capyio.audio.lan-lab/1` consumes the full common packet and retains exact
+Session, Route, Stream, epoch, sequence, source timestamp, first-sample index,
+sample count, discontinuity and payload. The exact selected format remains in
+the pre-bound control seam rather than being renegotiated per datagram.
+
+The version-1 UDP layout is fixed and big-endian: a 104-byte header plus at most
+1,096 payload bytes in a 1,200-byte datagram. A packet has at most 64 canonical
+fragments/70,144 payload bytes; a Rust receiver holds at most eight partial
+packets. Wrong peer, wrong binding, malformed/non-canonical fragments,
+duplicates and capacity eviction have explicit outcomes or counters. One
+shared 120-byte golden datagram is checked by Rust and Java.
+
+This implementation runs only on media workers and currently stops before the
+platform audio queues. It has no jitter deadline, loss concealment,
+retransmission, congestion control, clock correction, codec implementation or
+security. Therefore it remains `AdapterManaged` and trusted-lab-only; it is not
+the final `CapyDataPlane` or a StandardPort interoperability declaration.
+
+ADR 0045 supplies the Android-side worker pipeline. A PCM packetizer emits only
+exact frame-duration packets into a queue bounded by both packet count and
+aggregate bytes. Queue pressure does not block capture: rejected packets
+advance the timeline and the next accepted packet is discontinuous. A one-shot
+sender drains that queue to UDP. In the opposite direction a one-shot receiver
+uses bounded reassembly and offers complete immutable packets to another
+bounded queue. Output pressure remains observable through queue metrics and
+sequence gaps for the later jitter/render policy.
+
+All endpoint, queue and reassembler bindings must match before either worker
+starts, and stop closes/interrupts then joins for at most two seconds. The
+hardware-free Java composition was tested end to end before the 001E speaker
+consumer was added; `AudioRecord` remains disconnected.
+
+ADR 0046 adds the first platform consumer. The speaker-only lab accepts exact
+48 kHz stereo S16LE packets. A dedicated worker validates `sample_count * 4`
+against payload length and handles partial `AudioTrack.WRITE_NON_BLOCKING`
+writes. Sequence/sample gaps or explicit discontinuity reset the streaming
+sink; they do not yet invoke a jitter deadline, concealment or resampler.
+Windows render-ring blocks are accumulated under a 64 KiB ceiling and split
+into the same exact 480-frame packets before UDP send.
+
 ## 6. Reordering and loss
 
 `ReorderBuffer` is bound to exactly one `stream_id` and one `stream_epoch`. It has a fixed frame capacity and accepts only sequences inside the current reorder window.
@@ -169,9 +212,11 @@ This container is intended for a worker/network thread. It is not the final lock
 
 It establishes a measurable baseline for later dynamic resampling. Production work still needs robust filtering, window rotation, outlier handling and integration with buffer-fill control.
 
-## 8. Deferred wire encoding
+## 8. Transport evolution
 
-The semantic frame is not itself the public binary wire layout. A transport ADR must define:
+The semantic frame is not itself a public binary wire layout. ADR 0044 fixes a
+lab reference layout so implementations can be compared; a production
+transport ADR must still define:
 
 - byte order and fixed header layout;
 - authentication/encryption relationship;

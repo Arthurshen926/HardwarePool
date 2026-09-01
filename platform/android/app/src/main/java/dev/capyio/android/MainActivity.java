@@ -24,29 +24,25 @@ import dev.capyio.android.contract.AudioNodeSnapshot;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.concurrent.atomic.AtomicBoolean;
 
 public final class MainActivity extends Activity {
     private static final int REQUEST_AUDIO_PERMISSIONS = 8101;
-    private static final long REFRESH_INTERVAL_MILLIS = 500;
+    private static final long REFRESH_INTERVAL_MILLIS = 250;
 
     private final Handler handler = new Handler(Looper.getMainLooper());
-    private final Runnable refreshTask = new Runnable() {
-        @Override
-        public void run() {
-            renderLatest();
-            if (binder != null) {
-                handler.postDelayed(this, REFRESH_INTERVAL_MILLIS);
-            }
-        }
+    private final AtomicBoolean refreshQueued = new AtomicBoolean();
+    private final Runnable refreshTask = () -> {
+        refreshQueued.set(false);
+        renderLatest();
     };
 
     private final ServiceConnection serviceConnection = new ServiceConnection() {
         @Override
         public void onServiceConnected(ComponentName name, IBinder service) {
             binder = (AudioNodeService.NodeBinder) service;
-            binder.setStateListener(MainActivity.this::renderLatest);
-            handler.removeCallbacks(refreshTask);
-            handler.post(refreshTask);
+            binder.setStateListener(MainActivity.this::scheduleRefresh);
+            scheduleRefresh(0);
         }
 
         @Override
@@ -56,6 +52,7 @@ public final class MainActivity extends Activity {
             }
             binder = null;
             handler.removeCallbacks(refreshTask);
+            refreshQueued.set(false);
         }
     };
 
@@ -65,6 +62,8 @@ public final class MainActivity extends Activity {
 
     private TextView nodeIdView;
     private TextView permissionView;
+    private TextView speakerTransportView;
+    private TextView microphoneTransportView;
     private CapabilityViews microphoneViews;
     private CapabilityViews speakerViews;
 
@@ -88,6 +87,8 @@ public final class MainActivity extends Activity {
                 findViewById(R.id.speaker_problem),
                 findViewById(R.id.start_speaker),
                 findViewById(R.id.stop_speaker));
+        speakerTransportView = findViewById(R.id.speaker_transport);
+        microphoneTransportView = findViewById(R.id.microphone_transport);
 
         microphoneViews.start.setOnClickListener(view -> requestStart(
                 AudioCapabilityKind.MICROPHONE_SOURCE));
@@ -111,6 +112,7 @@ public final class MainActivity extends Activity {
     @Override
     protected void onStop() {
         handler.removeCallbacks(refreshTask);
+        refreshQueued.set(false);
         if (binder != null) {
             binder.setStateListener(null);
             binder = null;
@@ -187,7 +189,39 @@ public final class MainActivity extends Activity {
         nodeIdView.setText(getString(R.string.node_id_format, snapshot.nodeId()));
         renderCapability(microphoneViews, snapshot.microphone());
         renderCapability(speakerViews, snapshot.speaker());
+        MicrophoneSourceAdapter.TransportMetrics microphoneTransport =
+                binder.microphoneTransportMetrics();
+        microphoneTransportView.setText(getString(
+                R.string.microphone_transport_format,
+                microphoneTransport.packetsEmitted,
+                microphoneTransport.packetsSent,
+                microphoneTransport.datagramsSent,
+                microphoneTransport.packetsDropped,
+                microphoneTransport.bufferedBytes));
+        SpeakerSinkAdapter.TransportMetrics transport = binder.speakerTransportMetrics();
+        speakerTransportView.setText(getString(
+                R.string.speaker_transport_format,
+                transport.datagramsReceived,
+                transport.wrongPeerDatagrams,
+                transport.malformedDatagrams,
+                transport.completedPackets,
+                transport.partialEvictions,
+                transport.fullPacketDrops + transport.fullByteDrops));
         renderPermissionState(null);
+        if (snapshot.microphone().state().ownsForegroundLifecycle()
+                || snapshot.speaker().state().ownsForegroundLifecycle()) {
+            scheduleRefresh();
+        }
+    }
+
+    private void scheduleRefresh() {
+        scheduleRefresh(REFRESH_INTERVAL_MILLIS);
+    }
+
+    private void scheduleRefresh(long delayMillis) {
+        if (refreshQueued.compareAndSet(false, true)) {
+            handler.postDelayed(refreshTask, delayMillis);
+        }
     }
 
     private void renderCapability(CapabilityViews views, AudioCapabilitySnapshot capability) {

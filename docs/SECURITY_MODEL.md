@@ -56,6 +56,22 @@ binding to false. The descriptor prevents UI/runtime code from mistaking a
 private compatibility path for a production-secure backend, but does not add
 security to either wire.
 
+ADR 0044's native LAN reference also sets every production-security property
+to false. It accepts one configured unicast IP/port, rejects a different UDP
+source and validates Session/Route/Stream/epoch plus canonical fragmentation,
+but source-address filtering and self-asserted header IDs are not
+authentication. The wire has no encryption, integrity tag, replay window,
+downgrade binding, pairing, Capability grant or key lifecycle. It is allowed
+only on an explicitly trusted local/Tailscale lab; Tailscale transport does not
+replace CapyIO application authorization. Android cleartext app traffic remains
+disabled, but that setting is not cryptographic protection for raw UDP.
+
+ADR 0046's speaker build metadata is closed and outside Activity input, but it
+is still only trusted-lab configuration. A matching source IP, port and
+self-declared Route tuple do not prove peer identity. The default Android build
+disables the lab receiver unless an explicit peer IPv4 is supplied at build
+time.
+
 The SensorServer lab client rejects DNS names, arbitrary paths, credentials,
 redirects, binary sensor payloads and frames/messages above 4 KiB. TCP and
 WebSocket operations have deadlines. These controls limit attack surface but do
@@ -98,6 +114,16 @@ than all interactive users. Requests remain closed to `status`, `start` and
 and stable problem codes. They never carry an executable path, endpoint
 identity or arbitrary argument. This isolates local-user process authority but
 does not authenticate the Android peer or encrypt MicYou traffic.
+
+ADR 0047 adds a separate native microphone mode to the same privileged Broker.
+Its executable and literal local/peer UDP endpoints remain administrator-set
+service configuration and cannot be supplied through the control pipe or
+WebView. The child accepts only one fixed common-packet binding and explicit
+peer, but ADR 0044 still provides no authentication, confidentiality, integrity,
+replay protection or downgrade binding. Explicit peer filtering is not peer
+identity. The capture ring is SPSC, so the native receiver and MicYou ingress
+are mutually exclusive producers. The service does not launch both; manually
+starting a compatibility producer beside native mode remains unsupported.
 
 The desktop Quick Action never accepts an executable path, endpoint identifier,
 bind address or port from the WebView. Those values come only from the trusted

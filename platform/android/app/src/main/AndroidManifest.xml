@@ -10,6 +10,7 @@
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MICROPHONE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK" />
+    <uses-permission android:name="android.permission.INTERNET" />
 
     <application
         android:allowBackup="false"
@@ -20,6 +21,55 @@
         android:supportsRtl="true"
         android:theme="@style/Theme.CapyIO"
         android:usesCleartextTraffic="false">
+
+        <meta-data
+            android:name="dev.capyio.android.SPEAKER_LAB_ENABLED"
+            android:value="${capyioSpeakerLabEnabled}" />
+        <meta-data
+            android:name="dev.capyio.android.SPEAKER_LAB_PEER_IPV4"
+            android:value="${capyioSpeakerPeerIpv4}" />
+        <meta-data
+            android:name="dev.capyio.android.SPEAKER_LAB_LOCAL_PORT"
+            android:value="${capyioSpeakerLocalPort}" />
+        <meta-data
+            android:name="dev.capyio.android.SPEAKER_LAB_PEER_PORT"
+            android:value="${capyioSpeakerPeerPort}" />
+        <meta-data
+            android:name="dev.capyio.android.SPEAKER_LAB_SESSION_ID"
+            android:value="${capyioSpeakerSessionId}" />
+        <meta-data
+            android:name="dev.capyio.android.SPEAKER_LAB_ROUTE_ID"
+            android:value="${capyioSpeakerRouteId}" />
+        <meta-data
+            android:name="dev.capyio.android.SPEAKER_LAB_STREAM_ID"
+            android:value="${capyioSpeakerStreamId}" />
+        <meta-data
+            android:name="dev.capyio.android.SPEAKER_LAB_STREAM_EPOCH"
+            android:value="${capyioSpeakerStreamEpoch}" />
+        <meta-data
+            android:name="dev.capyio.android.MICROPHONE_LAB_ENABLED"
+            android:value="${capyioMicrophoneLabEnabled}" />
+        <meta-data
+            android:name="dev.capyio.android.MICROPHONE_LAB_PEER_IPV4"
+            android:value="${capyioMicrophonePeerIpv4}" />
+        <meta-data
+            android:name="dev.capyio.android.MICROPHONE_LAB_LOCAL_PORT"
+            android:value="${capyioMicrophoneLocalPort}" />
+        <meta-data
+            android:name="dev.capyio.android.MICROPHONE_LAB_PEER_PORT"
+            android:value="${capyioMicrophonePeerPort}" />
+        <meta-data
+            android:name="dev.capyio.android.MICROPHONE_LAB_SESSION_ID"
+            android:value="${capyioMicrophoneSessionId}" />
+        <meta-data
+            android:name="dev.capyio.android.MICROPHONE_LAB_ROUTE_ID"
+            android:value="${capyioMicrophoneRouteId}" />
+        <meta-data
+            android:name="dev.capyio.android.MICROPHONE_LAB_STREAM_ID"
+            android:value="${capyioMicrophoneStreamId}" />
+        <meta-data
+            android:name="dev.capyio.android.MICROPHONE_LAB_STREAM_EPOCH"
+            android:value="${capyioMicrophoneStreamEpoch}" />
 
         <activity
             android:name=".MainActivity"

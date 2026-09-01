@@ -1,0 +1,18 @@
+[package]
+name = "capyio-native-audio-lan"
+description = "Bounded direction-neutral CapyIO audio LAN lab backend."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish = false
+
+[dependencies]
+capyio-audio = { path = "../../crates/capyio-audio" }
+capyio-core = { path = "../../crates/capyio-core" }
+thiserror.workspace = true
+uuid.workspace = true
+
+[target.'cfg(windows)'.dependencies]
+capyio-windows-capture-ring = { path = "../../platform/windows/capture-ring" }
+capyio-windows-render-ring = { path = "../../platform/windows/render-ring" }

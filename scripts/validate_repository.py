@@ -9,6 +9,7 @@ before the full Rust/Tauri/platform toolchains are available.
 from __future__ import annotations
 
 import json
+import os
 import re
 import sys
 import tomllib
@@ -28,14 +29,29 @@ REQUIRED_FILES = [
     "docs/SECURITY_MODEL.md",
     "docs/TESTING.md",
     "docs/BACKLOG.md",
+    "docs/CAPY_AUDIO_NATIVE_001E_REPORT.md",
     "docs/REQUIREMENTS_TRACEABILITY.md",
     "docs/plans/TEMPLATE.md",
+    "docs/adr/0046-connect-native-speaker-lab-path.md",
     "crates/capyio-core/src/lib.rs",
     "crates/capyio-data-plane/src/lib.rs",
     "adapters/sensor-server/src/lib.rs",
     "adapters/micyou/src/lib.rs",
+    "adapters/native-audio-lan/Cargo.toml",
+    "adapters/native-audio-lan/src/lib.rs",
+    "adapters/native-audio-lan/src/codec.rs",
+    "adapters/native-audio-lan/src/endpoint.rs",
+    "adapters/native-audio-lan/src/lab.rs",
+    "adapters/native-audio-lan/src/reassembly.rs",
+    "adapters/native-audio-lan/src/bin/capyio-native-audio-tone.rs",
+    "adapters/native-audio-lan/src/bin/capyio-native-virtual-speaker.rs",
+    "adapters/native-audio-lan/src/bin/capyio-native-virtual-microphone.rs",
     "platform/windows/process-presence/Cargo.toml",
     "platform/windows/process-presence/src/lib.rs",
+    "platform/windows/render-ring/Cargo.toml",
+    "platform/windows/render-ring/src/lib.rs",
+    "platform/windows/capture-ring/Cargo.toml",
+    "platform/windows/capture-ring/src/lib.rs",
     "platform/windows/micyou-host-config/Cargo.toml",
     "platform/windows/micyou-host-config/src/lib.rs",
     "platform/windows/micyou-host-config/src/bin/capyio-micyou-config.rs",
@@ -48,6 +64,7 @@ REQUIRED_FILES = [
     "fixtures/imu/imu_samples_v1.jsonl",
     "fixtures/sensor-server/accelerometer.json",
     "fixtures/sensor-server/gyroscope.json",
+    "fixtures/audio/native_lan_v1_opus_single.hex",
     "apps/desktop/package.json",
     "apps/desktop/src/App.vue",
     "apps/desktop/src-tauri/tauri.conf.json",
@@ -59,7 +76,20 @@ REQUIRED_FILES = [
     "platform/android/gradle/wrapper/gradle-wrapper.properties",
     "platform/android/app/src/main/AndroidManifest.xml",
     "platform/android/app/src/main/java/dev/capyio/android/AudioNodeService.java",
+    "platform/android/app/src/main/java/dev/capyio/android/NativeSpeakerConfigLoader.java",
+    "platform/android/app/src/main/java/dev/capyio/android/NativeMicrophoneConfigLoader.java",
+    "platform/android/app/src/main/java/dev/capyio/android/SpeakerSinkAdapter.java",
     "platform/android/node-contract/src/main/java/dev/capyio/android/contract/AudioNodeController.java",
+    "platform/android/native-lan-contract/src/main/java/dev/capyio/android/lan/NativeLanPacketCodec.java",
+    "platform/android/native-lan-contract/src/main/java/dev/capyio/android/lan/NativeLanPacketQueue.java",
+    "platform/android/native-lan-contract/src/main/java/dev/capyio/android/lan/NativeLanPacketReassembler.java",
+    "platform/android/native-lan-contract/src/main/java/dev/capyio/android/lan/NativeLanPcmPacketizer.java",
+    "platform/android/native-lan-contract/src/main/java/dev/capyio/android/lan/NativeLanPcmSinkWorker.java",
+    "platform/android/native-lan-contract/src/main/java/dev/capyio/android/lan/NativeLanSenderWorker.java",
+    "platform/android/native-lan-contract/src/main/java/dev/capyio/android/lan/NativeLanReceiverWorker.java",
+    "platform/android/native-lan-contract/src/main/java/dev/capyio/android/lan/NativeLanUdpEndpoint.java",
+    "platform/android/native-lan-contract/src/main/java/dev/capyio/android/lan/NativeLanSpeakerSessionConfig.java",
+    "platform/android/native-lan-contract/src/main/java/dev/capyio/android/lan/NativeLanMicrophoneSessionConfig.java",
 ]
 
 REQUIREMENT_ID_RE = re.compile(r"(?:FR|NFR)-[A-Z]+-\d{3}")
@@ -152,21 +182,35 @@ def validate_android_audio_shell() -> None:
         'android.permission.FOREGROUND_SERVICE',
         'android.permission.FOREGROUND_SERVICE_MICROPHONE',
         'android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK',
+        'android.permission.INTERNET',
         'android:foregroundServiceType="microphone|mediaPlayback"',
         'android:exported="false"',
         'android:stopWithTask="false"',
         'android:usesCleartextTraffic="false"',
         'android:allowBackup="false"',
+        'dev.capyio.android.SPEAKER_LAB_ENABLED',
+        'dev.capyio.android.SPEAKER_LAB_PEER_IPV4',
+        'dev.capyio.android.SPEAKER_LAB_STREAM_EPOCH',
+        'dev.capyio.android.MICROPHONE_LAB_ENABLED',
+        'dev.capyio.android.MICROPHONE_LAB_PEER_IPV4',
+        'dev.capyio.android.MICROPHONE_LAB_STREAM_EPOCH',
     ]
     missing = [token for token in required_manifest if token not in manifest]
     if missing:
         fail(f"Android audio shell manifest is incomplete: {missing}")
-    if 'android.permission.INTERNET' in manifest:
-        fail("001C Android audio shell must not declare network access")
-
     root_build = (ROOT / "platform/android/build.gradle").read_text(encoding="utf-8")
     if "com.android.application' version '9.3.1'" not in root_build:
         fail("Android Gradle Plugin pin changed without updating the 001C contract")
+    app_build = (ROOT / "platform/android/app/build.gradle").read_text(encoding="utf-8")
+    build_required = [
+        "main.java.srcDir 'src/main/java'",
+        "verifyDebugEntrypoints",
+        "dev/capyio/android/MainActivity.class",
+        "dev/capyio/android/AudioNodeService.class",
+    ]
+    missing_build = [token for token in build_required if token not in app_build]
+    if missing_build:
+        fail(f"Android application entrypoint gate is incomplete: {missing_build}")
 
     wrapper = (
         ROOT / "platform/android/gradle/wrapper/gradle-wrapper.properties"
@@ -194,12 +238,128 @@ def validate_android_audio_shell() -> None:
         "startForeground(",
         "new AudioRecord.Builder()",
         "new AudioTrack.Builder()",
+        "AudioTrack.WRITE_NON_BLOCKING",
+        "NativeLanReceiverWorker",
+        "NativeLanPcmSinkWorker",
+        "NativeLanPcmPacketizer",
+        "NativeLanSenderWorker",
     ]
     missing_source = [token for token in source_required if token not in sources]
     if missing_source:
         fail(f"Android platform audio shell is incomplete: {missing_source}")
     if "android.util.Log" in sources or "java.net." in sources:
-        fail("001C Android audio callbacks must not log or use a network API")
+        fail("Android audio callbacks must not log or use a network API")
+    activity = (ROOT / "platform/android/app/src/main/java/dev/capyio/android/MainActivity.java").read_text(
+        encoding="utf-8"
+    )
+    if "SPEAKER_LAB_" in activity or "MICROPHONE_LAB_" in activity or "InetSocketAddress" in activity:
+        fail("Android Activity must not own native audio Route/network authority")
+    for token in [
+        "speakerTransportMetrics",
+        "microphoneTransportMetrics",
+        "AtomicBoolean refreshQueued",
+        "MainActivity.this::scheduleRefresh",
+        "snapshot.microphone().state().ownsForegroundLifecycle()",
+        "snapshot.speaker().state().ownsForegroundLifecycle()",
+    ]:
+        if token not in activity:
+            fail(f"Android audio UI lacks bounded diagnostics/refresh behavior: {token}")
+    if "MainActivity.this::renderLatest" in activity:
+        fail("Android audio UI must coalesce worker-driven state notifications")
+
+
+def validate_native_audio_lan_backend() -> None:
+    manifest = (ROOT / "adapters/native-audio-lan/Cargo.toml").read_text(
+        encoding="utf-8"
+    )
+    for dependency in ["capyio-audio", "capyio-core", "thiserror.workspace", "uuid.workspace"]:
+        if dependency not in manifest:
+            fail(f"native audio LAN manifest lacks reviewed dependency: {dependency}")
+    forbidden_dependencies = ["tokio", "quinn", "webrtc", "reqwest", "aoo"]
+    present = [name for name in forbidden_dependencies if name in manifest.lower()]
+    if present:
+        fail(f"native audio LAN reference added an unreviewed dependency: {present}")
+
+    rust_sources = "\n".join(
+        (ROOT / relative_path).read_text(encoding="utf-8")
+        for relative_path in [
+            "adapters/native-audio-lan/src/lib.rs",
+            "adapters/native-audio-lan/src/codec.rs",
+            "adapters/native-audio-lan/src/endpoint.rs",
+            "adapters/native-audio-lan/src/lab.rs",
+            "adapters/native-audio-lan/src/reassembly.rs",
+            "adapters/native-audio-lan/src/bin/capyio-native-audio-tone.rs",
+            "adapters/native-audio-lan/src/bin/capyio-native-virtual-speaker.rs",
+            "adapters/native-audio-lan/src/bin/capyio-native-virtual-microphone.rs",
+        ]
+    )
+    rust_required = [
+        '"dev.capyio.audio.lan-lab/1"',
+        "AudioTransportInteroperability::AdapterManaged",
+        "MAX_NATIVE_LAN_DATAGRAM_BYTES: usize = 1_200",
+        "NATIVE_LAN_HEADER_BYTES: usize = 104",
+        "MAX_NATIVE_LAN_FRAGMENTS: usize = 64",
+        "MAX_NATIVE_LAN_INFLIGHT_PACKETS: usize = 8",
+        "peer_authenticated: false",
+        "confidentiality: false",
+        "replay_protection: false",
+        "UdpSocket",
+        "NATIVE_SPEAKER_LAB_STREAM_EPOCH",
+        "NATIVE_MICROPHONE_LAB_STREAM_EPOCH",
+        "capyio-native-virtual-speaker",
+        "capyio-native-virtual-microphone",
+        "Global\\\\CapyIO.RenderRing.v1",
+        "Global\\\\CapyIO.CaptureRing.v1",
+    ]
+    missing = [token for token in rust_required if token not in rust_sources]
+    if missing:
+        fail(f"native audio LAN Rust boundary is incomplete: {missing}")
+
+    java_sources = "\n".join(
+        (ROOT / relative_path).read_text(encoding="utf-8")
+        for relative_path in [
+            "platform/android/native-lan-contract/src/main/java/dev/capyio/android/lan/NativeLanPacketCodec.java",
+            "platform/android/native-lan-contract/src/main/java/dev/capyio/android/lan/NativeLanPacketQueue.java",
+            "platform/android/native-lan-contract/src/main/java/dev/capyio/android/lan/NativeLanPacketReassembler.java",
+            "platform/android/native-lan-contract/src/main/java/dev/capyio/android/lan/NativeLanPcmPacketizer.java",
+            "platform/android/native-lan-contract/src/main/java/dev/capyio/android/lan/NativeLanPcmSinkWorker.java",
+            "platform/android/native-lan-contract/src/main/java/dev/capyio/android/lan/NativeLanSenderWorker.java",
+            "platform/android/native-lan-contract/src/main/java/dev/capyio/android/lan/NativeLanReceiverWorker.java",
+            "platform/android/native-lan-contract/src/main/java/dev/capyio/android/lan/NativeLanUdpEndpoint.java",
+            "platform/android/native-lan-contract/src/main/java/dev/capyio/android/lan/NativeLanSpeakerSessionConfig.java",
+            "platform/android/native-lan-contract/src/main/java/dev/capyio/android/lan/NativeLanMicrophoneSessionConfig.java",
+        ]
+    )
+    java_required = [
+        '"dev.capyio.audio.lan-lab/1"',
+        "MAX_DATAGRAM_BYTES = 1_200",
+        "HEADER_BYTES = 104",
+        "MAX_FRAGMENTS = 64",
+        "MAX_PACKET_CAPACITY = 128",
+        "MAX_AGGREGATE_BYTES = 4 * 1024 * 1024",
+        "MAX_INFLIGHT_PACKETS = 8",
+        "MAX_PUSH_BYTES = 256 * 1024",
+        "DatagramSocket",
+        "Android audio callbacks never call",
+        "peer.isUnresolved()",
+        "capyio-native-lan-sender",
+        "capyio-native-lan-receiver",
+        "thread.join(2_000)",
+        "pendingDiscontinuity = true",
+        "capyio-native-lan-pcm-sink",
+        "MAX_ZERO_WRITES = 1_000",
+        "speaker peer must be a concrete unicast IPv4",
+        "microphone peer must be a concrete unicast IPv4",
+    ]
+    missing = [token for token in java_required if token not in java_sources]
+    if missing:
+        fail(f"native audio LAN Android boundary is incomplete: {missing}")
+
+    golden = (ROOT / "fixtures/audio/native_lan_v1_opus_single.hex").read_text(
+        encoding="utf-8"
+    ).split()
+    if len(golden) != 120 or any(re.fullmatch(r"[0-9a-fA-F]{2}", byte) is None for byte in golden):
+        fail("native audio LAN shared golden datagram must contain exactly 120 hex bytes")
 
 
 def fail(message: str) -> None:
@@ -219,11 +379,24 @@ def is_ignored(path: Path) -> bool:
 
 
 def repository_files() -> list[Path]:
-    return sorted(
-        path
-        for path in ROOT.rglob("*")
-        if path.is_file() and not is_ignored(path)
-    )
+    return sorted(path for path in repository_entries() if path.is_file())
+
+
+def repository_entries():
+    for directory, names, filenames in os.walk(ROOT, topdown=True, followlinks=False):
+        parent = Path(directory)
+        retained_names = []
+        for name in names:
+            path = parent / name
+            if is_ignored(path):
+                continue
+            retained_names.append(name)
+            yield path
+        names[:] = retained_names
+        for name in filenames:
+            path = parent / name
+            if not is_ignored(path):
+                yield path
 
 
 def validate_required_files() -> None:
@@ -235,8 +408,8 @@ def validate_required_files() -> None:
 def validate_no_symlinks() -> None:
     symlinks = [
         relative(path)
-        for path in ROOT.rglob("*")
-        if path.is_symlink() and not is_ignored(path)
+        for path in repository_entries()
+        if path.is_symlink()
     ]
     if symlinks:
         fail(f"archive must not contain symlinks: {', '.join(symlinks)}")
@@ -275,8 +448,8 @@ def validate_yaml() -> None:
 
     for path in sorted(
         path
-        for path in [*ROOT.rglob("*.yml"), *ROOT.rglob("*.yaml")]
-        if not is_ignored(path)
+        for path in repository_files()
+        if path.suffix.lower() in {".yml", ".yaml"}
     ):
         try:
             yaml.safe_load(path.read_text(encoding="utf-8"))
@@ -285,7 +458,7 @@ def validate_yaml() -> None:
 
 
 def validate_python() -> None:
-    for path in sorted(path for path in ROOT.rglob("*.py") if not is_ignored(path)):
+    for path in (path for path in repository_files() if path.suffix.lower() == ".py"):
         try:
             compile(path.read_text(encoding="utf-8"), relative(path), "exec")
         except (OSError, SyntaxError) as error:
@@ -294,7 +467,7 @@ def validate_python() -> None:
 
 def validate_toml_and_workspace() -> None:
     manifests: dict[Path, dict] = {}
-    for path in sorted(path for path in ROOT.rglob("*.toml") if not is_ignored(path)):
+    for path in (path for path in repository_files() if path.suffix.lower() == ".toml"):
         try:
             with path.open("rb") as handle:
                 manifests[path] = tomllib.load(handle)
@@ -875,7 +1048,6 @@ def validate_windows_audio_endpoint_contract() -> None:
     microphone_topology = (tablet / "micintoptable.h").read_text(encoding="utf-8")
     required_endpoint_names = {
         "c2ae0cd6-c228-41a6-8b0f-8b13773556a0": "CapyIO Speaker",
-        "bec4e45e-4dd5-492b-91b0-596da93ccec5": "CapyIO Microphone Ingress",
         "ba3df3f3-aa52-4d39-b9d7-d2a44a50510a": "CapyIO Microphone",
     }
     driver_sources = f"{topology}\n{microphone_topology}".lower()
@@ -884,20 +1056,45 @@ def validate_windows_audio_endpoint_contract() -> None:
             fail(f"Windows audio bridge-pin GUID is missing from topology source: {guid}")
         if guid not in base_inf.lower() or f'= "{endpoint_name}"' not in base_inf:
             fail(f"Windows audio endpoint name is not registered in the base INF: {endpoint_name}")
-    if "&CapyIoMicrophoneIngressTopoMiniportFilterDescriptor" not in (
-        tablet / "minipairs.h"
-    ).read_text(encoding="utf-8"):
-        fail("microphone ingress must not reuse the speaker topology descriptor")
-    if "&CAPYIO_MIC_INGRESS_CATEGORY" not in topology:
-        fail("microphone ingress must use its registered product-specific endpoint category")
-    ingress_category_guid = "6f13d5db-0274-4e66-a116-340b4c54eb38"
-    if ingress_category_guid not in topology.lower() or ingress_category_guid not in base_inf.lower():
-        fail("microphone ingress category GUID must match its topology and INF registration")
-    if "CapyIO.MicrophoneIngressCategoryGuid" not in base_inf:
-        fail("microphone ingress category GUID must have a device-specific name registration")
+    minipairs = (tablet / "minipairs.h").read_text(encoding="utf-8")
+    render_endpoints = minipairs.split(
+        "static PENDPOINT_MINIPAIR g_RenderEndpoints[] =", 1
+    )[-1].split("};", 1)[0]
+    if render_endpoints.count("&CapyIoSpeakerMiniports") != 1:
+        fail("Windows audio must expose exactly one CapyIO Speaker render endpoint")
+    if "MicrophoneIngress" in render_endpoints:
+        fail("native microphone transport must not expose the retired render ingress endpoint")
+    if "ENDPOINT_OFFLOAD_SUPPORTED | ENDPOINT_SYNTHETIC_LOOPBACK_DISABLED" not in minipairs:
+        fail("CapyIO Speaker must reject the inherited SysVAD synthetic loopback path")
+    common_header = (
+        ROOT / "drivers/windows-audio/sysvad/common.h"
+    ).read_text(encoding="utf-8")
+    wave_header = (
+        ROOT / "drivers/windows-audio/sysvad/EndpointsCommon/minwavert.h"
+    ).read_text(encoding="utf-8")
+    wave_source = (
+        ROOT / "drivers/windows-audio/sysvad/EndpointsCommon/minwavert.cpp"
+    ).read_text(encoding="utf-8")
+    if "ENDPOINT_SYNTHETIC_LOOPBACK_DISABLED" not in common_header:
+        fail("Windows audio contract lacks the synthetic-loopback disable flag")
+    if "m_DeviceFlags & ENDPOINT_SYNTHETIC_LOOPBACK_DISABLED" not in wave_header:
+        fail("Windows audio loopback capability must honor the disable flag")
+    loopback_validation = wave_source.split("CMiniportWaveRT::ValidateStreamCreate", 1)[-1].split(
+        "//=============================================================================", 1
+    )[0]
+    if "if (IsLoopbackSupported())" not in loopback_validation:
+        fail("Windows audio stream creation must reject disabled loopback pins")
+    for retired_ingress_token in (
+        "KSNAME_WaveMicIngress",
+        "KSNAME_TopologyMicIngress",
+        "CapyIO.I.WaveMicIngress",
+        "CapyIO.I.TopologyMicIngress",
+        "CapyIO.MicrophoneIngressCategoryGuid",
+    ):
+        if retired_ingress_token in base_inf or retired_ingress_token in extension_inf:
+            fail(f"Windows audio INF still exposes retired ingress token {retired_ingress_token}")
     required_associations = {
         "%KSNODETYPE_SPEAKER%": "speaker",
-        "%CapyIO.MicrophoneIngressCategoryGuid%": "microphone ingress",
         "%KSNODETYPE_MICROPHONE%": "microphone",
     }
     for category, endpoint in required_associations.items():
@@ -906,12 +1103,7 @@ def validate_windows_audio_endpoint_contract() -> None:
             fail(f"Windows audio {endpoint} must declare its explicit endpoint association")
     if "HKR,EP\\0,%PKEY_AudioEndpoint_Association%,,%KSNODETYPE_ANY%" in base_inf:
         fail("Windows audio endpoint associations must not fall back to KSNODETYPE_ANY")
-    if "TopologyMicIngress%,CapyIOIngressExtension.Interface" not in extension_inf:
-        fail("microphone ingress must use its independent render processing-mode contract")
-    ingress_fx = extension_inf.split("[CapyIOIngressExtension.Interface.AddReg]", 1)[-1].split("[", 1)[0]
     capture_fx = extension_inf.split("[CapyIOMicrophoneExtension.Interface.AddReg]", 1)[-1].split("[", 1)[0]
-    if "%CAPYIO_RENDER_MFX_CLSID%" not in ingress_fx:
-        fail("microphone ingress must use the proven shared render bridge APO class")
     if extension_inf.count("TopologyMicIn%,CapyIOMicrophoneExtension.Interface") != 2:
         fail("microphone capture bridge must cover both audio and topology interfaces")
     if "%CAPYIO_RENDER_MFX_CLSID%" not in capture_fx:
@@ -944,19 +1136,6 @@ def validate_windows_audio_endpoint_contract() -> None:
     standard_apo_interface = '"APOInterface0",,"{FD7F2B29-24D0-4B5C-B177-592C39F9CA10}"'
     if apo_inf.count(standard_apo_interface) != 2:
         fail("both CapyIO APO registrations must declare the standard IAudioProcessingObject IID")
-    for mode in (
-        "%AUDIO_SIGNALPROCESSINGMODE_DEFAULT%",
-        "%AUDIO_SIGNALPROCESSINGMODE_MEDIA%",
-        "%AUDIO_SIGNALPROCESSINGMODE_MOVIE%",
-    ):
-        if mode not in ingress_fx:
-            fail(f"microphone ingress processing modes must include {mode}")
-    for capture_only_mode in (
-        "%AUDIO_SIGNALPROCESSINGMODE_COMMUNICATIONS%",
-        "%AUDIO_SIGNALPROCESSINGMODE_SPEECH%",
-    ):
-        if capture_only_mode in ingress_fx:
-            fail(f"microphone ingress processing modes must exclude {capture_only_mode}")
     if "COM_INTERFACE_ENTRY(IAudioSystemEffectsCustomFormats)" in microphone_apo_header:
         fail("microphone bridge must not advertise SysVAD custom formats")
     if "CBaseAudioProcessingObject::IsOutputFormatSupported(" not in microphone_apo_source:
@@ -965,7 +1144,6 @@ def validate_windows_audio_endpoint_contract() -> None:
         fail("microphone capture bridge must keep inherited SysVAD DSP disabled")
     for role_marker in (
         "GetMicrophoneBridgeRole(candidate.get())",
-        "MicrophoneBridgeRole::IngressProducer",
         "MicrophoneBridgeRole::CaptureConsumer",
         "value.vt == VT_LPWSTR",
         "CLSIDFromString(value.pwszVal, &association)",
@@ -973,6 +1151,13 @@ def validate_windows_audio_endpoint_contract() -> None:
     ):
         if role_marker not in shared_bridge_source:
             fail(f"shared audio bridge must retain role marker {role_marker}")
+    for retired_producer_token in (
+        "MicrophoneBridgeRole::IngressProducer",
+        "kCapyIoMicrophoneIngressCategory",
+        "m_captureProducer",
+    ):
+        if retired_producer_token in microphone_apo_header or retired_producer_token in shared_bridge_source or retired_producer_token in microphone_apo_source:
+            fail(f"retired microphone ingress producer remains in the APO: {retired_producer_token}")
     if "m_microphoneBridgeRole != MicrophoneBridgeRole::Detached" not in shared_bridge_source:
         fail("microphone bridge roles must not register render endpoint-volume notifications")
     for capture_lock_marker in (
@@ -994,13 +1179,6 @@ def validate_windows_audio_endpoint_contract() -> None:
     ):
         if fresh_attach_marker not in capture_ring_source:
             fail(f"capture ring must discard stale pre-attach frames: {fresh_attach_marker}")
-    ingress_descriptor = topology.split(
-        "PCFILTER_DESCRIPTOR CapyIoMicrophoneIngressTopoMiniportFilterDescriptor =", 1
-    )[-1]
-    if "NULL, // The private ingress must not advertise the integrated Speaker jack." not in ingress_descriptor:
-        fail("microphone ingress must not reuse the integrated Speaker jack automation")
-
-
 def workflow_has_pull_request_branch(text: str, expected: str) -> bool:
     lines = text.splitlines()
     for index, line in enumerate(lines):
@@ -1084,7 +1262,7 @@ def validate_current_foundation_labels() -> None:
 
 def validate_local_markdown_links() -> None:
     link_pattern = re.compile(r"\[[^\]]*\]\(([^)]+)\)")
-    for path in sorted(path for path in ROOT.rglob("*.md") if not is_ignored(path)):
+    for path in (path for path in repository_files() if path.suffix.lower() == ".md"):
         for target in link_pattern.findall(path.read_text(encoding="utf-8")):
             target = target.strip().split("#", 1)[0]
             if not target or target.startswith(("http://", "https://", "mailto:", "#")):
@@ -1142,6 +1320,7 @@ def main() -> None:
     validate_sensor_server_provenance()
     validate_micyou_adapter_contract()
     validate_android_audio_shell()
+    validate_native_audio_lan_backend()
     validate_windows_audio_provenance()
     validate_windows_audio_endpoint_contract()
     validate_hosted_ci_contract()

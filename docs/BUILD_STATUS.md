@@ -157,9 +157,10 @@ are in `docs/CAPY_IMU_001B3B_REPORT.md`.
 
 ## Not built or tested
 
-- installed/physically qualified CapyIO Android APK or native audio transport;
-- real-device Android permission, indicator, foreground/background, focus and
-  route-change behavior;
+- platform-audio integration or physical cross-device sound through the
+  CapyIO-native LAN backend;
+- Android permission denial/revoke, indicator, lock/process-death,
+  long-background, focus and route-change behavior;
 - CapyIO-owned camera or input data path;
 - release-qualified Windows virtual devices, signed installer or stable
   isolated-VM driver target;
@@ -413,11 +414,12 @@ empty for the future backend. Each direction has independent generation,
 state, actual format, metrics and sanitized Problem code; stale completions and
 one-direction failures cannot mutate the other slot.
 
-The manifest declares the approved recording and dual foreground-service
-permissions, requires a persistent notification, exports no service, disables
-backup/cleartext and deliberately omits Internet permission. The APK has no
-third-party runtime dependency. Gradle 9.5.0 is wrapper/checksum pinned with AGP
-9.3.1 and SDK 36.
+The 001C manifest declared the approved recording and dual foreground-service
+permissions, required a persistent notification, exported no service, disabled
+backup/cleartext and deliberately omitted Internet permission. ADR 0044's
+subsequent 001D1 slice adds the separately approved Internet permission while
+retaining those restrictions. The APK has no third-party runtime dependency.
+Gradle 9.5.0 is wrapper/checksum pinned with AGP 9.3.1 and SDK 36.
 
 `cargo xtask android-check` passed 36 lifecycle/validation assertions, Android
 Java/resource/manifest compilation, Lint with warnings denied and debug APK
@@ -438,3 +440,235 @@ device's platform-endpoint/lifecycle evidence, not remote sound, network,
 focus/routing, lock, revoke, latency, quality or vendor-power qualification.
 Evidence and remaining risks are in
 `docs/CAPY_AUDIO_NATIVE_001C_REPORT.md`.
+
+## CAPY-AUDIO-NATIVE-001D1 bounded LAN reference backend
+
+ADR 0044 now gives the common audio packet its first CapyIO-owned executable
+network reference. `capyio-native-audio-lan` moves either Route direction over
+an explicit-peer UDP socket with a fixed version-1 header, 1,200-byte datagram
+limit, at most 64 fragments/70,144 packet bytes and at most eight incomplete
+packets. Session, Route, Stream, epoch and every packet timeline field remain
+exact. Malformed, conflicting, wrong-binding and wrong-peer input is rejected
+or reported through bounded counters.
+
+The Android tree contains a dependency-free Java codec and UDP worker endpoint
+with the same bounds. A committed 120-byte golden datagram is asserted by both
+Rust and Java, including complete unsigned 64-bit counter preservation. The
+manifest contains the approved `INTERNET` permission, but platform audio classes
+still contain no network API: microphone bytes remain discarded and speaker
+render remains empty until `001E/001F` connect the now-bounded 001D2 workers.
+
+The backend contract declares authentication, confidentiality, integrity,
+replay defense and downgrade binding false. It is an `AdapterManaged` trusted-
+lab reference, not production transport or a public StandardPort. No AOO,
+SonoBus, codec or other runtime dependency was added. Local Rust tests cover
+codec, fragmentation/reassembly, duplicate/eviction behavior, malformed input,
+UDP loopback, spoofed peer and timeout. Android contract/Lint/APK and full
+workspace Gate results are recorded in
+`docs/CAPY_AUDIO_NATIVE_001D1_REPORT.md`.
+
+The final local `cargo xtask ci` passed 181 Rust tests with 4 explicit
+external/physical ignores, plus format, workspace check, warnings-as-errors
+Clippy, IMU demo, documentation/manifests, Adapter smoke, repository validation
+and desktop typecheck/build. `cargo xtask android-check` separately passed 36
+audio lifecycle assertions, 35 native-LAN assertions, Lint and debug APK
+assembly without ADB or installation.
+
+## CAPY-AUDIO-NATIVE-001D2 Android bounded media workers
+
+ADR 0045 completes the hardware-free Android composition around the 001D1
+wire. `NativeLanPcmPacketizer` converts bounded frame-aligned PCM reads into
+exact packets. `NativeLanPacketQueue` caps both packet count and aggregate
+bytes, never blocks a producer and reports packet pressure, byte pressure and
+wrong binding independently. Dropped packets advance sequence/sample/time and
+mark the next accepted packet discontinuous.
+
+The Android reassembler now mirrors the Rust 1–8 partial-packet bound. One-shot
+sender/receiver threads own endpoint I/O, validate matching Route bindings
+before start, expose stable sanitized I/O codes, and stop by closing/interruption
+plus a two-second join ceiling. A local test moves two 48 kHz stereo packets
+through packetizer, send queue, UDP fragmentation, receiver/reassembly and sink
+queue with exact bytes and timeline, then proves terminal stop.
+
+`cargo xtask android-check` passes 36 lifecycle assertions, 85 native-LAN
+assertions, Java/application compilation, warnings-as-errors Lint and debug APK
+assembly. No APK/ADB/device/driver/service operation occurred. Existing Android
+platform Adapters remain deliberately disconnected, so this is not audible or
+cross-device evidence. Details are in
+`docs/CAPY_AUDIO_NATIVE_001D2_REPORT.md`.
+
+The final local `cargo xtask ci` also passes format, workspace check, strict
+Clippy, 181 Rust tests with 4 explicit external/physical ignores, IMU demo,
+documentation/manifests, Adapter smoke, repository structural validation for
+88 traced Requirement IDs, and desktop typecheck/build.
+
+## CAPY-AUDIO-NATIVE-001E native speaker implementation
+
+ADR 0046 connects the Android Speaker Sink to the 001D2 receiver queue through
+`NativeLanPcmSinkWorker` and `AudioTrack.WRITE_NON_BLOCKING`. The worker checks
+PCM geometry, handles partial writes, resets on sequence/sample discontinuity
+and stops within two seconds. A closed build-time configuration supplies the
+trusted-lab peer and Route binding without exposing authority through the
+Activity; the default build disables this path.
+
+The protocol-neutral Windows render-ring consumer now lives in
+`capyio-windows-render-ring`. Both the Audio Share rollback Broker and the new
+`capyio-native-virtual-speaker` reuse it. A separate native 440 Hz sender
+isolates network/Android acceptance before ordinary Windows playback.
+
+Hardware-free evidence passes 36 Android lifecycle assertions, 117 native-LAN
+assertions, Android compile/Lint/debug APK, 12 native-LAN Rust tests, render-
+ring and Audio Share regressions, and strict affected-crate Clippy. Physical
+work progressed from the failed 0.3.0-dev source-set package through bounded
+queue diagnostics to accepted 0.3.4-dev. The final native tone baseline
+received 1,000 datagrams, completed 500 packets, rendered exactly 240,000
+frames and recorded zero transport/reassembly/queue drops. An ordinary Windows
+`SoundPlayer` playback through the working `CapyIO Speaker with Render Bridge`
+instance then raised Android to 512,160 rendered frames / 1,067 packets with
+all error counters still zero. A stale identically named Windows endpoint was
+also found. A phone Stop/Start reset every counter and the next ordinary WAV
+rendered 272,640 frames / 568 packets with zero errors or drops, proving a fresh
+service generation. Endpoint cleanup and stable instance handling remain
+release work.
+
+The native Broker is also integrated into the existing `CapyIOBroker` service
+and its ACL-protected local control pipe. Service-owned start reached `active`
+while honestly retaining `receiverPresent=false`; an ordinary WAV advanced the
+phone to 296,640 frames / 618 packets without drops. A full Windows service
+stop released UDP 46001, restart reacquired it, and a second ordinary WAV
+advanced the phone to 565,920 frames / 1,179 packets with all transport,
+reassembly and queue error counters still zero. The final clean Release
+deployment then delivered an exact additional 24,000 frames / 50 packets /
+100 datagrams, reaching 589,920 frames / 1,229 packets with no errors or drops.
+Abrupt-termination and signed
+installer-upgrade handling remain release qualification. Details are in
+`docs/CAPY_AUDIO_NATIVE_001E_REPORT.md`.
+
+The final local `cargo xtask ci` passes format, workspace check, strict Clippy,
+185 Rust tests with 4 explicit external/physical ignores, IMU demo,
+documentation/manifests, Adapter smoke, repository validation for 88 traced
+Requirement IDs, and desktop typecheck/build.
+
+## CAPY-AUDIO-NATIVE-001F1 native microphone implementation
+
+ADR 0047 connects Android `AudioRecord` through the existing exact PCM
+packetizer, bounded queue and native LAN sender worker. The default build still
+has no peer authority; the controlled 0.4.0-dev build uses a fixed microphone
+Route and dedicated UDP 46010/46011 endpoints. The audio worker does not perform
+socket I/O and captured payload is neither stored nor logged.
+
+The fixed Windows capture ABI now lives in `capyio-windows-capture-ring` with a
+live-owner mutex, strict layout/generation validation, S16LE-mono conversion and
+whole-block pressure behavior. `capyio-native-virtual-microphone` receives the
+exact common packet from one explicit peer and is supervised as the optional
+second child of native `CapyIOBroker`. Its configuration is all-or-none;
+microphone startup failure rolls the speaker child back and health requires
+both children. Native and MicYou capture producers remain mutually exclusive.
+
+Hardware-free evidence passes 4 capture-ring tests, 17 native-LAN tests, 17
+Windows service tests, strict affected-crate Clippy, 36 Android lifecycle
+assertions, 126 Android native-LAN assertions, Android compile/Lint and debug
+APK assembly. A controlled no-MicYou run received 477 packets and committed
+228,960 real microphone frames into the capture ring with zero observed
+wrong-peer, malformed, full-ring or frame drops. The matching service Release
+build is ready, but its administrator-token deployment and ordinary Windows
+WAV capture remain 001F2 acceptance rather than a completed claim. Details are
+in `docs/CAPY_AUDIO_NATIVE_001F1_REPORT.md`.
+
+## CAPY-AUDIO-NATIVE-001F2 native microphone physical acceptance
+
+The exact combined Release was deployed behind automatic LocalSystem
+`CapyIOBroker`. Both native children reached `active`; UDP 46001 and 46011 were
+owned by their separate Session 0 processes. An ordinary Windows WASAPI client
+recorded three eight-second WAVs containing respectively 374,080, 372,649 and
+378,387 non-zero samples out of 384,000, with non-zero RMS/peak and no client
+errors. The second recording followed a full Runtime Stop/Start: both ports were
+absent while stopped and reacquired by new processes in generation 2.
+
+Android 0.4.1-dev first corrected the stale microphone-discard copy and exposed
+bounded sender metrics. With both capabilities active (`0x82`), its panel observed
+1,002,240 microphone frames, 2,088 packets generated/sent, 2,088 datagrams,
+zero queue drops and zero buffered bytes. Final 0.4.2-dev coalesces UI refreshes
+to 250 ms, has SHA-256
+`79DE1A0BA7C6CDDE08D33A3C15D2C971027B7EC181EC6034DC7F6B83B5A68578`
+and produced another non-silent WAV with 382,496/384,000 non-zero samples.
+Exact active-button taps stopped microphone then speaker and removed foreground
+ownership. Android 36 lifecycle assertions, 126 native-LAN assertions, compile,
+strict Lint and APK assembly pass. `CAPY-AUDIO-NATIVE-001F` is therefore functionally
+accepted for the controlled lab; details and retained release non-scope are in
+`docs/CAPY_AUDIO_NATIVE_001F2_REPORT.md`.
+
+## CAPY-AUDIO-NATIVE-001G1 partial-failure isolation
+
+ADR 0048 corrects the first dual-Route orchestration defect: after successful
+transactional startup, native pair liveness now means either child remains
+running, while readiness still requires both. A single speaker or microphone
+child exit therefore returns the Broker from `active` to `starting` without
+stopping the opposite healthy Route. Loss of both remains a terminal bounded
+failure. Two focused regressions join the existing startup-rollback test; the
+Windows service crate now passes 19 tests. Physical child termination,
+simultaneous media, bounded per-direction retry and direction-specific Desktop
+diagnostics remain 001G work. See `docs/CAPY_AUDIO_NATIVE_001G1_REPORT.md`.
+
+The exact 001G1 Broker was subsequently deployed with SHA-256
+`C8A917F92134AF2F4DD3266FA319F746B61C50A909027B5FFD987A47870055BE`.
+Symmetric controlled process-exit tests passed: killing the speaker released
+only 46001 while microphone PID 78996/46011 survived, and killing the
+microphone released only 46011 while speaker PID 83900/46001 survived. Both
+cases moved the same generation from `active` to `starting` without a terminal
+Problem; explicit Stop/Start restored a complete `active` generation 5.
+
+Full concurrent-media acceptance remains open, but the two initial diagnostics
+are now resolved at source. Android 0.4.3-dev proved the independent speaker
+sender actually delivered 1,000 datagrams / 500 packets / 240,000 rendered
+frames; the earlier zero was a foreground metrics-refresh defect. Windows
+endpoint properties prove the second same-name render device is the retired
+MicYou `WaveMicIngress`. Its presence also makes APO role selection order-
+dependent and can route the microphone graph through the render lock path,
+explaining the reproduced WASAPI `0x80070057`. ADR 0049 removes that endpoint
+and producer role. The signed 21.83 package is installed and exposes one active
+speaker plus one active microphone. Interactive-session acceptance opened the
+CapyIO microphone for 99 callbacks / 47,520 samples and measured live Android
+media at RMS `0.00795198`, peak `0.13494873`. A 21.84 float-pin experiment was
+rejected after making the capture endpoint `NOTPRESENT`; rollback restored
+21.83 without reboot. A single retained simultaneous-media evidence bundle
+remains pending.
+
+The subsequent UU Remote compatibility investigation ran the Android service
+in speaker-only mode: microphone state remained `STOPPED` with zero frames and
+packets, while eight seconds of Windows playback delivered 384,000 speaker
+frames through 800 packets / 1,600 datagrams with zero wrong-source, malformed,
+reassembly-eviction or queue-drop counters. The high-frequency remote sound is
+therefore not full-duplex feedback or native-LAN corruption. Source review
+confirms that the inherited SysVAD loopback capture stream generates a sine
+tone. ADR 0051 introduces a build-only 21.85 candidate that rejects this
+synthetic loopback while preserving offload render and the APO ring. Deployment
+and controlled-host regression remain pending explicit package approval.
+
+That approval was subsequently granted. Signed 21.85 installed without reboot
+as `oem179/oem180/oem181`, retaining signed 21.83 as
+`oem176/oem177/oem178`. One render and one capture endpoint enumerate `OK`,
+and the three Windows audio/Broker services are Running. Direct WASAPI
+loopback initialization now fails closed with `0x88890008`. Ordinary Windows
+playback added about 240,480 Android frames in five seconds with all reported
+transport error/drop counters at zero. A normal Windows capture client saw
+non-zero Android microphone samples in all 100 ms windows, including while the
+speaker test ran concurrently. Both directions stopped cleanly after the run.
+The owner subsequently confirmed normal Android playback through UU Remote and
+no recurrence of the high-frequency squeal.
+
+The apparent post-stop UDP restart failure was then isolated from CapyIO. With
+UU Remote running, every tested port in 45980--46030 returned Winsock 10048
+without an enumerated endpoint owner, including unused 46012. The 40000/40001/
+40010/40011 set remained available, so the controlled Android build and Windows
+service configuration moved there; the rejected `SO_REUSEADDR` experiment and
+temporary `socket2` dependency were removed. In the accepted restart sequence,
+generation 3 owned speaker/microphone PIDs 60340/56084, Stop removed both
+processes and ports, and generation 4 reacquired 40001/40011 with new PIDs
+2960/44928 while UU stayed running. Android reported microphone `ACTIVE` with
+6,016 generated/sent packets, 6,016 datagrams and zero queue drop, plus speaker
+`ACTIVE` with 34,614 received datagrams, 17,307 complete packets and zero
+source/format/reassembly/queue errors. The interactive Windows microphone probe
+again measured non-zero RMS/peak in every shown 100 ms window without saving
+audio. The owner's final UU listening confirmed normal phone playback without
+the previous squeal, so the controlled-host 21.85 acceptance is complete.

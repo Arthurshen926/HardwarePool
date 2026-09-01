@@ -17,14 +17,13 @@ use std::{
 use thiserror::Error;
 
 mod peer_presence;
-mod render_ring;
 mod supervisor;
 mod transport;
 
-pub use peer_presence::ReceiverTcpPresence;
 #[cfg(windows)]
-pub use render_ring::RenderRingConsumer;
-pub use render_ring::{RenderRingError, f32le_to_s16le};
+pub use capyio_windows_render_ring::RenderRingConsumer;
+pub use capyio_windows_render_ring::{RenderRingError, f32le_to_s16le};
+pub use peer_presence::ReceiverTcpPresence;
 pub use supervisor::{
     AudioShareSupervisor, ProcessExitReport, ProcessOutputSummary, SupervisorLimits,
     SupervisorStartReport, SupervisorStatus, SupervisorStopReport,

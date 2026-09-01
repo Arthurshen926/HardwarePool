@@ -130,6 +130,20 @@ unsupported metadata; MicYou declares an opaque external-process boundary and
 has no common-packet API. Sharing the seam does not turn either private
 AdapterManaged protocol into a StandardPort or make them interoperable.
 
+ADR 0044 adds a third `AdapterManaged` backend as a CapyIO-authored reference,
+not another compatibility wrapper. It consumes the complete common packet and
+preserves its metadata over a fixed, bounded UDP lab wire. Rust and Android
+implementations share a golden datagram, but the absence of peer
+authentication, encryption, replay defense and production loss/clock behavior
+prevents a StandardPort claim. Platform audio callbacks never own its socket;
+the fixed-capacity workers added by 001D2 mediate its Android composition.
+
+ADR 0045 implements that mediation on Android as exact PCM packetization,
+packet/aggregate-byte bounded queues, bounded reassembly and independently
+owned one-shot UDP workers. This remains an Adapter-internal lab mechanism;
+neither the Activity nor the current platform audio Adapters receive raw peer
+or Route authority in this slice.
+
 ## Failure isolation
 
 Adapter Host owns child process handles, stdin/stdout/stderr tasks, deadlines

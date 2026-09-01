@@ -2,21 +2,23 @@
 <resources>
     <string name="app_name">CapyIO</string>
     <string name="screen_title">CapyIO Audio Node</string>
-    <string name="screen_subtitle">本阶段只验证 Android 音频能力和独立生命周期；音频不会保存或通过网络发送。</string>
+    <string name="screen_subtitle">CapyIO 原生音频实验节点；麦克风与扬声器使用独立 Route 和统一媒体协议。</string>
     <string name="node_id_format">Node ID：%1$s</string>
     <string name="permission_ready">麦克风与通知权限已就绪</string>
     <string name="permission_required">启动麦克风需要录音与通知权限；启动扬声器需要通知权限。</string>
     <string name="permission_denied">权限未授予，能力没有启动。</string>
     <string name="microphone_title">麦克风 Source</string>
-    <string name="microphone_description">读取 AudioRecord 后立即丢弃；不保存、不上传。</string>
+    <string name="microphone_description">通过统一原生 LAN 后端发送 AudioRecord PCM；不保存、不记录音频内容。</string>
     <string name="speaker_title">扬声器 Sink</string>
-    <string name="speaker_description">打开 AudioTrack 并等待后续统一网络后端提供音频。</string>
+    <string name="speaker_description">通过统一原生 LAN 后端接收 PCM，并由独立工作线程写入 AudioTrack。</string>
     <string name="start">启动</string>
     <string name="stop">停止</string>
     <string name="state_format">状态：%1$s</string>
     <string name="format_pending">实际格式：尚未协商</string>
     <string name="format_value">实际格式：%1$d Hz / %2$d ch / %3$s / burst %4$d 帧</string>
     <string name="frames_format">已处理：%1$d 帧</string>
+    <string name="microphone_transport_format">网络：生成 %1$d 包 / 发送 %2$d 包 / %3$d 数据报 / 队列丢包 %4$d / 暂存 %5$d 字节</string>
+    <string name="speaker_transport_format">网络：接收 %1$d 数据报 / 错误来源 %2$d / 格式错误 %3$d / 完整包 %4$d / 重组淘汰 %5$d / 队列丢包 %6$d</string>
     <string name="problem_format">问题：%1$s</string>
     <string name="notification_channel_name">CapyIO 音频共享</string>
     <string name="notification_channel_description">显示正在使用的 CapyIO 麦克风或扬声器能力</string>

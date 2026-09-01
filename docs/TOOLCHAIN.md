@@ -25,13 +25,14 @@ difference is recorded in ADR 0007.
 - NDK and Rust Android targets when the later JNI slice requires them;
 - ADB and an explicitly designated physical device.
 
-The 001C project pins Gradle 9.5.0 by distribution SHA-256, Android Gradle Plugin
+The Android project pins Gradle 9.5.0 by distribution SHA-256, Android Gradle Plugin
 9.3.1, compile/target SDK 36, min SDK 26 and Java 17 source/target bytecode. The
 current host has SDK Platform 36, Build Tools 36.x and a compatible JDK. Run
 `cargo xtask android-check` for contract tests, Lint and debug APK assembly.
 This command never invokes ADB or installs/grants/starts anything on a device.
 Core CI continues to treat the SDK as optional and runs a static Android source
-contract when it is absent.
+contract when it is absent. ADR 0044's LAN codec/worker uses only Java platform
+network APIs and adds no Android runtime library.
 
 ## optional-windows-native
 
@@ -55,7 +56,9 @@ tools must never be auto-installed or executed on the daily-development host.
 ## optional-media
 
 FFmpeg, GStreamer, AOO, WebRTC stacks, codec SDKs, ROS 2, MCAP and USB/IP tools
-are future Adapter dependencies, not Core prerequisites.
+are future Adapter dependencies, not Core prerequisites. The 001D1 reference
+backend deliberately adds none of them; an AOO comparison remains a separately
+pinned Adapter spike.
 
 ## Windows session PATH note
 

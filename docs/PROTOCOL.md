@@ -70,6 +70,13 @@ PCM-payload-only or opaque access plus field fidelity and observable security;
 it is neither serialized in `capyio.v1` nor permission to claim a partial
 compatibility wire as a StandardPort.
 
+ADR 0044 defines `dev.capyio.audio.lan-lab/1`, a separate versioned UDP golden
+wire for transport conformance. It is not an Envelope payload, does not change
+`capyio.v1`, and is not a production/public StandardPort. Its header repeats
+the control-approved Session/Route/Stream/epoch so a bound endpoint can reject
+cross-Route data, but those unauthenticated fields are not proof of peer
+identity or authorization.
+
 ## Sidecar protocol
 
 Sidecar control is a separate JSON-RPC 2.0/NDJSON request/response contract on

@@ -31,8 +31,6 @@ const PROPERTYKEY kAudioEndpointAssociation =
     {0x1da5d803, 0xd492, 0x4edd, {0x8c, 0x23, 0xe0, 0xc0, 0xff, 0xee, 0x7f, 0x0e}},
     2
 };
-const GUID kCapyIoMicrophoneIngressCategory =
-    {0x6f13d5db, 0x0274, 0x4e66, {0xa1, 0x16, 0x34, 0x0b, 0x4c, 0x54, 0xeb, 0x38}};
 const GUID kMicrophoneCategory =
     {0xdff21be1, 0xf70f, 0x11d0, {0xb9, 0x17, 0x00, 0xa0, 0xc9, 0x22, 0x31, 0x96}};
 
@@ -66,11 +64,7 @@ MicrophoneBridgeRole GetMicrophoneBridgeRole(IMMDevice* endpoint)
     }
     if (hasAssociation)
     {
-        if (IsEqualGUID(association, kCapyIoMicrophoneIngressCategory))
-        {
-            role = MicrophoneBridgeRole::IngressProducer;
-        }
-        else if (IsEqualGUID(association, kMicrophoneCategory))
+        if (IsEqualGUID(association, kMicrophoneCategory))
         {
             role = MicrophoneBridgeRole::CaptureConsumer;
         }
@@ -186,15 +180,6 @@ STDMETHODIMP_(void) CSwapAPOSFX::APOProcess(
                     copied == 0 ? BUFFER_SILENT : BUFFER_VALID;
                 ppOutputConnections[0]->u32ValidFrameCount = frameCount;
                 break;
-            }
-
-            if (m_microphoneBridgeRole == MicrophoneBridgeRole::IngressProducer &&
-                ppInputConnections[0]->u32BufferFlags == BUFFER_VALID)
-            {
-                m_captureProducer.TryWrite(
-                    pf32InputFrames,
-                    frameCount,
-                    GetSamplesPerFrame());
             }
 
             // The producer performs one bounded copy into pre-mapped shared
@@ -390,12 +375,6 @@ STDMETHODIMP CSwapAPOSFX::LockForProcess(UINT32 u32NumInputConnections,
                 static_cast<std::uint32_t>(inputFormat.fFramesPerSecond),
                 inputFormat.dwSamplesPerFrame);
         }
-        else if (m_microphoneBridgeRole == MicrophoneBridgeRole::IngressProducer)
-        {
-            m_captureProducer.Attach(
-                static_cast<std::uint32_t>(inputFormat.fFramesPerSecond),
-                inputFormat.dwSamplesPerFrame);
-        }
         else
         {
             m_renderRing.Attach(
@@ -424,7 +403,6 @@ STDMETHODIMP CSwapAPOSFX::UnlockForProcess()
         m_bRegisteredEndpointVolumeCallback = FALSE;
     }
     m_renderRing.Detach();
-    m_captureProducer.Detach();
     m_captureConsumer.Detach();
     return CBaseAudioProcessingObject::UnlockForProcess();
 }

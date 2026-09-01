@@ -939,7 +939,13 @@ CMiniportWaveRT::ValidateStreamCreate
     {
         if (IsLoopbackPin(_Pin))
         {
-            VERIFY_PIN_INSTANCE_RESOURCES_AVAILABLE(ntStatus, m_ulLoopbackAllocated, m_ulMaxLoopbackStreams);
+            // CapyIO transports the real post-mix render PCM through the APO
+            // bridge. The upstream SysVAD loopback pin generates a synthetic
+            // tone, so an endpoint can explicitly reject that misleading path.
+            if (IsLoopbackSupported())
+            {
+                VERIFY_PIN_INSTANCE_RESOURCES_AVAILABLE(ntStatus, m_ulLoopbackAllocated, m_ulMaxLoopbackStreams);
+            }
         }
         else if (IsSystemCapturePin(_Pin) || IsCellularBiDiCapturePin(_Pin))
         {

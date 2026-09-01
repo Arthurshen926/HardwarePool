@@ -6,7 +6,7 @@ use std::sync::{
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    AudioShareSupervisor, BrokerProcess, BrokerServiceRuntime, BrokerServiceSnapshot,
+    BrokerProcess, BrokerServiceRuntime, BrokerServiceSnapshot, ServiceBrokerProcess,
     local_pipe::{NamedPipe, invoke, wake},
 };
 
@@ -95,7 +95,7 @@ impl BrokerServiceClient {
 }
 
 pub fn control_server_loop(
-    runtime: Arc<Mutex<BrokerServiceRuntime<AudioShareSupervisor>>>,
+    runtime: Arc<Mutex<BrokerServiceRuntime<ServiceBrokerProcess>>>,
     stop: Arc<AtomicBool>,
 ) -> Result<(), String> {
     let pipe = NamedPipe::create(CONTROL_PIPE_NAME, PIPE_SDDL)?;
@@ -173,7 +173,7 @@ mod tests {
     }
 
     impl BrokerProcess for FakeBroker {
-        fn start(&mut self) -> Result<(), String> {
+        fn start(&mut self) -> Result<(), &'static str> {
             self.running = true;
             Ok(())
         }

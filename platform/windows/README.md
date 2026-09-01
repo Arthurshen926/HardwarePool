@@ -15,10 +15,35 @@ Responsibilities:
 It must treat the driver as an untrusted privileged boundary and validate every IPC response before using it.
 
 `capyio-service` builds an SCM service host named `CapyIOBroker` that owns and
-reaps the dedicated virtual-speaker Broker. Its local-only, ACL-protected named
+reaps the dedicated native audio Brokers. Its local-only, ACL-protected named
 pipe accepts only bounded `status`, `start` and `stop` requests. CapyIO Desktop
 uses that boundary before its environment-configured development fallback, so
 normal use does not elevate Tauri and closing the window does not stop sharing.
+
+The service has two closed launch modes. The omitted/default mode retains the
+Audio Share compatibility Broker and its established-TCP activation evidence.
+`--mode native-speaker` launches `capyio-native-virtual-speaker` with explicit
+local and peer IPv4 socket addresses. The native supervisor requires the
+Broker's bounded readiness line before activation and reports
+`receiverPresent=false`: UDP process readiness is not evidence that Android is
+receiving. Android packet/render counters provide that separate evidence.
+
+Native mode may additionally supply one complete microphone child
+configuration. It launches `capyio-native-virtual-microphone`, which receives
+the fixed 48 kHz mono S16LE lab stream and writes the service-owned capture
+ring. All five microphone options are required together. Speaker startup is
+rolled back if microphone startup fails, and both children must remain alive.
+This mode is mutually exclusive with the MicYou capture producer.
+
+```text
+capyio-windows-service.exe --mode native-speaker \
+  --broker capyio-native-virtual-speaker.exe \
+  --bind-ip 100.64.x.y --port 46001 \
+  --peer-ip 100.64.a.b --peer-port 46000 \
+  --microphone-broker capyio-native-virtual-microphone.exe \
+  --microphone-bind-ip 100.64.x.y --microphone-port 46011 \
+  --microphone-peer-ip 100.64.a.b --microphone-peer-port 46010
+```
 
 The installed local-lab service can also be inspected directly:
 

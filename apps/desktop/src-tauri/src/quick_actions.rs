@@ -530,9 +530,9 @@ impl BrokerServiceProcess {
 fn service_supervisor_status(snapshot: BrokerServiceSnapshot) -> SupervisorStatus {
     match snapshot.state {
         BrokerServiceState::Stopped => SupervisorStatus::Stopped,
-        BrokerServiceState::WaitingForReceiver | BrokerServiceState::Active => {
-            SupervisorStatus::Running { process_id: 0 }
-        }
+        BrokerServiceState::Starting
+        | BrokerServiceState::WaitingForReceiver
+        | BrokerServiceState::Active => SupervisorStatus::Running { process_id: 0 },
         BrokerServiceState::Failed => SupervisorStatus::Exited(ProcessExitReport {
             exit_code: None,
             output: ProcessOutputSummary {
@@ -553,7 +553,9 @@ fn configured_host_process()
         if let Ok(snapshot) = client.status() {
             let was_running = matches!(
                 snapshot.state,
-                BrokerServiceState::WaitingForReceiver | BrokerServiceState::Active
+                BrokerServiceState::Starting
+                    | BrokerServiceState::WaitingForReceiver
+                    | BrokerServiceState::Active
             );
             return Ok((
                 TrustedAudioShareHostConfig {
