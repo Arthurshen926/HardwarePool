@@ -2,21 +2,35 @@
 import { computed, onMounted, onUnmounted, ref } from "vue";
 
 import RouteCard from "./components/RouteCard.vue";
+import GamepadSurface from "./components/GamepadSurface.vue";
+import GamepadTelemetry from "./components/GamepadTelemetry.vue";
 import QuickActionCard from "./components/QuickActionCard.vue";
 import StatusPill from "./components/StatusPill.vue";
 import { createCapyIOApi } from "./lib/api";
-import type { QuickActionOperation, UiAudioEndpointCatalog, UiLiveImu, UiQuickAction, UiRoute, UiSnapshot } from "./lib/types";
+import type { DsuProjectionMode, GamepadControlUpdate, QuickActionOperation, UiAudioEndpointCatalog, UiGamepadState, UiLiveImu, UiQuickAction, UiRoute, UiSnapshot, WindowsControllerKind } from "./lib/types";
 
 const api = createCapyIOApi();
 const snapshot = ref<UiSnapshot | null>(null);
 const busyRouteId = ref<string | null>(null);
 const loading = ref(true);
 const errorMessage = ref("");
-const view = ref<"quick" | "workspace">("quick");
+type PrimaryView = "quick" | "workspace" | "controller";
+const initialView = new URLSearchParams(window.location.search).get("view") === "controller" ? "controller" : "quick";
+const view = ref<PrimaryView>(initialView);
 const liveImu = ref<UiLiveImu | null>(null);
 const liveImuIp = ref("");
 const liveImuPort = ref(8080);
 const liveImuBusy = ref(false);
+const gamepad = ref<UiGamepadState | null>(null);
+const gamepadBusy = ref(false);
+const gamepadDsuPort = ref(26760);
+const gamepadDsuMode = ref<DsuProjectionMode>("motion_only");
+const gamepadDsuBusy = ref(false);
+const gamepadAndroidPort = ref(31580);
+const gamepadAndroidBusy = ref(false);
+const gamepadWindowsBusy = ref(false);
+const gamepadWindowsKind = ref<WindowsControllerKind>("dualshock4");
+const gamepadXinputCompanion = ref(false);
 const quickActions = ref<UiQuickAction[]>([]);
 const audioEndpoints = ref<UiAudioEndpointCatalog | null>(null);
 const busyActionId = ref<string | null>(null);
@@ -35,9 +49,10 @@ async function load(): Promise<void> {
   loading.value = true;
   errorMessage.value = "";
   try {
-    const [nextSnapshot, nextLiveImu, nextQuickActions, nextAudioEndpoints] = await Promise.all([api.getSnapshot(), api.getLiveImu(), api.getQuickActions(), api.getAudioEndpoints()]);
+    const [nextSnapshot, nextLiveImu, nextGamepad, nextQuickActions, nextAudioEndpoints] = await Promise.all([api.getSnapshot(), api.getLiveImu(), api.getGamepadState(), api.getQuickActions(), api.getAudioEndpoints()]);
     snapshot.value = nextSnapshot;
     liveImu.value = nextLiveImu;
+    gamepad.value = nextGamepad;
     quickActions.value = nextQuickActions;
     audioEndpoints.value = nextAudioEndpoints;
   }
@@ -85,6 +100,11 @@ async function refreshLiveImu(): Promise<void> {
   catch (error) { errorMessage.value = normalizeError(error); }
 }
 
+async function refreshGamepad(): Promise<void> {
+  try { gamepad.value = await api.getGamepadState(); }
+  catch (error) { errorMessage.value = normalizeError(error); }
+}
+
 async function startLiveImu(): Promise<void> {
   liveImuBusy.value = true;
   errorMessage.value = "";
@@ -112,9 +132,77 @@ async function toggleRoute(route: UiRoute): Promise<void> {
 async function resetDemo(): Promise<void> {
   loading.value = true;
   errorMessage.value = "";
-  try { snapshot.value = await api.resetDemo(); }
+  try {
+    snapshot.value = await api.resetDemo();
+    gamepad.value = await api.getGamepadState();
+  }
   catch (error) { errorMessage.value = normalizeError(error); }
   finally { loading.value = false; }
+}
+
+let gamepadUpdates = Promise.resolve();
+function updateGamepad(update: GamepadControlUpdate): void {
+  gamepadBusy.value = true;
+  gamepadUpdates = gamepadUpdates
+    .then(async () => { gamepad.value = await api.updateGamepadState(update); })
+    .catch((error: unknown) => { errorMessage.value = normalizeError(error); })
+    .finally(() => { gamepadBusy.value = false; });
+}
+
+async function startGamepadDsu(): Promise<void> {
+  gamepadDsuBusy.value = true;
+  errorMessage.value = "";
+  try { gamepad.value = await api.startGamepadDsu(gamepadDsuPort.value, gamepadDsuMode.value); }
+  catch (error) { errorMessage.value = normalizeError(error); }
+  finally { gamepadDsuBusy.value = false; }
+}
+
+async function stopGamepadDsu(): Promise<void> {
+  gamepadDsuBusy.value = true;
+  errorMessage.value = "";
+  try { gamepad.value = await api.stopGamepadDsu(); }
+  catch (error) { errorMessage.value = normalizeError(error); }
+  finally { gamepadDsuBusy.value = false; }
+}
+
+async function startAndroidGamepad(): Promise<void> {
+  gamepadAndroidBusy.value = true;
+  errorMessage.value = "";
+  try { gamepad.value = await api.startAndroidGamepad(gamepadAndroidPort.value); }
+  catch (error) { errorMessage.value = normalizeError(error); }
+  finally { gamepadAndroidBusy.value = false; }
+}
+
+async function stopAndroidGamepad(): Promise<void> {
+  gamepadAndroidBusy.value = true;
+  errorMessage.value = "";
+  try { gamepad.value = await api.stopAndroidGamepad(); }
+  catch (error) { errorMessage.value = normalizeError(error); }
+  finally { gamepadAndroidBusy.value = false; }
+}
+
+async function refreshWindowsGamepadPreflight(): Promise<void> {
+  gamepadWindowsBusy.value = true;
+  errorMessage.value = "";
+  try { gamepad.value = await api.refreshWindowsGamepadPreflight(gamepadWindowsKind.value); }
+  catch (error) { errorMessage.value = normalizeError(error); }
+  finally { gamepadWindowsBusy.value = false; }
+}
+
+async function startWindowsGamepadProjection(): Promise<void> {
+  gamepadWindowsBusy.value = true;
+  errorMessage.value = "";
+  try { gamepad.value = await api.startWindowsGamepadProjection(gamepadXinputCompanion.value); }
+  catch (error) { errorMessage.value = normalizeError(error); }
+  finally { gamepadWindowsBusy.value = false; }
+}
+
+async function stopWindowsGamepadProjection(): Promise<void> {
+  gamepadWindowsBusy.value = true;
+  errorMessage.value = "";
+  try { gamepad.value = await api.stopWindowsGamepadProjection(); }
+  catch (error) { errorMessage.value = normalizeError(error); }
+  finally { gamepadWindowsBusy.value = false; }
 }
 
 function normalizeError(error: unknown): string {
@@ -123,7 +211,7 @@ function normalizeError(error: unknown): string {
 
 onMounted(() => {
   void load();
-  livePoll = setInterval(() => { void refreshLiveImu(); void refreshQuickActions(); }, 500);
+  livePoll = setInterval(() => { void refreshLiveImu(); void refreshGamepad(); void refreshQuickActions(); }, 500);
 });
 onUnmounted(() => { if (livePoll) clearInterval(livePoll); });
 </script>
@@ -138,6 +226,7 @@ onUnmounted(() => { if (livePoll) clearInterval(livePoll); });
       <nav class="view-switch" aria-label="Primary views">
         <button type="button" :class="{ active: view === 'quick' }" @click="view = 'quick'">Quick Actions</button>
         <button type="button" :class="{ active: view === 'workspace' }" @click="view = 'workspace'">Workspace</button>
+        <button type="button" :class="{ active: view === 'controller' }" @click="view = 'controller'">Controller</button>
       </nav>
       <div class="topbar__actions">
         <StatusPill v-if="snapshot" :tone="snapshot.backendMode === 'tauri_demo' ? 'success' : 'warning'" :label="snapshot.backendMode" />
@@ -145,7 +234,7 @@ onUnmounted(() => { if (livePoll) clearInterval(livePoll); });
       </div>
     </header>
 
-    <section id="overview" class="hero-panel hero-panel--compact">
+    <section v-if="view !== 'controller'" id="overview" class="hero-panel hero-panel--compact">
       <div class="hero-panel__copy">
         <p class="eyebrow">Gate 5 groundwork · Fixture-first StandardPort</p>
         <h1>连接能力，不绑定设备角色。</h1>
@@ -163,13 +252,13 @@ onUnmounted(() => { if (livePoll) clearInterval(livePoll); });
       </div>
     </section>
 
-    <section v-if="snapshot?.warnings.length" class="warning-stack" aria-label="Warnings">
+    <section v-if="view !== 'controller' && snapshot?.warnings.length" class="warning-stack" aria-label="Warnings">
       <p v-for="warning in snapshot.warnings" :key="warning">{{ warning }}</p>
     </section>
     <p v-if="errorMessage" class="error-banner" role="alert">{{ errorMessage }}</p>
     <section v-if="loading && !snapshot" class="loading-panel">Loading Runtime snapshot…</section>
 
-    <section v-if="liveImu" class="info-panel imu-lab imu-live" aria-labelledby="imu-live-title">
+    <section v-if="view !== 'controller' && liveImu" class="info-panel imu-lab imu-live" aria-labelledby="imu-live-title">
       <header class="imu-lab__header">
         <div>
           <p class="eyebrow">Physical IMU lab · trusted LAN only</p>
@@ -204,7 +293,89 @@ onUnmounted(() => { if (livePoll) clearInterval(livePoll); });
       </div>
     </section>
 
-    <section v-if="snapshot?.imuFixture" class="info-panel imu-lab" aria-labelledby="imu-lab-title">
+    <section v-if="view === 'controller' && gamepad" class="info-panel gamepad-lab gamepad-lab--primary" aria-labelledby="gamepad-lab-title">
+      <header class="imu-lab__header">
+        <div>
+          <p class="eyebrow">CapyIO Controller · touch + motion composition</p>
+          <h1 id="gamepad-lab-title">触控体感手柄</h1>
+          <p>{{ gamepad.profile }} · epoch {{ gamepad.streamEpoch }} · sequence {{ gamepad.sequence ?? "尚未输入" }}</p>
+        </div>
+        <div class="gamepad-lab__actions">
+          <StatusPill :tone="gamepad.simulated ? 'warning' : 'success'" :label="gamepad.simulated ? 'simulated source' : 'android live source'" />
+          <button class="ghost-button" type="button" :disabled="gamepadBusy || gamepad.androidInput.status === 'listening' || gamepad.androidInput.status === 'connected'" @click="updateGamepad({ kind: 'reset' })">全部归零</button>
+        </div>
+      </header>
+      <p class="gamepad-lab__note">桌面模拟器和 Android 真机共用完整 <code>GamepadState</code> 检查器。Android 每个 UDP 数据报携带按键、摇杆、扳机与 IMU 完整快照；序列回退会被拒绝，超过 350ms 未收到数据会强制手柄归零。</p>
+      <div class="dsu-lab-bar android-lab-bar">
+        <div><span>Android controller input</span><strong>{{ gamepad.androidInput.lanHostHint ?? '本机局域网 IPv4' }}:{{ gamepadAndroidPort }} · token {{ gamepad.androidInput.pairingToken ?? '启动后生成' }}</strong></div>
+        <label>UDP 端口<input v-model.number="gamepadAndroidPort" type="number" min="1" max="65535" :disabled="gamepadAndroidBusy || gamepad.androidInput.status === 'listening' || gamepad.androidInput.status === 'connected'" /></label>
+        <button class="primary-button" type="button" :disabled="gamepadAndroidBusy || gamepad.androidInput.status === 'listening' || gamepad.androidInput.status === 'connected' || gamepad.dsuProjection.status === 'active'" @click="startAndroidGamepad">监听手机</button>
+        <button class="ghost-button" type="button" :disabled="gamepadAndroidBusy || !['listening', 'connected'].includes(gamepad.androidInput.status) || gamepad.dsuProjection.status === 'active'" @click="stopAndroidGamepad">停止监听</button>
+        <StatusPill :tone="gamepad.androidInput.status === 'connected' ? 'success' : gamepad.androidInput.status === 'failed' ? 'danger' : 'warning'" :label="gamepad.androidInput.status" />
+      </div>
+      <div class="dsu-stats" aria-label="Android controller input counters">
+        <span>Accepted <strong>{{ gamepad.androidInput.acceptedPackets }}</strong></span>
+        <span>Rejected <strong>{{ gamepad.androidInput.rejectedPackets }}</strong></span>
+        <span>Replay <strong>{{ gamepad.androidInput.replayedPackets }}</strong></span>
+        <span>Timeout <strong>{{ gamepad.androidInput.peerTimeouts }}</strong></span>
+        <span>Age <strong>{{ gamepad.androidInput.packetAgeMillis ?? '—' }} ms</strong></span>
+        <span>Remote seq <strong>{{ gamepad.androidInput.remoteSequence ?? '—' }}</strong></span>
+        <span>Last <strong>{{ gamepad.androidInput.lastEvent }}</strong></span>
+      </div>
+      <div class="dsu-lab-bar">
+        <div><span>DSU loopback projection</span><strong>{{ gamepad.dsuProjection.endpoint ?? "127.0.0.1 · 未启动" }}</strong></div>
+        <label>端口<input v-model.number="gamepadDsuPort" type="number" min="1" max="65535" :disabled="gamepadDsuBusy || gamepad.dsuProjection.status === 'active' || !gamepad.dsuProjection.supported" /></label>
+        <label>数据<select v-model="gamepadDsuMode" :disabled="gamepadDsuBusy || gamepad.dsuProjection.status === 'active' || !gamepad.dsuProjection.supported"><option value="motion_only">仅手机体感</option><option value="motion_and_controls">手机体感 + 触控按键</option></select></label>
+        <button class="primary-button" type="button" :disabled="gamepadDsuBusy || gamepad.dsuProjection.status === 'active' || !gamepad.dsuProjection.supported" @click="startGamepadDsu">启动 DSU</button>
+        <button class="ghost-button" type="button" :disabled="gamepadDsuBusy || gamepad.dsuProjection.status !== 'active'" @click="stopGamepadDsu">停止</button>
+        <StatusPill :tone="gamepad.dsuProjection.status === 'active' ? 'success' : gamepad.dsuProjection.status === 'failed' ? 'danger' : 'warning'" :label="gamepad.dsuProjection.status" />
+      </div>
+      <div class="dsu-stats" aria-label="DSU projection counters">
+        <span>Controls <strong>{{ gamepad.dsuProjection.controlsAccepted }} / {{ gamepad.dsuProjection.controlsSubmitted }}</strong></span>
+        <span>Mode <strong>{{ gamepad.dsuProjection.mode }}</strong></span>
+        <span>Subscribers <strong>{{ gamepad.dsuProjection.activeSubscribers }}</strong></span>
+        <span>Packets <strong>{{ gamepad.dsuProjection.padPacketsSent }}</strong></span>
+        <span>Queue full <strong>{{ gamepad.dsuProjection.controlsQueueFull }}</strong></span>
+        <span>Send errors <strong>{{ gamepad.dsuProjection.packetSendErrors }}</strong></span>
+        <span>Last <strong>{{ gamepad.dsuProjection.lastSubmit }}</strong></span>
+      </div>
+      <div class="dsu-lab-bar windows-gamepad-bar" aria-label="Windows virtual controller projection status">
+        <div>
+          <span>Windows virtual controller projection</span>
+          <strong>{{ gamepad.windowsProjection.deviceIdentity }} · {{ gamepad.windowsProjection.busId ?? '尚未创建 bus' }}</strong>
+        </div>
+        <label>设备<select v-model="gamepadWindowsKind" :disabled="gamepadWindowsBusy || gamepad.windowsProjection.status === 'active'"><option value="dualshock4">DualShock 4（原生体感）</option><option value="xbox360">Xbox 360（无原生体感）</option></select></label>
+        <div>
+          <span>Loopback boundaries</span>
+          <strong>VIIPER {{ gamepad.windowsProjection.viiperEndpoint ?? '—' }} · USB/IP {{ gamepad.windowsProjection.usbipEndpoint ?? '—' }}</strong>
+        </div>
+        <div>
+          <span>Owned USB/IP port</span>
+          <strong>{{ gamepad.windowsProjection.ownedUsbipPort ?? '—' }}</strong>
+        </div>
+        <div>
+          <span>Read-only preflight</span>
+          <strong>VIIPER {{ gamepad.windowsProjection.viiperReady ? 'ready' : '—' }} · USB/IP {{ gamepad.windowsProjection.usbipReady ? 'ready' : '—' }} · XInput runtime {{ gamepad.windowsProjection.xinputAvailable ? 'available' : '—' }} · active {{ gamepad.windowsProjection.xinputReady ? 'yes' : 'no' }} · exports {{ gamepad.windowsProjection.exportCount }}</strong>
+        </div>
+        <div>
+          <span>Complete-state ingress</span>
+          <strong>packets {{ gamepad.windowsProjection.inputPackets }} · non-neutral {{ gamepad.windowsProjection.nonNeutralPackets }} · DS4 rejected {{ gamepad.windowsProjection.ds4RejectedPackets }} · XInput {{ gamepad.windowsProjection.xinputPackets }} · offline {{ gamepad.windowsProjection.inputOfflineEvents }} · remote seq {{ gamepad.windowsProjection.lastRemoteSequence ?? '—' }}</strong>
+        </div>
+        <button class="ghost-button" type="button" :disabled="gamepadWindowsBusy || !gamepad.windowsProjection.supported || gamepad.windowsProjection.status === 'active'" @click="refreshWindowsGamepadPreflight">{{ gamepadWindowsBusy ? '检查中…' : '只读预检' }}</button>
+        <label><input v-model="gamepadXinputCompanion" type="checkbox" :disabled="gamepadWindowsBusy || gamepad.windowsProjection.status === 'active' || !gamepad.windowsProjection.xinputAvailable" /> Direct XInput 兼容设备</label>
+        <button v-if="gamepad.windowsProjection.status !== 'active'" class="primary-button" type="button" :disabled="gamepadWindowsBusy || gamepadWindowsKind !== 'dualshock4' || !gamepad.androidInput.endpoint" @click="startWindowsGamepadProjection">启动 DS4</button>
+        <button v-else class="danger-button" type="button" :disabled="gamepadWindowsBusy" @click="stopWindowsGamepadProjection">停止 DS4</button>
+        <StatusPill :tone="gamepad.windowsProjection.status === 'active' ? 'success' : gamepad.windowsProjection.status === 'failed' || gamepad.windowsProjection.status === 'offline' ? 'danger' : 'warning'" :label="gamepad.windowsProjection.status" />
+      </div>
+      <p v-if="gamepad.windowsProjection.problem" class="error-banner" role="status"><strong v-if="gamepad.windowsProjection.problemCode">{{ gamepad.windowsProjection.problemCode }} · </strong>{{ gamepad.windowsProjection.problem }}</p>
+      <p class="gamepad-lab__note">默认只发布完整 DS4：其按键、摇杆与 IMU 已通过 Windows Raw HID/WGI 动态报告验证，适合 Steam 的 PlayStation 支持与 DS4-aware 应用。Direct XInput 兼容设备仅供直接调用 XInput 的旧游戏显式启用；本机验证显示虚拟 Xbox 在 WGI 中可枚举但不会更新，因此不建议为 Steam 或浏览器启用。停止会先发送安全中立态，再精确卸载本次拥有的设备；此入口不安装或卸载驱动，也不触发重启。</p>
+      <div class="gamepad-lab__grid">
+        <div><h3>{{ gamepad.simulated ? 'Desktop virtual input source' : 'Android input mirror' }}</h3><GamepadSurface :state="gamepad" :disabled="!gamepad.simulated" @update="updateGamepad" /></div>
+        <div><h3>PC live inspector</h3><GamepadTelemetry :state="gamepad" /></div>
+      </div>
+    </section>
+
+    <section v-if="view !== 'controller' && snapshot?.imuFixture" class="info-panel imu-lab" aria-labelledby="imu-lab-title">
       <header class="imu-lab__header">
         <div>
           <p class="eyebrow">IMU StandardPort lab</p>
@@ -280,7 +451,7 @@ onUnmounted(() => { if (livePoll) clearInterval(livePoll); });
       </article>
     </template>
 
-    <section class="lower-grid">
+    <section v-if="view !== 'controller'" class="lower-grid">
       <article class="info-panel">
         <p class="eyebrow">Architecture contract</p><h2>共享语义，隔离平台实现</h2>
         <ol class="contract-list">
@@ -296,6 +467,6 @@ onUnmounted(() => { if (livePoll) clearInterval(livePoll); });
       </article>
     </section>
 
-    <footer class="app-footer"><span>CapyIO pre-alpha</span><span>Protocol 1.0 · IMU fixture + physical lab</span><span>Live ws:// is trusted-LAN development only</span></footer>
+    <footer v-if="view !== 'controller'" class="app-footer"><span>CapyIO pre-alpha</span><span>Protocol 1.0 · IMU fixture + physical lab</span><span>Live ws:// is trusted-LAN development only</span></footer>
   </main>
 </template>

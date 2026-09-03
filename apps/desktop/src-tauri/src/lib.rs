@@ -27,23 +27,49 @@ use capyio_testkit::DemoLab;
 use serde::{Deserialize, Serialize};
 use tauri::State;
 
+mod android_gamepad;
 pub mod audio_share_runtime;
+mod gamepad_lab;
 mod physical_imu_runtime;
 mod quick_actions;
+mod windows_gamepad_host;
 
+use gamepad_lab::{GamepadLab, UiGamepadState, UpdateGamepadRequest};
 use physical_imu_runtime::PhysicalImuRoute;
 use quick_actions::{
     AudioShareQuickAction, InvokeQuickActionRequest, SelectAudioEndpointRequest,
     UiAudioEndpointCatalog, UiQuickAction,
 };
+use windows_gamepad_host::WindowsGamepadHost;
 
 struct AppState {
     lab: Arc<Mutex<DemoLab>>,
     physical_imu: PhysicalImuRoute,
     live_imu: Arc<Mutex<UiLiveImu>>,
     live_imu_controller: Mutex<Option<LiveImuController>>,
+    gamepad_lab: Arc<Mutex<GamepadLab>>,
+    gamepad_worker: GamepadProjectionWorker,
+    windows_gamepad_preflight_running: AtomicBool,
     audio_share: Arc<Mutex<AudioShareQuickAction>>,
     audio_worker: AudioQuickActionWorker,
+}
+
+struct AtomicSingleFlight<'a> {
+    flag: &'a AtomicBool,
+}
+
+impl<'a> AtomicSingleFlight<'a> {
+    fn acquire(flag: &'a AtomicBool, busy_message: &'static str) -> Result<Self, String> {
+        flag.compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
+            .map_err(|_| busy_message.to_owned())?;
+        Ok(Self { flag })
+    }
+}
+
+impl Drop for AtomicSingleFlight<'_> {
+    fn drop(&mut self) {
+        self.flag.store(false, Ordering::Release);
+    }
 }
 
 impl Drop for AppState {
@@ -57,6 +83,13 @@ impl Drop for AppState {
         self.audio_worker.stop.store(true, Ordering::Release);
         if let Some(worker) = self.audio_worker.worker.take() {
             let _ = worker.join();
+        }
+        self.gamepad_worker.stop.store(true, Ordering::Release);
+        if let Some(worker) = self.gamepad_worker.worker.take() {
+            let _ = worker.join();
+        }
+        if let (Ok(mut lab), Ok(mut gamepad)) = (self.lab.lock(), self.gamepad_lab.lock()) {
+            let _ = gamepad.stop_windows_projection(&mut lab.runtime);
         }
         if let Ok(mut audio_share) = self.audio_share.lock()
             && let Ok(mut lab) = self.lab.lock()
@@ -76,11 +109,41 @@ struct AudioQuickActionWorker {
     worker: Option<JoinHandle<()>>,
 }
 
+struct GamepadProjectionWorker {
+    stop: Arc<AtomicBool>,
+    worker: Option<JoinHandle<()>>,
+}
+
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 struct StartLiveImuRequest {
     ip: String,
     port: u16,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct StartGamepadDsuRequest {
+    port: u16,
+    mode: gamepad_lab::UiDsuMode,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct StartAndroidGamepadRequest {
+    port: u16,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct RefreshWindowsGamepadPreflightRequest {
+    controller_kind: windows_gamepad_host::UiWindowsControllerKind,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct StartWindowsGamepadProjectionRequest {
+    enable_xinput_companion: bool,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -299,6 +362,10 @@ fn reset_demo(state: State<'_, AppState>) -> Result<UiSnapshot, String> {
     *lab = DemoLab::new().map_err(|error| error.to_string())?;
     let session_id = lab.session_id;
     PhysicalImuRoute::install(&mut lab.runtime, session_id)?;
+    *state
+        .gamepad_lab
+        .lock()
+        .map_err(|_| "gamepad lab state lock poisoned".to_owned())? = GamepadLab::new()?;
     Ok(to_ui_snapshot(&lab))
 }
 
@@ -358,6 +425,116 @@ fn get_live_imu(state: State<'_, AppState>) -> Result<UiLiveImu, String> {
         .lock()
         .map_err(|_| "live IMU state lock poisoned".to_owned())
         .map(|snapshot| snapshot.clone())
+}
+
+#[tauri::command]
+fn get_gamepad_state(state: State<'_, AppState>) -> Result<UiGamepadState, String> {
+    state
+        .gamepad_lab
+        .lock()
+        .map_err(|_| "gamepad lab state lock poisoned".to_owned())
+        .map(|lab| lab.snapshot())
+}
+
+#[tauri::command]
+async fn refresh_windows_gamepad_preflight(
+    request: RefreshWindowsGamepadPreflightRequest,
+    state: State<'_, AppState>,
+) -> Result<UiGamepadState, String> {
+    let _single_flight = AtomicSingleFlight::acquire(
+        &state.windows_gamepad_preflight_running,
+        "Windows gamepad preflight is already running",
+    )?;
+    let projection = tauri::async_runtime::spawn_blocking(move || {
+        windows_gamepad_host::probe_read_only(request.controller_kind)
+    })
+    .await
+    .map_err(|_| "Windows gamepad preflight worker panicked".to_owned())?;
+    Ok(state
+        .gamepad_lab
+        .lock()
+        .map_err(|_| "gamepad lab state lock poisoned".to_owned())?
+        .apply_windows_preflight(projection))
+}
+
+#[tauri::command]
+fn update_gamepad_state(
+    request: UpdateGamepadRequest,
+    state: State<'_, AppState>,
+) -> Result<UiGamepadState, String> {
+    state
+        .gamepad_lab
+        .lock()
+        .map_err(|_| "gamepad lab state lock poisoned".to_owned())?
+        .apply(request)
+}
+
+#[tauri::command]
+fn start_gamepad_dsu(
+    request: StartGamepadDsuRequest,
+    state: State<'_, AppState>,
+) -> Result<UiGamepadState, String> {
+    if request.port == 0 {
+        return Err("DSU port must be non-zero".to_owned());
+    }
+    state
+        .gamepad_lab
+        .lock()
+        .map_err(|_| "gamepad lab state lock poisoned".to_owned())?
+        .start_dsu_mode(request.port, request.mode)
+}
+
+#[tauri::command]
+fn stop_gamepad_dsu(state: State<'_, AppState>) -> Result<UiGamepadState, String> {
+    state
+        .gamepad_lab
+        .lock()
+        .map_err(|_| "gamepad lab state lock poisoned".to_owned())?
+        .stop_dsu()
+}
+
+#[tauri::command]
+fn start_android_gamepad(
+    request: StartAndroidGamepadRequest,
+    state: State<'_, AppState>,
+) -> Result<UiGamepadState, String> {
+    state
+        .gamepad_lab
+        .lock()
+        .map_err(|_| "gamepad lab state lock poisoned".to_owned())?
+        .start_android(request.port)
+}
+
+#[tauri::command]
+fn stop_android_gamepad(state: State<'_, AppState>) -> Result<UiGamepadState, String> {
+    state
+        .gamepad_lab
+        .lock()
+        .map_err(|_| "gamepad lab state lock poisoned".to_owned())?
+        .stop_android()
+}
+
+#[tauri::command]
+fn start_windows_gamepad_projection(
+    request: StartWindowsGamepadProjectionRequest,
+    state: State<'_, AppState>,
+) -> Result<UiGamepadState, String> {
+    let mut lab = state.lab.lock().map_err(|_| "demo state lock poisoned")?;
+    state
+        .gamepad_lab
+        .lock()
+        .map_err(|_| "gamepad lab state lock poisoned".to_owned())?
+        .start_windows_projection(&mut lab.runtime, request.enable_xinput_companion)
+}
+
+#[tauri::command]
+fn stop_windows_gamepad_projection(state: State<'_, AppState>) -> Result<UiGamepadState, String> {
+    let mut lab = state.lab.lock().map_err(|_| "demo state lock poisoned")?;
+    state
+        .gamepad_lab
+        .lock()
+        .map_err(|_| "gamepad lab state lock poisoned".to_owned())?
+        .stop_windows_projection(&mut lab.runtime)
 }
 
 #[tauri::command]
@@ -656,6 +833,54 @@ fn read_live_sensor(
     client.close().map_err(|error| error.to_string())
 }
 
+/// Debug-only operator-assisted physical Android -> DSU gate.
+#[cfg(debug_assertions)]
+pub fn run_gamepad_physical_gate(android_port: u16, dsu_port: u16) -> Result<(), String> {
+    gamepad_lab::run_physical_gamepad_gate(android_port, dsu_port)
+}
+
+/// Debug-only Runtime-owned physical Android -> Windows DS4 Gate.
+#[cfg(debug_assertions)]
+pub fn run_windows_ds4_runtime_gate(android_port: u16, hold_seconds: u64) -> Result<(), String> {
+    gamepad_lab::run_windows_ds4_runtime_gate(android_port, hold_seconds)
+}
+
+/// Debug-only Runtime-owned physical Android -> Windows DS4-only Gate.
+#[cfg(debug_assertions)]
+pub fn run_windows_ds4_only_runtime_gate(
+    android_port: u16,
+    hold_seconds: u64,
+) -> Result<(), String> {
+    gamepad_lab::run_windows_ds4_only_runtime_gate(android_port, hold_seconds)
+}
+
+/// Debug-only operator-assisted physical Android -> DSU + VIIPER gate.
+#[cfg(debug_assertions)]
+pub fn run_gamepad_viiper_physical_gate(
+    android_port: u16,
+    dsu_port: u16,
+    viiper_port: u16,
+    hold_seconds: u64,
+) -> Result<(), String> {
+    gamepad_lab::run_physical_viiper_gamepad_gate(android_port, dsu_port, viiper_port, hold_seconds)
+}
+
+/// Debug-only operator-assisted physical Android touch+IMU -> native DS4 gate.
+#[cfg(debug_assertions)]
+pub fn run_gamepad_ds4_physical_gate(
+    android_port: u16,
+    viiper_port: u16,
+    hold_seconds: u64,
+) -> Result<(), String> {
+    gamepad_lab::run_physical_ds4_gamepad_gate(android_port, viiper_port, hold_seconds)
+}
+
+/// Debug-only fixed-config read-only Windows gamepad host preflight.
+#[cfg(debug_assertions)]
+pub fn run_windows_gamepad_read_only_preflight() -> Result<(), String> {
+    windows_gamepad_host::run_read_only_preflight_gate()
+}
+
 pub fn run() {
     let mut lab = DemoLab::new().expect("valid deterministic demo lab");
     let session_id = lab.session_id;
@@ -666,6 +891,11 @@ pub fn run() {
         &mut lab.runtime,
         session_id,
     )));
+    let windows_host = WindowsGamepadHost::install(&mut lab.runtime, session_id)
+        .expect("valid fixed Windows gamepad host configuration");
+    let gamepad_lab = Arc::new(Mutex::new(
+        GamepadLab::new_with_windows_host(windows_host).expect("valid gamepad simulator"),
+    ));
     let lab = Arc::new(Mutex::new(lab));
     let audio_stop = Arc::new(AtomicBool::new(false));
     let worker_stop = Arc::clone(&audio_stop);
@@ -681,12 +911,33 @@ pub fn run() {
             thread::sleep(Duration::from_millis(250));
         }
     });
+    let gamepad_stop = Arc::new(AtomicBool::new(false));
+    let worker_stop = Arc::clone(&gamepad_stop);
+    let worker_gamepad = Arc::clone(&gamepad_lab);
+    let worker_lab = Arc::clone(&lab);
+    let gamepad_worker = thread::Builder::new()
+        .name("capyio-windows-gamepad".to_owned())
+        .spawn(move || {
+            while !worker_stop.load(Ordering::Acquire) {
+                if let (Ok(mut lab), Ok(mut gamepad)) = (worker_lab.lock(), worker_gamepad.lock()) {
+                    gamepad.poll_windows_projection(&mut lab.runtime);
+                }
+                thread::sleep(Duration::from_millis(4));
+            }
+        })
+        .expect("start Windows gamepad projection worker");
     tauri::Builder::default()
         .manage(AppState {
             lab,
             physical_imu,
             live_imu: Arc::new(Mutex::new(live_imu)),
             live_imu_controller: Mutex::new(None),
+            gamepad_lab,
+            gamepad_worker: GamepadProjectionWorker {
+                stop: gamepad_stop,
+                worker: Some(gamepad_worker),
+            },
+            windows_gamepad_preflight_running: AtomicBool::new(false),
             audio_share,
             audio_worker: AudioQuickActionWorker {
                 stop: audio_stop,
@@ -700,6 +951,15 @@ pub fn run() {
             get_live_imu,
             start_live_imu,
             stop_live_imu,
+            get_gamepad_state,
+            refresh_windows_gamepad_preflight,
+            update_gamepad_state,
+            start_gamepad_dsu,
+            stop_gamepad_dsu,
+            start_android_gamepad,
+            stop_android_gamepad,
+            start_windows_gamepad_projection,
+            stop_windows_gamepad_projection,
             get_quick_actions,
             invoke_quick_action,
             get_audio_endpoints,
@@ -1003,6 +1263,15 @@ mod tests {
         assert_eq!(snapshot.stream_epoch, 0);
         assert!(snapshot.acceleration.is_none());
         assert!(snapshot.problem.is_none());
+    }
+
+    #[test]
+    fn windows_preflight_single_flight_is_bounded_and_released_by_drop() {
+        let flag = AtomicBool::new(false);
+        let first = AtomicSingleFlight::acquire(&flag, "busy").expect("first permit");
+        assert!(AtomicSingleFlight::acquire(&flag, "busy").is_err());
+        drop(first);
+        assert!(AtomicSingleFlight::acquire(&flag, "busy").is_ok());
     }
 
     #[test]

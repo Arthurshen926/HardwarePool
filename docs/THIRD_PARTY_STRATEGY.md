@@ -20,15 +20,25 @@ license text under `LICENSES/`.
 
 ## Current status
 
-MicYou, VCamdroid, VIIPER, scrcpy and Sunshine/Moonlight remain planning
-candidates. SensorServer is the first reviewed external-service protocol
-boundary. Audio Share v0.3.4 is the first reviewed external-process
-`AdapterManaged` audio boundary: its repository, commit, Apache-2.0 license and
-official release hashes are recorded, but no upstream source or binary is
-included. The official Windows executable is not Authenticode signed, so the
-current lab uses only a user-supplied, hash-verified artifact and makes no
-distribution claim. A README, protocol mapping or physical lab run does not
-imply endorsement or production security.
+MicYou, VCamdroid, scrcpy and Sunshine/Moonlight remain planning candidates.
+VIIPER v0.7.0 is now a fixed-revision protocol reference for a standalone
+external-process TCP Adapter; no source, generated client, library, binary or
+USB/IP driver is imported. Its network surface is an exact-version, bounded
+loopback probe plus an ADR-0042-owned Xbox session using workspace `serde`,
+`serde_json` and `thiserror`. The Windows input layer composes that session
+with a typed Runtime Route but fixture tests remain the only execution
+evidence. Mutation requires an explicit assertion that upstream localhost
+auto-attach was disabled; real-process proof remains a later lab boundary. Its
+GPL-3.0-or-later program license, external-process
+rationale and documented usbip-win2 trusted-root risk are recorded before
+implementation. SensorServer is the first reviewed
+external-service protocol boundary. Audio Share v0.3.4 is the first reviewed
+external-process `AdapterManaged` audio boundary: its repository, commit,
+Apache-2.0 license and official release hashes are recorded, but no upstream
+source or binary is included. The official Windows executable is not
+Authenticode signed, so the current lab uses only a user-supplied, hash-verified
+artifact and makes no distribution claim. A README, protocol mapping or
+physical lab run does not imply endorsement or production security.
 
 Microsoft SysVAD remains the reviewed toolchain and endpoint-enumeration
 starting point for the dedicated Windows virtual-speaker work. Its synthetic

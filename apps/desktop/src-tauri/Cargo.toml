@@ -21,9 +21,13 @@ tauri-build = { version = "2.6.2", features = [] }
 capyio-audio-share-adapter = { path = "../../../adapters/audio-share" }
 capyio-core = { path = "../../../crates/capyio-core" }
 capyio-data-plane = { path = "../../../crates/capyio-data-plane" }
+capyio-dsu-adapter = { path = "../../../adapters/dsu" }
+capyio-input = { path = "../../../crates/capyio-input" }
 capyio-runtime = { path = "../../../crates/capyio-runtime" }
 capyio-sensor-server-adapter = { path = "../../../adapters/sensor-server" }
 capyio-testkit = { path = "../../../crates/capyio-testkit" }
+capyio-viiper-adapter = { path = "../../../adapters/viiper" }
+capyio-windows-input = { path = "../../../platform/windows/capyio-input" }
 capyio-windows-service = { path = "../../../platform/windows/capyio-service" }
 serde.workspace = true
 serde_json.workspace = true

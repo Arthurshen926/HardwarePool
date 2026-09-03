@@ -117,6 +117,18 @@ Quick Actions select Route Templates. Workspace exposes the technical graph.
 The WebView sees narrow DTO commands only and has no arbitrary shell/filesystem
 power.
 
+The built-in Controller view is shared presentation code for desktop and a
+future Android host. It emits closed semantic control changes; a trusted host
+owns stream identity, epoch, sequence and complete-state composition. Desktop
+may expose an explicitly simulated Controller source and IPv4-loopback DSU
+diagnostic, but that fixture is not a peer data plane or Runtime Route claim.
+Its Windows status surface may also request one parameter-free read-only host
+preflight. Fixed host configuration probes the pinned VIIPER identity and
+usbip-win2 Xbox export list; the WebView cannot supply an executable, endpoint,
+bus or attachment port and cannot reach any mutation through this command. The
+probe is single-flight and runs outside the shared gamepad-state lock; only its
+finished immutable status projection is published to the UI.
+
 ## 5. Repository module graph
 
 ```text
@@ -163,6 +175,26 @@ Dependency rules:
 - `capyio-input` defines normalized pointer/touch/keyboard/gamepad/haptics
   semantics and allocation-free epoch/sequence guards. It does not inject
   input, implement DSU/VIIPER/HID/USB-IP or depend on a platform SDK.
+- `capyio-windows-input` is the host composition boundary for DSU and VIIPER
+  Projections. The DSU path registers a typed StandardPort IMU sink, owns one
+  bounded IPv4-loopback Worker per Runtime `ExternalProtocol` Route and
+  activates only after bind plus exact-epoch anchor validation. The VIIPER path
+  registers a typed gamepad sink and activates only after provisioning plus
+  initial neutral succeed. Both complete cleanup before Offline/Stopped,
+  retries use a new Route epoch, and unrelated Routes are never mutated as a
+  side effect. The SensorServer-to-DSU executable is an explicit physical-lab
+  surface, not a production UI/data-plane transport.
+- Its optional usbip-win2 owner is also user mode: it launches one absolute
+  pinned CLI directly, never through a shell; accepts only IPv4 loopback and
+  the VIIPER-derived Xbox 360 export; bounds process time/output; attaches with
+  no persistent retry; and retains one exact hub port. A USB/IP-enabled Route
+  does not become Active until attachment succeeds. Stop writes neutral before
+  exact-port detach and owned-bus removal. Driver install/remove, reboot and
+  boot/security policy remain outside the Runtime Route.
+- A separate read-only desktop preflight reuses those bounds but returns only
+  exact Xbox 360 exports and sanitized readiness. Zero matches is not an error,
+  one match is visible as `export_ready`, and multiple matches fail closed. It
+  neither selects an export for attachment nor owns a Route lifecycle.
 - VCamdroid-compatible encoded video remains an `AdapterManaged` private data
   plane until a complete codec/access-unit contract and explicit decode
   Converter produce `capyio.video.frames/1`.
@@ -311,8 +343,18 @@ fallback when the service boundary is absent.
 
 Android platform code owns permissions, microphone indicators, foreground
 service, audio focus/routing and hardware APIs. Activity/window lifecycle is not
-session lifecycle. The current foundation contains no permission or service
-implementation and makes no hardware claim.
+session lifecycle.
+
+The separately packaged Controller Lab is a narrow physical-input spike while
+the unified Android Node host is still in flight. Its Activity owns only a
+visible touch surface and registers accelerometer/gyroscope callbacks while the
+foreground lab stream is active. Sensor callbacks copy finite values into one
+bounded snapshot and never perform network or UI work. A dedicated sender emits
+a closed complete-state version-1 UDP frame; it does not mirror Rust memory or
+claim a StandardPort production transport. The desktop host validates and maps
+that frame into independent `GamepadState` and IMU contracts, then feeds the
+existing loopback-only DSU Projection. This lab boundary is designed to move
+behind the common Android module registry without changing portable contracts.
 
 ## 13. Failure isolation
 

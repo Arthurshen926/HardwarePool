@@ -294,6 +294,149 @@ a:focus-visible {
   background: linear-gradient(145deg, rgba(238, 250, 246, 0.94), rgba(255, 255, 255, 0.82));
 }
 
+.gamepad-lab {
+  margin-top: 20px;
+  border-color: rgba(18, 75, 52, 0.18);
+  background: linear-gradient(145deg, rgba(247, 252, 249, 0.96), rgba(235, 246, 239, 0.86));
+}
+
+.gamepad-lab--primary {
+  min-height: calc(100vh - 110px);
+  margin-top: 30px;
+}
+
+.gamepad-lab--primary h1 {
+  margin: 0;
+  font-size: clamp(32px, 5vw, 58px);
+  letter-spacing: -0.045em;
+}
+
+.gamepad-lab__actions {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+}
+
+.gamepad-lab__note {
+  margin: 18px 0 0;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.65;
+}
+
+.gamepad-lab__note code {
+  padding: 2px 5px;
+  border-radius: 5px;
+  color: var(--accent-dark);
+  background: rgba(11, 118, 80, 0.08);
+}
+
+.dsu-lab-bar {
+  display: grid;
+  grid-template-columns: minmax(220px, 1fr) 120px auto auto auto;
+  gap: 10px;
+  align-items: end;
+  padding: 14px;
+  margin-top: 16px;
+  border: 1px solid var(--line);
+  border-radius: 16px;
+  background: rgba(255, 255, 255, 0.6);
+}
+
+.android-lab-bar {
+  border-color: rgba(21, 110, 81, 0.24);
+  background: linear-gradient(100deg, rgba(225, 247, 238, 0.86), rgba(255, 255, 255, 0.64));
+}
+
+.windows-gamepad-bar {
+  grid-template-columns: minmax(220px, 1.25fr) minmax(230px, 1fr) 110px minmax(180px, 0.8fr) auto auto;
+  align-items: center;
+  border-color: rgba(69, 88, 153, 0.2);
+  background: linear-gradient(100deg, rgba(237, 241, 255, 0.82), rgba(255, 255, 255, 0.64));
+}
+
+.windows-gamepad-bar > div strong {
+  overflow-wrap: anywhere;
+}
+
+.android-lab-bar > div strong {
+  overflow-wrap: anywhere;
+  font-variant-numeric: tabular-nums;
+}
+
+.dsu-lab-bar > div span,
+.dsu-lab-bar > div strong {
+  display: block;
+}
+
+.dsu-lab-bar > div span,
+.dsu-lab-bar label {
+  color: var(--muted);
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+}
+
+.dsu-lab-bar > div strong {
+  margin-top: 5px;
+  font-size: 12px;
+}
+
+.dsu-lab-bar label {
+  display: grid;
+  gap: 5px;
+}
+
+.dsu-lab-bar input {
+  width: 100%;
+  padding: 9px 10px;
+  border: 1px solid var(--line);
+  border-radius: 9px;
+  background: white;
+  font: inherit;
+}
+
+.dsu-stats {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 10px;
+}
+
+.dsu-stats span {
+  padding: 7px 9px;
+  border-radius: 9px;
+  color: var(--muted);
+  background: rgba(11, 118, 80, 0.07);
+  font-size: 9px;
+  text-transform: uppercase;
+}
+
+.dsu-stats strong {
+  color: var(--ink);
+  font-variant-numeric: tabular-nums;
+}
+
+.gamepad-lab__grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1.45fr) minmax(480px, 0.8fr);
+  gap: 18px;
+  margin-top: 18px;
+}
+
+.gamepad-lab__grid > div {
+  min-width: 0;
+}
+
+.gamepad-lab__grid h3 {
+  margin: 0 0 10px;
+  color: var(--muted);
+  font-size: 11px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
 .imu-live__controls {
   display: grid;
   grid-template-columns: minmax(220px, 1fr) 120px auto auto;
@@ -886,7 +1029,8 @@ button:disabled {
   .capability-grid,
   .lower-grid,
   .workspace-grid,
-  .imu-lab__grid {
+  .imu-lab__grid,
+  .gamepad-lab__grid {
     grid-template-columns: 1fr;
   }
 
@@ -902,6 +1046,14 @@ button:disabled {
 
   .view-switch button {
     flex: 1;
+  }
+
+  .dsu-lab-bar {
+    grid-template-columns: 1fr 120px auto auto;
+  }
+
+  .dsu-lab-bar > div {
+    grid-column: 1 / -1;
   }
 }
 
@@ -939,11 +1091,23 @@ button:disabled {
     grid-template-columns: 1fr;
   }
 
+  .dsu-lab-bar {
+    grid-template-columns: 1fr;
+  }
+
+  .dsu-lab-bar > div {
+    grid-column: auto;
+  }
+
   .section-heading,
   .capability-card__footer,
   .imu-lab__header {
     align-items: stretch;
     flex-direction: column;
+  }
+
+  .gamepad-lab__actions {
+    justify-content: space-between;
   }
 
   .capability-card__header {

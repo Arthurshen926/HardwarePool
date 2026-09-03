@@ -236,11 +236,230 @@ planned_integrations:
       slice. A user-installed unmodified app is an external GPL-3.0-only
       service. Distribution and legal review remain required before bundling.
   - id: viiper
-    upstream_repository: null
-    pinned_revision: null
-    license: pending_verification
-    integration_mode: planned_sidecar
+    upstream_repository: https://github.com/Alia5/VIIPER
+    pinned_revision: 6b71b148a2243fab77ee1a46f4e22e00bd7d5a04
+    pinned_release: v0.7.0
+    license: GPL-3.0-or-later
+    license_source: https://github.com/Alia5/VIIPER/blob/v0.7.0/LICENSE.txt
+    integration_mode: external_process_tcp_api
     source_imported: false
+    binary_imported: false
+    upstream_client_libraries_imported: false
+    imported_paths: []
+    local_modifications: []
+    experimental_local_lab_review:
+      upstream_revision: 88f66f1ed0c3716c78f810d92b1924112093f896
+      compatibility_version: 0.7.0-capyio-88f66f1
+      relevant_upstream_commit: 7e33d2d3e6a30041ce12b5d30b444827985fd171
+      source_archive_sha256: 45492c18115541ec8939c5c85e85efa845d9d48a157f46eeb92021d9f54af7db
+      release_compare_patch_sha256: a705fbfcb9d7e8a92f86ff8398fb1d0fe435a8873d7f88f4b078520258de8a86
+      local_binary_sha256: 70e088c8255abf6d85205aa117655b546e01425e2c2c83418883306097530bfe
+      build_toolchain: go1.26.2.windows-amd64
+      build_toolchain_sha256: 98eb3570bade15cb826b0909338df6cc6d2cf590bc39c471142002db3832b708
+      source_imported: false
+      binary_imported: false
+      distributed: false
+      purpose: >-
+        Test upstream asynchronous and cancelable interrupt-IN URB handling
+        against the Windows HID-interface activation failure observed with
+        release v0.7.0. The build only embeds the closed compatibility version
+        above; no source patch is applied.
+    experimental_ds4windows_fork_review:
+      upstream_repository: https://github.com/hbashton/VIIPER
+      upstream_revision: fd298a04d7d229293be15b2af664405c9e68114c
+      pinned_release: v0.1.0
+      compatibility_version: 0.1.0-capyio-fd298a0
+      source_archive_sha256: d7cc70d7c949076bff0198adf88156f0b8b76b7ffeb6e3580f96af02c236d62d
+      local_binary_sha256: 651f8584ab968c2c752da93374bf91d90a07df943b1af0817d17ada9ca682f94
+      build_toolchain: go1.26.2.windows-amd64
+      source_imported: false
+      binary_imported: false
+      distributed: false
+      preserved_contract:
+        dualshock4_input_bytes: 31
+        dualshock4_feedback_bytes: 7
+      purpose: >-
+        Evaluate the DS4Windows-oriented VIIPER fork's expanded native
+        DualShock 4 USB implementation after both Alia5 v0.7.0 and its current
+        main revision failed the Windows native-consumer Gate. The build only
+        embeds the closed compatibility version above; no source patch is
+        applied.
+    experimental_ds4windows_v012_review:
+      upstream_repository: https://github.com/hbashton/VIIPER
+      upstream_revision: f5d097b
+      pinned_release: v0.1.2
+      compatibility_version: 0.1.2
+      windows_amd64_archive_sha256: 66a9bbd4535c9914752e59e1426dab8f318f6a441367a7eab6563e6674a14a46
+      source_imported: false
+      binary_imported: false
+      distributed: false
+      preserved_contract:
+        dualshock4_input_bytes: 31
+        dualshock4_feedback_bytes: 7
+      purpose: >-
+        Evaluate the current DS4Windows backend release against the exact WGI,
+        direct-HID and RawInput inventory Gates while retaining the existing
+        bounded loopback protocol and one-owned-device lifecycle.
+    fixed_revision_protocol_review:
+      reviewed_paths:
+        - LICENSE.txt
+        - docs/api/overview.md
+        - docs/devices/xbox360.md
+        - docs/devices/dualshock4.md
+        - docs/getting-started/installation.md
+        - internal/codegen/common/version.go
+        - internal/server/api/handler/device.go
+        - internal/server/api/handler/ping.go
+        - internal/server/usb/server.go
+        - device/xbox360/const.go
+        - device/xbox360/inputstate.go
+        - device/dualshock4/const.go
+        - device/dualshock4/inputstate.go
+        - device/dualshock4/device.go
+      management_framing: >-
+        null-terminated UTF-8 request; JSON success/problem response terminated
+        by connection close
+      documented_default_api_port: 3242
+      device_stream: null-terminated path handshake followed by fixed binary packets
+      xbox360_input_bytes: 20
+      xbox360_rumble_bytes: 2
+      dualshock4_input_bytes: 31
+      dualshock4_feedback_bytes: 7
+      purpose: >-
+        Implement a deterministic CapyIO-owned codec for the documented external
+        standalone-server TCP contract without importing an upstream client or source.
+    runtime_dependencies:
+      - VIIPER standalone server supplied separately by the user
+      - platform USB/IP client; usbip-win2 is the documented Windows candidate
+    client_dependencies:
+      - name: serde
+        version: 1.0.229
+        license: MIT OR Apache-2.0
+        purpose: deserialize fixed deny-unknown-field VIIPER response DTOs
+      - name: serde_json
+        version: 1.0.151
+        license: MIT OR Apache-2.0
+        purpose: >-
+          parse management JSON only after the TCP response has passed an
+          independent total byte limit and connection-close deadline
+      - name: thiserror
+        version: 2.0.20
+        license: MIT OR Apache-2.0
+        purpose: expose typed configuration, transport, protocol and compatibility failures
+    client_dependency_alternatives_rejected:
+      - hand-written JSON parsing
+      - importing an upstream generated client or linking libVIIPER
+    security_findings:
+      - localhost authentication is optional upstream and must be made explicit before a live Adapter slice
+      - remote API access requires authentication and encryption but is outside the current local-only plan
+      - the client applies explicit response-size and absolute socket-deadline bounds before parsing API JSON
+      - localhost device creation may auto-attach USB/IP upstream and is not safe to probe as a read-only operation
+      - >-
+        fixed v0.7.0 documentation and source disagree on whether a failed
+        localhost auto-attach affects the add response; reviewed source can
+        return 409 after device creation without rollback
+      - >-
+        mutating CapyIO calls require a caller assertion that localhost
+        auto-attach was independently disabled; the token is not proof of the
+        external server configuration
+      - older test-signed USB/IP candidates could change trust/boot policy and are prohibited; the selected signed package is recorded separately
+      - driver install, attach, removal and certificate-store changes require separate human approval
+      - >-
+        release v0.7.0 completed USB/IP liveness while Windows kept its exact
+        DS4 HID interface disabled; the reviewed Alia5 current revision behaved
+        the same. The hbashton v0.1.0 fork enabled the standard HID interface
+        and passed the changing-report direct-HID Gate. After correcting the
+        native probe's WGI discovery window and 32-byte RID_DEVICE_INFO union
+        ABI, both hbashton v0.1.0 and v0.1.2 also passed exact WGI dynamic input
+        and RawInput inventory. The controlled Chrome surface exposed neither
+        this DS4 nor a ViGEm Xbox control device and is not absence evidence for
+        the host browser API
+    alternatives_considered:
+      - link GPL-licensed libVIIPER directly
+      - import an upstream generated client library
+      - implement a new device-specific Windows kernel driver
+    distribution_note: >-
+      CapyIO does not vendor, link, repackage or distribute VIIPER, a generated
+      client, libVIIPER, usbip-win2 or any binary in this slice. The reviewed
+      experimental source archive, comparison patch, toolchain and executable
+      remain ignored local-lab artifacts under `target/`; none are imported or
+      distributed. The standalone external-process boundary avoids linking
+      libVIIPER but still requires a distribution and legal review before
+      product packaging.
+  - id: usbip-win2
+    upstream_repository: https://github.com/vadimgrn/usbip-win2
+    pinned_revision: null
+    pinned_release: v.0.9.7.7
+    license: BSD-2-Clause
+    license_source: https://github.com/vadimgrn/usbip-win2/blob/v.0.9.7.7/LICENSE.txt
+    integration_mode: external_signed_driver_and_bounded_cli
+    source_imported: false
+    binary_imported: false
+    upstream_client_libraries_imported: false
+    imported_paths: []
+    local_modifications: []
+    reviewed_artifact:
+      name: USBip-0.9.7.7-x64.exe
+      size_bytes: 33226344
+      sha256: 51620fa5f9f8be5932bc9d786deee557ce06d5407a99cab490dcfac71f185fea
+      authenticode_status: Valid
+      signer: Cloudyne Systems (Scheibling Consulting AB)
+      signer_thumbprint: 9AC56B6C76141395D74FFF6652818376E80B9C95
+      driver_signing: Microsoft attestation signed
+    reviewed_cli_contract:
+      version: 0.9.7.7
+      server_scope: explicit IPv4 loopback only
+      expected_export_bus_id: VIIPER <bus>-<device>
+      expected_export_vid_pid: 045e:028e
+      attach_mode: one shot (--once), never persistent
+      cleanup: exact returned hub port, never detach all
+      process_bounds: absolute deadline plus independent stdout/stderr limits
+    security_findings:
+      - installation restarts USB 3.0 hubs and can require a Windows restart
+      - driver install/remove, restart and first device attachment require separate approval
+      - selected v0.9.7.7 is retained because v0.9.7.8 carries an upstream memory-corruption/BSOD warning
+      - installation and rollback must never change test signing, Secure Boot or the trusted root store
+      - an interrupted attachment gate requires exact-port inspection and cleanup
+    distribution_note: >-
+      The reviewed executable and drivers are installed only on the separately
+      authorized local-lab host and are not copied into the repository or
+      distributed by CapyIO. Product bundling needs independent legal,
+      servicing, signing and recovery review.
+  - id: vigem-dotnet-xinput-companion
+    upstream_repository: https://github.com/ViGEm/ViGEm.NET
+    pinned_revision: null
+    pinned_release: 1.21.256
+    license: MIT
+    license_source: https://github.com/ViGEm/ViGEm.NET/blob/master/LICENSE
+    integration_mode: external_user_mode_sidecar_over_fixed_binary_stdin
+    source_imported: false
+    binary_imported: false
+    imported_paths: []
+    local_modifications: []
+    reviewed_artifact:
+      name: Nefarius.ViGEm.Client.1.21.256.nupkg
+      size_bytes: 198914
+      sha256: ff460031b33e0882cd1166fe2d072d0fe97578480c61ed85dccfa6c930fdb55e
+    purpose: >-
+      publish the same normalized phone controls as a standard Xbox 360 XInput
+      companion for Steam and browser consumers while the independent DS4 and
+      DSU projections retain motion semantics
+    data_contract: >-
+      fixed 20-byte little-endian Xbox 360 complete-state frames over inherited
+      stdin; one readiness line on stdout; failures on stderr
+    alternatives_considered:
+      - VIIPER Xbox 360 over usbip-win2, rejected after WGI absence and premature attachment loss
+      - replacing the motion-capable DS4 projection with Xbox 360, rejected because XInput has no IMU contract
+      - adding browser-specific IMU-to-stick mapping, rejected as a semantic mismatch
+    security_findings:
+      - the archived ViGEmBus driver is already installed on the authorized lab host; this slice does not install, remove or reconfigure it
+      - product packaging must pin and service both the managed client and external bus driver independently
+      - sidecar startup, state writes and shutdown are bounded; EOF and explicit stop send neutral before target removal
+    distribution_note: >-
+      The reviewed package and installed ViGEmBus remain ignored local-lab
+      artifacts under target/ or host state. The repository contains only the
+      CapyIO-owned sidecar source and build recipe; no upstream binary is
+      imported or distributed.
   - id: scrcpy
     upstream_repository: null
     pinned_revision: null

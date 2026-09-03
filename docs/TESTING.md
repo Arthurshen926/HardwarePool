@@ -92,6 +92,260 @@ These tests prove only deterministic semantic contracts. They do not capture a
 camera, inject OS input, register a virtual camera, start DSU/VIIPER, install a
 driver/APK or prove ordinary-application compatibility.
 
+## VIIPER Xbox 360 codec tests
+
+- a fixed-revision golden vector distinguishes the external device-stream
+  `InputState` frame from VIIPER's different same-length host USB report;
+- every representable semantic button and all nine D-pad combinations map to
+  exact little-endian masks;
+- six independent source-axis sign selectors, asymmetric signed endpoints and
+  trigger rounding are explicit;
+- current and future source buttons without Xbox 360 fields fail closed, while
+  all six reserved bytes remain zero;
+- rumble feedback accepts exactly two bytes, preserves left/right raw motor
+  intensity and rejects both truncated and trailing data.
+
+These tests do not open a socket, start VIIPER, attach USB/IP, install a driver,
+enumerate a system controller, prove game compatibility or construct a haptics
+command without a duration/Route lifecycle.
+
+## VIIPER DualShock 4 codec tests
+
+- the pinned 31-byte stream layout keeps controls, two inactive touch contacts,
+  three fixed-point gyro axes and three fixed-point acceleration axes at exact
+  offsets;
+- semantic face buttons use DS4 physical positions, non-zero analog triggers
+  set their matching digital bits, and signed sticks cover both asymmetric
+  `i8` endpoints;
+- separately typed SI-unit IMU envelopes map through explicit signed axis
+  permutations to 16 counts per degree/second and 512 counts per m/s²;
+- the fixed Controller Lab landscape mount maps Android source `+Y,+Z,+X`
+  into DS4 body X,Y,Z while leaving the StandardPort sample in its normative
+  Android device coordinate frame;
+- duplicate axes, invalid envelopes, fixed-point overflow and unsupported
+  paddles fail closed before a packet is emitted;
+- feedback accepts exactly seven bytes and preserves both rumble motors, RGB
+  LED and flash timing bytes without inventing a reverse haptics Route.
+
+These tests do not provision `dualshock4`, connect to a live VIIPER stream,
+attach USB/IP or prove that a Windows game consumes native DS4 motion.
+
+## VIIPER owned DualShock 4 session fixture tests
+
+- a loopback fixture observes exact probe, create, fixed `dualshock4` add,
+  device stream, initial neutral/stationary state and owned-bus removal;
+- the response must match DS4 `054c:09cc`, a numeric device ID and object-shaped
+  fixed metadata; an identity mismatch rolls back the known bus;
+- gamepad and IMU streams have independent sequence trackers. A gamepad-only
+  gap releases controls while retaining the last accepted motion sample before
+  the recovered report;
+- exact seven-byte feedback is read without creating a reverse Route, and
+  explicit stop writes the safe state before stream shutdown and cleanup.
+
+The USB/IP unit boundary separately filters DS4 exports and verifies an owned
+port against the exact server, VIIPER bus and `054c:09cc` identity. Desktop
+tests prove motion-only DSU never submits local controls. No test performs a
+real attachment.
+
+## Runtime-owned DualShock 4 paired Route fixture tests
+
+- controls and IMU remain two independent StandardPort Routes with their own
+  profiles, QoS modes, Route IDs and epochs;
+- the shared DS4 Worker activates only after both anchors match their Runtime
+  epochs and exact VIIPER provisioning succeeds;
+- an IMU-source disconnect writes the safe state, removes the owned bus,
+  offlines both dependent DS4 Routes and leaves an unrelated active Route
+  unchanged;
+- retry recovers both Routes with advancing epochs and a fresh owned bus;
+- mismatched anchors fail closed before any VIIPER connection is opened;
+- the optional USB/IP branch is constrained to the separately tested one-shot
+  DS4 selector and exact owned-port lifecycle.
+
+These fixtures use a process-local fake VIIPER server. They do not attach
+USB/IP, enumerate a Windows DS4, install a driver or connect to a phone.
+
+## Desktop DS4 selection and complete-state ingress tests
+
+- the Windows host DTO keeps Xbox 360 and DS4 identities explicit and defaults
+  the motion-capable path to DS4 `054c:09cc`;
+- read-only preflight selects the controller-specific USB/IP inventory method,
+  so DS4 mode cannot accidentally accept an Xbox export or vice versa;
+- one accepted Android datagram remains one paired controls+IMU event on a
+  capacity-eight non-blocking channel;
+- peer timeout and listener stop emit explicit upstream-offline events rather
+  than performing blocking projection cleanup on the UDP receiver thread;
+- the desktop inspector drains the bounded ingress and publishes accepted
+  packet, offline-event and last-remote-sequence counters;
+- starting DSU replaces the observer ingress with the DSU senders, and stopping
+  DSU restores the bounded Windows ingress.
+
+These tests do not start the DS4 Worker, attach USB/IP or mutate Windows. The
+ingress-to-DS4 activation Worker remains the final hardware-free 004C slice.
+
+## VIIPER bounded probe fixture tests
+
+- configuration rejects non-loopback IPs, port zero, zero/overlong deadlines
+  and response limits outside `1..=4096`;
+- a process-local `127.0.0.1:0` fixture observes exact `ping\0`, and the client
+  requires exact `VIIPER` / `0.7.0` identity;
+- the response limit accepts exactly N bytes and rejects N+1 before JSON parse;
+- whitespace-only, malformed/trailing JSON, fixed Problem responses and wrong
+  identity/version have distinct failures;
+- a complete JSON prefix held open without EOF times out rather than being
+  accepted early.
+
+The fixture uses bounded channel joins and socket deadlines. It never starts or
+connects to a real VIIPER server, creates a bus/device, enters a device stream,
+attaches USB/IP or touches a driver/certificate store.
+
+## VIIPER owned Xbox 360 session fixture tests
+
+- a process-local server observes exact `ping`, create, fixed Xbox add, stream
+  handshake, initial neutral and remove ordering;
+- unsupported controls and rejected stream headers do not consume sequence or
+  write a frame;
+- an input gap writes neutral before the recovered state, epoch advance writes
+  neutral before fresh input, and sequence exhaustion writes neutral and
+  latches until explicit epoch advance;
+- stop writes neutral, shuts down the device stream, removes only the owned bus
+  and is idempotent;
+- consecutive exact rumble frames, a no-byte timeout, one-byte truncation and
+  clean peer close are distinguished; failed streams still attempt bus cleanup;
+- add failure and injected device identity trigger removal of the known bus,
+  and a cleanup failure is retained alongside the primary failure.
+
+Expected stream packets are hard-coded independently of the production codec.
+All tests use `TcpListener(127.0.0.1:0)` and a fake protocol peer. They neither
+start VIIPER nor create a real virtual device or USB/IP attachment.
+
+## VIIPER Runtime Route fixture tests
+
+- a typed remote gamepad Source and local VIIPER Sink form one
+  `ExternalProtocol` Route, which reaches Active only after the owned Worker
+  sends initial neutral;
+- unsupported controls reject one frame without consuming sequence or taking
+  the Route Offline;
+- upstream disconnect sends neutral and removes the owned bus before Offline,
+  while retry provisions a fresh bus under a strictly newer Runtime epoch;
+- add failure rolls back the known bus before the typed open-failure Problem;
+- sequence exhaustion sends fail-safe neutral, cleans up and requires an
+  explicit Route retry;
+- a closed device stream is detected by bounded raw-feedback polling, cleaned
+  up and reported as a stream Problem without constructing a haptics Route;
+- a simultaneously Active IMU Route remains Active with no related Problem in
+  every injected gamepad failure case.
+
+The four tests use only process-local `127.0.0.1:0` listeners and independently
+hard-coded request/frame expectations. They do not start or configure VIIPER,
+touch USB/IP or a driver, enumerate a controller or make a game-compatibility
+claim.
+
+## DSU Runtime Route and live-lab fixture tests
+
+- the DSU composition registers a typed IMU StandardPort sink and does not
+  activate until its Worker binds IPv4 loopback with the exact Runtime epoch;
+- upstream disconnect joins the Worker and releases its port before Offline;
+  retry binds a new Worker under a strictly newer epoch;
+- occupied-port and mismatched-epoch starts produce owner-correct typed
+  Problems while a simultaneously Active unrelated IMU Route remains unchanged;
+- the lab CLI parser closes commands, ports, sample count and signed axis
+  permutations, while preflight releases the exact checked UDP port;
+- a process-local two-WebSocket SensorServer fixture emits accelerometer and
+  gyroscope readings through the real assembler, Runtime Route, DSU Worker and
+  a real loopback DSU subscriber; acceptance requires 16/16 samples, observed
+  subscription/motion delivery and zero queue, projection or transport errors.
+
+All automated endpoints are ephemeral loopback fixtures. The command does not
+prove a phone, emulator UI, game response or physical orientation. Those are
+retained only by the manual procedure in `docs/CAPY_GAMEPAD_DSU_LAB.md`.
+
+## Desktop Controller source and inspector tests
+
+- a closed semantic Tauri DTO feeds the portable `GamepadStateComposer`; a
+  button followed by a stick update retains both controls in complete snapshots
+  and monotonically advances sequence;
+- invalid D-pad and reserved signed-axis inputs fail without consuming sequence;
+- reset returns buttons, D-pad, sticks and triggers to neutral;
+- the desktop simulator starts the existing bounded DSU dual-input Worker on an
+  ephemeral IPv4-loopback fixture, seeds a labeled stationary motion sample,
+  submits one complete control state and observes it accepted with no queue
+  overflow before bounded neutral stop;
+- browser typecheck/build and visual checks cover the desktop layout, top-level
+  Controller navigation, button press/release sequencing, 844x390 responsive
+  layout, absence of horizontal overflow and absence of browser errors.
+- the Windows status preflight has no input DTO, filters the bounded USB/IP
+  inventory to exact Xbox 360 exports, distinguishes zero/one/multiple matches,
+  preserves partial VIIPER/USB-IP readiness and maps host failures to stable
+  sanitized codes without producing an owned attachment; a single-flight test
+  rejects concurrent invocation and proves permit release;
+- a real pre-restart run covers service-offline, ready-without-export,
+  unique-export-ready and post-cleanup disappearance states while the owned
+  USB/IP port remains empty. See `CAPY_GAMEPAD_006C_REPORT.md`.
+
+Those `005A` checks do not package or install an Android application, capture a
+phone sensor, establish a peer data plane, observe an emulator subscription or
+prove game compatibility. The `005A` DSU source and motion seed are explicitly
+simulated.
+
+## Android Controller Lab tests
+
+- closed UDP decoding accepts a valid complete control+motion frame and rejects
+  unknown fields, a wrong token and the reserved `i16::MIN` axis value;
+- a real loopback UDP listener accepts one sequence, rejects its replay and
+  replaces a pressed control with neutral after the 350 ms peer deadline;
+- the composition acceptance starts Android input and the existing DSU Worker,
+  sends a complete UDP frame, observes the desktop source change to
+  `android_touch`, verifies button/stick/motion values and observes the DSU
+  controls queue accept the same state;
+- Android `lintDebug` and `assembleDebug` compile the native Java surface for
+  minSdk 26 / targetSdk 36 without a third-party runtime dependency; `aapt2`
+  verifies package `io.capyio.controllerlab` and exactly one declared permission,
+  `android.permission.INTERNET`;
+- physical checks install only the recorded debug APK on the explicitly
+  authorized device, launch the exported launcher Activity, inspect the visible
+  UI, send touch+IMU frames to the desktop and verify timeout neutralization;
+- the debug-only `--gamepad-physical-gate` registers a DSUC subscriber, waits
+  for real Android data, closes it, then requires a replacement subscriber to
+  observe a non-neutral control and finite IMU values. This covers Windows UDP
+  `ConnectionReset` recovery after a stale subscriber as well as the complete
+  phone-to-DSUS packet path;
+- the debug-only `--gamepad-viiper-physical-gate` composes that same accepted
+  Android stream into DSU and a real pinned VIIPER v0.7.0 Xbox 360 session. It
+  prints exact bus/device IDs, stays alive for a bounded operator-selected
+  enumeration window, neutralizes peer timeout, and explicitly removes only
+  its owned bus. Windows USB/IP installation and attachment are separately
+  authorized host-lab operations recorded in `CAPY_GAMEPAD_006A_REPORT.md`;
+- `capyio-gamepad-usbip-lab preflight` executes exact-version probe and
+  read-only list against the live export. Fixtures reject non-loopback/unbounded
+  config, malformed or wrong-VID exports, persistent/all-device arguments,
+  ambiguous ports and oversized output. A fake executor proves ordered
+  probe/list/one-shot-attach/exact-port-detach without touching a driver. The
+  real pre-restart run stops after list; see `CAPY_GAMEPAD_006B_REPORT.md`.
+- post-restart fixtures require the terse returned port to resolve through
+  `usbip port <port>` to the exact loopback server, VIIPER bus and Xbox
+  `045e:028e` identity. Missing/mismatched inventory triggers exact-port
+  cleanup; the physical lab polls that same invariant once per second and the
+  recorded `006D` run proves PnP, XInput button/axis delivery, liveness and
+  exact detach.
+- the `--gamepad-windows-ds4-only-runtime-gate` keeps the optional XInput
+  companion disabled and requires physical Android packets plus non-neutral
+  controls before exact cleanup. The recorded 150-second run accepted 7,096
+  packets and 723 non-neutral states; the independent WGI probe observed an
+  advancing `054c:09cc` report with button, D-pad switch and axis changes.
+- a paired Android projection replaces each transient 350 ms WLAN peer gap
+  with a complete neutral controls+motion state while keeping the virtual
+  controller owned and active. Explicit listener stop remains terminal and
+  removes the projection.
+- the fixture DSU subscriber uses bounded nonblocking 1 ms polling so its
+  initial request cannot be lost behind a 100 ms receive wait before the
+  Runtime-owned loopback endpoint binds.
+
+Loopback automation proves the wire/parser/composition boundary but not Android
+touch dispatch, physical SensorManager axes, WLAN/firewall behavior, emulator
+response or game compatibility. The recorded `005B` run proves the first four
+physical boundaries through a conforming DSU subscriber; emulator/game behavior
+still requires a separately installed Cemu/Dolphin instance.
+
 ## SensorServer mapping contract tests
 
 - the pinned upstream three-field JSON shape maps exact finite axes, timestamp
@@ -335,6 +589,12 @@ Required before merge: Rust format, check, Clippy warnings denied, tests,
 Protobuf build, docs/repository validation, manifest validation, Adapter smoke,
 frontend typecheck/build and dependency/license review when dependencies change.
 Hardware jobs may be manual but must attach evidence. Claims match actual runs.
+
+The native DS4 application-consumer Gate compiles and self-tests the SDK-only
+`RawGameController` probe without an attached device. Its no-device case must
+fail closed. A physical pass is recorded only inside a separately authorized,
+exact VID:PID USB/IP attachment window and requires a user-visible control
+change; normal CI never attaches a controller.
 
 Pull-request workflows targeting `main` explicitly check out
 `github.event.pull_request.head.sha`; a synthetic merge commit is not substituted

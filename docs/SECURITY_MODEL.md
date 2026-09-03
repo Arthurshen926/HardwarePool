@@ -55,6 +55,106 @@ private TCP/UDP protocol. The pinned upstream Windows release is not
 Authenticode signed and is neither bundled nor treated as trusted production
 software by CapyIO.
 
+The VIIPER Xbox 360 boundary accepts only an explicit IP-literal loopback socket
+with a non-zero port, positive bounded connect/I/O deadlines and a response
+limit no greater than 4 KiB. It has no default address, DNS, discovery,
+authentication-key lookup or generic request API. Independent read-only probe
+sends exact `ping\0`, reads JSON through connection close under one absolute
+I/O deadline, uses fixed DTOs and accepts only exact server/version identity.
+
+ADR 0042 governs resource creation. The mutating entry point requires a caller
+assertion that the separately supplied server has localhost auto-attach
+disabled, then re-probes compatibility and owns create/add/stream/initial
+neutral/remove as one operation. Only the returned positive bus ID is eligible
+for cleanup; arbitrary CRUD and enumeration are not exposed. Once known, that
+bus is removed after open failure or explicit stop, and cleanup failure cannot
+replace the primary error. Drop performs socket shutdown only and is not the
+cleanup guarantee. The assertion token records policy but cannot prove an
+external process flag; a live Adapter must retain independent configuration
+evidence. A malformed create response can leave no safely identifiable cleanup
+target and remains a declared external-protocol risk.
+
+Upstream localhost device creation may trigger automatic USB/IP attachment,
+and the reviewed v0.7.0 source can return an add error after creating a device
+without rollback. Older test-signed usbip-win2 candidates could change the
+trusted-root/boot posture and remain prohibited. The selected v0.9.7.7 x64
+package is Authenticode/attestation signed; its exact digest, signature chain,
+driver package, restore point and rollback still require separate approval and
+evidence. VIIPER authentication would not replace CapyIO pairing, Capability
+authorization or replay protection.
+
+The Windows input composition layer does not launch or reconfigure VIIPER. It
+requires the ADR 0042 caller assertion before installing a Route controller,
+uses the Runtime epoch as the fixed gamepad stream epoch and marks the Route
+Active only after the owned session is fully open. Open rollback, upstream
+disconnect, terminal stream failure, sequence exhaustion and explicit stop
+all attempt Worker cleanup before the corresponding Runtime transition.
+Problems reference only the gamepad Route and VIIPER Adapter; no failure path
+mutates an independent IMU Route. Raw two-byte feedback polling is liveness
+evidence only and does not authorize or construct a reverse haptics Route.
+
+The optional Windows USB/IP owner accepts only an absolute executable named
+`usbip.exe`, exact version `0.9.7.7`, an explicit IPv4-loopback server and a
+VIIPER-derived simple bus/device identity. It lists before mutation and requires
+Xbox 360 VID:PID `045e:028e`. Child processes are launched directly with no
+shell, no stdin and (on Windows) no console window; stdout/stderr are drained
+concurrently under fixed byte limits and each command has an absolute deadline.
+Attachment always includes `--once`, retains the returned non-zero hub port and
+never uses all-device detach. Explicit Route cleanup writes neutral, detaches
+that exact port and only then removes the VIIPER bus. Driver deployment,
+restart, removal and boot/security-policy changes are not reachable through
+this API and remain separately approved operator actions. The mutating call
+also requires a caller assertion that package/signature checks, driver health,
+any required restart and attachment authorization are complete; like ADR 0042,
+the token records policy but cannot prove external state.
+
+The returned port is not trusted merely because `attach --terse` printed a
+number. Before ownership is published, and throughout the bounded physical
+lab hold, `usbip port <owned-port>` must show exactly one in-use port with the
+fixed loopback server, the expected VIIPER bus ID and Xbox `045e:028e`
+identity. Missing or mismatched status fails closed and attempts detach of only
+that returned port; status output is bounded and never authorizes a different
+port or all-device cleanup.
+
+The DSU composition path binds only IPv4 loopback and activates its Runtime
+Route only after the exact port and fixed-epoch stream anchor are valid. Bind
+failure is projection-owned; source epoch mismatch or SensorServer disconnect
+is source-owned. Both release the Worker before Offline/Stopped, and Problems
+remain related only to the DSU Route. The `capyio-gamepad-dsu-lab` command
+accepts an explicit phone IP and port but does not print the IP. SensorServer's
+plain `ws://` connection has no CapyIO authentication, confidentiality or
+pairing and is restricted to an operator-controlled physical lab; DSU client
+subscription proves local delivery only, not trusted input or game
+compatibility.
+
+The desktop Controller diagnostic likewise accepts only semantic button/axis
+updates and one non-zero DSU port from the WebView. The Rust host owns stream
+identity, epoch, sequence, bounds and complete-state composition; the DSU
+socket is fixed to IPv4 loopback. Browser Mock opens no socket. Other local
+processes can still subscribe to or send datagrams to this unauthenticated lab
+endpoint, so it is a local Projection fixture rather than a trusted peer or
+production input path.
+
+The Windows gamepad preflight command accepts no WebView parameters. Trusted
+host configuration fixes VIIPER to `127.0.0.1:3242`, usbip-win2 to
+`C:\Program Files\USBip\usbip.exe` v0.9.7.7 and its server to
+`127.0.0.1:3241`. Only exact Xbox 360 match count and bus identity reach the
+DTO; unrelated USB exports and raw process errors are omitted. Multiple exact
+matches fail closed. Concurrent preflight invocation is rejected by a host
+single-flight guard. This command has no create, attach, detach, driver,
+restart or boot-policy operation.
+
+The Android Controller Lab expands the desktop listener to an operator-selected
+IPv4 UDP port on trusted LAN interfaces. Its random 48-bit hexadecimal token is
+shown locally and required in every closed-schema frame; comparison is bounded,
+the token and peer address are not logged, frames are capped at 2 KiB, and
+session sequence rollback is rejected. This filters accidental/unrelated LAN
+traffic but is not identity, encryption or production pairing: possession of
+the token permits input injection. The listener requests neutral after 350 ms
+without a valid frame and on stop. The authorized APK declares only
+`android.permission.INTERNET`, keeps capture foreground-only and has backup/data
+transfer disabled so the lab configuration is not exported.
+
 The dedicated virtual-speaker Broker is a separate trusted-host mode. It
 requires a non-unspecified IPv4 bind address and accepts no playback endpoint
 identifier; it can consume only the fixed, versioned CapyIO render ring. Its
