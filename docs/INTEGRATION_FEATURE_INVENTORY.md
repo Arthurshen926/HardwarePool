@@ -52,8 +52,10 @@ and Control Ports.
 The Android service-owned schema-v1 catalog now also records read-only hardware
 presence for microphone, audio output, camera, accelerometer+gyroscope,
 touchscreen and vibrator. Presence is not treated as Adapter attachment or
-sharing availability; the shared Vue UI does not consume this Android catalog
-until the A01C host bridge is implemented.
+sharing availability. A01C1 makes the Android build package the exact shared
+Vue/Vite output under `assets/capyio-ui`, with relative-path and entrypoint asset
+checks. The native Activity does not render it yet, and the shared Vue UI cannot
+consume the Android catalog until the A01C2 observer bridge is implemented.
 
 ## Remaining integration work
 
@@ -61,8 +63,8 @@ until the A01C host bridge is implemented.
    facade, attach touchpad lifecycle without regressing standalone evidence,
    and route IMU/gamepad samples through bounded typed data planes. Haptics
    requires separate approval for the Android `VIBRATE` Manifest permission.
-2. Build an Android Tauri host that consumes the shared Vue source and maps the
-   Android-local schema-v1 catalog to shared UI schema 4.
+2. Add the Android local observer host for the already packaged shared Vue
+   source and map the Android-local schema-v1 catalog to shared UI schema 4.
 3. Implement real Adapter-driven local hardware discovery and authenticated
    peer catalog exchange; schema 4 currently projects deterministic Runtime
    fixture catalogs.

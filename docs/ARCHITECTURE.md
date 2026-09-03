@@ -766,6 +766,16 @@ remain separate follow-on work. Android vibration remains unattached because
 calling `Vibrator` requires a Manifest permission change and therefore separate
 human approval.
 
+ANDROID-A01C1 establishes the presentation packaging seam without changing the
+Android Activity or Node lifecycle. The Android Gradle build invokes the pinned
+workspace Vue/Vite build from `apps/desktop`, stages that exact output under
+`assets/capyio-ui`, and rejects an absent entrypoint, absent JavaScript/CSS, or
+root-absolute asset references. Vite therefore emits relative asset paths that
+also remain valid in the Windows Tauri host. This proves one presentation source
+is packageable on both platforms; it does not yet render that presentation on
+Android or expose Binder commands to JavaScript. A narrow local observer host
+and schema conversion remain A01C2 work.
+
 ADR 0044 subsequently adds the approved network permission and a separate
 dependency-free LAN codec/socket worker boundary. ADRs 0046 and 0047 now attach
 the speaker Sink and microphone Source respectively: `AudioTrack` consumes the

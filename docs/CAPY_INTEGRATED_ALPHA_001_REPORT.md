@@ -54,6 +54,14 @@ sender are unchanged. Haptics remains Offline/unattached: Android Lint confirmed
 that a real `Vibrator` Sink needs `android.permission.VIBRATE`, and this
 integration scope does not authorize a Manifest permission change.
 
+A01C1 now makes the Android build consume the same Vue/Vite presentation source
+as the Windows Tauri host. Gradle builds and stages that output under
+`assets/capyio-ui`; a verification task requires the entrypoint, JavaScript and
+CSS and rejects root-absolute asset paths. The assembled debug APK contains the
+three asset classes. The existing native Activity remains the runtime UI, so
+Android visual parity and the Binder-to-shared-DTO observer bridge are still
+A01C2 work.
+
 ## Automated evidence
 
 - `cargo test --offline -p capyio-input -p capyio-dsu-adapter -p capyio-viiper-adapter -p capyio-windows-input -p capyio-desktop`: passed after the gamepad merge.
@@ -80,7 +88,10 @@ integration scope does not authorize a Manifest permission change.
   --offline`: passed 40 generation-bound lifecycle and gamepad-state assertions.
 - `platform/android/gradlew.bat capyioCheck --offline`: final aggregate Android
   Gate passed all contracts, composition checks, Lint, entrypoint verification
-  and debug assembly without installing the APK.
+  shared-Vue asset verification and debug assembly without installing the APK.
+- `jar tf platform/android/app/build/outputs/apk/debug/app-debug.apk`: confirmed
+  `assets/capyio-ui/index.html` and generated JavaScript/CSS in the assembled
+  archive; the entrypoint references both assets with `./assets/...` paths.
 
 ## Explicit exclusions
 
@@ -89,4 +100,5 @@ integration scope does not authorize a Manifest permission change.
 - no Windows driver install/removal, restart or boot/security-policy change;
 - no Display merge or Display worktree modification;
 - no claim that schema-4 fixture catalogs are real hardware discovery;
-- no claim that the Android product UI is already unified.
+- no claim that packaging the shared source means the Android product UI is
+  already rendered or bridged.

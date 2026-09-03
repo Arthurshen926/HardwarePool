@@ -1536,6 +1536,15 @@ old-generation rejection for non-audio Android Adapters.
 The root Android `capyioCheck` task includes this composition executable so the
 registry cannot silently disappear from the aggregate Android Gate.
 
+ANDROID-A01C1 adds a hardware-free shared-presentation packaging check. Gradle
+builds the exact `apps/desktop` Vue source, stages it as `assets/capyio-ui`, and
+requires an HTML entrypoint plus JavaScript and CSS files. The HTML check rejects
+root-absolute `/assets/` references so the same Vite output is valid in Tauri and
+an Android packaged-asset host. `capyioCheck` depends on this verification and
+debug APK assembly; archive inspection additionally confirms all three artifact
+classes are present. This is packaging evidence only: the native Activity is
+unchanged, no WebView/Tauri observer bridge runs, and no APK is installed.
+
 Offline repository validation additionally pins the Gradle/AGP contract and
 checks the source manifest for the approved recording/notification/foreground
 permissions, a non-exported dual-type service, disabled backup/cleartext and no

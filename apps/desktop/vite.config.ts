@@ -2,6 +2,8 @@ import { defineConfig } from "vite";
 import vue from "@vitejs/plugin-vue";
 
 export default defineConfig({
+  // Keep one build usable by Tauri and an Android packaged-asset host.
+  base: "./",
   plugins: [vue()],
   clearScreen: false,
   server: {

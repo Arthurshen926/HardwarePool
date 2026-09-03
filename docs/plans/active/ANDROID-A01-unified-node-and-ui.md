@@ -23,8 +23,9 @@ Display is excluded until its feature branch is complete.
 - `platform/android/capyio-camera-app` is a separate camera lab application.
 - `apps/android/controller-lab` is a separate touch+IMU controller lab.
 - `platform/android/touchpad-bridge/lab-app` is a separate touchpad lab.
-- `apps/desktop/src` is the schema-4 shared presentation source, but no Android
-  Tauri host consumes it yet.
+- `apps/desktop/src` is the schema-4 shared presentation source. A01C1 packages
+  its exact Vite output into the Android APK, but no Android observer host
+  renders or bridges it yet.
 
 ## Ordered slices
 
@@ -36,17 +37,18 @@ Display is excluded until its feature branch is complete.
    existing live audio façade and lists camera, controller and touchpad modules
    as explicitly Offline/unattached. A01B2 adds permission-free, read-only
    hardware presence probes while keeping presence, attachment and availability
-   separate. A01B3 now supplies the generation-bound non-audio lifecycle
-   contract and attaches accelerometer/gyroscope registration to the unified
-   Service. The next slice attaches a bounded, generation-scoped touch-gamepad
-   snapshot facade that neutralizes on Stop; its shared UI surface, haptics and
-   touchpad remain pending while standalone labs are preserved. Haptics is held
+   separate. A01B3 supplies the generation-bound non-audio lifecycle contract,
+   attaches accelerometer/gyroscope registration to the unified Service, and
+   attaches a bounded, generation-scoped touch-gamepad snapshot facade that
+   neutralizes on Stop. Its shared UI surface, haptics and touchpad remain
+   pending while standalone labs are preserved. Haptics is held
    behind separate approval for the `VIBRATE` Manifest permission. None of these
    slices adds a permission or service declaration.
-3. **A01C — Android Tauri observer shell:** build the shared Vue source inside
-   the Android package and implement the same read-only catalog commands through
-   a Kotlin plugin/host boundary. The existing Node service, not the Activity,
-   remains lifecycle owner.
+3. **A01C — Android observer shell (A01C1 packaging complete):** A01C1 builds the
+   shared Vue source and packages it under `assets/capyio-ui`, with relative-path
+   and required-asset gates. A01C2 must render it in a local-only host and expose
+   the same read-only catalog semantics through a narrow platform bridge. The
+   existing Node service, not the Activity, remains lifecycle owner.
 4. **A01D — per-capability operations:** connect schema-versioned start/stop,
    permission and Route status commands one capability at a time. Audio goes
    first because its independent service lifecycle is already physically

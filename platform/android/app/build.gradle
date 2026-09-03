@@ -2,6 +2,59 @@ plugins {
     id 'com.android.application'
 }
 
+def repositoryRoot = rootProject.file('../..')
+def sharedUiProject = new File(repositoryRoot, 'apps/desktop')
+def sharedUiOutput = new File(sharedUiProject, 'dist')
+def packagedSharedUiRoot = layout.buildDirectory.dir('generated/capyio-shared-ui').get().asFile
+
+tasks.register('buildSharedUi', Exec) {
+    group = 'build'
+    description = 'Builds the shared Vue presentation used by Windows and Android.'
+    workingDir repositoryRoot
+    def pnpmExecutable = System.getProperty('os.name').toLowerCase().contains('windows')
+            ? 'pnpm.cmd' : 'pnpm'
+    commandLine pnpmExecutable, '--filter', '@capyio/desktop', 'build'
+    inputs.files(fileTree(sharedUiProject) {
+        include 'index.html', 'package.json', 'tsconfig.json', 'vite.config.ts'
+        include 'src/**'
+    })
+    inputs.files(new File(repositoryRoot, 'package.json'),
+            new File(repositoryRoot, 'pnpm-lock.yaml'),
+            new File(repositoryRoot, 'pnpm-workspace.yaml'))
+    outputs.dir sharedUiOutput
+}
+
+tasks.register('syncSharedUi', Sync) {
+    group = 'build'
+    description = 'Stages the shared Vue build as Android packaged assets.'
+    dependsOn tasks.named('buildSharedUi')
+    from sharedUiOutput
+    into new File(packagedSharedUiRoot, 'capyio-ui')
+}
+
+tasks.register('verifySharedUiAssets') {
+    group = 'verification'
+    description = 'Verifies the Android package contains a relative-path shared UI entrypoint.'
+    dependsOn tasks.named('syncSharedUi')
+    doLast {
+        def entrypoint = new File(packagedSharedUiRoot, 'capyio-ui/index.html')
+        if (!entrypoint.isFile()) {
+            throw new GradleException('Shared UI entrypoint is missing from Android assets')
+        }
+        def html = entrypoint.getText('UTF-8')
+        if (html.contains('src="/assets/') || html.contains('href="/assets/')) {
+            throw new GradleException('Shared UI assets must use relative paths on Android')
+        }
+        def assets = new File(packagedSharedUiRoot, 'capyio-ui/assets')
+        def assetFiles = assets.isDirectory() ? assets.listFiles() : null
+        if (assetFiles == null
+                || !assetFiles.any { file -> file.isFile() && file.name.endsWith('.js') }
+                || !assetFiles.any { file -> file.isFile() && file.name.endsWith('.css') }) {
+            throw new GradleException('Shared UI JavaScript or CSS asset is missing')
+        }
+    }
+}
+
 android {
     namespace = 'dev.capyio.android'
     compileSdk = 36
@@ -50,6 +103,7 @@ android {
         main.java.srcDir 'src/main/java'
         main.java.srcDir '../node-contract/src/main/java'
         main.java.srcDir '../native-lan-contract/src/main/java'
+        main.assets.srcDir packagedSharedUiRoot
     }
 
     lint {
@@ -59,6 +113,10 @@ android {
         // API 36, AGP 9.3.1 and checksum-pinned Gradle 9.5.0 are deliberate.
         disable += ['GradleDependency', 'OldTargetApi', 'AndroidGradlePluginVersion']
     }
+}
+
+tasks.named('preBuild') {
+    dependsOn tasks.named('syncSharedUi')
 }
 
 tasks.register('verifyDebugEntrypoints') {
