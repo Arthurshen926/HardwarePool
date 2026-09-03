@@ -1,6 +1,6 @@
 [package]
 name = "capyio-android-host"
-description = "Reserved platform-independent seam for a future CapyIO Android Node host."
+description = "Android-owned pure data mappings for the future CapyIO Node host."
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -8,3 +8,4 @@ license.workspace = true
 
 [dependencies]
 capyio-core = { path = "../../../crates/capyio-core" }
+capyio-input = { path = "../../../crates/capyio-input" }

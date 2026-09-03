@@ -1,10 +1,20 @@
 [package]
 name = "capyio-remote-touchpad-adapter"
-description = "Reserved CapyIO boundary for remote pointer/touch gesture mapping."
+description = "Bounded CapyIO remote touchpad conversion and private packet boundary."
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 
 [dependencies]
+capyio-core = { path = "../../crates/capyio-core" }
 capyio-input = { path = "../../crates/capyio-input" }
+
+[target.'cfg(windows)'.dependencies]
+capyio-windows-input = { path = "../../platform/windows/capyio-input" }
+
+[dev-dependencies]
+capyio-android-host = { path = "../../platform/android/capyio-host" }
+capyio-runtime = { path = "../../crates/capyio-runtime" }
+capyio-testkit = { path = "../../crates/capyio-testkit" }
+capyio-windows-input = { path = "../../platform/windows/capyio-input" }

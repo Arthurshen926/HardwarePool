@@ -1,0 +1,203 @@
+{
+  "stream": {
+    "stream_id": "00000000-0000-4000-8000-00000000c201",
+    "stream_epoch": 1,
+    "clock_domain_id": "fixture.touchpad.monotonic"
+  },
+  "descriptor": {
+    "physical_size": {
+      "width_himetric": 10000,
+      "height_himetric": 6000
+    },
+    "max_contacts": 5,
+    "button_type": "non_clickable",
+    "reports_contact_size": true,
+    "reports_pressure": true
+  },
+  "frames": [
+    {
+      "header": {
+        "stream_id": "00000000-0000-4000-8000-00000000c201",
+        "stream_epoch": 1,
+        "sequence": 0,
+        "source_timestamp_nanos": 1000000000
+      },
+      "kind": "cancel_all",
+      "button": "released",
+      "contacts": []
+    },
+    {
+      "header": {
+        "stream_id": "00000000-0000-4000-8000-00000000c201",
+        "stream_epoch": 1,
+        "sequence": 1,
+        "source_timestamp_nanos": 1010000000
+      },
+      "kind": "update",
+      "button": "released",
+      "contacts": [
+        {
+          "contact_id": 10,
+          "position": { "x_himetric": 2000, "y_himetric": 3000 },
+          "confidence": true,
+          "size": { "width_himetric": 700, "height_himetric": 800 },
+          "pressure": 12000
+        }
+      ]
+    },
+    {
+      "header": {
+        "stream_id": "00000000-0000-4000-8000-00000000c201",
+        "stream_epoch": 1,
+        "sequence": 2,
+        "source_timestamp_nanos": 1020000000
+      },
+      "kind": "update",
+      "button": "released",
+      "contacts": [
+        {
+          "contact_id": 10,
+          "position": { "x_himetric": 2300, "y_himetric": 2800 },
+          "confidence": true,
+          "size": { "width_himetric": 700, "height_himetric": 800 },
+          "pressure": 12500
+        }
+      ]
+    },
+    {
+      "header": {
+        "stream_id": "00000000-0000-4000-8000-00000000c201",
+        "stream_epoch": 1,
+        "sequence": 3,
+        "source_timestamp_nanos": 1030000000
+      },
+      "kind": "update",
+      "button": "released",
+      "contacts": [
+        {
+          "contact_id": 10,
+          "position": { "x_himetric": 2500, "y_himetric": 2600 },
+          "confidence": true,
+          "size": { "width_himetric": 700, "height_himetric": 800 },
+          "pressure": 13000
+        },
+        {
+          "contact_id": 20,
+          "position": { "x_himetric": 6500, "y_himetric": 2600 },
+          "confidence": true,
+          "size": { "width_himetric": 680, "height_himetric": 780 },
+          "pressure": 11800
+        }
+      ]
+    },
+    {
+      "header": {
+        "stream_id": "00000000-0000-4000-8000-00000000c201",
+        "stream_epoch": 1,
+        "sequence": 4,
+        "source_timestamp_nanos": 1040000000
+      },
+      "kind": "update",
+      "button": "released",
+      "contacts": [
+        {
+          "contact_id": 10,
+          "position": { "x_himetric": 2200, "y_himetric": 2300 },
+          "confidence": true,
+          "size": { "width_himetric": 700, "height_himetric": 800 },
+          "pressure": 13000
+        },
+        {
+          "contact_id": 20,
+          "position": { "x_himetric": 4200, "y_himetric": 2300 },
+          "confidence": true,
+          "size": { "width_himetric": 680, "height_himetric": 780 },
+          "pressure": 11800
+        },
+        {
+          "contact_id": 30,
+          "position": { "x_himetric": 6200, "y_himetric": 2300 },
+          "confidence": true,
+          "size": { "width_himetric": 720, "height_himetric": 820 },
+          "pressure": 12100
+        },
+        {
+          "contact_id": 40,
+          "position": { "x_himetric": 8200, "y_himetric": 2300 },
+          "confidence": true,
+          "size": { "width_himetric": 690, "height_himetric": 790 },
+          "pressure": 11900
+        }
+      ]
+    },
+    {
+      "header": {
+        "stream_id": "00000000-0000-4000-8000-00000000c201",
+        "stream_epoch": 1,
+        "sequence": 5,
+        "source_timestamp_nanos": 1050000000
+      },
+      "kind": "update",
+      "button": "released",
+      "contacts": [
+        {
+          "contact_id": 10,
+          "position": { "x_himetric": 1800, "y_himetric": 2500 },
+          "confidence": true,
+          "size": { "width_himetric": 700, "height_himetric": 800 },
+          "pressure": 13000
+        },
+        {
+          "contact_id": 20,
+          "position": { "x_himetric": 3400, "y_himetric": 2500 },
+          "confidence": true,
+          "size": { "width_himetric": 680, "height_himetric": 780 },
+          "pressure": 11800
+        },
+        {
+          "contact_id": 30,
+          "position": { "x_himetric": 5000, "y_himetric": 2500 },
+          "confidence": true,
+          "size": { "width_himetric": 720, "height_himetric": 820 },
+          "pressure": 12100
+        },
+        {
+          "contact_id": 40,
+          "position": { "x_himetric": 6600, "y_himetric": 2500 },
+          "confidence": true,
+          "size": { "width_himetric": 690, "height_himetric": 790 },
+          "pressure": 11900
+        },
+        {
+          "contact_id": 50,
+          "position": { "x_himetric": 8200, "y_himetric": 2500 },
+          "confidence": false,
+          "size": { "width_himetric": 2500, "height_himetric": 2600 },
+          "pressure": 9000
+        }
+      ]
+    },
+    {
+      "header": {
+        "stream_id": "00000000-0000-4000-8000-00000000c201",
+        "stream_epoch": 1,
+        "sequence": 6,
+        "source_timestamp_nanos": 1060000000
+      },
+      "kind": "update",
+      "button": "released",
+      "contacts": []
+    },
+    {
+      "header": {
+        "stream_id": "00000000-0000-4000-8000-00000000c201",
+        "stream_epoch": 1,
+        "sequence": 7,
+        "source_timestamp_nanos": 1070000000
+      },
+      "kind": "cancel_all",
+      "button": "released",
+      "contacts": []
+    }
+  ]
+}

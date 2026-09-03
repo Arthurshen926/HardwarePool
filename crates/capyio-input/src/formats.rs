@@ -16,6 +16,11 @@ pub fn touch_events_profile() -> ProfileId {
 }
 
 #[must_use]
+pub fn touchpad_frames_profile() -> ProfileId {
+    ProfileId::touchpad_frames_v1()
+}
+
+#[must_use]
 pub fn gamepad_state_profile() -> ProfileId {
     ProfileId::gamepad_state_v1()
 }
@@ -38,6 +43,11 @@ pub fn pointer_events_format() -> FormatDescriptor {
 #[must_use]
 pub fn touch_snapshot_format() -> FormatDescriptor {
     FormatDescriptor::new("touch-snapshot-v1")
+}
+
+#[must_use]
+pub fn touchpad_frame_format() -> FormatDescriptor {
+    FormatDescriptor::new("touchpad-frame-v1")
 }
 
 #[must_use]

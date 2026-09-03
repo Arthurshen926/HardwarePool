@@ -1,6 +1,6 @@
 [package]
 name = "capyio-windows-input"
-description = "Reserved Windows input projection boundary for CapyIO."
+description = "Windows input projection and runtime probes for CapyIO."
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -8,3 +8,19 @@ license.workspace = true
 
 [dependencies]
 capyio-input = { path = "../../../crates/capyio-input" }
+
+[target.'cfg(windows)'.dependencies]
+windows-sys = { workspace = true, features = [
+    "Win32_Devices_DeviceAndDriverInstallation",
+    "Win32_Foundation",
+    "Win32_Security",
+    "Win32_Storage_FileSystem",
+    "Win32_System_LibraryLoader",
+    "Win32_System_IO",
+    "Win32_UI_Controls",
+    "Win32_UI_Input_Pointer",
+    "Win32_UI_WindowsAndMessaging",
+] }
+
+[dev-dependencies]
+capyio-core = { path = "../../../crates/capyio-core" }

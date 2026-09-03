@@ -658,6 +658,7 @@ fn capability_class_to_wire(value: &core::CapabilityClass) -> (i32, String) {
         core::CapabilityClass::Recorder => (13, String::new()),
         core::CapabilityClass::Panel => (14, String::new()),
         core::CapabilityClass::Bridge => (15, String::new()),
+        core::CapabilityClass::Touchpad => (16, String::new()),
         core::CapabilityClass::Custom(custom) => (100, custom.clone()),
     }
 }
@@ -681,6 +682,7 @@ fn capability_class_from_wire(
         13 => Ok(core::CapabilityClass::Recorder),
         14 => Ok(core::CapabilityClass::Panel),
         15 => Ok(core::CapabilityClass::Bridge),
+        16 => Ok(core::CapabilityClass::Touchpad),
         100 if !custom.trim().is_empty() => Ok(core::CapabilityClass::Custom(custom)),
         _ => Err(invalid_enum("capability.class", value)),
     }

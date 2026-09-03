@@ -26,6 +26,14 @@ pub enum InputContractError {
     InvalidPointerFrame(String),
     #[error("invalid touch frame: {0}")]
     InvalidTouchFrame(String),
+    #[error("invalid touchpad descriptor: {0}")]
+    InvalidTouchpadDescriptor(String),
+    #[error("invalid touchpad frame: {0}")]
+    InvalidTouchpadFrame(String),
+    #[error("invalid touchpad fixture: {0}")]
+    InvalidTouchpadFixture(String),
+    #[error("touchpad timestamp {actual} regressed below {previous}")]
+    TouchpadTimestampRegression { previous: u64, actual: u64 },
     #[error("invalid keyboard frame: {0}")]
     InvalidKeyboardFrame(String),
     #[error("invalid gamepad state: {0}")]

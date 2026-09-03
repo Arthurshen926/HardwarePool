@@ -10,6 +10,10 @@ fn video_and_input_profile_helpers_match_the_normative_registry() {
             "capyio.input.pointer-events",
         ),
         (ProfileId::touch_events_v1(), "capyio.input.touch-events"),
+        (
+            ProfileId::touchpad_frames_v1(),
+            "capyio.input.touchpad-frames",
+        ),
         (ProfileId::gamepad_state_v1(), "capyio.input.gamepad-state"),
         (ProfileId::haptics_feedback_v1(), "capyio.haptics.feedback"),
     ];
