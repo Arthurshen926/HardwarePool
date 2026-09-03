@@ -2,6 +2,10 @@ use serde::{Deserialize, Serialize};
 
 use crate::{InputContractError, InputFrameHeader, SignedAxis, TriggerValue};
 
+mod composer;
+
+pub use composer::{GamepadControlUpdate, GamepadStateComposer, GamepadStick, GamepadTrigger};
+
 const KNOWN_BUTTON_MASK: u32 = (1 << 16) - 1;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
@@ -39,6 +43,12 @@ impl GamepadButtons {
     #[must_use]
     pub const fn with(mut self, button: GamepadButton) -> Self {
         self.0 |= 1_u32 << button as u8;
+        self
+    }
+
+    #[must_use]
+    pub const fn without(mut self, button: GamepadButton) -> Self {
+        self.0 &= !(1_u32 << button as u8);
         self
     }
 

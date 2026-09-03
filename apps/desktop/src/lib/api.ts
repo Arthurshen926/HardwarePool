@@ -1,7 +1,7 @@
 import { invoke } from "@tauri-apps/api/core";
 
 import { BrowserMockCapyIOApi } from "./mock";
-import type { CapyIOApi, QuickActionOperation, UiAudioEndpointCatalog, UiLiveImu, UiQuickAction, UiSnapshot } from "./types";
+import type { CapyIOApi, GamepadControlUpdate, QuickActionOperation, UiAudioEndpointCatalog, UiGamepadState, UiLiveImu, UiQuickAction, UiSnapshot, WindowsControllerKind } from "./types";
 
 class TauriCapyIOApi implements CapyIOApi {
   getSnapshot(): Promise<UiSnapshot> {
@@ -28,6 +28,42 @@ class TauriCapyIOApi implements CapyIOApi {
 
   stopLiveImu(): Promise<UiLiveImu> {
     return invoke<UiLiveImu>("stop_live_imu");
+  }
+
+  getGamepadState(): Promise<UiGamepadState> {
+    return invoke<UiGamepadState>("get_gamepad_state");
+  }
+
+  refreshWindowsGamepadPreflight(controllerKind: WindowsControllerKind): Promise<UiGamepadState> {
+    return invoke<UiGamepadState>("refresh_windows_gamepad_preflight", { request: { controllerKind } });
+  }
+
+  startWindowsGamepadProjection(enableXinputCompanion: boolean): Promise<UiGamepadState> {
+    return invoke<UiGamepadState>("start_windows_gamepad_projection", { request: { enableXinputCompanion } });
+  }
+
+  stopWindowsGamepadProjection(): Promise<UiGamepadState> {
+    return invoke<UiGamepadState>("stop_windows_gamepad_projection");
+  }
+
+  updateGamepadState(update: GamepadControlUpdate): Promise<UiGamepadState> {
+    return invoke<UiGamepadState>("update_gamepad_state", { request: update });
+  }
+
+  startGamepadDsu(port: number, mode: import("./types").DsuProjectionMode): Promise<UiGamepadState> {
+    return invoke<UiGamepadState>("start_gamepad_dsu", { request: { port, mode } });
+  }
+
+  stopGamepadDsu(): Promise<UiGamepadState> {
+    return invoke<UiGamepadState>("stop_gamepad_dsu");
+  }
+
+  startAndroidGamepad(port: number): Promise<UiGamepadState> {
+    return invoke<UiGamepadState>("start_android_gamepad", { request: { port } });
+  }
+
+  stopAndroidGamepad(): Promise<UiGamepadState> {
+    return invoke<UiGamepadState>("stop_android_gamepad");
   }
 
   getQuickActions(): Promise<UiQuickAction[]> {

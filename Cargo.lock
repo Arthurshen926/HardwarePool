@@ -382,11 +382,15 @@ dependencies = [
  "capyio-audio-share-adapter",
  "capyio-core",
  "capyio-data-plane",
+ "capyio-dsu-adapter",
+ "capyio-input",
  "capyio-micyou-adapter",
  "capyio-micyou-host-config",
  "capyio-runtime",
  "capyio-sensor-server-adapter",
  "capyio-testkit",
+ "capyio-viiper-adapter",
+ "capyio-windows-input",
  "capyio-windows-service",
  "serde",
  "serde_json",
@@ -567,7 +571,12 @@ dependencies = [
 name = "capyio-viiper-adapter"
 version = "0.1.0"
 dependencies = [
+ "capyio-core",
+ "capyio-data-plane",
  "capyio-input",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.20",
 ]
 
 [[package]]
@@ -623,7 +632,14 @@ name = "capyio-windows-input"
 version = "0.1.0"
 dependencies = [
  "capyio-core",
+ "capyio-data-plane",
+ "capyio-dsu-adapter",
  "capyio-input",
+ "capyio-runtime",
+ "capyio-sensor-server-adapter",
+ "capyio-testkit",
+ "capyio-viiper-adapter",
+ "tungstenite",
  "windows-sys 0.61.2",
 ]
 

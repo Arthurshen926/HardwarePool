@@ -7,7 +7,13 @@ rust-version.workspace = true
 license.workspace = true
 
 [dependencies]
+capyio-core = { path = "../../../crates/capyio-core" }
+capyio-data-plane = { path = "../../../crates/capyio-data-plane" }
+capyio-dsu-adapter = { path = "../../../adapters/dsu" }
 capyio-input = { path = "../../../crates/capyio-input" }
+capyio-runtime = { path = "../../../crates/capyio-runtime" }
+capyio-sensor-server-adapter = { path = "../../../adapters/sensor-server" }
+capyio-viiper-adapter = { path = "../../../adapters/viiper" }
 
 [target.'cfg(windows)'.dependencies]
 windows-sys = { workspace = true, features = [
@@ -24,3 +30,5 @@ windows-sys = { workspace = true, features = [
 
 [dev-dependencies]
 capyio-core = { path = "../../../crates/capyio-core" }
+capyio-testkit = { path = "../../../crates/capyio-testkit" }
+tungstenite.workspace = true

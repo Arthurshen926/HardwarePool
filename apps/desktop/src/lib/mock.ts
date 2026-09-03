@@ -3,6 +3,9 @@ import type {
   RouteState,
   UiEvent,
   UiAudioEndpointCatalog,
+  GamepadButton,
+  GamepadControlUpdate,
+  UiGamepadState,
   UiLiveImu,
   QuickActionOperation,
   UiPort,
@@ -104,6 +107,7 @@ function initialSnapshot(): UiSnapshot {
 export class BrowserMockCapyIOApi implements CapyIOApi {
   private snapshot = initialSnapshot();
   private nextSequence = 3;
+  private gamepad = initialGamepadState();
 
   async getSnapshot(): Promise<UiSnapshot> {
     return structuredClone(this.snapshot);
@@ -133,6 +137,7 @@ export class BrowserMockCapyIOApi implements CapyIOApi {
   async resetDemo(): Promise<UiSnapshot> {
     this.snapshot = initialSnapshot();
     this.nextSequence = 3;
+    this.gamepad = initialGamepadState();
     return structuredClone(this.snapshot);
   }
 
@@ -146,6 +151,85 @@ export class BrowserMockCapyIOApi implements CapyIOApi {
 
   async stopLiveImu(): Promise<UiLiveImu> {
     return unsupportedLiveImu();
+  }
+
+  async getGamepadState(): Promise<UiGamepadState> {
+    return structuredClone(this.gamepad);
+  }
+
+  async refreshWindowsGamepadPreflight(controllerKind: import("./types").WindowsControllerKind): Promise<UiGamepadState> {
+    this.gamepad.windowsProjection.controllerKind = controllerKind;
+    this.gamepad.windowsProjection.deviceIdentity = controllerKind === "dualshock4"
+      ? "DualShock 4 · 054c:09cc · native motion"
+      : "Xbox 360 Controller · 045e:028e";
+    return structuredClone(this.gamepad);
+  }
+
+  async startWindowsGamepadProjection(_enableXinputCompanion: boolean): Promise<UiGamepadState> {
+    throw new Error("Windows DS4 projection requires the Tauri desktop backend.");
+  }
+
+  async stopWindowsGamepadProjection(): Promise<UiGamepadState> {
+    this.gamepad.windowsProjection.status = "stopped";
+    this.gamepad.windowsProjection.busId = null;
+    this.gamepad.windowsProjection.ownedUsbipPort = null;
+    return structuredClone(this.gamepad);
+  }
+
+  async updateGamepadState(update: GamepadControlUpdate): Promise<UiGamepadState> {
+    const next = structuredClone(this.gamepad);
+    switch (update.kind) {
+      case "button": {
+        const pressed = new Set<GamepadButton>(next.pressedButtons);
+        if (update.pressed) pressed.add(update.button);
+        else pressed.delete(update.button);
+        next.pressedButtons = [...pressed];
+        break;
+      }
+      case "dpad":
+        if (!isDpadValue(update.x) || !isDpadValue(update.y)) throw new Error("D-pad axes must be -1, 0, or 1.");
+        next.dpad = { x: update.x, y: update.y };
+        break;
+      case "stick":
+        if (!isAxisValue(update.x) || !isAxisValue(update.y)) throw new Error("Stick axes must be -32767..=32767.");
+        if (update.stick === "left") next.leftStick = { x: update.x, y: update.y };
+        else next.rightStick = { x: update.x, y: update.y };
+        break;
+      case "trigger":
+        if (!Number.isInteger(update.value) || update.value < 0 || update.value > 65535) throw new Error("Trigger must be 0..=65535.");
+        if (update.trigger === "left") next.leftTrigger = update.value;
+        else next.rightTrigger = update.value;
+        break;
+      case "reset":
+        next.pressedButtons = [];
+        next.dpad = { x: 0, y: 0 };
+        next.leftStick = { x: 0, y: 0 };
+        next.rightStick = { x: 0, y: 0 };
+        next.leftTrigger = 0;
+        next.rightTrigger = 0;
+        break;
+    }
+    next.sequence = (next.sequence ?? -1) + 1;
+    next.sourceTimestampNanos = Math.max(1, Math.round(performance.now() * 1_000_000));
+    next.lastUpdate = update.kind === "reset" ? "reset.neutral" : "control.update";
+    this.gamepad = next;
+    return structuredClone(next);
+  }
+
+  async startGamepadDsu(_port: number, _mode: import("./types").DsuProjectionMode): Promise<UiGamepadState> {
+    throw new Error("DSU loopback projection requires the Tauri desktop backend.");
+  }
+
+  async stopGamepadDsu(): Promise<UiGamepadState> {
+    return structuredClone(this.gamepad);
+  }
+
+  async startAndroidGamepad(_port: number): Promise<UiGamepadState> {
+    throw new Error("Android controller UDP input requires the Tauri desktop backend.");
+  }
+
+  async stopAndroidGamepad(): Promise<UiGamepadState> {
+    return structuredClone(this.gamepad);
   }
 
   async getQuickActions(): Promise<UiQuickAction[]> {
@@ -177,6 +261,93 @@ export class BrowserMockCapyIOApi implements CapyIOApi {
     this.snapshot.events.push(event);
     this.snapshot.events = this.snapshot.events.slice(-20);
   }
+}
+
+function initialGamepadState(): UiGamepadState {
+  return {
+    schemaVersion: 1,
+    source: "desktop_simulator",
+    simulated: true,
+    profile: "capyio.input.gamepad-state/1",
+    streamEpoch: 1,
+    sequence: null,
+    sourceTimestampNanos: null,
+    pressedButtons: [],
+    dpad: { x: 0, y: 0 },
+    leftStick: { x: 0, y: 0 },
+    rightStick: { x: 0, y: 0 },
+    leftTrigger: 0,
+    rightTrigger: 0,
+    lastUpdate: "neutral.initial",
+    dsuProjection: {
+      supported: false,
+      status: "unsupported",
+      endpoint: null,
+      mode: "motion_only",
+      lastSubmit: "not_started",
+      controlsSubmitted: 0,
+      controlsAccepted: 0,
+      controlsQueueFull: 0,
+      controlsNeutralResets: 0,
+      activeSubscribers: 0,
+      padPacketsSent: 0,
+      packetSendErrors: 0,
+    },
+    windowsProjection: {
+      supported: false,
+      status: "unsupported",
+      controllerKind: "dualshock4",
+      deviceIdentity: "DualShock 4 · 054c:09cc · native motion",
+      viiperEndpoint: null,
+      usbipEndpoint: null,
+      viiperReady: false,
+      usbipReady: false,
+      xinputAvailable: false,
+      xinputReady: false,
+      exportCount: 0,
+      busId: null,
+      ownedUsbipPort: null,
+      inputPackets: 0,
+      nonNeutralPackets: 0,
+      ds4RejectedPackets: 0,
+      xinputPackets: 0,
+      inputOfflineEvents: 0,
+      lastRemoteSequence: null,
+      lastEvent: "browser_mock_has_no_platform_access",
+      problemCode: null,
+      problem: null,
+    },
+    androidInput: {
+      supported: false,
+      status: "unsupported",
+      endpoint: null,
+      lanHostHint: null,
+      pairingToken: null,
+      peerConnected: false,
+      acceptedPackets: 0,
+      rejectedPackets: 0,
+      replayedPackets: 0,
+      peerTimeouts: 0,
+      projectionQueueFull: 0,
+      packetAgeMillis: null,
+      remoteSequence: null,
+      lastEvent: "not_started",
+    },
+    motion: {
+      source: "stationary_fixture",
+      sourceTimestampNanos: null,
+      acceleration: [0, 0, 9.80665],
+      angularVelocity: [0, 0, 0],
+    },
+  };
+}
+
+function isDpadValue(value: number): boolean {
+  return Number.isInteger(value) && value >= -1 && value <= 1;
+}
+
+function isAxisValue(value: number): boolean {
+  return Number.isInteger(value) && value >= -32767 && value <= 32767;
 }
 
 function unsupportedAudioQuickAction(): UiQuickAction {

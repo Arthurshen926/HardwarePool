@@ -27,7 +27,8 @@ pub use formats::{
     touch_events_profile, touch_snapshot_format, touchpad_frame_format, touchpad_frames_profile,
 };
 pub use gamepad::{
-    DpadState, GamepadButton, GamepadButtons, GamepadControls, GamepadState, StickState,
+    DpadState, GamepadButton, GamepadButtons, GamepadControlUpdate, GamepadControls, GamepadState,
+    GamepadStateComposer, GamepadStick, GamepadTrigger, StickState,
 };
 pub use haptics::{HapticsCommand, HapticsEffect};
 pub use keyboard::{KeyEvent, KeyPhase, KeyboardFrame, PhysicalKey};

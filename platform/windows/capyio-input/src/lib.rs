@@ -1,21 +1,26 @@
 #![deny(unsafe_op_in_unsafe_fn)]
 
-//! Runtime probe for the Windows synthetic Precision Touchpad API.
+//! Windows user-mode input Projection composition boundary.
 //!
-//! The current Windows SDK may predate these exports even when the operating
-//! system provides them, so this crate deliberately resolves the API from
-//! `user32.dll` at runtime. The default probe performs no input injection. The
-//! optional device smoke creates a five-contact, 100 x 60 mm synthetic
-//! touchpad and immediately destroys it without submitting contact frames.
+//! The crate owns the synthetic Precision Touchpad probe/session together with
+//! Runtime-owned bounded DSU, VIIPER and optional USB/IP gamepad Projection
+//! workers. It does not install or restart a driver, change host boot policy,
+//! or perform reverse haptics routing.
 
 use std::fmt;
 
+mod dsu_route;
 mod injection_fixture;
 mod projection;
 mod session;
+mod usbip_win2;
 mod vhf_broker;
 mod vhf_win32;
+mod vigem_x360;
+mod viiper_ds4_route;
+mod viiper_route;
 
+pub use dsu_route::{DsuImuRouteController, DsuImuRouteStatus};
 pub use injection_fixture::{
     FIXED_DOUBLE_TAP_DRAG_FRAMES, FIXED_INJECTION_INTERVAL_MILLIS, FIXED_INJECTION_UPDATE_FRAMES,
     SyntheticTouchpadGesture, TouchpadInjectionDryRun, TouchpadInjectionFixture,
@@ -32,6 +37,12 @@ pub use session::{
     SyntheticTouchpadSession, SyntheticTouchpadSessionError, SyntheticTouchpadSessionState,
     SyntheticTouchpadSubmission,
 };
+pub use usbip_win2::{
+    MAX_USBIP_COMMAND_TIMEOUT, MAX_USBIP_OUTPUT_BYTES, PINNED_USBIP_WIN2_VERSION,
+    USBIP_DS4_PRODUCT_ID, USBIP_DS4_VENDOR_ID, USBIP_XBOX360_PRODUCT_ID, USBIP_XBOX360_VENDOR_ID,
+    UsbipBusId, UsbipControllerKind, UsbipExportedDevice, UsbipOwnedAttachment, UsbipWin2Client,
+    UsbipWin2Config, UsbipWin2DeploymentVerified, UsbipWin2Error,
+};
 pub use vhf_broker::{
     VHF_BROKER_MAX_CONTACTS, VHF_BROKER_RECORD_SIZE, VhfBrokerClient, VhfBrokerClientError,
     VhfBrokerCodecError, VhfBrokerContact, VhfBrokerProjectionError, VhfBrokerRecordEncoder,
@@ -39,8 +50,11 @@ pub use vhf_broker::{
     VhfBrokerTransportError, VhfTouchpadSession, VhfTouchpadSessionError, VhfTouchpadSessionState,
 };
 pub use vhf_win32::{VhfBrokerInterfaceProbe, VhfWin32Transport, probe_vhf_broker_interface};
+pub use vigem_x360::{VigemX360Companion, VigemX360Error, VigemX360SidecarConfig};
+pub use viiper_ds4_route::{ViiperDs4RouteController, ViiperDs4RouteEpochs, ViiperDs4RouteStatus};
+pub use viiper_route::{ViiperGamepadRouteController, ViiperGamepadRouteStatus};
 
-pub const IMPLEMENTATION_STATUS: &str = "synthetic-touchpad-sink-session";
+pub const IMPLEMENTATION_STATUS: &str = "integrated-touchpad-and-gamepad-projections";
 pub const PROBE_SCHEMA_VERSION: u32 = 1;
 pub const MAX_SYNTHETIC_TOUCHPAD_CONTACTS: u32 = 5;
 

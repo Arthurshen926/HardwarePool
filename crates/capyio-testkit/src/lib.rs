@@ -314,7 +314,11 @@ pub fn android_node() -> NodeDescriptor {
         "capyio.android.integrated-hardware",
         "Android Integrated Hardware Adapter",
         AdapterDeploymentMode::InProcess,
-        [RouteBackend::CapyDataPlane, RouteBackend::LocalPipeline],
+        [
+            RouteBackend::CapyDataPlane,
+            RouteBackend::LocalPipeline,
+            RouteBackend::ExternalProtocol,
+        ],
     );
     let hardware_adapter_id = hardware_adapter.id;
     node.add_adapter(hardware_adapter)

@@ -1,0 +1,81 @@
+<!doctype html>
+<html lang="zh-CN">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>CapyIO 浏览器手柄验收</title>
+<style>
+  :root { color-scheme: light dark; font: 15px/1.45 system-ui, sans-serif; }
+  body { max-width: 980px; margin: 32px auto; padding: 0 20px; }
+  h1 { margin-bottom: 8px; }
+  .status, .pad { border: 1px solid #8886; border-radius: 12px; padding: 16px; margin: 16px 0; }
+  .ok { color: #26a269; } .waiting { color: #c88800; }
+  .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 8px 20px; }
+  meter { width: 100%; }
+  code { overflow-wrap: anywhere; }
+  button { padding: 8px 12px; }
+</style>
+<body>
+  <h1>CapyIO 浏览器手柄验收</h1>
+  <p>先让此页保持前台，再在手机上按任意键或移动摇杆。Chrome 通常会在首次输入后公开设备。</p>
+  <div class="status">
+    <strong id="headline" class="waiting">等待手柄输入…</strong>
+    <div id="summary"></div>
+  </div>
+  <div id="pads"></div>
+  <p>标准 Web Gamepad API 只验收按键、摇杆和扳机，不提供 DS4 陀螺仪/加速度计数据。IMU 请使用 DS4-aware 应用或 DSU 消费端验收。</p>
+<script>
+  const headline = document.querySelector('#headline');
+  const summary = document.querySelector('#summary');
+  const padsRoot = document.querySelector('#pads');
+  let connectedEvents = 0;
+  let changedFrames = 0;
+  let previous = '';
+
+  addEventListener('gamepadconnected', () => connectedEvents++);
+
+  function sample() {
+    const pads = Array.from(navigator.getGamepads?.() ?? []).filter(Boolean);
+    const state = JSON.stringify(pads.map(pad => ({
+      index: pad.index,
+      timestamp: pad.timestamp,
+      axes: Array.from(pad.axes),
+      buttons: Array.from(pad.buttons, button => [button.pressed, button.value]),
+    })));
+    if (previous && state !== previous) changedFrames++;
+    previous = state;
+
+    headline.textContent = pads.length ? `已枚举 ${pads.length} 个手柄` : '等待手柄输入…';
+    headline.className = pads.length ? 'ok' : 'waiting';
+    summary.textContent = `连接事件 ${connectedEvents} · 变化帧 ${changedFrames}`;
+    padsRoot.replaceChildren(...pads.map(renderPad));
+    requestAnimationFrame(sample);
+  }
+
+  function renderPad(pad) {
+    const section = document.createElement('section');
+    section.className = 'pad';
+    const title = document.createElement('h2');
+    title.textContent = `#${pad.index} ${pad.id}`;
+    const metadata = document.createElement('p');
+    metadata.innerHTML = `mapping=<code>${pad.mapping || '(raw)'}</code> · timestamp=${pad.timestamp.toFixed(1)}`;
+    const grid = document.createElement('div');
+    grid.className = 'grid';
+    pad.axes.forEach((value, index) => grid.append(metric(`轴 ${index}`, value, -1, 1)));
+    pad.buttons.forEach((button, index) => grid.append(metric(`键 ${index}${button.pressed ? '（按下）' : ''}`, button.value, 0, 1)));
+    section.append(title, metadata, grid);
+    return section;
+  }
+
+  function metric(label, value, min, max) {
+    const item = document.createElement('label');
+    item.textContent = `${label}: ${value.toFixed(3)}`;
+    const meter = document.createElement('meter');
+    meter.min = min; meter.max = max; meter.value = value;
+    item.append(document.createElement('br'), meter);
+    return item;
+  }
+
+  sample();
+</script>
+</body>
+</html>

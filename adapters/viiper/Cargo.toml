@@ -1,10 +1,18 @@
 [package]
 name = "capyio-viiper-adapter"
-description = "Reserved CapyIO boundary for a reviewed VIIPER projection integration."
+description = "Deterministic CapyIO codec boundary for a reviewed external VIIPER projection."
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
+publish = false
 
 [dependencies]
+capyio-data-plane = { path = "../../crates/capyio-data-plane" }
 capyio-input = { path = "../../crates/capyio-input" }
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+
+[dev-dependencies]
+capyio-core = { path = "../../crates/capyio-core" }
