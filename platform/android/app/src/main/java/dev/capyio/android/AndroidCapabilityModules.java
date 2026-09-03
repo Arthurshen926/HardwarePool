@@ -7,6 +7,9 @@ import dev.capyio.android.contract.AudioNodeController;
 import dev.capyio.android.contract.AudioNodeSnapshot;
 import dev.capyio.android.contract.CapabilityAvailability;
 import dev.capyio.android.contract.CapabilityKind;
+import dev.capyio.android.contract.CapabilityLifecycleController;
+import dev.capyio.android.contract.CapabilityLifecycleSnapshot;
+import dev.capyio.android.contract.CapabilityLifecycleState;
 import dev.capyio.android.contract.CapabilityModule;
 import dev.capyio.android.contract.CapabilityModuleRegistry;
 import dev.capyio.android.contract.CapabilityPermissionRequirement;
@@ -28,6 +31,7 @@ final class AndroidCapabilityModules {
 
     static CapabilityModuleRegistry createRegistry(
             AudioNodeController audioController,
+            CapabilityLifecycleController imuController,
             BooleanSupplier microphonePermissionReady,
             BooleanSupplier notificationPermissionReady,
             HardwarePresence microphonePresence,
@@ -54,40 +58,8 @@ final class AndroidCapabilityModules {
                 CapabilityPortDirection.SOURCE,
                 "capyio.video.frames/1",
                 "platform-negotiated-video-frame"))));
-        registry.register(pendingModule("android.controller-module", List.of(
-                pendingCapability(
-                        "android.imu",
-                        "Phone IMU",
-                        CapabilityKind.IMU,
-                        CapabilityPermissionRequirement.NONE,
-                        imuPresence,
-                        "android.imu.source",
-                        "IMU Sample Source",
-                        CapabilityPortDirection.SOURCE,
-                        "capyio.motion.imu-samples/1",
-                        "imu-si-f32-le"),
-                pendingCapability(
-                        "android.gamepad",
-                        "Touch Gamepad",
-                        CapabilityKind.GAMEPAD,
-                        CapabilityPermissionRequirement.NONE,
-                        touchSurfacePresence,
-                        "android.gamepad.source",
-                        "Gamepad State Source",
-                        CapabilityPortDirection.SOURCE,
-                        "capyio.input.gamepad-state/1",
-                        "gamepad-state-v1"),
-                pendingCapability(
-                        "android.haptics",
-                        "Phone Vibration",
-                        CapabilityKind.HAPTICS,
-                        CapabilityPermissionRequirement.NONE,
-                        vibratorPresence,
-                        "android.haptics.sink",
-                        "Haptics Feedback Sink",
-                        CapabilityPortDirection.SINK,
-                        "capyio.haptics.feedback/1",
-                        "dual-rumble-v1"))));
+        registry.register(controllerModule(
+                imuController, imuPresence, touchSurfacePresence, vibratorPresence));
         registry.register(pendingModule("android.touchpad-module", List.of(pendingCapability(
                 "android.touchpad",
                 "Phone Touchpad Surface",
@@ -100,6 +72,80 @@ final class AndroidCapabilityModules {
                 "capyio.input.touchpad-frames/1",
                 "touchpad-frame-v1"))));
         return registry;
+    }
+
+    private static CapabilityModule controllerModule(
+            CapabilityLifecycleController imuController,
+            HardwarePresence imuPresence,
+            HardwarePresence touchSurfacePresence,
+            HardwarePresence vibratorPresence) {
+        return new CapabilityModule() {
+            @Override
+            public String moduleKey() {
+                return "android.controller-module";
+            }
+
+            @Override
+            public List<CapabilitySnapshot> capabilities() {
+                return List.of(
+                        imuCapability(imuController.snapshot(), imuPresence),
+                        pendingCapability(
+                                "android.gamepad",
+                                "Touch Gamepad",
+                                CapabilityKind.GAMEPAD,
+                                CapabilityPermissionRequirement.NONE,
+                                touchSurfacePresence,
+                                "android.gamepad.source",
+                                "Gamepad State Source",
+                                CapabilityPortDirection.SOURCE,
+                                "capyio.input.gamepad-state/1",
+                                "gamepad-state-v1"),
+                        pendingCapability(
+                                "android.haptics",
+                                "Phone Vibration",
+                                CapabilityKind.HAPTICS,
+                                CapabilityPermissionRequirement.NONE,
+                                vibratorPresence,
+                                "android.haptics.sink",
+                                "Haptics Feedback Sink",
+                                CapabilityPortDirection.SINK,
+                                "capyio.haptics.feedback/1",
+                                "dual-rumble-v1"));
+            }
+        };
+    }
+
+    private static CapabilitySnapshot imuCapability(
+            CapabilityLifecycleSnapshot lifecycle,
+            HardwarePresence hardwarePresence) {
+        CapabilityAvailability availability;
+        String problemCode = null;
+        if (hardwarePresence != HardwarePresence.PRESENT) {
+            availability = CapabilityAvailability.OFFLINE;
+            problemCode = inventoryProblem(hardwarePresence);
+        } else if (lifecycle.state() == CapabilityLifecycleState.FAILED) {
+            availability = CapabilityAvailability.OFFLINE;
+            problemCode = lifecycle.problemCode();
+        } else {
+            availability = lifecycle.state().ownsAdapterLifecycle()
+                    ? CapabilityAvailability.BUSY
+                    : CapabilityAvailability.AVAILABLE;
+        }
+        return new CapabilitySnapshot(
+                "android.imu",
+                "Phone IMU",
+                CapabilityKind.IMU,
+                availability,
+                CapabilityPermissionRequirement.NONE,
+                hardwarePresence,
+                true,
+                List.of(new CapabilityPortSnapshot(
+                        "android.imu.source",
+                        "IMU Sample Source",
+                        CapabilityPortDirection.SOURCE,
+                        "capyio.motion.imu-samples/1",
+                        List.of("imu-si-f32-le"))),
+                problemCode);
     }
 
     private static CapabilityModule pendingModule(

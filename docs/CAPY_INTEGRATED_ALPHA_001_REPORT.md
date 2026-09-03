@@ -36,6 +36,14 @@ vibrator inventory without opening hardware. Presence, Adapter attachment and
 availability remain three separate states, so detected-but-unintegrated input
 hardware is still Offline.
 
+A01B3 now attaches the first input lifecycle facade. The unified Node service
+owns accelerometer/gyroscope registration through an IMU Adapter and exposes
+generation-bound start/stop plus observer state through its Binder. IMU is
+therefore an attached Available/Busy/Offline Source in the local catalog;
+gamepad, haptics, touchpad and camera remain explicitly unattached. The sensor
+callback retains only fixed-size latest values and does not perform network or
+UI work. Sample data-plane routing and background operation are not claimed.
+
 ## Automated evidence
 
 - `cargo test --offline -p capyio-input -p capyio-dsu-adapter -p capyio-viiper-adapter -p capyio-windows-input -p capyio-desktop`: passed after the gamepad merge.
@@ -57,7 +65,9 @@ hardware is still Offline.
   :app:verifyDebugEntrypoints --offline`: passed; the debug APK was built only
   as evidence and was not installed.
 - `platform/android/gradlew.bat :app:capabilityCompositionTest --offline`:
-  passed 19 hardware-free assertions over the exact service composition.
+  passed 32 hardware-free assertions over the exact service composition.
+- `platform/android/gradlew.bat :node-contract:capabilityLifecycleContractTest
+  --offline`: passed 21 generation-bound lifecycle assertions.
 - `platform/android/gradlew.bat capyioCheck --offline`: final aggregate Android
   Gate passed all contracts, composition checks, Lint, entrypoint verification
   and debug assembly without installing the APK.

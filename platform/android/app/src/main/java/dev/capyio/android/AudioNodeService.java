@@ -10,6 +10,7 @@ import android.content.Context;
 import android.content.Intent;
 import android.content.pm.PackageManager;
 import android.content.pm.ServiceInfo;
+import android.hardware.SensorManager;
 import android.os.Binder;
 import android.os.Build;
 import android.os.Handler;
@@ -22,12 +23,14 @@ import dev.capyio.android.contract.AudioCapabilitySnapshot;
 import dev.capyio.android.contract.AudioNodeController;
 import dev.capyio.android.contract.AudioNodeSnapshot;
 import dev.capyio.android.contract.CapabilityCatalogSnapshot;
+import dev.capyio.android.contract.CapabilityLifecycleController;
+import dev.capyio.android.contract.CapabilityLifecycleSnapshot;
 import dev.capyio.android.contract.CapabilityModuleRegistry;
 import dev.capyio.android.contract.TransitionToken;
 import dev.capyio.android.lan.NativeLanSpeakerSessionConfig;
 import dev.capyio.android.lan.NativeLanMicrophoneSessionConfig;
 
-/** Owns Android audio resources independently of the Activity lifecycle. */
+/** Owns Android Node hardware resources independently of the Activity implementation. */
 public final class AudioNodeService extends Service {
     private static final String ACTION_START_MICROPHONE =
             "dev.capyio.android.action.START_MICROPHONE";
@@ -48,10 +51,13 @@ public final class AudioNodeService extends Service {
     private final NodeBinder binder = new NodeBinder();
     private final Handler mainHandler = new Handler(Looper.getMainLooper());
     private final AudioNodeController controller = new AudioNodeController();
+    private final CapabilityLifecycleController imuController =
+            new CapabilityLifecycleController();
 
     private CapabilityModuleRegistry capabilityRegistry;
     private MicrophoneSourceAdapter microphoneAdapter;
     private SpeakerSinkAdapter speakerAdapter;
+    private ImuSourceAdapter imuAdapter;
     private String nodeId;
     private boolean foreground;
     private boolean destroying;
@@ -87,6 +93,7 @@ public final class AudioNodeService extends Service {
         AndroidHardwareInventory inventory = AndroidHardwareInventory.probe(this);
         capabilityRegistry = AndroidCapabilityModules.createRegistry(
                 controller,
+                imuController,
                 () -> checkSelfPermission(Manifest.permission.RECORD_AUDIO)
                         == PackageManager.PERMISSION_GRANTED,
                 () -> Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU
@@ -98,6 +105,27 @@ public final class AudioNodeService extends Service {
                 inventory.imuPresence(),
                 inventory.touchSurfacePresence(),
                 inventory.vibratorPresence());
+        imuAdapter = new ImuSourceAdapter(
+                getSystemService(SensorManager.class),
+                new ImuSourceAdapter.Listener() {
+                    @Override
+                    public void onStarted(long generation) {
+                        imuController.completeStart(generation);
+                        notifyStateListener();
+                    }
+
+                    @Override
+                    public void onStopped(long generation) {
+                        imuController.completeStop(generation);
+                        notifyStateListener();
+                    }
+
+                    @Override
+                    public void onFailed(long generation, String problemCode) {
+                        imuController.fail(generation, problemCode);
+                        notifyStateListener();
+                    }
+                });
         createNotificationChannel();
         NativeLanMicrophoneSessionConfig microphoneConfig;
         try {
@@ -137,6 +165,7 @@ public final class AudioNodeService extends Service {
         } else if (ACTION_STOP_ALL.equals(action)) {
             stopCapability(AudioCapabilityKind.MICROPHONE_SOURCE);
             stopCapability(AudioCapabilityKind.SPEAKER_SINK);
+            stopImu();
         }
         return START_NOT_STICKY;
     }
@@ -156,6 +185,10 @@ public final class AudioNodeService extends Service {
         TransitionToken speaker = controller.beginStop(AudioCapabilityKind.SPEAKER_SINK);
         if (speaker.accepted()) {
             speakerAdapter.stop(speaker.generation());
+        }
+        TransitionToken imu = imuController.beginStop();
+        if (imu.accepted()) {
+            imuAdapter.stop(imu.generation());
         }
         stateListener = null;
         super.onDestroy();
@@ -194,6 +227,22 @@ public final class AudioNodeService extends Service {
         return kind == AudioCapabilityKind.MICROPHONE_SOURCE
                 ? microphoneAdapter
                 : speakerAdapter;
+    }
+
+    private void startImu() {
+        TransitionToken transition = imuController.beginStart();
+        if (transition.accepted()) {
+            imuAdapter.start(transition.generation());
+        }
+        notifyStateListener();
+    }
+
+    private void stopImu() {
+        TransitionToken transition = imuController.beginStop();
+        if (transition.accepted()) {
+            imuAdapter.stop(transition.generation());
+        }
+        notifyStateListener();
     }
 
     private AudioPlatformAdapter.Listener listenerFor(AudioCapabilityKind kind) {
@@ -365,6 +414,18 @@ public final class AudioNodeService extends Service {
 
         public CapabilityCatalogSnapshot capabilityCatalog() {
             return AudioNodeService.this.capabilityCatalogSnapshot();
+        }
+
+        public CapabilityLifecycleSnapshot imuLifecycle() {
+            return imuController.snapshot();
+        }
+
+        public void startImu() {
+            mainHandler.post(AudioNodeService.this::startImu);
+        }
+
+        public void stopImu() {
+            mainHandler.post(AudioNodeService.this::stopImu);
         }
 
         public int speakerUnderrunCount() {

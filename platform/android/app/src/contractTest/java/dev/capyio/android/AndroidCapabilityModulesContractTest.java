@@ -4,6 +4,8 @@ import dev.capyio.android.contract.AudioCapabilityKind;
 import dev.capyio.android.contract.AudioNodeController;
 import dev.capyio.android.contract.CapabilityAvailability;
 import dev.capyio.android.contract.CapabilityCatalogSnapshot;
+import dev.capyio.android.contract.CapabilityLifecycleController;
+import dev.capyio.android.contract.CapabilityLifecycleState;
 import dev.capyio.android.contract.CapabilityPortDirection;
 import dev.capyio.android.contract.CapabilitySnapshot;
 import dev.capyio.android.contract.HardwarePresence;
@@ -17,14 +19,17 @@ public final class AndroidCapabilityModulesContractTest {
     public static void main(String[] args) {
         exposesTheCompleteNonDisplayMigrationInventory();
         reflectsPermissionAndAudioLifecycleState();
+        reflectsGenerationBoundImuLifecycleState();
         System.out.println("Android Capability module composition: PASS ("
                 + assertions + " assertions)");
     }
 
     private static void exposesTheCompleteNonDisplayMigrationInventory() {
         AudioNodeController controller = new AudioNodeController();
+        CapabilityLifecycleController imuController = new CapabilityLifecycleController();
         CapabilityCatalogSnapshot snapshot = AndroidCapabilityModules.createRegistry(
                 controller,
+                imuController,
                 () -> true,
                 () -> true,
                 HardwarePresence.PRESENT,
@@ -37,9 +42,9 @@ public final class AndroidCapabilityModulesContractTest {
         check(snapshot.moduleCount() == 4);
         check(snapshot.capabilities().size() == 7);
         check(snapshot.capabilities().stream().filter(CapabilitySnapshot::adapterAttached).count()
-                == 2);
+                == 3);
         check(snapshot.capabilities().stream().filter(capability -> !capability.adapterAttached()).count()
-                == 5);
+                == 4);
         check(capability(snapshot, "android.microphone").ports().get(0).direction()
                 == CapabilityPortDirection.SOURCE);
         check(capability(snapshot, "android.speaker").ports().get(0).direction()
@@ -52,6 +57,8 @@ public final class AndroidCapabilityModulesContractTest {
                 == CapabilityAvailability.OFFLINE);
         check(capability(snapshot, "android.camera").hardwarePresence()
                 == HardwarePresence.PRESENT);
+        check(capability(snapshot, "android.imu").availability()
+                == CapabilityAvailability.AVAILABLE);
         check("CAPY.ANDROID.MODULE_NOT_ATTACHED".equals(
                 capability(snapshot, "android.touchpad").problemCode()));
     }
@@ -60,6 +67,7 @@ public final class AndroidCapabilityModulesContractTest {
         AudioNodeController controller = new AudioNodeController();
         var registry = AndroidCapabilityModules.createRegistry(
                 controller,
+                new CapabilityLifecycleController(),
                 () -> false,
                 () -> true,
                 HardwarePresence.PRESENT,
@@ -87,6 +95,42 @@ public final class AndroidCapabilityModulesContractTest {
                 == CapabilityAvailability.BUSY);
         check(capability(starting, "android.microphone").availability()
                 == CapabilityAvailability.PERMISSION_REQUIRED);
+    }
+
+    private static void reflectsGenerationBoundImuLifecycleState() {
+        CapabilityLifecycleController imuController = new CapabilityLifecycleController();
+        var registry = AndroidCapabilityModules.createRegistry(
+                new AudioNodeController(),
+                imuController,
+                () -> true,
+                () -> true,
+                HardwarePresence.PRESENT,
+                HardwarePresence.PRESENT,
+                HardwarePresence.PRESENT,
+                HardwarePresence.PRESENT,
+                HardwarePresence.PRESENT,
+                HardwarePresence.PRESENT);
+
+        TransitionToken start = imuController.beginStart();
+        check(start.accepted());
+        check(capability(registry.snapshot("test-node"), "android.imu").availability()
+                == CapabilityAvailability.BUSY);
+        check(imuController.completeStart(start.generation()));
+        check(imuController.snapshot().state() == CapabilityLifecycleState.ACTIVE);
+
+        TransitionToken stop = imuController.beginStop();
+        check(stop.accepted());
+        check(!imuController.completeStart(start.generation()));
+        check(imuController.completeStop(stop.generation()));
+        check(capability(registry.snapshot("test-node"), "android.imu").availability()
+                == CapabilityAvailability.AVAILABLE);
+
+        TransitionToken retry = imuController.beginStart();
+        check(retry.accepted());
+        check(imuController.fail(retry.generation(), "CAPY.ANDROID.IMU_START_FAILED"));
+        CapabilitySnapshot failed = capability(registry.snapshot("test-node"), "android.imu");
+        check(failed.availability() == CapabilityAvailability.OFFLINE);
+        check("CAPY.ANDROID.IMU_START_FAILED".equals(failed.problemCode()));
     }
 
     private static CapabilitySnapshot capability(

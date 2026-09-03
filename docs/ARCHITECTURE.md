@@ -748,6 +748,14 @@ detected camera or sensor therefore remains Offline while its Adapter is not
 attached; absence receives a distinct bounded Problem code.
 Probe exceptions fail closed as `Unknown` with a separate Problem code and
 cannot make the Capability selectable.
+ANDROID-A01B3 begins lifecycle attachment with the IMU Source. A reusable,
+generation-bound non-audio lifecycle controller is owned by the Node service;
+its Android Adapter registers the accelerometer and gyroscope and retains only
+one fixed-size latest sample. Sensor callbacks perform no network, file or UI
+work. The Binder exposes start/stop commands and observer state, while the
+catalog reports the attached IMU as Available, Busy or Offline independently of
+hardware presence. This slice does not yet route samples onto a data plane or
+claim background/lock-screen operation.
 
 ADR 0044 subsequently adds the approved network permission and a separate
 dependency-free LAN codec/socket worker boundary. ADRs 0046 and 0047 now attach
