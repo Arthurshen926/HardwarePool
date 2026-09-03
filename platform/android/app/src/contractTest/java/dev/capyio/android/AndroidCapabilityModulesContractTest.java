@@ -22,6 +22,7 @@ public final class AndroidCapabilityModulesContractTest {
         reflectsPermissionAndAudioLifecycleState();
         reflectsGenerationBoundImuLifecycleState();
         reflectsGenerationBoundGamepadLifecycleState();
+        projectsTheCatalogIntoSharedUiSchemaFour();
         System.out.println("Android Capability module composition: PASS ("
                 + assertions + " assertions)");
     }
@@ -165,6 +166,48 @@ public final class AndroidCapabilityModulesContractTest {
         check(gamepadController.completeStop(stop.generation()));
         check(capability(registry.snapshot("test-node"), "android.gamepad").availability()
                 == CapabilityAvailability.AVAILABLE);
+    }
+
+    private static void projectsTheCatalogIntoSharedUiSchemaFour() {
+        CapabilityCatalogSnapshot catalog = AndroidCapabilityModules.createRegistry(
+                new AudioNodeController(),
+                new CapabilityLifecycleController(),
+                new GamepadNodeController(),
+                () -> true,
+                () -> true,
+                HardwarePresence.PRESENT,
+                HardwarePresence.PRESENT,
+                HardwarePresence.PRESENT,
+                HardwarePresence.PRESENT,
+                HardwarePresence.PRESENT,
+                HardwarePresence.PRESENT).snapshot("test-node");
+
+        String json = AndroidUiSnapshotJson.encode(catalog, "16", "0.4.3-dev");
+        check(json.startsWith("{\"backendMode\":\"android_observer\",\"schemaVersion\":4,"));
+        check(json.contains("\"id\":\"test-node\",\"displayName\":\"CapyIO Android\""));
+        check(json.contains("\"capabilityCount\":7"));
+        check(occurrences(json, "\"inventorySource\":\"android_node_catalog\"") == 7);
+        check(json.contains("\"capabilityClass\":\"microphone\""));
+        check(json.contains("\"direction\":\"source\""));
+        check(json.contains("\"direction\":\"sink\""));
+        check(json.contains("\"selectableForSharing\":false"));
+        check(json.endsWith("\"imuFixture\":null}"));
+        check("\"a\\\"b\\\\c\\n\\ud83d\\ude00\"".equals(
+                AndroidUiSnapshotJson.encodeStringForContractTest("a\"b\\c\n\ud83d\ude00")));
+
+        String disconnected = AndroidUiSnapshotJson.encodeDisconnected("16", "0.4.3-dev");
+        check(disconnected.contains("\"online\":false"));
+        check(disconnected.contains("\"capabilities\":[]"));
+    }
+
+    private static int occurrences(String value, String target) {
+        int count = 0;
+        int offset = 0;
+        while ((offset = value.indexOf(target, offset)) >= 0) {
+            count++;
+            offset += target.length();
+        }
+        return count;
     }
 
     private static CapabilitySnapshot capability(

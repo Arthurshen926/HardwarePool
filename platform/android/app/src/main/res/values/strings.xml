@@ -7,6 +7,7 @@
     <string name="permission_ready">麦克风与通知权限已就绪</string>
     <string name="permission_required">启动麦克风需要录音与通知权限；启动扬声器需要通知权限。</string>
     <string name="permission_denied">权限未授予，能力没有启动。</string>
+    <string name="open_shared_ui">打开统一界面（只读目录）</string>
     <string name="microphone_title">麦克风 Source</string>
     <string name="microphone_description">通过统一原生 LAN 后端发送 AudioRecord PCM；不保存、不记录音频内容。</string>
     <string name="speaker_title">扬声器 Sink</string>

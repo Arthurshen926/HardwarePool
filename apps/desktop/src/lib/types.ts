@@ -1,4 +1,4 @@
-export type BackendMode = "browser_mock" | "tauri_demo";
+export type BackendMode = "android_observer" | "browser_mock" | "tauri_demo";
 
 export type RouteState =
   | "draft"
@@ -71,7 +71,7 @@ export interface UiCapability {
   local: boolean;
   availability: CapabilityAvailability;
   permissionRequirement: PermissionRequirement;
-  inventorySource: "runtime_catalog";
+  inventorySource: "android_node_catalog" | "runtime_catalog";
   simulated: boolean;
   selectableForSharing: boolean;
   selectedForSharing: boolean;
@@ -301,7 +301,7 @@ export interface UiSnapshot {
   adapters: UiAdapter[];
   events: UiEvent[];
   warnings: string[];
-  imuFixture: UiImuFixture;
+  imuFixture: UiImuFixture | null;
 }
 
 export interface CapyIOApi {
@@ -309,10 +309,10 @@ export interface CapyIOApi {
   setRoute(routeId: string, active: boolean): Promise<UiSnapshot>;
   setLocalCapabilityShared(capabilityId: string, selected: boolean): Promise<UiSnapshot>;
   resetDemo(): Promise<UiSnapshot>;
-  getLiveImu(): Promise<UiLiveImu>;
+  getLiveImu(): Promise<UiLiveImu | null>;
   startLiveImu(ip: string, port: number): Promise<UiLiveImu>;
   stopLiveImu(): Promise<UiLiveImu>;
-  getGamepadState(): Promise<UiGamepadState>;
+  getGamepadState(): Promise<UiGamepadState | null>;
   refreshWindowsGamepadPreflight(controllerKind: WindowsControllerKind): Promise<UiGamepadState>;
   startWindowsGamepadProjection(enableXinputCompanion: boolean): Promise<UiGamepadState>;
   stopWindowsGamepadProjection(): Promise<UiGamepadState>;
@@ -323,6 +323,6 @@ export interface CapyIOApi {
   stopAndroidGamepad(): Promise<UiGamepadState>;
   getQuickActions(): Promise<UiQuickAction[]>;
   invokeQuickAction(actionId: string, operation: QuickActionOperation): Promise<UiQuickAction>;
-  getAudioEndpoints(): Promise<UiAudioEndpointCatalog>;
+  getAudioEndpoints(): Promise<UiAudioEndpointCatalog | null>;
   selectAudioEndpoint(actionId: string, selectionToken: string): Promise<UiQuickAction>;
 }

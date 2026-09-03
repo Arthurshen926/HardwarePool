@@ -255,6 +255,16 @@ needs signing and provenance.
 Narrow DTO commands, Rust-side validation, CSP, no remote WebView content and no
 arbitrary shell/filesystem/updater plugin in the foundation.
 
+ANDROID-A01C2 loads only the build-packaged `file:///android_asset/capyio-ui/`
+presentation. Its WebView blocks network loads and content access, denies
+file-origin universal access and refuses top-level navigation outside that
+asset subtree. The injected `CapyIOAndroid` object exposes one no-argument,
+read-only catalog snapshot method; it cannot start hardware, request permission,
+select sharing, construct a Route, choose an endpoint or access platform handles.
+The bridge is removed when the Activity is destroyed. This is a narrow local
+observation boundary, not authentication or authorization for future mutable
+commands.
+
 The synthetic-touchpad injection harness is a local controlled-lab binary, not
 an allow-listed WebView/Node Runtime command. Its default path only projects and
 encodes fixed fixtures. Native submission requires both an explicit injection

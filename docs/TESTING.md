@@ -1545,6 +1545,15 @@ debug APK assembly; archive inspection additionally confirms all three artifact
 classes are present. This is packaging evidence only: the native Activity is
 unchanged, no WebView/Tauri observer bridge runs, and no APK is installed.
 
+ANDROID-A01C2 extends the hardware-free composition executable from 39 to 51
+assertions. It projects all seven non-display Capabilities into shared schema 4,
+checks Android observer mode, node and capability counts, Source/Sink direction,
+read-only sharing flags, JSON escaping and a disconnected-service snapshot.
+Android Lint and debug compilation cover the local-only WebView host, its single
+read-only JavaScript method, the native/shared view switch and Back fallback.
+This still provides compile/contract evidence only; no WebView was rendered on
+a physical device and no APK was installed.
+
 Offline repository validation additionally pins the Gradle/AGP contract and
 checks the source manifest for the approved recording/notification/foreground
 permissions, a non-exported dual-type service, disabled backup/cleartext and no

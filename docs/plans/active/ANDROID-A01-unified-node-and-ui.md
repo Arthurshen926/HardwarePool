@@ -24,8 +24,8 @@ Display is excluded until its feature branch is complete.
 - `apps/android/controller-lab` is a separate touch+IMU controller lab.
 - `platform/android/touchpad-bridge/lab-app` is a separate touchpad lab.
 - `apps/desktop/src` is the schema-4 shared presentation source. A01C1 packages
-  its exact Vite output into the Android APK, but no Android observer host
-  renders or bridges it yet.
+  its exact Vite output into the Android APK; A01C2 renders it on demand through
+  a read-only catalog bridge while retaining native audio controls as fallback.
 
 ## Ordered slices
 
@@ -44,11 +44,12 @@ Display is excluded until its feature branch is complete.
    pending while standalone labs are preserved. Haptics is held
    behind separate approval for the `VIBRATE` Manifest permission. None of these
    slices adds a permission or service declaration.
-3. **A01C — Android observer shell (A01C1 packaging complete):** A01C1 builds the
+3. **A01C — Android observer shell (complete):** A01C1 builds the
    shared Vue source and packages it under `assets/capyio-ui`, with relative-path
-   and required-asset gates. A01C2 must render it in a local-only host and expose
-   the same read-only catalog semantics through a narrow platform bridge. The
-   existing Node service, not the Activity, remains lifecycle owner.
+   and required-asset gates. A01C2 renders it on demand in a network-blocked
+   local host and projects the Service catalog through one no-argument read-only
+   method. Back restores the native control fallback. The existing Node service,
+   not the Activity or WebView, remains lifecycle owner.
 4. **A01D — per-capability operations:** connect schema-versioned start/stop,
    permission and Route status commands one capability at a time. Audio goes
    first because its independent service lifecycle is already physically

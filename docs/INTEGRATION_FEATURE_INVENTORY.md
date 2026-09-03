@@ -54,8 +54,11 @@ presence for microphone, audio output, camera, accelerometer+gyroscope,
 touchscreen and vibrator. Presence is not treated as Adapter attachment or
 sharing availability. A01C1 makes the Android build package the exact shared
 Vue/Vite output under `assets/capyio-ui`, with relative-path and entrypoint asset
-checks. The native Activity does not render it yet, and the shared Vue UI cannot
-consume the Android catalog until the A01C2 observer bridge is implemented.
+checks. A01C2 adds a local-only, read-only Android observer that renders this
+packaged workspace on demand and projects the service catalog into shared schema
+4. The native audio controls remain available as the fallback, and Back returns
+to them. The observer exposes no sharing selection, Route or hardware lifecycle
+command and does not invent peer state; those operations remain separate work.
 
 ## Remaining integration work
 
@@ -63,8 +66,9 @@ consume the Android catalog until the A01C2 observer bridge is implemented.
    facade, attach touchpad lifecycle without regressing standalone evidence,
    and route IMU/gamepad samples through bounded typed data planes. Haptics
    requires separate approval for the Android `VIBRATE` Manifest permission.
-2. Add the Android local observer host for the already packaged shared Vue
-   source and map the Android-local schema-v1 catalog to shared UI schema 4.
+2. Replace the transitional native-control fallback only after A01D maps
+   schema-versioned shared UI operations to the Service with equivalent
+   permission, lifecycle and physical-device evidence.
 3. Implement real Adapter-driven local hardware discovery and authenticated
    peer catalog exchange; schema 4 currently projects deterministic Runtime
    fixture catalogs.

@@ -773,8 +773,18 @@ workspace Vue/Vite build from `apps/desktop`, stages that exact output under
 root-absolute asset references. Vite therefore emits relative asset paths that
 also remain valid in the Windows Tauri host. This proves one presentation source
 is packageable on both platforms; it does not yet render that presentation on
-Android or expose Binder commands to JavaScript. A narrow local observer host
-and schema conversion remain A01C2 work.
+Android or expose Binder commands to JavaScript.
+
+ANDROID-A01C2 adds that local observer without replacing the proven native audio
+controls. The Activity can reveal the packaged Vue workspace in a WebView and
+return to the native controls with Back. A single no-argument JavaScript method
+projects the service-owned schema-v1 catalog into shared `UiSnapshot` schema 4;
+it contains no start/stop, Route, sharing-selection or arbitrary command entry.
+The shared API reports `android_observer`, treats the catalog as real and
+read-only, and does not fabricate a peer catalog, Routes, live panels or Quick
+Actions. Service state notifications refresh the snapshot while the Service
+continues to own every Adapter lifecycle. Replacing the transitional native
+controls requires the separately tested A01D operations.
 
 ADR 0044 subsequently adds the approved network permission and a separate
 dependency-free LAN codec/socket worker boundary. ADRs 0046 and 0047 now attach

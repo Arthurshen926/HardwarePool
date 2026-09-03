@@ -1,6 +1,7 @@
 package dev.capyio.android;
 
 import android.Manifest;
+import android.annotation.SuppressLint;
 import android.app.Activity;
 import android.content.ComponentName;
 import android.content.Context;
@@ -12,6 +13,11 @@ import android.os.Bundle;
 import android.os.Handler;
 import android.os.IBinder;
 import android.os.Looper;
+import android.webkit.JavascriptInterface;
+import android.webkit.WebResourceRequest;
+import android.webkit.WebView;
+import android.webkit.WebViewClient;
+import android.view.KeyEvent;
 import android.view.View;
 import android.widget.Button;
 import android.widget.TextView;
@@ -29,6 +35,8 @@ import java.util.concurrent.atomic.AtomicBoolean;
 public final class MainActivity extends Activity {
     private static final int REQUEST_AUDIO_PERMISSIONS = 8101;
     private static final long REFRESH_INTERVAL_MILLIS = 250;
+    private static final String SHARED_UI_URL =
+            "file:///android_asset/capyio-ui/index.html?view=workspace";
 
     private final Handler handler = new Handler(Looper.getMainLooper());
     private final AtomicBoolean refreshQueued = new AtomicBoolean();
@@ -53,10 +61,11 @@ public final class MainActivity extends Activity {
             binder = null;
             handler.removeCallbacks(refreshTask);
             refreshQueued.set(false);
+            dispatchSharedUiState();
         }
     };
 
-    private AudioNodeService.NodeBinder binder;
+    private volatile AudioNodeService.NodeBinder binder;
     private AudioCapabilityKind pendingStart;
     private boolean bound;
 
@@ -66,11 +75,17 @@ public final class MainActivity extends Activity {
     private TextView microphoneTransportView;
     private CapabilityViews microphoneViews;
     private CapabilityViews speakerViews;
+    private View nativeControls;
+    private WebView sharedUi;
+    private boolean sharedUiLoaded;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
         setContentView(R.layout.activity_main);
+        nativeControls = findViewById(R.id.native_controls);
+        sharedUi = findViewById(R.id.shared_ui);
+        configureSharedUi();
         nodeIdView = findViewById(R.id.node_id);
         permissionView = findViewById(R.id.permission_state);
         microphoneViews = new CapabilityViews(
@@ -97,7 +112,52 @@ public final class MainActivity extends Activity {
         speakerViews.start.setOnClickListener(view -> requestStart(
                 AudioCapabilityKind.SPEAKER_SINK));
         speakerViews.stop.setOnClickListener(view -> AudioNodeService.stopSpeaker(this));
+        findViewById(R.id.open_shared_ui).setOnClickListener(view -> showSharedUi());
         renderPermissionState(null);
+    }
+
+    @SuppressLint("SetJavaScriptEnabled")
+    @SuppressWarnings("deprecation")
+    private void configureSharedUi() {
+        sharedUi.getSettings().setJavaScriptEnabled(true);
+        sharedUi.getSettings().setAllowContentAccess(false);
+        sharedUi.getSettings().setAllowFileAccess(true);
+        sharedUi.getSettings().setAllowFileAccessFromFileURLs(false);
+        sharedUi.getSettings().setAllowUniversalAccessFromFileURLs(false);
+        sharedUi.getSettings().setBlockNetworkLoads(true);
+        sharedUi.addJavascriptInterface(new ObserverBridge(), "CapyIOAndroid");
+        sharedUi.setWebViewClient(new WebViewClient() {
+            @Override
+            public boolean shouldOverrideUrlLoading(WebView view, WebResourceRequest request) {
+                return !request.getUrl().toString().startsWith(
+                        "file:///android_asset/capyio-ui/");
+            }
+        });
+    }
+
+    private void showSharedUi() {
+        nativeControls.setVisibility(View.GONE);
+        sharedUi.setVisibility(View.VISIBLE);
+        if (!sharedUiLoaded) {
+            sharedUiLoaded = true;
+            sharedUi.loadUrl(SHARED_UI_URL);
+        } else {
+            dispatchSharedUiState();
+        }
+    }
+
+    private void hideSharedUi() {
+        sharedUi.setVisibility(View.GONE);
+        nativeControls.setVisibility(View.VISIBLE);
+    }
+
+    @Override
+    public boolean onKeyDown(int keyCode, KeyEvent event) {
+        if (keyCode == KeyEvent.KEYCODE_BACK && sharedUi.getVisibility() == View.VISIBLE) {
+            hideSharedUi();
+            return true;
+        }
+        return super.onKeyDown(keyCode, event);
     }
 
     @Override
@@ -122,6 +182,13 @@ public final class MainActivity extends Activity {
             bound = false;
         }
         super.onStop();
+    }
+
+    @Override
+    protected void onDestroy() {
+        sharedUi.removeJavascriptInterface("CapyIOAndroid");
+        sharedUi.destroy();
+        super.onDestroy();
     }
 
     @Override
@@ -208,6 +275,7 @@ public final class MainActivity extends Activity {
                 transport.partialEvictions,
                 transport.fullPacketDrops + transport.fullByteDrops));
         renderPermissionState(null);
+        dispatchSharedUiState();
         if (snapshot.microphone().state().ownsForegroundLifecycle()
                 || snapshot.speaker().state().ownsForegroundLifecycle()) {
             scheduleRefresh();
@@ -263,6 +331,30 @@ public final class MainActivity extends Activity {
         permissionView.setText(microphoneGranted && notificationGranted
                 ? R.string.permission_ready
                 : R.string.permission_required);
+    }
+
+    private void dispatchSharedUiState() {
+        if (sharedUiLoaded) {
+            sharedUi.evaluateJavascript(
+                    "window.dispatchEvent(new Event('capyio-native-state'))",
+                    null);
+        }
+    }
+
+    private final class ObserverBridge {
+        @JavascriptInterface
+        public String getSnapshotJson() {
+            AudioNodeService.NodeBinder current = binder;
+            if (current == null) {
+                return AndroidUiSnapshotJson.encodeDisconnected(
+                        Build.VERSION.RELEASE,
+                        BuildConfig.VERSION_NAME);
+            }
+            return AndroidUiSnapshotJson.encode(
+                    current.capabilityCatalog(),
+                    Build.VERSION.RELEASE,
+                    BuildConfig.VERSION_NAME);
+        }
     }
 
     private static final class CapabilityViews {

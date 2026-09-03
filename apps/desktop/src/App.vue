@@ -49,6 +49,7 @@ const quickActionRouteIds = computed(() => new Set(quickActions.value.flatMap((a
 const ordinaryQuickRoutes = computed(() => (snapshot.value?.routes ?? []).filter((route) => !quickActionRouteIds.value.has(route.id)));
 const localCapabilities = computed(() => (snapshot.value?.capabilities ?? []).filter((capability) => capability.local));
 const peerCapabilities = computed(() => (snapshot.value?.capabilities ?? []).filter((capability) => !capability.local));
+const androidObserver = computed(() => snapshot.value?.backendMode === "android_observer");
 
 async function load(): Promise<void> {
   loading.value = true;
@@ -225,8 +226,18 @@ function normalizeError(error: unknown): string {
 onMounted(() => {
   void load();
   livePoll = setInterval(() => { void refreshLiveImu(); void refreshGamepad(); void refreshQuickActions(); }, 500);
+  window.addEventListener("capyio-native-state", refreshSnapshot);
 });
-onUnmounted(() => { if (livePoll) clearInterval(livePoll); });
+onUnmounted(() => {
+  if (livePoll) clearInterval(livePoll);
+  window.removeEventListener("capyio-native-state", refreshSnapshot);
+});
+
+function refreshSnapshot(): void {
+  void api.getSnapshot()
+    .then((nextSnapshot) => { snapshot.value = nextSnapshot; })
+    .catch((error: unknown) => { errorMessage.value = normalizeError(error); });
+}
 </script>
 
 <template>
@@ -239,11 +250,11 @@ onUnmounted(() => { if (livePoll) clearInterval(livePoll); });
       <nav class="view-switch" aria-label="Primary views">
         <button type="button" :class="{ active: view === 'quick' }" @click="view = 'quick'">Quick Actions</button>
         <button type="button" :class="{ active: view === 'workspace' }" @click="view = 'workspace'">设备与能力</button>
-        <button type="button" :class="{ active: view === 'controller' }" @click="view = 'controller'">Controller</button>
+        <button v-if="!androidObserver" type="button" :class="{ active: view === 'controller' }" @click="view = 'controller'">Controller</button>
       </nav>
       <div class="topbar__actions">
         <StatusPill v-if="snapshot" :tone="snapshot.backendMode === 'tauri_demo' ? 'success' : 'warning'" :label="snapshot.backendMode" />
-        <button class="ghost-button" type="button" :disabled="loading" @click="resetDemo">Reset demo</button>
+        <button v-if="!androidObserver" class="ghost-button" type="button" :disabled="loading" @click="resetDemo">Reset demo</button>
       </div>
     </header>
 
@@ -259,9 +270,9 @@ onUnmounted(() => { if (livePoll) clearInterval(livePoll); });
         </div>
       </div>
       <div class="hero-panel__diagram" aria-label="Symmetric Node model">
-        <div class="node-box node-box--phone"><span>Node · Android</span><strong>vivo X200 Pro mini</strong><small>source + sink Ports</small></div>
+        <div class="node-box node-box--phone"><span>Node · {{ localNode?.platform ?? "local" }}</span><strong>{{ localNode?.displayName ?? "Loading…" }}</strong><small>local capability catalog</small></div>
         <div class="flow-line"><span>typed Routes</span><i></i><span>both directions</span></div>
-        <div class="node-box node-box--pc"><span>Node · Windows</span><strong>HP OmniBook</strong><small>source + sink Ports</small></div>
+        <div class="node-box node-box--pc"><span>Node · {{ remoteNode?.platform ?? "peer" }}</span><strong>{{ remoteNode?.displayName ?? "No connected peer" }}</strong><small>remote capability catalog</small></div>
       </div>
     </section>
 

@@ -3,6 +3,57 @@ import { invoke } from "@tauri-apps/api/core";
 import { BrowserMockCapyIOApi } from "./mock";
 import type { CapyIOApi, GamepadControlUpdate, QuickActionOperation, UiAudioEndpointCatalog, UiGamepadState, UiLiveImu, UiQuickAction, UiSnapshot, WindowsControllerKind } from "./types";
 
+declare global {
+  interface Window {
+    CapyIOAndroid?: {
+      getSnapshotJson(): string;
+    };
+  }
+}
+
+class AndroidObserverCapyIOApi implements CapyIOApi {
+  async getSnapshot(): Promise<UiSnapshot> {
+    const encoded = window.CapyIOAndroid?.getSnapshotJson();
+    if (!encoded) throw new Error("Android observer bridge is unavailable");
+    const snapshot = JSON.parse(encoded) as UiSnapshot;
+    if (snapshot.schemaVersion !== 4
+      || snapshot.backendMode !== "android_observer"
+      || !Array.isArray(snapshot.nodes)
+      || !Array.isArray(snapshot.capabilities)
+      || !Array.isArray(snapshot.routes)
+      || !Array.isArray(snapshot.adapters)
+      || !Array.isArray(snapshot.events)
+      || !Array.isArray(snapshot.warnings)) {
+      throw new Error("Android observer returned an incompatible snapshot");
+    }
+    return snapshot;
+  }
+
+  setRoute(): Promise<UiSnapshot> { return this.readOnly(); }
+  setLocalCapabilityShared(): Promise<UiSnapshot> { return this.readOnly(); }
+  resetDemo(): Promise<UiSnapshot> { return this.readOnly(); }
+  getLiveImu(): Promise<UiLiveImu | null> { return Promise.resolve(null); }
+  startLiveImu(): Promise<UiLiveImu> { return this.readOnly(); }
+  stopLiveImu(): Promise<UiLiveImu> { return this.readOnly(); }
+  getGamepadState(): Promise<UiGamepadState | null> { return Promise.resolve(null); }
+  refreshWindowsGamepadPreflight(): Promise<UiGamepadState> { return this.readOnly(); }
+  startWindowsGamepadProjection(): Promise<UiGamepadState> { return this.readOnly(); }
+  stopWindowsGamepadProjection(): Promise<UiGamepadState> { return this.readOnly(); }
+  updateGamepadState(): Promise<UiGamepadState> { return this.readOnly(); }
+  startGamepadDsu(): Promise<UiGamepadState> { return this.readOnly(); }
+  stopGamepadDsu(): Promise<UiGamepadState> { return this.readOnly(); }
+  startAndroidGamepad(): Promise<UiGamepadState> { return this.readOnly(); }
+  stopAndroidGamepad(): Promise<UiGamepadState> { return this.readOnly(); }
+  getQuickActions(): Promise<UiQuickAction[]> { return Promise.resolve([]); }
+  invokeQuickAction(): Promise<UiQuickAction> { return this.readOnly(); }
+  getAudioEndpoints(): Promise<UiAudioEndpointCatalog | null> { return Promise.resolve(null); }
+  selectAudioEndpoint(): Promise<UiQuickAction> { return this.readOnly(); }
+
+  private readOnly<T>(): Promise<T> {
+    return Promise.reject(new Error("Android shared UI is read-only in A01C2"));
+  }
+}
+
 class TauriCapyIOApi implements CapyIOApi {
   getSnapshot(): Promise<UiSnapshot> {
     return invoke<UiSnapshot>("get_snapshot");
@@ -94,7 +145,7 @@ class TauriCapyIOApi implements CapyIOApi {
 }
 
 export function createCapyIOApi(): CapyIOApi {
-  return window.__TAURI_INTERNALS__
-    ? new TauriCapyIOApi()
-    : new BrowserMockCapyIOApi();
+  if (window.__TAURI_INTERNALS__) return new TauriCapyIOApi();
+  if (window.CapyIOAndroid) return new AndroidObserverCapyIOApi();
+  return new BrowserMockCapyIOApi();
 }

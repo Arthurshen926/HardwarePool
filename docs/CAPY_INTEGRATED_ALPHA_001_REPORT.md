@@ -62,6 +62,14 @@ three asset classes. The existing native Activity remains the runtime UI, so
 Android visual parity and the Binder-to-shared-DTO observer bridge are still
 A01C2 work.
 
+A01C2 adds a transitional, actually loadable Android observer surface while
+preserving the native audio controls as a fallback. The packaged Vue workspace
+reads the service-owned seven-Capability catalog through one no-argument bridge
+method and labels the backend `android_observer`; it exposes no mutable command,
+fake peer, Route or simulated panel. WebView network/content access and external
+navigation are blocked, and Back returns to the proven native controls. Physical
+rendering and mutable-operation parity are not claimed.
+
 ## Automated evidence
 
 - `cargo test --offline -p capyio-input -p capyio-dsu-adapter -p capyio-viiper-adapter -p capyio-windows-input -p capyio-desktop`: passed after the gamepad merge.
@@ -89,6 +97,9 @@ A01C2 work.
 - `platform/android/gradlew.bat capyioCheck --offline`: final aggregate Android
   Gate passed all contracts, composition checks, Lint, entrypoint verification
   shared-Vue asset verification and debug assembly without installing the APK.
+- the Android composition executable passed 51 assertions after A01C2, including
+  schema-4 projection, all seven capabilities, read-only flags, JSON escaping
+  and disconnected-service output.
 - `jar tf platform/android/app/build/outputs/apk/debug/app-debug.apk`: confirmed
   `assets/capyio-ui/index.html` and generated JavaScript/CSS in the assembled
   archive; the entrypoint references both assets with `./assets/...` paths.
@@ -100,5 +111,5 @@ A01C2 work.
 - no Windows driver install/removal, restart or boot/security-policy change;
 - no Display merge or Display worktree modification;
 - no claim that schema-4 fixture catalogs are real hardware discovery;
-- no claim that packaging the shared source means the Android product UI is
-  already rendered or bridged.
+- no claim of physical Android rendering or mutable-command UI parity; A01C2 is
+  a build-verified read-only observer with native controls retained.
