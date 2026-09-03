@@ -1517,6 +1517,20 @@ microphone/speaker activation, one-direction Stop, failure isolation, later
 generation Retry, stale completion rejection and bounded actual-format/Problem
 fields.
 
+ANDROID-A01B1 adds a second dependency-free contract executable with 13
+assertions. It verifies stable module order, immutable catalog snapshots,
+Port-owned direction, duplicate rejection, bounded/canonical identifiers and
+the rule that an unattached Adapter cannot advertise an available Capability.
+The existing Android host then passes `lintDebug`, `assembleDebug` and
+`verifyDebugEntrypoints` with the registry exposed by the service Binder. This
+is compile/contract evidence only; the APK is not installed and pending camera,
+controller and touchpad entries do not constitute hardware discovery.
+The hardware-free host composition executable adds 15 assertions for four
+modules, seven non-display Capabilities, attached-versus-pending counts,
+Source/Sink direction, permission state and live audio lifecycle projection.
+The root Android `capyioCheck` task includes this composition executable so the
+registry cannot silently disappear from the aggregate Android Gate.
+
 Offline repository validation additionally pins the Gradle/AGP contract and
 checks the source manifest for the approved recording/notification/foreground
 permissions, a non-exported dual-type service, disabled backup/cleartext and no

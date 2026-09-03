@@ -14,9 +14,9 @@ is not modified.
 | Capability | Integrated source baseline | Android boundary | Windows boundary | Current product-composition status |
 |---|---|---|---|---|
 | Bidirectional audio | `codex/capyio-native-audio-subsystem` at `50f3921` | unified audio Node service with independent microphone Source and speaker Sink | unified desktop Quick Actions plus service/host and virtual audio boundaries | physically proven vertical paths are present; production pairing/security remain open |
-| Camera | `codex/capyio-camera` at `9808d2c` | separate Camera2/MediaCodec lab and private AVC record/transport boundary | Media Foundation virtual-camera, shared-memory ingress and host crates | source is merged; still separate from the Android product app and desktop Quick Actions |
-| Precision Touchpad | `codex/capyio-touchpad` at `77b6846` | separate touchpad lab/JNI bridge and bounded private packet Source | user-mode/VHF projection boundaries and Runtime workers | source is merged and catalogued; product Route/UI operation remains to be composed |
-| Touch + motion gamepad | `codex/capyio-gamepad` at `cadaef9` | separate Controller Lab with touch controls and IMU | shared Controller UI, DSU/VIIPER/DS4 and optional XInput projection boundaries | source and desktop UI are merged; Android launcher remains a migration input |
+| Camera | `codex/capyio-camera` at `9808d2c` | separate Camera2/MediaCodec lab and private AVC record/transport boundary; main Node catalog now declares an unattached Offline camera module | Media Foundation virtual-camera, shared-memory ingress and host crates | source and migration inventory are merged; camera lifecycle is not yet attached to the Android product app |
+| Precision Touchpad | `codex/capyio-touchpad` at `77b6846` | separate touchpad lab/JNI bridge and bounded private packet Source; main Node catalog declares it Offline/unattached | user-mode/VHF projection boundaries and Runtime workers | source is merged and catalogued; product Route/UI operation remains to be composed |
+| Touch + motion gamepad | `codex/capyio-gamepad` at `cadaef9` | separate Controller Lab with touch controls and IMU; main Node catalog declares IMU/gamepad/haptics directions Offline/unattached | shared Controller UI, DSU/VIIPER/DS4 and optional XInput projection boundaries | source, desktop UI and migration inventory are merged; Android lifecycle attachment remains open |
 | IMU | audio baseline plus gamepad composition | SensorManager/SensorServer lab sources | live numeric panel, recorder fixture and DSU/DS4 consumers | merged; transport/security and unified Android source selection remain open |
 
 Portable Video/Input contracts from `codex/capyio-contracts` at `fc3da363`
@@ -51,9 +51,10 @@ and Control Ports.
 
 ## Remaining integration work
 
-1. Build an Android Tauri host that consumes the shared Vue source.
-2. Extract camera, controller and touchpad labs behind the unified Android
-   service/module registry without regressing their standalone evidence.
+1. Attach camera, controller and touchpad lifecycle façades to the new Android
+   service-owned module registry without regressing their standalone evidence.
+2. Build an Android Tauri host that consumes the shared Vue source and maps the
+   Android-local schema-v1 catalog to shared UI schema 4.
 3. Implement real Adapter-driven local hardware discovery and authenticated
    peer catalog exchange; schema 4 currently projects deterministic Runtime
    fixture catalogs.

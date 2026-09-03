@@ -7,6 +7,12 @@ java {
     targetCompatibility = JavaVersion.VERSION_17
 }
 
+tasks.withType(JavaCompile).configureEach {
+    // Main sources are also compiled into the dependency-free contract runner
+    // and Android app. Full compilation avoids overlapping-consumer cache gaps.
+    options.incremental = false
+}
+
 sourceSets {
     main.java.srcDir '../native-lan-contract/src/main/java'
 }
@@ -19,6 +25,7 @@ tasks.register('compileContractTest', JavaCompile) {
     classpath = files()
     destinationDirectory = contractTestOutput
     options.release = 17
+    outputs.upToDateWhen { false }
 }
 
 tasks.register('contractTest', JavaExec) {
@@ -41,6 +48,16 @@ tasks.register('nativeLanContractTest', JavaExec) {
             rootProject.file('../../fixtures/audio/native_lan_v1_opus_single.hex').absolutePath
 }
 
+tasks.register('capabilityCatalogContractTest', JavaExec) {
+    group = 'verification'
+    description = 'Runs the dependency-free Android Capability module catalog contract tests.'
+    dependsOn tasks.named('compileContractTest')
+    classpath = files(contractTestOutput)
+    mainClass = 'dev.capyio.android.contract.CapabilityCatalogContractTest'
+    enableAssertions = true
+}
+
 tasks.named('check') {
-    dependsOn tasks.named('contractTest'), tasks.named('nativeLanContractTest')
+    dependsOn tasks.named('contractTest'), tasks.named('nativeLanContractTest'),
+            tasks.named('capabilityCatalogContractTest')
 }

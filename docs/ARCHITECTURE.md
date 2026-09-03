@@ -733,6 +733,14 @@ separate generation so a late platform completion cannot reverse Stop or fail
 the opposite direction. Actual Android parameters are retained rather than
 assuming the requested 48 kHz PCM mode was granted.
 
+ANDROID-A01B1 adds a dependency-free, schema-v1 Android-local Capability
+catalog contract. A bounded registry is owned by the Node service and exposed
+through its existing Binder observer boundary. The audio module projects its
+live microphone Source and speaker Sink state; camera, controller and touchpad
+modules are declared as unattached and therefore remain explicitly Offline.
+This is a migration inventory rather than hardware discovery. The DTO contains
+only bounded metadata and never carries platform handles or media payloads.
+
 ADR 0044 subsequently adds the approved network permission and a separate
 dependency-free LAN codec/socket worker boundary. ADRs 0046 and 0047 now attach
 the speaker Sink and microphone Source respectively: `AudioTrack` consumes the
@@ -933,6 +941,10 @@ claim a StandardPort production transport. The desktop host validates and maps
 that frame into independent `GamepadState` and IMU contracts, then feeds the
 existing loopback-only DSU Projection. This lab boundary is designed to move
 behind the common Android module registry without changing portable contracts.
+ANDROID-A01B1 establishes that registry and records the controller module's IMU
+Source, gamepad Source and haptics Sink as unattached entries. The standalone
+lab remains the lifecycle owner until a later slice attaches its façade to the
+service and passes equivalent foreground-loss and neutral-state checks.
 
 ## 13. Failure isolation
 

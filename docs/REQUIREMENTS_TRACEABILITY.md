@@ -49,7 +49,7 @@ hardware, networking, security or performance behavior has run.
 | `FR-SCEN-009` | verified | Gate 5 | Bounded recorded-style IMU fixture replay covers independent sinks, gaps, overflow, stale epochs and abnormal paths. |
 | `FR-NODE-001` | verified | Gate 2 | Typed Node descriptor and protocol round-trip tests in `capyio-core` and `capyio-protocol`. |
 | `FR-NODE-002` | verified | Gate 2 | Core has no global NodeRole; deterministic fixtures own mixed-direction Ports. |
-| `FR-NODE-003` | verified | Gate 2 | `capyio-testkit` catalogs contain Source and Sink Ports on both Nodes. |
+| `FR-NODE-003` | verified | Gate 2 | `capyio-testkit` catalogs contain Source and Sink Ports on both Nodes; the Android schema-v1 module registry likewise publishes microphone/gamepad/IMU/touchpad Sources and speaker/haptics Sinks without assigning a Node role. |
 | `FR-NODE-004` | verified | Gate 2 | Symmetric catalog DTO/round-trip and deterministic two-Node fixture tests. |
 | `FR-NODE-005` | planned | Gate 14 | Pairing and explicit authorization tests for unknown/offline Nodes. |
 | `FR-SESSION-001` | verified | Gate 2 | Typed Session model and protocol session round-trip coverage. |
@@ -66,7 +66,7 @@ hardware, networking, security or performance behavior has run.
 | `FR-CAP-003` | verified | Gate 2 | Capability has no direction field; PortDirection is independently tested. |
 | `FR-CAP-004` | verified | Gate 2 | Core permits mixed-direction Ports on one Capability and fixtures exercise compound catalogs. |
 | `FR-CAP-005` | verified | Gate 2 | Custom Capability class remains explicit through Core/protocol conversion. |
-| `FR-CAP-006` | verified | Gate 2 | Panels, projections and exports use Adapter-owned Capability/Port descriptors in fixtures and UI. |
+| `FR-CAP-006` | verified | Gate 2 | Panels, projections and exports use Adapter-owned Capability/Port descriptors in fixtures and UI; Android A01B1 keeps unattached camera/controller/touchpad declarations explicitly Offline rather than treating inventory as discovery. |
 | `FR-PORT-001` | verified | Gate 2 | PortDirection enum and Route direction-rejection tests. |
 | `FR-PORT-002` | verified | Gate 2 | Port descriptor validation and protocol round trips cover Profile, formats, QoS, clock, availability and permission. |
 | `FR-PORT-003` | verified | Gate 2 | ProfileId is transport/platform-neutral and Core dependency validation guards the boundary. |

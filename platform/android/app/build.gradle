@@ -79,3 +79,26 @@ tasks.register('verifyDebugEntrypoints') {
         }
     }
 }
+
+def capabilityCompositionOutput = layout.buildDirectory.dir('classes/java/capabilityCompositionTest')
+
+tasks.register('compileCapabilityCompositionTest', JavaCompile) {
+    group = 'verification'
+    source fileTree('../node-contract/src/main/java')
+    source file('src/main/java/dev/capyio/android/AndroidCapabilityModules.java')
+    source fileTree('src/contractTest/java')
+    classpath = files()
+    destinationDirectory = capabilityCompositionOutput
+    options.release = 17
+    options.incremental = false
+    outputs.upToDateWhen { false }
+}
+
+tasks.register('capabilityCompositionTest', JavaExec) {
+    group = 'verification'
+    description = 'Tests the hardware-free Android non-display module composition.'
+    dependsOn tasks.named('compileCapabilityCompositionTest')
+    classpath = files(capabilityCompositionOutput)
+    mainClass = 'dev.capyio.android.AndroidCapabilityModulesContractTest'
+    enableAssertions = true
+}

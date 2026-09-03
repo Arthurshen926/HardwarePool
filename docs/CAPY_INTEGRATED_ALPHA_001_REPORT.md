@@ -24,6 +24,12 @@ ADR 1400 selects one Vue/Tauri presentation with platform-owned Node hosts.
 camera/controller/touchpad lab applications to one Android Node. No Android
 permission or foreground-service declaration was changed in this slice.
 
+The follow-on A01B1 slice adds a bounded schema-v1 Android Capability module
+registry to the existing service-owned Node identity. The live audio module is
+attached; camera, IMU, gamepad, haptics and touchpad are present only as
+explicitly Offline/unattached migration entries. The service Binder exposes the
+catalog without moving lifecycle ownership into the Activity.
+
 ## Automated evidence
 
 - `cargo test --offline -p capyio-input -p capyio-dsu-adapter -p capyio-viiper-adapter -p capyio-windows-input -p capyio-desktop`: passed after the gamepad merge.
@@ -39,6 +45,16 @@ permission or foreground-service declaration was changed in this slice.
 - `cargo xtask ci`: passed end to end, including the workspace tests, fixture
   demo, repository validation, Adapter smoke test, frontend typecheck and
   production build.
+- `platform/android/gradlew.bat :node-contract:check --offline`: passed with 13
+  Capability-catalog, 36 audio-lifecycle and 126 native-LAN assertions.
+- `platform/android/gradlew.bat :app:lintDebug :app:assembleDebug
+  :app:verifyDebugEntrypoints --offline`: passed; the debug APK was built only
+  as evidence and was not installed.
+- `platform/android/gradlew.bat :app:capabilityCompositionTest --offline`:
+  passed 15 hardware-free assertions over the exact service composition.
+- `platform/android/gradlew.bat capyioCheck --offline`: final aggregate Android
+  Gate passed all contracts, composition checks, Lint, entrypoint verification
+  and debug assembly without installing the APK.
 
 ## Explicit exclusions
 

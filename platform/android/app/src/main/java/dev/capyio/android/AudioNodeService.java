@@ -21,6 +21,8 @@ import dev.capyio.android.contract.AudioCapabilityKind;
 import dev.capyio.android.contract.AudioCapabilitySnapshot;
 import dev.capyio.android.contract.AudioNodeController;
 import dev.capyio.android.contract.AudioNodeSnapshot;
+import dev.capyio.android.contract.CapabilityCatalogSnapshot;
+import dev.capyio.android.contract.CapabilityModuleRegistry;
 import dev.capyio.android.contract.TransitionToken;
 import dev.capyio.android.lan.NativeLanSpeakerSessionConfig;
 import dev.capyio.android.lan.NativeLanMicrophoneSessionConfig;
@@ -47,6 +49,7 @@ public final class AudioNodeService extends Service {
     private final Handler mainHandler = new Handler(Looper.getMainLooper());
     private final AudioNodeController controller = new AudioNodeController();
 
+    private CapabilityModuleRegistry capabilityRegistry;
     private MicrophoneSourceAdapter microphoneAdapter;
     private SpeakerSinkAdapter speakerAdapter;
     private String nodeId;
@@ -81,6 +84,13 @@ public final class AudioNodeService extends Service {
     public void onCreate() {
         super.onCreate();
         nodeId = NodeIdentityStore.loadOrCreate(this);
+        capabilityRegistry = AndroidCapabilityModules.createRegistry(
+                controller,
+                () -> checkSelfPermission(Manifest.permission.RECORD_AUDIO)
+                        == PackageManager.PERMISSION_GRANTED,
+                () -> Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU
+                        || checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS)
+                                == PackageManager.PERMISSION_GRANTED);
         createNotificationChannel();
         NativeLanMicrophoneSessionConfig microphoneConfig;
         try {
@@ -330,6 +340,10 @@ public final class AudioNodeService extends Service {
         return controller.snapshot(nodeId);
     }
 
+    private CapabilityCatalogSnapshot capabilityCatalogSnapshot() {
+        return capabilityRegistry.snapshot(nodeId);
+    }
+
     private void notifyStateListener() {
         Runnable listener = stateListener;
         if (listener != null) {
@@ -340,6 +354,10 @@ public final class AudioNodeService extends Service {
     public final class NodeBinder extends Binder {
         public AudioNodeSnapshot snapshot() {
             return AudioNodeService.this.snapshot();
+        }
+
+        public CapabilityCatalogSnapshot capabilityCatalog() {
+            return AudioNodeService.this.capabilityCatalogSnapshot();
         }
 
         public int speakerUnderrunCount() {
