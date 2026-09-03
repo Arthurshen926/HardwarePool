@@ -51,6 +51,33 @@ export interface UiNode {
   capabilityCount: number;
 }
 
+export type CapabilityAvailability = "available" | "busy" | "permission_required" | "offline";
+export type PermissionRequirement = "none" | "user_confirmation" | "foreground_service" | "privileged";
+
+export interface UiCapabilityPort {
+  id: string;
+  displayName: string;
+  direction: "source" | "sink" | "control";
+  profile: string;
+  formats: string[];
+}
+
+export interface UiCapability {
+  id: string;
+  nodeId: string;
+  nodeName: string;
+  displayName: string;
+  capabilityClass: string;
+  local: boolean;
+  availability: CapabilityAvailability;
+  permissionRequirement: PermissionRequirement;
+  inventorySource: "runtime_catalog";
+  simulated: boolean;
+  selectableForSharing: boolean;
+  selectedForSharing: boolean;
+  ports: UiCapabilityPort[];
+}
+
 export interface UiAdapter {
   id: string;
   nodeName: string;
@@ -266,9 +293,10 @@ export interface UiAudioEndpointCatalog {
 
 export interface UiSnapshot {
   backendMode: BackendMode;
-  schemaVersion: 3;
+  schemaVersion: 4;
   projectVersion: string;
   nodes: UiNode[];
+  capabilities: UiCapability[];
   routes: UiRoute[];
   adapters: UiAdapter[];
   events: UiEvent[];
@@ -279,6 +307,7 @@ export interface UiSnapshot {
 export interface CapyIOApi {
   getSnapshot(): Promise<UiSnapshot>;
   setRoute(routeId: string, active: boolean): Promise<UiSnapshot>;
+  setLocalCapabilityShared(capabilityId: string, selected: boolean): Promise<UiSnapshot>;
   resetDemo(): Promise<UiSnapshot>;
   getLiveImu(): Promise<UiLiveImu>;
   startLiveImu(ip: string, port: number): Promise<UiLiveImu>;

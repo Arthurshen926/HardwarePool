@@ -14,6 +14,12 @@ class TauriCapyIOApi implements CapyIOApi {
     });
   }
 
+  setLocalCapabilityShared(capabilityId: string, selected: boolean): Promise<UiSnapshot> {
+    return invoke<UiSnapshot>("set_local_capability_shared", {
+      request: { capabilityId, selected },
+    });
+  }
+
   resetDemo(): Promise<UiSnapshot> {
     return invoke<UiSnapshot>("reset_demo");
   }

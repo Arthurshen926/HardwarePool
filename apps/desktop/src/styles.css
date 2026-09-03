@@ -45,7 +45,9 @@ a {
 }
 
 button:focus-visible,
-a:focus-visible {
+a:focus-visible,
+input:focus-visible,
+select:focus-visible {
   outline: 3px solid rgba(11, 118, 80, 0.28);
   outline-offset: 3px;
 }
@@ -867,6 +869,193 @@ button:disabled {
   margin-top: 20px;
 }
 
+.catalog-pair {
+  display: grid;
+  gap: 20px;
+}
+
+.capability-catalog {
+  padding: 28px;
+  border: 1px solid rgba(255, 255, 255, 0.9);
+  border-radius: 24px;
+  background: var(--surface);
+  box-shadow: 0 14px 40px rgba(30, 58, 44, 0.07);
+}
+
+.capability-catalog__header {
+  display: flex;
+  gap: 28px;
+  align-items: flex-end;
+  justify-content: space-between;
+}
+
+.capability-catalog__header h2,
+.hardware-card h3 {
+  margin: 0;
+}
+
+.capability-catalog__header > p {
+  max-width: 660px;
+  margin: 0;
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1.65;
+}
+
+.hardware-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 14px;
+  margin-top: 24px;
+}
+
+.hardware-card {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  padding: 18px;
+  border: 1px solid var(--line);
+  border-radius: 18px;
+  background: rgba(255, 255, 255, 0.7);
+}
+
+.hardware-card > header {
+  display: flex;
+  gap: 14px;
+  align-items: flex-start;
+  justify-content: space-between;
+}
+
+.hardware-card h3 {
+  margin-top: 4px;
+  font-size: 16px;
+  letter-spacing: -0.02em;
+}
+
+.hardware-card header p,
+.hardware-card__note,
+.empty-state {
+  color: var(--muted);
+  font-size: 11px;
+  line-height: 1.55;
+}
+
+.hardware-card header p {
+  margin: 6px 0 0;
+}
+
+.hardware-card__class {
+  color: var(--accent);
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.port-list {
+  display: grid;
+  gap: 8px;
+  padding: 0;
+  margin: 18px 0;
+  list-style: none;
+}
+
+.port-list li {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 9px;
+  align-items: start;
+}
+
+.port-list strong,
+.port-list small {
+  display: block;
+  overflow-wrap: anywhere;
+}
+
+.port-list strong {
+  font-size: 11px;
+}
+
+.port-list small {
+  margin-top: 3px;
+  color: var(--muted);
+  font-size: 9px;
+  line-height: 1.5;
+}
+
+.port-direction {
+  padding: 4px 6px;
+  border-radius: 7px;
+  font-size: 8px;
+  font-weight: 850;
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+}
+
+.port-direction--source {
+  color: var(--accent-dark);
+  background: var(--accent-soft);
+}
+
+.port-direction--sink {
+  color: #35507a;
+  background: #e2eaff;
+}
+
+.port-direction--control {
+  color: var(--warning);
+  background: var(--warning-soft);
+}
+
+.hardware-card > footer {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  margin-top: auto;
+  flex-wrap: wrap;
+}
+
+.share-toggle {
+  display: inline-flex;
+  gap: 8px;
+  align-items: center;
+  min-height: 34px;
+  padding: 0 10px;
+  border-radius: 10px;
+  background: #edf4ef;
+  cursor: pointer;
+  font-size: 11px;
+  font-weight: 750;
+}
+
+.share-toggle input {
+  width: 17px;
+  height: 17px;
+  accent-color: var(--accent);
+}
+
+.hardware-card__permission,
+.hardware-card__fixture {
+  padding: 4px 7px;
+  border-radius: 999px;
+  color: var(--warning);
+  background: var(--warning-soft);
+  font-size: 8px;
+  font-weight: 800;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.hardware-card__fixture {
+  color: var(--muted);
+  background: #e4e9e5;
+}
+
+.empty-state {
+  margin: 24px 0 0;
+}
+
 .workspace-grid {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -1029,9 +1218,15 @@ button:disabled {
   .capability-grid,
   .lower-grid,
   .workspace-grid,
+  .hardware-grid,
   .imu-lab__grid,
   .gamepad-lab__grid {
     grid-template-columns: 1fr;
+  }
+
+  .capability-catalog__header {
+    align-items: stretch;
+    flex-direction: column;
   }
 
   .topbar {
@@ -1101,6 +1296,7 @@ button:disabled {
 
   .section-heading,
   .capability-card__footer,
+  .capability-catalog__header,
   .imu-lab__header {
     align-items: stretch;
     flex-direction: column;

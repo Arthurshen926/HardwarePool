@@ -131,6 +131,17 @@ Quick Actions select Route Templates. Workspace exposes the technical graph.
 The WebView sees narrow DTO commands only and has no arbitrary shell/filesystem
 power.
 
+ADR 1400 makes the Vue 3/TypeScript presentation shared across the Windows and
+future Android Tauri shells while keeping each platform's Runtime service,
+permissions, hardware APIs and real-time workers native. `UiSnapshot` schema 4
+projects local and peer Capability catalogs with explicit Port directions. The
+UI separates the tasks “share local capabilities” and “use peer capabilities”
+without inventing global sender/receiver Node roles. A local Source checkbox is
+publication intent only; Session trust, Route authorization, permission and
+worker lifecycle remain distinct host-owned operations. The current Tauri
+catalog is fixture-backed and must remain labeled simulated until an Adapter
+has actually enumerated the host.
+
 The built-in Controller view is shared presentation code for desktop and a
 future Android host. It emits closed semantic control changes; a trusted host
 owns stream identity, epoch, sequence and complete-state composition. Desktop

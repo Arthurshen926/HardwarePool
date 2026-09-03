@@ -1,0 +1,62 @@
+# Non-display integration inventory
+
+Date: 2026-09-04
+
+Integration branch: `codex/capyio-integrated-alpha`
+
+## Scope
+
+This inventory records source-level integration of the completed non-display
+vertical prototypes. It distinguishes merged code from product composition and
+physical deployment. Display is deliberately excluded and its branch/worktree
+is not modified.
+
+| Capability | Integrated source baseline | Android boundary | Windows boundary | Current product-composition status |
+|---|---|---|---|---|
+| Bidirectional audio | `codex/capyio-native-audio-subsystem` at `50f3921` | unified audio Node service with independent microphone Source and speaker Sink | unified desktop Quick Actions plus service/host and virtual audio boundaries | physically proven vertical paths are present; production pairing/security remain open |
+| Camera | `codex/capyio-camera` at `9808d2c` | separate Camera2/MediaCodec lab and private AVC record/transport boundary | Media Foundation virtual-camera, shared-memory ingress and host crates | source is merged; still separate from the Android product app and desktop Quick Actions |
+| Precision Touchpad | `codex/capyio-touchpad` at `77b6846` | separate touchpad lab/JNI bridge and bounded private packet Source | user-mode/VHF projection boundaries and Runtime workers | source is merged and catalogued; product Route/UI operation remains to be composed |
+| Touch + motion gamepad | `codex/capyio-gamepad` at `cadaef9` | separate Controller Lab with touch controls and IMU | shared Controller UI, DSU/VIIPER/DS4 and optional XInput projection boundaries | source and desktop UI are merged; Android launcher remains a migration input |
+| IMU | audio baseline plus gamepad composition | SensorManager/SensorServer lab sources | live numeric panel, recorder fixture and DSU/DS4 consumers | merged; transport/security and unified Android source selection remain open |
+
+Portable Video/Input contracts from `codex/capyio-contracts` at `fc3da363`
+were integrated before the three hardware feature branches.
+
+## Local integration commits
+
+| Commit | Result |
+|---|---|
+| `8cfc16b` | portable video and input contracts integrated |
+| `684ead1` | camera-sharing prototype integrated |
+| `d2fc1ff` | Precision Touchpad prototype integrated |
+| `7798993` | touch + motion gamepad prototype integrated |
+
+The branch already started from the complete native bidirectional-audio
+baseline. These commits are local only and are not pushed.
+
+## Unified UI state
+
+`UiSnapshot` schema 4 and the shared Vue `CapyIOApi` now expose:
+
+- local and peer Capability catalogs from the Runtime snapshot;
+- availability and permission requirement;
+- each Port's Source, Sink or Control direction, Profile and format;
+- per-local-Source publication selection with a narrow allow-listed command;
+- explicit fixture labels so catalog projection is not mistaken for physical
+  hardware enumeration or authorization.
+
+The UI intentionally uses “本机能力” and “远端节点公开的能力” rather than
+global sender/receiver roles. One Node can simultaneously expose Source, Sink
+and Control Ports.
+
+## Remaining integration work
+
+1. Build an Android Tauri host that consumes the shared Vue source.
+2. Extract camera, controller and touchpad labs behind the unified Android
+   service/module registry without regressing their standalone evidence.
+3. Implement real Adapter-driven local hardware discovery and authenticated
+   peer catalog exchange; schema 4 currently projects deterministic Runtime
+   fixture catalogs.
+4. Connect touchpad and camera to product Route actions rather than lab-only
+   entrypoints.
+5. Keep Display out until its branch reaches its own completion gate.

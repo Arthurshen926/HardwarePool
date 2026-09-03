@@ -2,6 +2,8 @@ import type {
   CapyIOApi,
   RouteState,
   UiEvent,
+  UiCapability,
+  UiCapabilityPort,
   UiAudioEndpointCatalog,
   GamepadButton,
   GamepadControlUpdate,
@@ -16,6 +18,8 @@ import type {
 
 const WINDOWS = "HP OmniBook Ultra Flip 14";
 const PHONE = "vivo X200 Pro mini";
+const WINDOWS_ID = "00000000-0000-4000-8000-000000000001";
+const PHONE_ID = "00000000-0000-4000-8000-000000000002";
 
 function port(
   nodeName: string,
@@ -58,15 +62,73 @@ function route(
   };
 }
 
+function catalogPort(
+  id: string,
+  displayName: string,
+  direction: "source" | "sink" | "control",
+  profile: string,
+  format: string,
+): UiCapabilityPort {
+  return { id, displayName, direction, profile, formats: [format] };
+}
+
+function capability(
+  idSuffix: string,
+  nodeId: string,
+  nodeName: string,
+  displayName: string,
+  capabilityClass: string,
+  local: boolean,
+  availability: UiCapability["availability"],
+  permissionRequirement: UiCapability["permissionRequirement"],
+  portValue: UiCapabilityPort,
+): UiCapability {
+  return {
+    id: `00000000-0000-4000-8000-000000000${idSuffix}`,
+    nodeId,
+    nodeName,
+    displayName,
+    capabilityClass,
+    local,
+    availability,
+    permissionRequirement,
+    inventorySource: "runtime_catalog",
+    simulated: true,
+    selectableForSharing: local && portValue.direction === "source" && availability !== "offline",
+    selectedForSharing: false,
+    ports: [portValue],
+  };
+}
+
+function initialCapabilities(): UiCapability[] {
+  return [
+    capability("101", WINDOWS_ID, WINDOWS, "System Mix", "system_audio_capture", true, "available", "none", catalogPort("00000000-0000-4000-8000-000000001101", "System Mix Source", "source", "capyio.audio.frames/1", "pcm-s16le-48000-stereo")),
+    capability("102", WINDOWS_ID, WINDOWS, "Windows Microphone", "microphone", true, "available", "none", catalogPort("00000000-0000-4000-8000-000000001102", "Windows Microphone Source", "source", "capyio.audio.frames/1", "pcm-s16le-48000-mono")),
+    capability("103", WINDOWS_ID, WINDOWS, "Windows Speaker", "speaker", true, "available", "none", catalogPort("00000000-0000-4000-8000-000000001103", "Windows Speaker Sink", "sink", "capyio.audio.frames/1", "pcm-s16le-48000-stereo")),
+    capability("104", WINDOWS_ID, WINDOWS, "Windows Virtual Microphone", "microphone", true, "available", "none", catalogPort("00000000-0000-4000-8000-000000001104", "Virtual Microphone Sink", "sink", "capyio.audio.frames/1", "pcm-s16le-48000-mono")),
+    capability("105", WINDOWS_ID, WINDOWS, "Windows Gamepad Projection", "gamepad", true, "available", "none", catalogPort("00000000-0000-4000-8000-000000001105", "Gamepad Projection Sink", "sink", "capyio.motion.imu-samples/1", "imu-si-f32-le")),
+    capability("106", WINDOWS_ID, WINDOWS, "Camera Preview Panel", "panel", true, "available", "none", catalogPort("00000000-0000-4000-8000-000000001106", "Camera Preview Sink", "sink", "capyio.video.frames/1", "bgra8-1280x720-30")),
+    capability("107", WINDOWS_ID, WINDOWS, "Windows Precision Touchpad Projection", "touchpad", true, "available", "none", catalogPort("00000000-0000-4000-8000-000000001107", "Precision Touchpad Sink", "sink", "capyio.input.touchpad-frames/1", "touchpad-frame-v1")),
+    capability("201", PHONE_ID, PHONE, "Phone Microphone", "microphone", false, "permission_required", "foreground_service", catalogPort("00000000-0000-4000-8000-000000001201", "Phone Microphone Source", "source", "capyio.audio.frames/1", "pcm-s16le-48000-mono")),
+    capability("202", PHONE_ID, PHONE, "Phone Speaker", "speaker", false, "available", "none", catalogPort("00000000-0000-4000-8000-000000001202", "Phone Speaker Sink", "sink", "capyio.audio.frames/1", "pcm-s16le-48000-stereo")),
+    capability("203", PHONE_ID, PHONE, "Back Camera", "camera", false, "permission_required", "foreground_service", catalogPort("00000000-0000-4000-8000-000000001203", "Back Camera Source", "source", "capyio.video.frames/1", "bgra8-1280x720-30")),
+    capability("204", PHONE_ID, PHONE, "Phone IMU", "imu", false, "available", "none", catalogPort("00000000-0000-4000-8000-000000001204", "IMU Sample Source", "source", "capyio.motion.imu-samples/1", "imu-si-f32-le")),
+    capability("205", PHONE_ID, PHONE, "Touch Gamepad", "gamepad", false, "available", "none", catalogPort("00000000-0000-4000-8000-000000001205", "Touch Gamepad Source", "source", "capyio.input.gamepad-state/1", "gamepad-state-v1")),
+    capability("206", PHONE_ID, PHONE, "Phone Vibration", "haptics", false, "available", "none", catalogPort("00000000-0000-4000-8000-000000001206", "Vibration Sink", "sink", "capyio.haptics.feedback/1", "dual-rumble-v1")),
+    capability("207", PHONE_ID, PHONE, "Phone Touchpad Surface", "touchpad", false, "available", "none", catalogPort("00000000-0000-4000-8000-000000001207", "Touchpad Frame Source", "source", "capyio.input.touchpad-frames/1", "touchpad-frame-v1")),
+  ];
+}
+
 function initialSnapshot(): UiSnapshot {
   return {
     backendMode: "browser_mock",
-    schemaVersion: 3,
+    schemaVersion: 4,
     projectVersion: "0.1.0",
     nodes: [
-      { id: "00000000-0000-4000-8000-000000000001", displayName: WINDOWS, platform: "windows", platformVersion: "Windows fixture", online: true, local: true, capabilityCount: 6 },
-      { id: "00000000-0000-4000-8000-000000000002", displayName: PHONE, platform: "android", platformVersion: "Android fixture", online: true, local: false, capabilityCount: 6 },
+      { id: WINDOWS_ID, displayName: WINDOWS, platform: "windows", platformVersion: "Windows fixture", online: true, local: true, capabilityCount: 7 },
+      { id: PHONE_ID, displayName: PHONE, platform: "android", platformVersion: "Android fixture", online: true, local: false, capabilityCount: 7 },
     ],
+    capabilities: initialCapabilities(),
     routes: [
       route("00000000-0000-4000-8000-000000000911", port(PHONE, "Phone Microphone", "microphone", "Phone Microphone Source", "source"), port(WINDOWS, "Windows Virtual Microphone", "microphone", "Virtual Microphone Sink", "sink"), "capyio.audio.frames/1", "pcm-s16le-48000-mono", "capydataplane", "Windows 系统端点投影（驱动尚未实现）"),
       route("00000000-0000-4000-8000-000000000912", port(WINDOWS, "System Mix", "system_audio_capture", "System Mix Source", "source"), port(PHONE, "Phone Speaker", "speaker", "Phone Speaker Sink", "sink"), "capyio.audio.frames/1", "pcm-s16le-48000-stereo", "capydataplane", "Android 应用内播放端（模拟）"),
@@ -75,8 +137,8 @@ function initialSnapshot(): UiSnapshot {
     ],
     adapters: [
       { id: "adapter-windows-audio", nodeName: WINDOWS, displayName: "Windows Audio Adapter", adapterType: "capyio.windows.audio", deploymentMode: "sidecar", state: "ready", health: "healthy", capabilityCount: 4 },
-      { id: "adapter-windows-projection", nodeName: WINDOWS, displayName: "Windows Projection Adapter", adapterType: "capyio.windows.projection", deploymentMode: "sidecar", state: "ready", health: "healthy", capabilityCount: 2 },
-      { id: "adapter-android-hardware", nodeName: PHONE, displayName: "Android Integrated Hardware Adapter", adapterType: "capyio.android.integrated-hardware", deploymentMode: "in_process", state: "ready", health: "healthy", capabilityCount: 6 },
+      { id: "adapter-windows-projection", nodeName: WINDOWS, displayName: "Windows Projection Adapter", adapterType: "capyio.windows.projection", deploymentMode: "sidecar", state: "ready", health: "healthy", capabilityCount: 3 },
+      { id: "adapter-android-hardware", nodeName: PHONE, displayName: "Android Integrated Hardware Adapter", adapterType: "capyio.android.integrated-hardware", deploymentMode: "in_process", state: "ready", health: "healthy", capabilityCount: 7 },
     ],
     events: [
       { sequence: 1, summary: `Registered ${PHONE}` },
@@ -131,6 +193,15 @@ export class BrowserMockCapyIOApi implements CapyIOApi {
         }
       : { estimatedLatencyMs: null, packetLossPercent: null, bufferFillMs: null, simulated: true };
     this.pushEvent(`${target.title}: Route ${active ? "started" : "stopped"}`);
+    return structuredClone(this.snapshot);
+  }
+
+  async setLocalCapabilityShared(capabilityId: string, selected: boolean): Promise<UiSnapshot> {
+    const target = this.snapshot.capabilities.find((item) => item.id === capabilityId);
+    if (!target || !target.local) throw new Error("Capability is not advertised by the local Node.");
+    if (!target.selectableForSharing) throw new Error("Capability has no local Source Port to share.");
+    target.selectedForSharing = selected;
+    this.pushEvent(`${target.displayName}: ${selected ? "selected for sharing" : "not shared"}`);
     return structuredClone(this.snapshot);
   }
 

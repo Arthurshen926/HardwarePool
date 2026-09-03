@@ -31,12 +31,14 @@ const WIN_SPEAKER_CAPABILITY_ID: &str = "00000000-0000-4000-8000-000000000103";
 const WIN_VIRTUAL_MIC_CAPABILITY_ID: &str = "00000000-0000-4000-8000-000000000104";
 const WIN_GAMEPAD_SINK_CAPABILITY_ID: &str = "00000000-0000-4000-8000-000000000105";
 const WIN_CAMERA_PANEL_CAPABILITY_ID: &str = "00000000-0000-4000-8000-000000000106";
+const WIN_TOUCHPAD_SINK_CAPABILITY_ID: &str = "00000000-0000-4000-8000-000000000107";
 const PHONE_MICROPHONE_CAPABILITY_ID: &str = "00000000-0000-4000-8000-000000000201";
 const PHONE_SPEAKER_CAPABILITY_ID: &str = "00000000-0000-4000-8000-000000000202";
 const PHONE_CAMERA_CAPABILITY_ID: &str = "00000000-0000-4000-8000-000000000203";
 const PHONE_IMU_CAPABILITY_ID: &str = "00000000-0000-4000-8000-000000000204";
 const PHONE_GAMEPAD_CAPABILITY_ID: &str = "00000000-0000-4000-8000-000000000205";
 const PHONE_VIBRATION_CAPABILITY_ID: &str = "00000000-0000-4000-8000-000000000206";
+const PHONE_TOUCHPAD_CAPABILITY_ID: &str = "00000000-0000-4000-8000-000000000207";
 
 const WIN_SYSTEM_MIX_PORT_ID: &str = "00000000-0000-4000-8000-000000001101";
 const WIN_MICROPHONE_PORT_ID: &str = "00000000-0000-4000-8000-000000001102";
@@ -44,12 +46,14 @@ const WIN_SPEAKER_PORT_ID: &str = "00000000-0000-4000-8000-000000001103";
 const WIN_VIRTUAL_MIC_PORT_ID: &str = "00000000-0000-4000-8000-000000001104";
 const WIN_GAMEPAD_SINK_PORT_ID: &str = "00000000-0000-4000-8000-000000001105";
 const WIN_CAMERA_PANEL_PORT_ID: &str = "00000000-0000-4000-8000-000000001106";
+const WIN_TOUCHPAD_SINK_PORT_ID: &str = "00000000-0000-4000-8000-000000001107";
 const PHONE_MICROPHONE_PORT_ID: &str = "00000000-0000-4000-8000-000000001201";
 const PHONE_SPEAKER_PORT_ID: &str = "00000000-0000-4000-8000-000000001202";
 const PHONE_CAMERA_PORT_ID: &str = "00000000-0000-4000-8000-000000001203";
 const PHONE_IMU_PORT_ID: &str = "00000000-0000-4000-8000-000000001204";
 const PHONE_GAMEPAD_PORT_ID: &str = "00000000-0000-4000-8000-000000001205";
 const PHONE_VIBRATION_PORT_ID: &str = "00000000-0000-4000-8000-000000001206";
+const PHONE_TOUCHPAD_PORT_ID: &str = "00000000-0000-4000-8000-000000001207";
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct DemoRoutes {
@@ -297,6 +301,22 @@ pub fn windows_node() -> NodeDescriptor {
             QosMode::Basic,
         ),
     );
+    add_capability(
+        &mut node,
+        projection_adapter_id,
+        WIN_TOUCHPAD_SINK_CAPABILITY_ID,
+        "Windows Precision Touchpad Projection",
+        CapabilityClass::Touchpad,
+        port(
+            WIN_TOUCHPAD_SINK_CAPABILITY_ID,
+            WIN_TOUCHPAD_SINK_PORT_ID,
+            "Precision Touchpad Sink",
+            PortDirection::Sink,
+            ProfileId::touchpad_frames_v1(),
+            "touchpad-frame-v1",
+            QosMode::Interactive,
+        ),
+    );
     node.validate().expect("valid Windows fixture");
     node
 }
@@ -419,6 +439,22 @@ pub fn android_node() -> NodeDescriptor {
             PortDirection::Sink,
             ProfileId::haptics_feedback_v1(),
             "dual-rumble-v1",
+            QosMode::Interactive,
+        ),
+    );
+    add_capability(
+        &mut node,
+        hardware_adapter_id,
+        PHONE_TOUCHPAD_CAPABILITY_ID,
+        "Phone Touchpad Surface",
+        CapabilityClass::Touchpad,
+        port(
+            PHONE_TOUCHPAD_CAPABILITY_ID,
+            PHONE_TOUCHPAD_PORT_ID,
+            "Touchpad Frame Source",
+            PortDirection::Source,
+            ProfileId::touchpad_frames_v1(),
+            "touchpad-frame-v1",
             QosMode::Interactive,
         ),
     );
@@ -571,6 +607,33 @@ mod tests {
             assert!(directions.contains(&PortDirection::Source));
             assert!(directions.contains(&PortDirection::Sink));
         }
+    }
+
+    #[test]
+    fn integrated_catalog_includes_touchpad_source_and_projection_sink() {
+        let android = android_node();
+        let windows = windows_node();
+        let source = android
+            .capabilities
+            .get(&parse_id(PHONE_TOUCHPAD_CAPABILITY_ID))
+            .expect("Android touchpad Capability");
+        let sink = windows
+            .capabilities
+            .get(&parse_id(WIN_TOUCHPAD_SINK_CAPABILITY_ID))
+            .expect("Windows touchpad Projection Capability");
+        assert_eq!(source.class, CapabilityClass::Touchpad);
+        assert_eq!(sink.class, CapabilityClass::Touchpad);
+        assert!(
+            source
+                .ports
+                .values()
+                .any(|port| port.direction == PortDirection::Source)
+        );
+        assert!(
+            sink.ports
+                .values()
+                .any(|port| port.direction == PortDirection::Sink)
+        );
     }
 
     #[test]

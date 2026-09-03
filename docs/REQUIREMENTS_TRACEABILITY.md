@@ -97,9 +97,9 @@ hardware, networking, security or performance behavior has run.
 | `FR-PROTO-007` | verified | Gate 3 | NDJSON codec and Sidecar smoke verify stdin/stdout control with stderr-only logs. |
 | `FR-UX-001` | verified | Gate 2 | Quick Actions present task-oriented Route cards without Adapter/Port details. |
 | `FR-UX-002` | planned | Gate 4 | Quick Action schema v2 projects independent Speaker/microphone Route actions, bounded status and trusted-host connection guidance; CAPY-MIC-001H physically validates the persisted microphone action without exposing host secrets. Reusable Route Templates and complete permission/result UX remain. |
-| `FR-UX-003` | planned | Gate 4 | Complete Workspace navigation for all required object families. |
-| `FR-UX-004` | planned | Gate 4 | Accessible list/card Route Builder implementation and tests. |
-| `FR-UX-005` | verified | Gate 2 | Browser/Tauri Mock share TypeScript DTOs and visibly label simulated mode/metrics. |
+| `FR-UX-003` | planned | Gate 4 | Workspace now exposes accessible local/peer Capability catalogs, Port directions, Nodes, Adapters and Routes through schema 4. Connections, Problems, complete Panels and Recorder/Playback navigation remain. |
+| `FR-UX-004` | planned | Gate 4 | Schema 4 adds accessible list/card capability selection with narrow-screen behavior; compatible Source-to-Sink Route Builder selection remains planned. |
+| `FR-UX-005` | verified | Gate 2 | Browser/Tauri Mock share the schema-4 TypeScript DTO and visibly label simulated catalogs, selection and metrics. |
 | `FR-UX-006` | verified | Gate 2 | Per-Route UI actions and Runtime tests prove independent toggles. |
 | `FR-UX-007` | verified | Gate 2 | Built-in preview/Panel representation only; repository contains no dynamic Panel market. |
 | `FR-PLAT-001` | verified | Gate 3 | Desktop Sidecar deployment boundary and hosted Adapter-smoke workflow on Windows/Linux/macOS. |

@@ -1,4 +1,5 @@
 use std::{
+    collections::BTreeSet,
     net::IpAddr,
     str::FromStr,
     sync::{
@@ -11,8 +12,9 @@ use std::{
 };
 
 use capyio_core::{
-    AdapterDeploymentMode, CapabilityClass, NodeDescriptor, OnlineState, PortDirection, PortRef,
-    QosMode, Route, RouteId, RouteState,
+    AdapterDeploymentMode, Availability, CapabilityClass, CapabilityId, NodeDescriptor,
+    OnlineState, PermissionRequirement, PortDirection, PortRef, QosMode, Route, RouteId,
+    RouteState,
 };
 use capyio_data_plane::{
     BoundedFanout, BoundedJsonlRecorder, ImuSampleV1, NumericImuPanel, RecorderOutcome,
@@ -47,6 +49,7 @@ use windows_gamepad_host::WindowsGamepadHost;
 
 struct AppState {
     lab: Arc<Mutex<DemoLab>>,
+    local_shared_capabilities: Mutex<BTreeSet<CapabilityId>>,
     physical_imu: PhysicalImuRoute,
     live_imu: Arc<Mutex<UiLiveImu>>,
     live_imu_controller: Mutex<Option<LiveImuController>>,
@@ -214,6 +217,13 @@ struct SetRouteRequest {
     active: bool,
 }
 
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct SetLocalCapabilitySharedRequest {
+    capability_id: String,
+    selected: bool,
+}
+
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 struct UiSnapshot {
@@ -221,6 +231,7 @@ struct UiSnapshot {
     schema_version: u8,
     project_version: &'static str,
     nodes: Vec<UiNode>,
+    capabilities: Vec<UiCapability>,
     routes: Vec<UiRoute>,
     adapters: Vec<UiAdapter>,
     events: Vec<UiEvent>,
@@ -238,6 +249,34 @@ struct UiNode {
     online: bool,
     local: bool,
     capability_count: usize,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct UiCapability {
+    id: String,
+    node_id: String,
+    node_name: String,
+    display_name: String,
+    capability_class: String,
+    local: bool,
+    availability: &'static str,
+    permission_requirement: &'static str,
+    inventory_source: &'static str,
+    simulated: bool,
+    selectable_for_sharing: bool,
+    selected_for_sharing: bool,
+    ports: Vec<UiCapabilityPort>,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct UiCapabilityPort {
+    id: String,
+    display_name: String,
+    direction: &'static str,
+    profile: String,
+    formats: Vec<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -325,7 +364,11 @@ struct UiVector3 {
 #[tauri::command]
 fn get_snapshot(state: State<'_, AppState>) -> Result<UiSnapshot, String> {
     let lab = state.lab.lock().map_err(|_| "demo state lock poisoned")?;
-    Ok(to_ui_snapshot(&lab))
+    let selected = state
+        .local_shared_capabilities
+        .lock()
+        .map_err(|_| "local Capability selection lock poisoned")?;
+    Ok(to_ui_snapshot(&lab, &selected))
 }
 
 #[tauri::command]
@@ -354,7 +397,27 @@ fn set_route(request: SetRouteRequest, state: State<'_, AppState>) -> Result<UiS
     let mut lab = state.lab.lock().map_err(|_| "demo state lock poisoned")?;
     lab.set_route_active(route_id, request.active, unix_time_ms()?)
         .map_err(|error| error.to_string())?;
-    Ok(to_ui_snapshot(&lab))
+    let selected = state
+        .local_shared_capabilities
+        .lock()
+        .map_err(|_| "local Capability selection lock poisoned")?;
+    Ok(to_ui_snapshot(&lab, &selected))
+}
+
+#[tauri::command]
+fn set_local_capability_shared(
+    request: SetLocalCapabilitySharedRequest,
+    state: State<'_, AppState>,
+) -> Result<UiSnapshot, String> {
+    let capability_id = CapabilityId::from_str(&request.capability_id)
+        .map_err(|_| "invalid Capability ID".to_owned())?;
+    let lab = state.lab.lock().map_err(|_| "demo state lock poisoned")?;
+    let mut selected = state
+        .local_shared_capabilities
+        .lock()
+        .map_err(|_| "local Capability selection lock poisoned")?;
+    update_local_capability_selection(&lab, &mut selected, capability_id, request.selected)?;
+    Ok(to_ui_snapshot(&lab, &selected))
 }
 
 #[tauri::command]
@@ -395,7 +458,12 @@ fn reset_demo(state: State<'_, AppState>) -> Result<UiSnapshot, String> {
         .gamepad_lab
         .lock()
         .map_err(|_| "gamepad lab state lock poisoned".to_owned())? = GamepadLab::new()?;
-    Ok(to_ui_snapshot(&lab))
+    let mut selected = state
+        .local_shared_capabilities
+        .lock()
+        .map_err(|_| "local Capability selection lock poisoned")?;
+    selected.clear();
+    Ok(to_ui_snapshot(&lab, &selected))
 }
 
 #[tauri::command]
@@ -987,6 +1055,7 @@ pub fn run() {
     tauri::Builder::default()
         .manage(AppState {
             lab,
+            local_shared_capabilities: Mutex::new(BTreeSet::new()),
             physical_imu,
             live_imu: Arc::new(Mutex::new(live_imu)),
             live_imu_controller: Mutex::new(None),
@@ -1006,6 +1075,7 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             get_snapshot,
             set_route,
+            set_local_capability_shared,
             reset_demo,
             get_live_imu,
             start_live_imu,
@@ -1028,8 +1098,9 @@ pub fn run() {
         .expect("run CapyIO Tauri application");
 }
 
-fn to_ui_snapshot(lab: &DemoLab) -> UiSnapshot {
+fn to_ui_snapshot(lab: &DemoLab, selected: &BTreeSet<CapabilityId>) -> UiSnapshot {
     let snapshot = lab.runtime.snapshot();
+    let local_node_id = snapshot.local_node.id;
     let all_nodes = std::iter::once(&snapshot.local_node).chain(snapshot.peers.iter());
     let nodes = all_nodes
         .clone()
@@ -1039,8 +1110,54 @@ fn to_ui_snapshot(lab: &DemoLab) -> UiSnapshot {
             platform: platform_label(&node.platform),
             platform_version: node.platform_version.clone(),
             online: node.online_state == OnlineState::Online,
-            local: node.id == snapshot.local_node.id,
+            local: node.id == local_node_id,
             capability_count: node.capabilities.len(),
+        })
+        .collect();
+    let capabilities = all_nodes
+        .clone()
+        .flat_map(|node| {
+            let local = node.id == local_node_id;
+            node.capabilities.values().map(move |capability| {
+                let selectable_for_sharing = local
+                    && capability.availability != Availability::Offline
+                    && capability
+                        .ports
+                        .values()
+                        .any(|port| port.direction == PortDirection::Source);
+                UiCapability {
+                    id: capability.id.to_string(),
+                    node_id: node.id.to_string(),
+                    node_name: node.display_name.clone(),
+                    display_name: capability.display_name.clone(),
+                    capability_class: capability_class_label(&capability.class),
+                    local,
+                    availability: availability_label(capability.availability),
+                    permission_requirement: permission_requirement_label(
+                        capability.permission_requirement,
+                    ),
+                    inventory_source: "runtime_catalog",
+                    simulated: true,
+                    selectable_for_sharing,
+                    selected_for_sharing: selectable_for_sharing
+                        && selected.contains(&capability.id),
+                    ports: capability
+                        .ports
+                        .values()
+                        .map(|port| UiCapabilityPort {
+                            id: port.id.to_string(),
+                            display_name: port.display_name.clone(),
+                            direction: port_direction_label(port.direction),
+                            profile: format!("{}/{}", port.profile.name, port.profile.major),
+                            formats: port
+                                .formats
+                                .iter()
+                                .map(|format| format.id.clone())
+                                .collect(),
+                        })
+                        .collect(),
+                }
+            })
         })
         .collect();
     let adapters = all_nodes
@@ -1077,18 +1194,49 @@ fn to_ui_snapshot(lab: &DemoLab) -> UiSnapshot {
 
     UiSnapshot {
         backend_mode: "tauri_demo",
-        schema_version: 3,
+        schema_version: 4,
         project_version: env!("CARGO_PKG_VERSION"),
         nodes,
+        capabilities,
         routes,
         adapters,
         events,
         warnings: vec![
             "Tauri Demo 的 Route/授权/指标仍为确定性数据；只有显式启动的 Physical IMU Lab 会访问一个经校验的 IP 端点。".to_owned(),
-            "四条 Route 的授权、指标与系统投影状态均为模拟数据。".to_owned(),
+            "能力目录来自 Runtime fixture；选择仅保存在当前进程，不代表真实硬件枚举、授权或网络发布。".to_owned(),
         ],
         imu_fixture: build_imu_fixture(),
     }
+}
+
+fn update_local_capability_selection(
+    lab: &DemoLab,
+    selected: &mut BTreeSet<CapabilityId>,
+    capability_id: CapabilityId,
+    enabled: bool,
+) -> Result<(), String> {
+    let snapshot = lab.runtime.snapshot();
+    let capability = snapshot
+        .local_node
+        .capabilities
+        .get(&capability_id)
+        .ok_or_else(|| "Capability is not advertised by the local Node".to_owned())?;
+    if capability.availability == Availability::Offline {
+        return Err("offline Capability cannot be selected for sharing".to_owned());
+    }
+    if !capability
+        .ports
+        .values()
+        .any(|port| port.direction == PortDirection::Source)
+    {
+        return Err("Capability has no local Source Port to share".to_owned());
+    }
+    if enabled {
+        selected.insert(capability_id);
+    } else {
+        selected.remove(&capability_id);
+    }
+    Ok(())
 }
 
 fn build_imu_fixture() -> UiImuFixture {
@@ -1243,6 +1391,24 @@ const fn port_direction_label(value: PortDirection) -> &'static str {
     }
 }
 
+const fn availability_label(value: Availability) -> &'static str {
+    match value {
+        Availability::Available => "available",
+        Availability::Busy => "busy",
+        Availability::PermissionRequired => "permission_required",
+        Availability::Offline => "offline",
+    }
+}
+
+const fn permission_requirement_label(value: PermissionRequirement) -> &'static str {
+    match value {
+        PermissionRequirement::None => "none",
+        PermissionRequirement::UserConfirmation => "user_confirmation",
+        PermissionRequirement::ForegroundService => "foreground_service",
+        PermissionRequirement::Privileged => "privileged",
+    }
+}
+
 fn qos_label(value: &QosMode) -> &str {
     match value {
         QosMode::Basic => "basic",
@@ -1322,6 +1488,78 @@ mod tests {
         assert_eq!(snapshot.stream_epoch, 0);
         assert!(snapshot.acceleration.is_none());
         assert!(snapshot.problem.is_none());
+    }
+
+    #[test]
+    fn capability_catalog_separates_local_sharing_from_peer_inventory() {
+        let lab = DemoLab::new().expect("demo Runtime fixture");
+        let runtime = lab.runtime.snapshot();
+        let local_source = runtime
+            .local_node
+            .capabilities
+            .values()
+            .find(|capability| {
+                capability
+                    .ports
+                    .values()
+                    .any(|port| port.direction == PortDirection::Source)
+            })
+            .expect("local Source Capability")
+            .id;
+        let local_sink = runtime
+            .local_node
+            .capabilities
+            .values()
+            .find(|capability| {
+                capability
+                    .ports
+                    .values()
+                    .all(|port| port.direction == PortDirection::Sink)
+            })
+            .expect("local Sink-only Capability")
+            .id;
+        let peer_source = runtime
+            .peers
+            .first()
+            .expect("peer Node")
+            .capabilities
+            .values()
+            .find(|capability| {
+                capability
+                    .ports
+                    .values()
+                    .any(|port| port.direction == PortDirection::Source)
+            })
+            .expect("peer Source Capability")
+            .id;
+        let mut selected = BTreeSet::new();
+
+        update_local_capability_selection(&lab, &mut selected, local_source, true)
+            .expect("select local Source");
+        assert!(update_local_capability_selection(&lab, &mut selected, local_sink, true).is_err());
+        assert!(update_local_capability_selection(&lab, &mut selected, peer_source, true).is_err());
+
+        let dto = to_ui_snapshot(&lab, &selected);
+        assert_eq!(dto.schema_version, 4);
+        assert!(dto.capabilities.iter().any(|capability| {
+            capability.local
+                && capability.id == local_source.to_string()
+                && capability.selectable_for_sharing
+                && capability.selected_for_sharing
+        }));
+        assert!(dto.capabilities.iter().any(|capability| {
+            !capability.local
+                && capability.id == peer_source.to_string()
+                && !capability.selectable_for_sharing
+                && !capability.selected_for_sharing
+        }));
+        assert_eq!(
+            dto.capabilities
+                .iter()
+                .filter(|capability| capability.capability_class == "touchpad")
+                .count(),
+            2
+        );
     }
 
     #[test]

@@ -1252,6 +1252,15 @@ or hardware reads. Tests register both catalogs, open a Session, prepare/start
 opposite-direction Routes, stop one, simulate Adapter/peer loss and assert
 ordered bounded events/snapshots.
 
+The schema-4 UI catalog fixture additionally includes Android and Windows
+Precision Touchpad capabilities. Tauri tests prove that only a Capability on
+the local Node with a Source Port can be selected for sharing; peer Sources and
+local Sink-only projections fail closed. Browser Mock and Tauri return the same
+typed capability, availability, permission and Port-direction fields, and the
+UI build typechecks both local and peer catalog components. These tests prove
+catalog projection and selection policy only, not physical hardware discovery,
+peer authentication, permission grant or data publication.
+
 ## Audio Share external-process probe tests
 
 - configuration requires an explicit IP address, non-zero port, bounded

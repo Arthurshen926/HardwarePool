@@ -2,12 +2,13 @@
 import { computed, onMounted, onUnmounted, ref } from "vue";
 
 import RouteCard from "./components/RouteCard.vue";
+import CapabilityCatalog from "./components/CapabilityCatalog.vue";
 import GamepadSurface from "./components/GamepadSurface.vue";
 import GamepadTelemetry from "./components/GamepadTelemetry.vue";
 import QuickActionCard from "./components/QuickActionCard.vue";
 import StatusPill from "./components/StatusPill.vue";
 import { createCapyIOApi } from "./lib/api";
-import type { DsuProjectionMode, GamepadControlUpdate, QuickActionOperation, UiAudioEndpointCatalog, UiGamepadState, UiLiveImu, UiQuickAction, UiRoute, UiSnapshot, WindowsControllerKind } from "./lib/types";
+import type { DsuProjectionMode, GamepadControlUpdate, QuickActionOperation, UiAudioEndpointCatalog, UiCapability, UiGamepadState, UiLiveImu, UiQuickAction, UiRoute, UiSnapshot, WindowsControllerKind } from "./lib/types";
 
 const api = createCapyIOApi();
 const snapshot = ref<UiSnapshot | null>(null);
@@ -15,7 +16,8 @@ const busyRouteId = ref<string | null>(null);
 const loading = ref(true);
 const errorMessage = ref("");
 type PrimaryView = "quick" | "workspace" | "controller";
-const initialView = new URLSearchParams(window.location.search).get("view") === "controller" ? "controller" : "quick";
+const requestedView = new URLSearchParams(window.location.search).get("view");
+const initialView: PrimaryView = requestedView === "workspace" || requestedView === "controller" ? requestedView : "quick";
 const view = ref<PrimaryView>(initialView);
 const liveImu = ref<UiLiveImu | null>(null);
 const liveImuIp = ref("");
@@ -34,6 +36,7 @@ const gamepadXinputCompanion = ref(false);
 const quickActions = ref<UiQuickAction[]>([]);
 const audioEndpoints = ref<UiAudioEndpointCatalog | null>(null);
 const busyActionId = ref<string | null>(null);
+const busyCapabilityId = ref<string | null>(null);
 let livePoll: ReturnType<typeof setInterval> | null = null;
 
 const localNode = computed(() => snapshot.value?.nodes.find((node) => node.local));
@@ -44,6 +47,8 @@ const liveImuRunning = computed(() => liveImu.value?.status === "connecting" || 
 const liveImuTone = computed(() => liveImu.value?.status === "active" ? "success" : ["failed", "offline"].includes(liveImu.value?.status ?? "") ? "danger" : "warning");
 const quickActionRouteIds = computed(() => new Set(quickActions.value.flatMap((action) => action.routeId ? [action.routeId] : [])));
 const ordinaryQuickRoutes = computed(() => (snapshot.value?.routes ?? []).filter((route) => !quickActionRouteIds.value.has(route.id)));
+const localCapabilities = computed(() => (snapshot.value?.capabilities ?? []).filter((capability) => capability.local));
+const peerCapabilities = computed(() => (snapshot.value?.capabilities ?? []).filter((capability) => !capability.local));
 
 async function load(): Promise<void> {
   loading.value = true;
@@ -127,6 +132,14 @@ async function toggleRoute(route: UiRoute): Promise<void> {
   try { snapshot.value = await api.setRoute(route.id, !route.active); }
   catch (error) { errorMessage.value = normalizeError(error); }
   finally { busyRouteId.value = null; }
+}
+
+async function toggleCapability(capability: UiCapability, selected: boolean): Promise<void> {
+  busyCapabilityId.value = capability.id;
+  errorMessage.value = "";
+  try { snapshot.value = await api.setLocalCapabilityShared(capability.id, selected); }
+  catch (error) { errorMessage.value = normalizeError(error); }
+  finally { busyCapabilityId.value = null; }
 }
 
 async function resetDemo(): Promise<void> {
@@ -225,7 +238,7 @@ onUnmounted(() => { if (livePoll) clearInterval(livePoll); });
       </a>
       <nav class="view-switch" aria-label="Primary views">
         <button type="button" :class="{ active: view === 'quick' }" @click="view = 'quick'">Quick Actions</button>
-        <button type="button" :class="{ active: view === 'workspace' }" @click="view = 'workspace'">Workspace</button>
+        <button type="button" :class="{ active: view === 'workspace' }" @click="view = 'workspace'">设备与能力</button>
         <button type="button" :class="{ active: view === 'controller' }" @click="view = 'controller'">Controller</button>
       </nav>
       <div class="topbar__actions">
@@ -236,9 +249,9 @@ onUnmounted(() => { if (livePoll) clearInterval(livePoll); });
 
     <section v-if="view !== 'controller'" id="overview" class="hero-panel hero-panel--compact">
       <div class="hero-panel__copy">
-        <p class="eyebrow">Pre-alpha lab · Real audio and IMU paths</p>
+        <p class="eyebrow">Integrated non-display capability labs</p>
         <h1>连接能力，不绑定设备角色。</h1>
-        <p>两个对等 Node 通过有方向、强类型的 Route 组合音频、IMU 与视频能力。每条 Route 独立启动和停止。</p>
+        <p>两个对等 Node 通过有方向、强类型的 Route 组合音频、摄像头、IMU、手柄与触控板能力。每条 Route 独立启动和停止。</p>
         <div class="hero-panel__summary">
           <div><span>Local Node</span><strong>{{ localNode?.displayName ?? "Loading…" }}</strong></div>
           <div><span>Peer Node</span><strong>{{ remoteNode?.displayName ?? "No peer" }}</strong></div>
@@ -258,7 +271,7 @@ onUnmounted(() => { if (livePoll) clearInterval(livePoll); });
     <p v-if="errorMessage" class="error-banner" role="alert">{{ errorMessage }}</p>
     <section v-if="loading && !snapshot" class="loading-panel">Loading Runtime snapshot…</section>
 
-    <section v-if="view !== 'controller' && liveImu" class="info-panel imu-lab imu-live" aria-labelledby="imu-live-title">
+    <section v-if="view === 'quick' && liveImu" class="info-panel imu-lab imu-live" aria-labelledby="imu-live-title">
       <header class="imu-lab__header">
         <div>
           <p class="eyebrow">Physical IMU lab · trusted LAN only</p>
@@ -375,7 +388,7 @@ onUnmounted(() => { if (livePoll) clearInterval(livePoll); });
       </div>
     </section>
 
-    <section v-if="view !== 'controller' && snapshot?.imuFixture" class="info-panel imu-lab" aria-labelledby="imu-lab-title">
+    <section v-if="view === 'quick' && snapshot?.imuFixture" class="info-panel imu-lab" aria-labelledby="imu-lab-title">
       <header class="imu-lab__header">
         <div>
           <p class="eyebrow">IMU StandardPort lab</p>
@@ -413,10 +426,31 @@ onUnmounted(() => { if (livePoll) clearInterval(livePoll); });
       </section>
     </template>
 
-    <template v-else>
+    <template v-else-if="view === 'workspace'">
       <section class="section-heading">
-        <div><p class="eyebrow">Workspace</p><h2>Node、Adapter、Port 与 Route</h2></div>
-        <p>用于开发期诊断和编排；这些术语不会强加给 Quick Actions 用户。</p>
+        <div><p class="eyebrow">Devices & capabilities</p><h2>共享本机硬件，使用远端能力</h2></div>
+        <p>界面按任务分区，但不会把整台 Node 固定成发送端或接收端；实际方向始终属于每个 Port。</p>
+      </section>
+
+      <section class="catalog-pair">
+        <CapabilityCatalog
+          catalog-id="local-capabilities"
+          eyebrow="Local capability catalog"
+          title="本机能力"
+          description="Runtime 从本机 Adapter 目录汇总能力。Source Port 可以逐项勾选；Sink 与 Control Port 仍作为接收、投影或控制目标显示。"
+          :capabilities="localCapabilities"
+          :busy-id="busyCapabilityId"
+          @toggle="toggleCapability"
+        />
+        <CapabilityCatalog
+          catalog-id="peer-capabilities"
+          eyebrow="Peer capability catalog"
+          title="远端节点公开的能力"
+          description="目录来自已连接节点并保持只读。Source 表示可从远端使用，Sink 表示可将本机能力路由到远端；授权在建立具体 Route 时单独完成。"
+          :capabilities="peerCapabilities"
+          :busy-id="busyCapabilityId"
+          @toggle="toggleCapability"
+        />
       </section>
 
       <section class="workspace-grid">
