@@ -34,6 +34,14 @@ Core CI continues to treat the SDK as optional and runs a static Android source
 contract when it is absent. ADR 0044's LAN codec/worker uses only Java platform
 network APIs and adds no Android runtime library.
 
+The current machine has Android Studio 2026.1.3.7 and JBR 25.0.2, plus the
+command-line-tools shell under the user SDK directory. The standalone Camera2
+lab pins Android Gradle Plugin 9.3.1, Gradle 9.5, compile/target SDK 36, minimum
+SDK 29 and Java bytecode level 17. JBR 25 performs the Java 17-targeted build.
+Its first approved build downloaded AGP's missing build-time artifacts and the
+official Android SDK Build Tools 36.0.0 alongside the already installed 36.1.0.
+No APK was installed and ADB was not invoked.
+
 ## optional-windows-native
 
 - Visual Studio/Build Tools desktop C++ workload;

@@ -1,10 +1,22 @@
 [package]
 name = "capyio-windows-camera"
-description = "Reserved Windows user-mode camera projection boundary for CapyIO."
+description = "Deterministic camera fixture and reserved Windows projection boundary for CapyIO."
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 
+[features]
+windows-mf-probe = ["dep:windows"]
+
 [dependencies]
+capyio-core = { path = "../../../crates/capyio-core" }
 capyio-video = { path = "../../../crates/capyio-video" }
+
+[target.'cfg(windows)'.dependencies]
+windows = { version = "0.61.3", optional = true, features = ["Win32_Media_MediaFoundation"] }
+
+[[bin]]
+name = "capyio-camera-mf-probe"
+path = "src/bin/capyio-camera-mf-probe.rs"
+required-features = ["windows-mf-probe"]

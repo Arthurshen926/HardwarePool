@@ -1,0 +1,21 @@
+[package]
+name = "capyio-windows-camera-host"
+description = "Headless Windows lifecycle owner for the CapyIO decoded-camera producer mapping."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish = false
+
+[features]
+lab-support = ["capyio-windows-camera-share/lab-support"]
+
+[dependencies]
+capyio-core = { path = "../../../crates/capyio-core" }
+capyio-windows-camera = { path = "../capyio-camera" }
+
+[target.'cfg(windows)'.dependencies]
+capyio-windows-camera-share = { path = "../capyio-camera-share" }
+
+[dev-dependencies]
+capyio-windows-camera-share = { path = "../capyio-camera-share", features = ["test-support"] }
