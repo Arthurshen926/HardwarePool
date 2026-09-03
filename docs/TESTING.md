@@ -1554,6 +1554,14 @@ read-only JavaScript method, the native/shared view switch and Back fallback.
 This still provides compile/contract evidence only; no WebView was rendered on
 a physical device and no APK was installed.
 
+ANDROID-A01D1 raises the composition executable to 70 assertions. The added
+checks cover two schema-v2 `capability_control` Quick Actions, stopped/starting/
+active projection, exact available operations, null Route identity, fixed IMU
+and gamepad targets, and state-dependent rejection of unknown IDs, invalid
+operations, shell-like text and invalid transitions. `capyioCheck` compiles the
+real three-method JavaScript bridge and Service Binder calls, then runs Lint and
+assembles the debug APK. No physical sensor was opened and no APK was installed.
+
 Offline repository validation additionally pins the Gradle/AGP contract and
 checks the source manifest for the approved recording/notification/foreground
 permissions, a non-exported dual-type service, disabled backup/cleartext and no

@@ -25,6 +25,13 @@ const isSpeakerAction = computed(
   () => props.action.id === "capyio.quick-action.remote-speaker",
 );
 
+const actionIcon = computed(() => {
+  if (props.action.id.includes("microphone")) return "MIC";
+  if (props.action.id.includes("imu")) return "IMU";
+  if (props.action.id.includes("gamepad")) return "PAD";
+  return "AUD";
+});
+
 function operationLabel(operation: QuickActionOperation): string {
   if (operation === "retry") return "重试";
   if (operation === "stop") return "停止";
@@ -41,16 +48,16 @@ function chooseEndpoint(event: Event): void {
   <article class="capability-card quick-action-card" :aria-labelledby="`${action.id}-title`">
     <header class="capability-card__header">
       <div class="capability-card__identity">
-        <div class="capability-card__icon" aria-hidden="true">{{ action.id.includes("microphone") ? "MIC" : "AUD" }}</div>
+        <div class="capability-card__icon" aria-hidden="true">{{ actionIcon }}</div>
         <div><p class="eyebrow">Quick Action schema v{{ action.schemaVersion }}</p><h3 :id="`${action.id}-title`">{{ action.title }}</h3></div>
       </div>
       <StatusPill :tone="tone" :label="action.status" />
     </header>
     <p>{{ action.summary }}</p>
     <dl class="capability-card__facts">
-      <div><dt>Runtime</dt><dd>{{ action.routeState ?? "not installed" }}<template v-if="action.routeEpoch !== null"> · epoch {{ action.routeEpoch }}</template></dd></div>
+      <div><dt>{{ action.kind === "capability_control" ? "Adapter" : "Runtime" }}</dt><dd>{{ action.kind === "capability_control" ? action.status : (action.routeState ?? "not installed") }}<template v-if="action.routeEpoch !== null"> · epoch {{ action.routeEpoch }}</template></dd></div>
       <div><dt>Evidence</dt><dd>{{ action.evidenceLevel }}</dd></div>
-      <div v-if="action.connectionHint"><dt>手机端</dt><dd>{{ action.connectionHint }}</dd></div>
+      <div v-if="action.connectionHint"><dt>提示</dt><dd>{{ action.connectionHint }}</dd></div>
       <div v-if="isMicrophoneAction"><dt>Windows 端</dt><dd>在录音或会议应用中选择 CapyIO 麦克风输入；当前实验室驱动也可能显示为“麦克风 (CapyIO Speaker with Render Bridge)”。</dd></div>
     </dl>
     <div v-if="isSpeakerAction && audioEndpoints?.supported" class="audio-endpoint-picker">

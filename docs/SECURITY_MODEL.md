@@ -265,6 +265,15 @@ The bridge is removed when the Activity is destroyed. This is a narrow local
 observation boundary, not authentication or authorization for future mutable
 commands.
 
+ANDROID-A01D1 extends that bridge only for two closed local Capability actions.
+The presentation may read the two bounded Quick Action DTOs and submit one exact
+action ID plus `start`, `retry` or `stop`. A dependency-free parser checks the
+ID, operation length, current lifecycle state and permitted transition before a
+Binder request is queued. Unknown camera/audio/haptics IDs, unknown operations,
+shell-like strings and invalid transitions are rejected. The command cannot
+carry an endpoint, Route, payload, permission, file path or platform handle and
+does not grant sharing or peer access.
+
 The synthetic-touchpad injection harness is a local controlled-lab binary, not
 an allow-listed WebView/Node Runtime command. Its default path only projects and
 encodes fixed fixtures. Native submission requires both an explicit injection

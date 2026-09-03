@@ -1,6 +1,8 @@
 package dev.capyio.android;
 
 import dev.capyio.android.contract.CapabilityCatalogSnapshot;
+import dev.capyio.android.contract.CapabilityLifecycleSnapshot;
+import dev.capyio.android.contract.CapabilityLifecycleState;
 import dev.capyio.android.contract.CapabilityPortSnapshot;
 import dev.capyio.android.contract.CapabilitySnapshot;
 
@@ -62,6 +64,83 @@ public final class AndroidUiSnapshotJson {
         appendQuoted(json, "Android Node service is not connected; the catalog is temporarily unavailable.");
         json.append("],\"imuFixture\":null}");
         return json.toString();
+    }
+
+    public static String encodeQuickActions(
+            CapabilityLifecycleSnapshot imu,
+            CapabilityLifecycleSnapshot gamepad) {
+        if (imu == null || gamepad == null) {
+            throw new IllegalArgumentException("Capability lifecycle snapshots are required");
+        }
+        StringBuilder json = new StringBuilder(1536);
+        json.append('[');
+        appendQuickAction(
+                json,
+                "capyio.quick-action.android-imu",
+                "IMU sensors",
+                "Start or stop the service-owned accelerometer and gyroscope Adapter.",
+                imu);
+        json.append(',');
+        appendQuickAction(
+                json,
+                "capyio.quick-action.android-gamepad",
+                "Touch gamepad",
+                "Start or stop the service-owned bounded gamepad state Adapter.",
+                gamepad);
+        json.append(']');
+        return json.toString();
+    }
+
+    private static void appendQuickAction(
+            StringBuilder json,
+            String id,
+            String title,
+            String summary,
+            CapabilityLifecycleSnapshot lifecycle) {
+        json.append("{\"schemaVersion\":2");
+        appendStringField(json, "id", id);
+        appendStringField(json, "kind", "capability_control");
+        appendStringField(json, "title", title);
+        appendStringField(json, "summary", summary);
+        appendStringField(json, "status", actionStatus(lifecycle.state()));
+        json.append(",\"simulated\":false,\"routeId\":null,\"routeState\":null")
+                .append(",\"routeEpoch\":null,\"availableOperations\":[");
+        String operation = availableOperation(lifecycle.state());
+        if (operation != null) {
+            appendQuoted(json, operation);
+        }
+        json.append(']');
+        appendStringField(json, "evidenceLevel", "not_started");
+        appendStringField(
+                json,
+                "connectionHint",
+                "Local Android Capability lifecycle only; sharing and Routes remain separate.");
+        if (lifecycle.problemCode() == null) {
+            json.append(",\"problemCode\":null,\"problem\":null}");
+        } else {
+            appendStringField(json, "problemCode", lifecycle.problemCode());
+            appendStringField(json, "problem", "Android Adapter reported a bounded failure.");
+            json.append('}');
+        }
+    }
+
+    private static String actionStatus(CapabilityLifecycleState state) {
+        return switch (state) {
+            case STOPPED -> "idle";
+            case STARTING -> "starting";
+            case ACTIVE -> "active";
+            case STOPPING -> "stopping";
+            case FAILED -> "failed";
+        };
+    }
+
+    private static String availableOperation(CapabilityLifecycleState state) {
+        return switch (state) {
+            case STOPPED -> "start";
+            case STARTING, ACTIVE -> "stop";
+            case STOPPING -> null;
+            case FAILED -> "retry";
+        };
     }
 
     private static void appendCapabilities(

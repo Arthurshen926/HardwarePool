@@ -7,6 +7,8 @@ declare global {
   interface Window {
     CapyIOAndroid?: {
       getSnapshotJson(): string;
+      getQuickActionsJson(): string;
+      invokeQuickAction(actionId: string, operation: QuickActionOperation): boolean;
     };
   }
 }
@@ -44,8 +46,30 @@ class AndroidObserverCapyIOApi implements CapyIOApi {
   stopGamepadDsu(): Promise<UiGamepadState> { return this.readOnly(); }
   startAndroidGamepad(): Promise<UiGamepadState> { return this.readOnly(); }
   stopAndroidGamepad(): Promise<UiGamepadState> { return this.readOnly(); }
-  getQuickActions(): Promise<UiQuickAction[]> { return Promise.resolve([]); }
-  invokeQuickAction(): Promise<UiQuickAction> { return this.readOnly(); }
+  async getQuickActions(): Promise<UiQuickAction[]> {
+    const encoded = window.CapyIOAndroid?.getQuickActionsJson();
+    if (!encoded) throw new Error("Android Quick Action bridge is unavailable");
+    const actions = JSON.parse(encoded) as UiQuickAction[];
+    if (!Array.isArray(actions)
+      || actions.some((action) => action.schemaVersion !== 2
+        || action.kind !== "capability_control")) {
+      throw new Error("Android Quick Action bridge returned incompatible data");
+    }
+    return actions;
+  }
+
+  async invokeQuickAction(actionId: string, operation: QuickActionOperation): Promise<UiQuickAction> {
+    if (!window.CapyIOAndroid?.invokeQuickAction(actionId, operation)) {
+      throw new Error("Android rejected the Capability operation");
+    }
+    const action = (await this.getQuickActions()).find((candidate) => candidate.id === actionId);
+    if (!action) throw new Error("Android Capability action disappeared");
+    return {
+      ...action,
+      status: operation === "stop" ? "stopping" : "starting",
+      availableOperations: [],
+    };
+  }
   getAudioEndpoints(): Promise<UiAudioEndpointCatalog | null> { return Promise.resolve(null); }
   selectAudioEndpoint(): Promise<UiQuickAction> { return this.readOnly(); }
 

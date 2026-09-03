@@ -260,7 +260,7 @@ export type QuickActionOperation = "start" | "retry" | "stop";
 export interface UiQuickAction {
   schemaVersion: 2;
   id: string;
-  kind: "route_control";
+  kind: "capability_control" | "route_control";
   title: string;
   summary: string;
   status: "blocked" | "idle" | "starting" | "active" | "stopping" | "offline" | "failed";

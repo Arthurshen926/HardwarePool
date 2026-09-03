@@ -23,6 +23,7 @@ public final class AndroidCapabilityModulesContractTest {
         reflectsGenerationBoundImuLifecycleState();
         reflectsGenerationBoundGamepadLifecycleState();
         projectsTheCatalogIntoSharedUiSchemaFour();
+        projectsAndAdmitsClosedCapabilityQuickActions();
         System.out.println("Android Capability module composition: PASS ("
                 + assertions + " assertions)");
     }
@@ -208,6 +209,66 @@ public final class AndroidCapabilityModulesContractTest {
             offset += target.length();
         }
         return count;
+    }
+
+    private static void projectsAndAdmitsClosedCapabilityQuickActions() {
+        CapabilityLifecycleController imu = new CapabilityLifecycleController();
+        CapabilityLifecycleController gamepad = new CapabilityLifecycleController();
+        String stopped = AndroidUiSnapshotJson.encodeQuickActions(
+                imu.snapshot(), gamepad.snapshot());
+        check(occurrences(stopped, "\"kind\":\"capability_control\"") == 2);
+        check(stopped.contains("capyio.quick-action.android-imu"));
+        check(stopped.contains("capyio.quick-action.android-gamepad"));
+        check(occurrences(stopped, "\"availableOperations\":[\"start\"]") == 2);
+        check(!stopped.contains("\"routeId\":\""));
+
+        TransitionToken imuStart = imu.beginStart();
+        check(imuStart.accepted());
+        String starting = AndroidUiSnapshotJson.encodeQuickActions(
+                imu.snapshot(), gamepad.snapshot());
+        check(starting.contains("\"status\":\"starting\""));
+        check(starting.contains("\"availableOperations\":[\"stop\"]"));
+        check(imu.completeStart(imuStart.generation()));
+        check(AndroidUiSnapshotJson.encodeQuickActions(imu.snapshot(), gamepad.snapshot())
+                .contains("\"status\":\"active\""));
+
+        check(AndroidCapabilityCommand.parse(
+                "capyio.quick-action.android-imu",
+                "start",
+                CapabilityLifecycleState.STOPPED).target()
+                == AndroidCapabilityCommand.Target.IMU);
+        check(AndroidCapabilityCommand.parse(
+                "capyio.quick-action.android-gamepad",
+                "stop",
+                CapabilityLifecycleState.ACTIVE).target()
+                == AndroidCapabilityCommand.Target.GAMEPAD);
+        check(AndroidCapabilityCommand.parse(
+                "capyio.quick-action.android-imu",
+                "retry",
+                CapabilityLifecycleState.FAILED).operation()
+                == AndroidCapabilityCommand.Operation.RETRY);
+        check(AndroidCapabilityCommand.parse(
+                "capyio.quick-action.android-imu",
+                "stop",
+                CapabilityLifecycleState.STOPPED) == null);
+        check(AndroidCapabilityCommand.parse(
+                "capyio.quick-action.android-imu",
+                "start",
+                CapabilityLifecycleState.ACTIVE) == null);
+        check(AndroidCapabilityCommand.parse(
+                "capyio.quick-action.android-imu",
+                "retry",
+                CapabilityLifecycleState.STOPPING) == null);
+        check(AndroidCapabilityCommand.parse(
+                "capyio.quick-action.android-camera",
+                "start",
+                CapabilityLifecycleState.STOPPED) == null);
+        check(AndroidCapabilityCommand.parse(
+                "capyio.quick-action.android-imu",
+                "start;stop",
+                CapabilityLifecycleState.STOPPED) == null);
+        check(AndroidCapabilityCommand.parse(null, "start", CapabilityLifecycleState.STOPPED)
+                == null);
     }
 
     private static CapabilitySnapshot capability(

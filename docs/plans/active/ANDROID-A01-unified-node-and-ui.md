@@ -50,10 +50,12 @@ Display is excluded until its feature branch is complete.
    local host and projects the Service catalog through one no-argument read-only
    method. Back restores the native control fallback. The existing Node service,
    not the Activity or WebView, remains lifecycle owner.
-4. **A01D — per-capability operations:** connect schema-versioned start/stop,
-   permission and Route status commands one capability at a time. Audio goes
-   first because its independent service lifecycle is already physically
-   proven.
+4. **A01D — per-capability operations (IMU/gamepad lifecycle attached):** A01D1
+   exposes schema-v2 `capability_control` Quick Actions for the existing IMU and
+   gamepad Service lifecycles through an exact state-dependent command allow-list.
+   These actions do not create Routes or select sharing. Audio permission UX,
+   high-rate touch state, Route status and the remaining capabilities proceed in
+   separate slices.
 5. **A01E — camera integration:** only after explicit approval, add the camera
    permission/service declarations required by the selected lifecycle and run
    denial/revoke/background tests on an authorized device.

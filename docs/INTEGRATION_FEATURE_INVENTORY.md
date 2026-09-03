@@ -60,12 +60,19 @@ packaged workspace on demand and projects the service catalog into shared schema
 to them. The observer exposes no sharing selection, Route or hardware lifecycle
 command and does not invent peer state; those operations remain separate work.
 
+A01D1 adds shared schema-v2 `capability_control` actions for the already attached
+IMU and gamepad lifecycles. Their fixed start/retry/stop commands cross the local
+bridge into the Node Service, while sharing selection and all Route fields remain
+separate and unset. No audio permission flow, touch-state submission or remote
+transport is exposed by this slice.
+
 ## Remaining integration work
 
-1. Connect the shared touch-gamepad surface to the new Service-owned state
-   facade, attach touchpad lifecycle without regressing standalone evidence,
-   and route IMU/gamepad samples through bounded typed data planes. Haptics
-   requires separate approval for the Android `VIBRATE` Manifest permission.
+1. Connect the shared touch-gamepad surface to the Service-owned state facade,
+   attach touchpad lifecycle without regressing standalone evidence, and route
+   IMU/gamepad samples through bounded typed data planes. Lifecycle Quick Actions
+   are attached, but they are not sharing or Route authorization. Haptics requires
+   separate approval for the Android `VIBRATE` Manifest permission.
 2. Replace the transitional native-control fallback only after A01D maps
    schema-versioned shared UI operations to the Service with equivalent
    permission, lifecycle and physical-device evidence.

@@ -27,6 +27,7 @@ import dev.capyio.android.contract.AudioCapabilityKind;
 import dev.capyio.android.contract.AudioCapabilitySnapshot;
 import dev.capyio.android.contract.AudioCapabilityState;
 import dev.capyio.android.contract.AudioNodeSnapshot;
+import dev.capyio.android.contract.CapabilityLifecycleSnapshot;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -354,6 +355,57 @@ public final class MainActivity extends Activity {
                     current.capabilityCatalog(),
                     Build.VERSION.RELEASE,
                     BuildConfig.VERSION_NAME);
+        }
+
+        @JavascriptInterface
+        public String getQuickActionsJson() {
+            AudioNodeService.NodeBinder current = binder;
+            if (current == null) {
+                return "[]";
+            }
+            return AndroidUiSnapshotJson.encodeQuickActions(
+                    current.imuLifecycle(),
+                    current.gamepadLifecycle());
+        }
+
+        @JavascriptInterface
+        public boolean invokeQuickAction(String actionId, String operation) {
+            AudioNodeService.NodeBinder current = binder;
+            if (current == null) {
+                return false;
+            }
+            CapabilityLifecycleSnapshot lifecycle;
+            if ("capyio.quick-action.android-imu".equals(actionId)) {
+                lifecycle = current.imuLifecycle();
+            } else if ("capyio.quick-action.android-gamepad".equals(actionId)) {
+                lifecycle = current.gamepadLifecycle();
+            } else {
+                return false;
+            }
+            AndroidCapabilityCommand command = AndroidCapabilityCommand.parse(
+                    actionId,
+                    operation,
+                    lifecycle.state());
+            if (command == null) {
+                return false;
+            }
+            switch (command.target()) {
+                case IMU -> {
+                    if (command.operation() == AndroidCapabilityCommand.Operation.STOP) {
+                        current.stopImu();
+                    } else {
+                        current.startImu();
+                    }
+                }
+                case GAMEPAD -> {
+                    if (command.operation() == AndroidCapabilityCommand.Operation.STOP) {
+                        current.stopGamepad();
+                    } else {
+                        current.startGamepad();
+                    }
+                }
+            }
+            return true;
         }
     }
 

@@ -70,6 +70,14 @@ fake peer, Route or simulated panel. WebView network/content access and external
 navigation are blocked, and Back returns to the proven native controls. Physical
 rendering and mutable-operation parity are not claimed.
 
+A01D1 connects the first shared UI operations: schema-v2 IMU and touch-gamepad
+Quick Actions now start, retry or stop their existing Service-owned Adapter
+lifecycles. They are explicitly `capability_control`, keep every Route field
+null and do not select sharing or transmit data. The native bridge accepts only
+the two fixed action IDs and operations valid for the observed lifecycle state;
+unknown, malformed and invalid-transition requests fail closed. Audio, camera,
+haptics, touch surface input and cross-node Routes remain outside this slice.
+
 ## Automated evidence
 
 - `cargo test --offline -p capyio-input -p capyio-dsu-adapter -p capyio-viiper-adapter -p capyio-windows-input -p capyio-desktop`: passed after the gamepad merge.
@@ -97,9 +105,10 @@ rendering and mutable-operation parity are not claimed.
 - `platform/android/gradlew.bat capyioCheck --offline`: final aggregate Android
   Gate passed all contracts, composition checks, Lint, entrypoint verification
   shared-Vue asset verification and debug assembly without installing the APK.
-- the Android composition executable passed 51 assertions after A01C2, including
+- the Android composition executable passed 70 assertions after A01D1, including
   schema-4 projection, all seven capabilities, read-only flags, JSON escaping
-  and disconnected-service output.
+  and disconnected-service output plus closed IMU/gamepad Quick Actions and
+  command rejection.
 - `jar tf platform/android/app/build/outputs/apk/debug/app-debug.apk`: confirmed
   `assets/capyio-ui/index.html` and generated JavaScript/CSS in the assembled
   archive; the entrypoint references both assets with `./assets/...` paths.
@@ -111,5 +120,5 @@ rendering and mutable-operation parity are not claimed.
 - no Windows driver install/removal, restart or boot/security-policy change;
 - no Display merge or Display worktree modification;
 - no claim that schema-4 fixture catalogs are real hardware discovery;
-- no claim of physical Android rendering or mutable-command UI parity; A01C2 is
-  a build-verified read-only observer with native controls retained.
+- no claim of physical Android rendering or complete mutable-command UI parity;
+  A01D1 exposes only IMU/gamepad lifecycle control and retains native audio controls.

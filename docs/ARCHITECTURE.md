@@ -786,6 +786,16 @@ Actions. Service state notifications refresh the snapshot while the Service
 continues to own every Adapter lifecycle. Replacing the transitional native
 controls requires the separately tested A01D operations.
 
+ANDROID-A01D1 adds the first mutable shared-UI operations without conflating an
+Adapter lifecycle with a Route. Two schema-v2 Quick Actions have kind
+`capability_control` and target only the attached IMU and gamepad Adapters. The
+bridge admits exact action IDs plus state-dependent `start`, `retry` or `stop`;
+all other IDs, operations and invalid transitions fail closed. Commands enter
+the existing Binder methods and are executed by the Service main handler. They
+do not select sharing, authorize or create a Route, transmit samples, request a
+permission or submit high-rate gamepad state. Audio permission UX and Route
+composition remain later A01D slices.
+
 ADR 0044 subsequently adds the approved network permission and a separate
 dependency-free LAN codec/socket worker boundary. ADRs 0046 and 0047 now attach
 the speaker Sink and microphone Source respectively: `AudioTrack` consumes the
