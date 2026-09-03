@@ -75,6 +75,22 @@ direction-neutral selected specification and Session/Route/Stream/epoch media
 binding; concrete network framing remains transport-owned. Audio types live in
 that crate or Profile-specific descriptors rather than dominating Core.
 
+## Video specialization
+
+Decoded packed-raw video, exact candidate selection, frame metadata and camera
+capability semantics are defined in `docs/VIDEO_PROFILE.md` and
+`capyio-video`. Encoded H.264/H.265/RTSP paths are not StandardPort v1 by
+implication; a vertical Adapter keeps its private data plane `AdapterManaged`
+until a complete codec/access-unit contract and Converter are explicit.
+
+## Input and haptics specialization
+
+Pointer, touch snapshot, semantic keyboard, fixed gamepad state, haptics and
+shared epoch/sequence behavior are defined in `docs/INPUT_PROFILE.md` and
+`capyio-input`. Canonical names are `capyio.input.gamepad-state/1` and
+`capyio.haptics.feedback/1`; the earlier mock-only `gamepad` and
+`haptics.pattern` spellings are invalid.
+
 ## IMU samples v1
 
 `capyio.motion.imu-samples/1` uses a StandardPort `DataEnvelope` with:

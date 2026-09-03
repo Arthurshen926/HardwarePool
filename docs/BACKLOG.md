@@ -305,11 +305,15 @@ decisions continue in
 
 ## Later small tasks
 
-- `CAPY-GAMEPAD-001`: DSU projection from recorded IMU fixture.
+- `CAPY-IO-CONTRACTS-001`: canonical portable Video/Input contracts and
+  reserved workspace ownership (active plan 0014).
+- `CAPY-GAMEPAD-001`: DSU projection from recorded IMU fixture after the common
+  contracts baseline has an approved commit.
 - `CAPY-GAMEPAD-002`: VIIPER sidecar probe and license/build spike.
 - `CAPY-MIC-003`: microphone release qualification and distributable product
   boundary (plan 0021).
-- `CAPY-CAMERA-001`: VCamdroid sidecar catalog/probe spike.
+- `CAPY-CAMERA-001`: generated raw-video fixture and Windows user-mode camera
+  projection before the VCamdroid sidecar catalog/probe spike.
 - `CAPY-UX-001`: versioned Quick Action template schema.
 - `CAPY-SEC-001`: authenticated control-channel design spike.
 - `CAPY-DRIVER-001`: provision the isolated Windows driver VM required by

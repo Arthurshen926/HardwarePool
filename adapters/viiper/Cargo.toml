@@ -1,0 +1,10 @@
+[package]
+name = "capyio-viiper-adapter"
+description = "Reserved CapyIO boundary for a reviewed VIIPER projection integration."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[dependencies]
+capyio-input = { path = "../../crates/capyio-input" }

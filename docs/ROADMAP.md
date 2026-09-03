@@ -95,6 +95,11 @@ implementation scope automatically.
   path remains explicitly insecure, fixed to the lab binding and subject to
   endpoint cleanup, lifecycle and quality qualification. Native microphone
   switchover remains `001F`.
+- Gates 6 and 9 now share the in-progress `CAPY-IO-CONTRACTS-001` semantic
+  baseline. Canonical input/haptics names, raw-video negotiation and reserved
+  workspace ownership are implementation scaffolding only; no DSU emulator,
+  Android camera, virtual camera, HID or ordinary-application evidence is yet
+  claimed.
 
 ## Public-alpha proof bar
 

@@ -1,0 +1,10 @@
+[package]
+name = "capyio-vcamdroid-adapter"
+description = "Reserved CapyIO boundary for a reviewed VCamdroid-compatible camera integration."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[dependencies]
+capyio-video = { path = "../../crates/capyio-video" }

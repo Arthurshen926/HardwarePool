@@ -316,6 +316,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "capyio-android-host"
+version = "0.1.0"
+dependencies = [
+ "capyio-core",
+]
+
+[[package]]
 name = "capyio-audio"
 version = "0.1.0"
 dependencies = [
@@ -374,6 +381,24 @@ dependencies = [
  "tauri",
  "tauri-build",
  "tungstenite",
+]
+
+[[package]]
+name = "capyio-dsu-adapter"
+version = "0.1.0"
+dependencies = [
+ "capyio-data-plane",
+ "capyio-input",
+]
+
+[[package]]
+name = "capyio-input"
+version = "0.1.0"
+dependencies = [
+ "capyio-core",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.20",
 ]
 
 [[package]]
@@ -464,6 +489,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "capyio-remote-touchpad-adapter"
+version = "0.1.0"
+dependencies = [
+ "capyio-input",
+]
+
+[[package]]
 name = "capyio-runtime"
 version = "0.1.0"
 dependencies = [
@@ -493,11 +525,49 @@ dependencies = [
 ]
 
 [[package]]
+name = "capyio-vcamdroid-adapter"
+version = "0.1.0"
+dependencies = [
+ "capyio-video",
+]
+
+[[package]]
+name = "capyio-video"
+version = "0.1.0"
+dependencies = [
+ "capyio-core",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.20",
+]
+
+[[package]]
+name = "capyio-viiper-adapter"
+version = "0.1.0"
+dependencies = [
+ "capyio-input",
+]
+
+[[package]]
+name = "capyio-windows-camera"
+version = "0.1.0"
+dependencies = [
+ "capyio-video",
+]
+
+[[package]]
 name = "capyio-windows-capture-ring"
 version = "0.1.0"
 dependencies = [
  "thiserror 2.0.20",
  "windows-sys 0.61.2",
+]
+
+[[package]]
+name = "capyio-windows-input"
+version = "0.1.0"
+dependencies = [
+ "capyio-input",
 ]
 
 [[package]]

@@ -1,0 +1,10 @@
+[package]
+name = "capyio-remote-touchpad-adapter"
+description = "Reserved CapyIO boundary for remote pointer/touch gesture mapping."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[dependencies]
+capyio-input = { path = "../../crates/capyio-input" }
