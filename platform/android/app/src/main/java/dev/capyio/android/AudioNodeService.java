@@ -84,13 +84,20 @@ public final class AudioNodeService extends Service {
     public void onCreate() {
         super.onCreate();
         nodeId = NodeIdentityStore.loadOrCreate(this);
+        AndroidHardwareInventory inventory = AndroidHardwareInventory.probe(this);
         capabilityRegistry = AndroidCapabilityModules.createRegistry(
                 controller,
                 () -> checkSelfPermission(Manifest.permission.RECORD_AUDIO)
                         == PackageManager.PERMISSION_GRANTED,
                 () -> Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU
                         || checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS)
-                                == PackageManager.PERMISSION_GRANTED);
+                                == PackageManager.PERMISSION_GRANTED,
+                inventory.microphonePresence(),
+                inventory.speakerPresence(),
+                inventory.cameraPresence(),
+                inventory.imuPresence(),
+                inventory.touchSurfacePresence(),
+                inventory.vibratorPresence());
         createNotificationChannel();
         NativeLanMicrophoneSessionConfig microphoneConfig;
         try {

@@ -56,6 +56,7 @@ public final class CapabilityCatalogContractTest {
                 CapabilityKind.CAMERA,
                 CapabilityAvailability.AVAILABLE,
                 CapabilityPermissionRequirement.USER_CONFIRMATION,
+                HardwarePresence.PRESENT,
                 false,
                 List.of(port("android.camera.source", CapabilityPortDirection.SOURCE)),
                 null));
@@ -65,6 +66,26 @@ public final class CapabilityCatalogContractTest {
                 CapabilityPortDirection.SOURCE,
                 "capyio.video.frames/1",
                 List.of("video-frame-v1")));
+        expectFailure(() -> new CapabilitySnapshot(
+                "android.imu",
+                "IMU",
+                CapabilityKind.IMU,
+                CapabilityAvailability.AVAILABLE,
+                CapabilityPermissionRequirement.NONE,
+                HardwarePresence.ABSENT,
+                true,
+                List.of(port("android.imu.source", CapabilityPortDirection.SOURCE)),
+                null));
+        expectFailure(() -> new CapabilitySnapshot(
+                "android.camera",
+                "Camera",
+                CapabilityKind.CAMERA,
+                CapabilityAvailability.PERMISSION_REQUIRED,
+                CapabilityPermissionRequirement.USER_CONFIRMATION,
+                HardwarePresence.UNKNOWN,
+                true,
+                List.of(port("android.camera.source", CapabilityPortDirection.SOURCE)),
+                null));
         expectFailure(() -> new CapabilityPortSnapshot(
                 "android.camera.source",
                 "Port",
@@ -82,6 +103,7 @@ public final class CapabilityCatalogContractTest {
                 CapabilityPortDirection.SOURCE);
         check(!pending.adapterAttached());
         check(pending.availability() == CapabilityAvailability.OFFLINE);
+        check(pending.hardwarePresence() == HardwarePresence.PRESENT);
         check("CAPY.ANDROID.MODULE_NOT_ATTACHED".equals(pending.problemCode()));
     }
 
@@ -111,6 +133,7 @@ public final class CapabilityCatalogContractTest {
                 kind,
                 availability,
                 CapabilityPermissionRequirement.NONE,
+                HardwarePresence.PRESENT,
                 attached,
                 List.of(port(key + ".port", direction)),
                 attached ? null : "CAPY.ANDROID.MODULE_NOT_ATTACHED");

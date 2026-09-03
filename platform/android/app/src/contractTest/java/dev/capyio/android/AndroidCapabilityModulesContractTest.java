@@ -6,6 +6,7 @@ import dev.capyio.android.contract.CapabilityAvailability;
 import dev.capyio.android.contract.CapabilityCatalogSnapshot;
 import dev.capyio.android.contract.CapabilityPortDirection;
 import dev.capyio.android.contract.CapabilitySnapshot;
+import dev.capyio.android.contract.HardwarePresence;
 import dev.capyio.android.contract.TransitionToken;
 
 public final class AndroidCapabilityModulesContractTest {
@@ -25,7 +26,13 @@ public final class AndroidCapabilityModulesContractTest {
         CapabilityCatalogSnapshot snapshot = AndroidCapabilityModules.createRegistry(
                 controller,
                 () -> true,
-                () -> true).snapshot("test-node");
+                () -> true,
+                HardwarePresence.PRESENT,
+                HardwarePresence.PRESENT,
+                HardwarePresence.PRESENT,
+                HardwarePresence.PRESENT,
+                HardwarePresence.PRESENT,
+                HardwarePresence.PRESENT).snapshot("test-node");
 
         check(snapshot.moduleCount() == 4);
         check(snapshot.capabilities().size() == 7);
@@ -43,6 +50,8 @@ public final class AndroidCapabilityModulesContractTest {
                 == CapabilityPortDirection.SINK);
         check(capability(snapshot, "android.camera").availability()
                 == CapabilityAvailability.OFFLINE);
+        check(capability(snapshot, "android.camera").hardwarePresence()
+                == HardwarePresence.PRESENT);
         check("CAPY.ANDROID.MODULE_NOT_ATTACHED".equals(
                 capability(snapshot, "android.touchpad").problemCode()));
     }
@@ -52,12 +61,24 @@ public final class AndroidCapabilityModulesContractTest {
         var registry = AndroidCapabilityModules.createRegistry(
                 controller,
                 () -> false,
-                () -> true);
+                () -> true,
+                HardwarePresence.PRESENT,
+                HardwarePresence.PRESENT,
+                HardwarePresence.ABSENT,
+                HardwarePresence.PRESENT,
+                HardwarePresence.PRESENT,
+                HardwarePresence.UNKNOWN);
         CapabilityCatalogSnapshot stopped = registry.snapshot("test-node");
         check(capability(stopped, "android.microphone").availability()
                 == CapabilityAvailability.PERMISSION_REQUIRED);
         check(capability(stopped, "android.speaker").availability()
                 == CapabilityAvailability.AVAILABLE);
+        check(capability(stopped, "android.camera").hardwarePresence()
+                == HardwarePresence.ABSENT);
+        check("CAPY.ANDROID.HARDWARE_PROBE_FAILED".equals(
+                capability(stopped, "android.haptics").problemCode()));
+        check(capability(stopped, "android.haptics").hardwarePresence()
+                == HardwarePresence.UNKNOWN);
 
         TransitionToken start = controller.beginStart(AudioCapabilityKind.SPEAKER_SINK);
         check(start.accepted());

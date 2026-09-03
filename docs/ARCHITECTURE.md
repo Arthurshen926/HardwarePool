@@ -740,6 +740,14 @@ live microphone Source and speaker Sink state; camera, controller and touchpad
 modules are declared as unattached and therefore remain explicitly Offline.
 This is a migration inventory rather than hardware discovery. The DTO contains
 only bounded metadata and never carries platform handles or media payloads.
+ANDROID-A01B2 separates read-only `HardwarePresence` from Adapter attachment and
+Capability availability. At service creation the Android host queries audio
+outputs, the microphone/camera/touchscreen feature inventory, accelerometer plus
+gyroscope presence and vibrator availability without opening any device. A
+detected camera or sensor therefore remains Offline while its Adapter is not
+attached; absence receives a distinct bounded Problem code.
+Probe exceptions fail closed as `Unknown` with a separate Problem code and
+cannot make the Capability selectable.
 
 ADR 0044 subsequently adds the approved network permission and a separate
 dependency-free LAN codec/socket worker boundary. ADRs 0046 and 0047 now attach

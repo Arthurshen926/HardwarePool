@@ -49,15 +49,22 @@ The UI intentionally uses “本机能力” and “远端节点公开的能力�
 global sender/receiver roles. One Node can simultaneously expose Source, Sink
 and Control Ports.
 
+The Android service-owned schema-v1 catalog now also records read-only hardware
+presence for microphone, audio output, camera, accelerometer+gyroscope,
+touchscreen and vibrator. Presence is not treated as Adapter attachment or
+sharing availability; the shared Vue UI does not consume this Android catalog
+until the A01C host bridge is implemented.
+
 ## Remaining integration work
 
-1. Attach camera, controller and touchpad lifecycle façades to the new Android
+1. Attach controller and touchpad lifecycle façades to the new Android
    service-owned module registry without regressing their standalone evidence.
 2. Build an Android Tauri host that consumes the shared Vue source and maps the
    Android-local schema-v1 catalog to shared UI schema 4.
 3. Implement real Adapter-driven local hardware discovery and authenticated
    peer catalog exchange; schema 4 currently projects deterministic Runtime
    fixture catalogs.
-4. Connect touchpad and camera to product Route actions rather than lab-only
+4. After explicit permission approval, attach camera lifecycle; connect
+   touchpad and camera to product Route actions rather than lab-only
    entrypoints.
 5. Keep Display out until its branch reaches its own completion gate.

@@ -31,12 +31,14 @@ Display is excluded until its feature branch is complete.
 1. **A01A — catalog/UI contract (complete):** project local and peer Capability
    catalogs through `UiSnapshot` schema 4; show Source/Sink/Control directions;
    allow only local Source publication selection; keep fixture state labeled.
-2. **A01B — native module registry (foundation complete):** A01B1 adds the
+2. **A01B — native module registry (inventory complete):** A01B1 adds the
    bounded schema-v1 Android-local DTO and service-owned registry, attaches the
    existing live audio façade and lists camera, controller and touchpad modules
-   as explicitly Offline/unattached. A01B2 will attach their lifecycle façades
-   while preserving standalone lab builds. Neither slice adds a permission or
-   service declaration.
+   as explicitly Offline/unattached. A01B2 adds permission-free, read-only
+   hardware presence probes while keeping presence, attachment and availability
+   separate. A01B3 will attach the input lifecycle façades while preserving
+   standalone lab builds. None of these slices adds a permission or service
+   declaration.
 3. **A01C — Android Tauri observer shell:** build the shared Vue source inside
    the Android package and implement the same read-only catalog commands through
    a Kotlin plugin/host boundary. The existing Node service, not the Activity,

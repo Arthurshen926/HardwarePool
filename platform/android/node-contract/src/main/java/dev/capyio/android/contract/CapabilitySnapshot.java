@@ -13,6 +13,7 @@ public final class CapabilitySnapshot {
     private final CapabilityKind kind;
     private final CapabilityAvailability availability;
     private final CapabilityPermissionRequirement permissionRequirement;
+    private final HardwarePresence hardwarePresence;
     private final boolean adapterAttached;
     private final List<CapabilityPortSnapshot> ports;
     private final String problemCode;
@@ -23,16 +24,22 @@ public final class CapabilitySnapshot {
             CapabilityKind kind,
             CapabilityAvailability availability,
             CapabilityPermissionRequirement permissionRequirement,
+            HardwarePresence hardwarePresence,
             boolean adapterAttached,
             List<CapabilityPortSnapshot> ports,
             String problemCode) {
         this.capabilityKey = requireKey(capabilityKey, "Capability key");
         this.displayName = requireDisplayName(displayName, "Capability display name");
-        if (kind == null || availability == null || permissionRequirement == null) {
+        if (kind == null || availability == null || permissionRequirement == null
+                || hardwarePresence == null) {
             throw new IllegalArgumentException("Capability enums are required");
         }
         if (!adapterAttached && availability != CapabilityAvailability.OFFLINE) {
             throw new IllegalArgumentException("an unattached Adapter must remain offline");
+        }
+        if (hardwarePresence != HardwarePresence.PRESENT
+                && availability != CapabilityAvailability.OFFLINE) {
+            throw new IllegalArgumentException("non-present hardware must remain offline");
         }
         if (ports == null || ports.isEmpty() || ports.size() > MAX_PORTS) {
             throw new IllegalArgumentException("Capability Ports are outside the supported bound");
@@ -45,6 +52,7 @@ public final class CapabilitySnapshot {
         this.kind = kind;
         this.availability = availability;
         this.permissionRequirement = permissionRequirement;
+        this.hardwarePresence = hardwarePresence;
         this.adapterAttached = adapterAttached;
         this.ports = copiedPorts;
         this.problemCode = problemCode == null ? null : requireProblemCode(problemCode);
@@ -68,6 +76,10 @@ public final class CapabilitySnapshot {
 
     public CapabilityPermissionRequirement permissionRequirement() {
         return permissionRequirement;
+    }
+
+    public HardwarePresence hardwarePresence() {
+        return hardwarePresence;
     }
 
     public boolean adapterAttached() {

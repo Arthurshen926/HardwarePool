@@ -30,6 +30,12 @@ attached; camera, IMU, gamepad, haptics and touchpad are present only as
 explicitly Offline/unattached migration entries. The service Binder exposes the
 catalog without moving lifecycle ownership into the Activity.
 
+A01B2 adds read-only local hardware presence to that catalog. The service probes
+microphone/audio-output, camera, accelerometer+gyroscope, touchscreen and
+vibrator inventory without opening hardware. Presence, Adapter attachment and
+availability remain three separate states, so detected-but-unintegrated input
+hardware is still Offline.
+
 ## Automated evidence
 
 - `cargo test --offline -p capyio-input -p capyio-dsu-adapter -p capyio-viiper-adapter -p capyio-windows-input -p capyio-desktop`: passed after the gamepad merge.
@@ -45,13 +51,13 @@ catalog without moving lifecycle ownership into the Activity.
 - `cargo xtask ci`: passed end to end, including the workspace tests, fixture
   demo, repository validation, Adapter smoke test, frontend typecheck and
   production build.
-- `platform/android/gradlew.bat :node-contract:check --offline`: passed with 13
+- `platform/android/gradlew.bat :node-contract:check --offline`: passed with 16
   Capability-catalog, 36 audio-lifecycle and 126 native-LAN assertions.
 - `platform/android/gradlew.bat :app:lintDebug :app:assembleDebug
   :app:verifyDebugEntrypoints --offline`: passed; the debug APK was built only
   as evidence and was not installed.
 - `platform/android/gradlew.bat :app:capabilityCompositionTest --offline`:
-  passed 15 hardware-free assertions over the exact service composition.
+  passed 19 hardware-free assertions over the exact service composition.
 - `platform/android/gradlew.bat capyioCheck --offline`: final aggregate Android
   Gate passed all contracts, composition checks, Lint, entrypoint verification
   and debug assembly without installing the APK.

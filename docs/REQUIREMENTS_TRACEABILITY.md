@@ -61,7 +61,7 @@ hardware, networking, security or performance behavior has run.
 | `FR-ADAPTER-004` | verified | Gate 3 | Adapter Host crash-isolation test scopes failure to owned Capabilities/Routes. |
 | `FR-ADAPTER-005` | verified | Gate 3 | Core backend/interoperability validation constrains AdapterManaged Routes; the SensorServer external-protocol boundary has separate mapping tests and provenance. |
 | `FR-ADAPTER-006` | verified | Gate 3 | Committed manifest schema, Rust validation tests and `cargo xtask validate-manifests`. |
-| `FR-CAP-001` | verified | Gate 2 | Capability descriptor validation covers class, owner, availability, permission and metadata. |
+| `FR-CAP-001` | verified | Gate 2 | Capability descriptor validation covers class, owner, availability, permission and metadata; Android A01B2 separately records read-only hardware presence so inventory cannot imply Adapter readiness. |
 | `FR-CAP-002` | verified | Gate 2 | Catalog validation rejects routable Capabilities without valid Ports. |
 | `FR-CAP-003` | verified | Gate 2 | Capability has no direction field; PortDirection is independently tested. |
 | `FR-CAP-004` | verified | Gate 2 | Core permits mixed-direction Ports on one Capability and fixtures exercise compound catalogs. |
@@ -103,7 +103,7 @@ hardware, networking, security or performance behavior has run.
 | `FR-UX-006` | verified | Gate 2 | Per-Route UI actions and Runtime tests prove independent toggles. |
 | `FR-UX-007` | verified | Gate 2 | Built-in preview/Panel representation only; repository contains no dynamic Panel market. |
 | `FR-PLAT-001` | verified | Gate 3 | Desktop Sidecar deployment boundary and hosted Adapter-smoke workflow on Windows/Linux/macOS. |
-| `FR-PLAT-002` | verified | Gate 8 | ADR 0043 and the 001C Android shell implement one platform-managed service; an authorized Android 16 run physically proves independent microphone Source and speaker Sink activation/Stop plus exact foreground-type transitions. |
+| `FR-PLAT-002` | verified | Gate 8 | ADR 0043 and the 001C Android shell implement one platform-managed service; A01B1/B2 add its bounded non-display module catalog and permission-free hardware inventory. An authorized Android 16 run physically proves independent microphone Source and speaker Sink activation/Stop plus exact foreground-type transitions. |
 | `FR-PLAT-003` | verified | Gate 8 | The Activity is an observing/bound client; a speaker foreground service physically remained active after Back finished the Activity, then the notification action stopped and released it without reopening UI. |
 | `FR-PLAT-004` | planned | Gate 4 | Windows user-mode synthetic PTP probing, bounded mapping/receiver/Route ingress and the VHF fallback have hardware-free and controlled-lab evidence. Product fallback selection, least-privilege Broker hosting, production worker wiring and observable Projection support levels remain planned. |
 | `FR-PLAT-005` | verified | Gate 1 | PRD, platform support and UI disclaim unsupported Android global virtual devices. |
