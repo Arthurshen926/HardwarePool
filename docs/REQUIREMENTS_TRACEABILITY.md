@@ -49,7 +49,7 @@ hardware, networking, security or performance behavior has run.
 | `FR-SCEN-009` | verified | Gate 5 | Bounded recorded-style IMU fixture replay covers independent sinks, gaps, overflow, stale epochs and abnormal paths. |
 | `FR-NODE-001` | verified | Gate 2 | Typed Node descriptor and protocol round-trip tests in `capyio-core` and `capyio-protocol`. |
 | `FR-NODE-002` | verified | Gate 2 | Core has no global NodeRole; deterministic fixtures own mixed-direction Ports. |
-| `FR-NODE-003` | verified | Gate 2 | `capyio-testkit` catalogs contain Source and Sink Ports on both Nodes; the Android schema-v1 module registry likewise publishes microphone/gamepad/IMU/touchpad Sources and speaker/haptics Sinks without assigning a Node role. |
+| `FR-NODE-003` | verified | Gate 2 | `capyio-testkit` catalogs contain Source and Sink Ports on both Nodes; the Android schema-v1 module registry likewise publishes microphone/gamepad/IMU/touchpad Sources and speaker/haptics Sinks without assigning a Node role. A01B3 attaches IMU and gamepad lifecycle independently while haptics remains explicitly unattached. |
 | `FR-NODE-004` | verified | Gate 2 | Symmetric catalog DTO/round-trip and deterministic two-Node fixture tests. |
 | `FR-NODE-005` | planned | Gate 14 | Pairing and explicit authorization tests for unknown/offline Nodes. |
 | `FR-SESSION-001` | verified | Gate 2 | Typed Session model and protocol session round-trip coverage. |
@@ -103,7 +103,7 @@ hardware, networking, security or performance behavior has run.
 | `FR-UX-006` | verified | Gate 2 | Per-Route UI actions and Runtime tests prove independent toggles. |
 | `FR-UX-007` | verified | Gate 2 | Built-in preview/Panel representation only; repository contains no dynamic Panel market. |
 | `FR-PLAT-001` | verified | Gate 3 | Desktop Sidecar deployment boundary and hosted Adapter-smoke workflow on Windows/Linux/macOS. |
-| `FR-PLAT-002` | verified | Gate 8 | ADR 0043 and the 001C Android shell implement one platform-managed service; A01B1/B2 add its bounded catalog/inventory and A01B3 moves IMU sensor registration behind its generation-bound Binder lifecycle. An authorized Android 16 run physically proves independent microphone Source and speaker Sink activation/Stop plus exact foreground-type transitions; the new IMU attachment remains compile/contract evidence. |
+| `FR-PLAT-002` | verified | Gate 8 | ADR 0043 and the 001C Android shell implement one platform-managed service; A01B1/B2 add its bounded catalog/inventory and A01B3 moves IMU registration plus neutralizing gamepad state behind generation-bound Binder lifecycles. An authorized Android 16 run physically proves independent microphone Source and speaker Sink activation/Stop plus exact foreground-type transitions; the new input attachments remain compile/contract evidence. |
 | `FR-PLAT-003` | verified | Gate 8 | The Activity is an observing/bound client; a speaker foreground service physically remained active after Back finished the Activity, then the notification action stopped and released it without reopening UI. |
 | `FR-PLAT-004` | planned | Gate 4 | Windows user-mode synthetic PTP probing, bounded mapping/receiver/Route ingress and the VHF fallback have hardware-free and controlled-lab evidence. Product fallback selection, least-privilege Broker hosting, production worker wiring and observable Projection support levels remain planned. |
 | `FR-PLAT-005` | verified | Gate 1 | PRD, platform support and UI disclaim unsupported Android global virtual devices. |

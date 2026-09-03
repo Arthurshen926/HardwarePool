@@ -39,10 +39,20 @@ hardware is still Offline.
 A01B3 now attaches the first input lifecycle facade. The unified Node service
 owns accelerometer/gyroscope registration through an IMU Adapter and exposes
 generation-bound start/stop plus observer state through its Binder. IMU is
-therefore an attached Available/Busy/Offline Source in the local catalog;
-gamepad, haptics, touchpad and camera remain explicitly unattached. The sensor
+therefore an attached Available/Busy/Offline Source in the local catalog; at
+that slice, gamepad, haptics, touchpad and camera remained explicitly
+unattached. The sensor
 callback retains only fixed-size latest values and does not perform network or
 UI work. Sample data-plane routing and background operation are not claimed.
+
+The following A01B3 slice attaches the touch-gamepad state boundary. The Node
+service now owns its generation and complete bounded control snapshot; Binder
+clients may start/stop it and submit only whole frames tagged with the current
+generation. Stop immediately restores a neutral frame, and delayed frames from
+an earlier session are rejected. The standalone Controller Lab and its UDP
+sender are unchanged. Haptics remains Offline/unattached: Android Lint confirmed
+that a real `Vibrator` Sink needs `android.permission.VIBRATE`, and this
+integration scope does not authorize a Manifest permission change.
 
 ## Automated evidence
 
@@ -65,9 +75,9 @@ UI work. Sample data-plane routing and background operation are not claimed.
   :app:verifyDebugEntrypoints --offline`: passed; the debug APK was built only
   as evidence and was not installed.
 - `platform/android/gradlew.bat :app:capabilityCompositionTest --offline`:
-  passed 32 hardware-free assertions over the exact service composition.
+  passed 39 hardware-free assertions over the exact service composition.
 - `platform/android/gradlew.bat :node-contract:capabilityLifecycleContractTest
-  --offline`: passed 21 generation-bound lifecycle assertions.
+  --offline`: passed 40 generation-bound lifecycle and gamepad-state assertions.
 - `platform/android/gradlew.bat capyioCheck --offline`: final aggregate Android
   Gate passed all contracts, composition checks, Lint, entrypoint verification
   and debug assembly without installing the APK.

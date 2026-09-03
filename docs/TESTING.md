@@ -1526,12 +1526,13 @@ The existing Android host then passes `lintDebug`, `assembleDebug` and
 `verifyDebugEntrypoints` with the registry exposed by the service Binder. This
 is compile/contract evidence only; the APK is not installed and pending camera,
 gamepad, haptics and touchpad entries do not constitute attached Adapters.
-The hardware-free host composition executable now has 32 assertions for four
+The hardware-free host composition executable now has 39 assertions for four
 modules, seven non-display Capabilities, attached-versus-pending counts,
 Source/Sink direction, hardware presence/absence/unknown, permission state and
-live audio plus IMU lifecycle projection. A separate 21-assertion lifecycle
-contract covers generation-bound start, stop, failure, Retry and stale callback
-rejection for non-audio Android Adapters.
+live audio, IMU and touch-gamepad lifecycle projection. A separate 40-assertion
+lifecycle contract covers generation-bound start, stop, failure, Retry and
+stale callback rejection plus complete gamepad-frame bounds, neutralization and
+old-generation rejection for non-audio Android Adapters.
 The root Android `capyioCheck` task includes this composition executable so the
 registry cannot silently disappear from the aggregate Android Gate.
 

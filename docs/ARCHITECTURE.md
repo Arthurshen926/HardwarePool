@@ -756,6 +756,15 @@ work. The Binder exposes start/stop commands and observer state, while the
 catalog reports the attached IMU as Available, Busy or Offline independently of
 hardware presence. This slice does not yet route samples onto a data plane or
 claim background/lock-screen operation.
+The next A01B3 slice attaches the touch-gamepad control-state boundary without
+copying the lab UDP sender into the product host. The service owns one complete,
+bounded control snapshot and a generation-bound lifecycle. A UI client submits
+whole frames through the local Binder with the observed generation; Stop
+neutralizes every control before completion, and stale queued UI frames cannot
+enter a retried session. The shared touch surface and product data-plane Route
+remain separate follow-on work. Android vibration remains unattached because
+calling `Vibrator` requires a Manifest permission change and therefore separate
+human approval.
 
 ADR 0044 subsequently adds the approved network permission and a separate
 dependency-free LAN codec/socket worker boundary. ADRs 0046 and 0047 now attach

@@ -9,6 +9,7 @@ import dev.capyio.android.contract.CapabilityLifecycleState;
 import dev.capyio.android.contract.CapabilityPortDirection;
 import dev.capyio.android.contract.CapabilitySnapshot;
 import dev.capyio.android.contract.HardwarePresence;
+import dev.capyio.android.contract.GamepadNodeController;
 import dev.capyio.android.contract.TransitionToken;
 
 public final class AndroidCapabilityModulesContractTest {
@@ -20,6 +21,7 @@ public final class AndroidCapabilityModulesContractTest {
         exposesTheCompleteNonDisplayMigrationInventory();
         reflectsPermissionAndAudioLifecycleState();
         reflectsGenerationBoundImuLifecycleState();
+        reflectsGenerationBoundGamepadLifecycleState();
         System.out.println("Android Capability module composition: PASS ("
                 + assertions + " assertions)");
     }
@@ -30,6 +32,7 @@ public final class AndroidCapabilityModulesContractTest {
         CapabilityCatalogSnapshot snapshot = AndroidCapabilityModules.createRegistry(
                 controller,
                 imuController,
+                new GamepadNodeController(),
                 () -> true,
                 () -> true,
                 HardwarePresence.PRESENT,
@@ -42,9 +45,9 @@ public final class AndroidCapabilityModulesContractTest {
         check(snapshot.moduleCount() == 4);
         check(snapshot.capabilities().size() == 7);
         check(snapshot.capabilities().stream().filter(CapabilitySnapshot::adapterAttached).count()
-                == 3);
-        check(snapshot.capabilities().stream().filter(capability -> !capability.adapterAttached()).count()
                 == 4);
+        check(snapshot.capabilities().stream().filter(capability -> !capability.adapterAttached()).count()
+                == 3);
         check(capability(snapshot, "android.microphone").ports().get(0).direction()
                 == CapabilityPortDirection.SOURCE);
         check(capability(snapshot, "android.speaker").ports().get(0).direction()
@@ -68,6 +71,7 @@ public final class AndroidCapabilityModulesContractTest {
         var registry = AndroidCapabilityModules.createRegistry(
                 controller,
                 new CapabilityLifecycleController(),
+                new GamepadNodeController(),
                 () -> false,
                 () -> true,
                 HardwarePresence.PRESENT,
@@ -102,6 +106,7 @@ public final class AndroidCapabilityModulesContractTest {
         var registry = AndroidCapabilityModules.createRegistry(
                 new AudioNodeController(),
                 imuController,
+                new GamepadNodeController(),
                 () -> true,
                 () -> true,
                 HardwarePresence.PRESENT,
@@ -131,6 +136,35 @@ public final class AndroidCapabilityModulesContractTest {
         CapabilitySnapshot failed = capability(registry.snapshot("test-node"), "android.imu");
         check(failed.availability() == CapabilityAvailability.OFFLINE);
         check("CAPY.ANDROID.IMU_START_FAILED".equals(failed.problemCode()));
+    }
+
+    private static void reflectsGenerationBoundGamepadLifecycleState() {
+        GamepadNodeController gamepadController = new GamepadNodeController();
+        var registry = AndroidCapabilityModules.createRegistry(
+                new AudioNodeController(),
+                new CapabilityLifecycleController(),
+                gamepadController,
+                () -> true,
+                () -> true,
+                HardwarePresence.PRESENT,
+                HardwarePresence.PRESENT,
+                HardwarePresence.PRESENT,
+                HardwarePresence.PRESENT,
+                HardwarePresence.PRESENT,
+                HardwarePresence.PRESENT);
+
+        check(capability(registry.snapshot("test-node"), "android.gamepad").availability()
+                == CapabilityAvailability.AVAILABLE);
+        TransitionToken start = gamepadController.beginStart();
+        check(start.accepted());
+        check(gamepadController.completeStart(start.generation()));
+        check(capability(registry.snapshot("test-node"), "android.gamepad").availability()
+                == CapabilityAvailability.BUSY);
+        TransitionToken stop = gamepadController.beginStop();
+        check(stop.accepted());
+        check(gamepadController.completeStop(stop.generation()));
+        check(capability(registry.snapshot("test-node"), "android.gamepad").availability()
+                == CapabilityAvailability.AVAILABLE);
     }
 
     private static CapabilitySnapshot capability(

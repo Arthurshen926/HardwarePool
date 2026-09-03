@@ -26,6 +26,9 @@ import dev.capyio.android.contract.CapabilityCatalogSnapshot;
 import dev.capyio.android.contract.CapabilityLifecycleController;
 import dev.capyio.android.contract.CapabilityLifecycleSnapshot;
 import dev.capyio.android.contract.CapabilityModuleRegistry;
+import dev.capyio.android.contract.GamepadControlsSnapshot;
+import dev.capyio.android.contract.GamepadNodeController;
+import dev.capyio.android.contract.HardwarePresence;
 import dev.capyio.android.contract.TransitionToken;
 import dev.capyio.android.lan.NativeLanSpeakerSessionConfig;
 import dev.capyio.android.lan.NativeLanMicrophoneSessionConfig;
@@ -53,12 +56,14 @@ public final class AudioNodeService extends Service {
     private final AudioNodeController controller = new AudioNodeController();
     private final CapabilityLifecycleController imuController =
             new CapabilityLifecycleController();
+    private final GamepadNodeController gamepadController = new GamepadNodeController();
 
     private CapabilityModuleRegistry capabilityRegistry;
     private MicrophoneSourceAdapter microphoneAdapter;
     private SpeakerSinkAdapter speakerAdapter;
     private ImuSourceAdapter imuAdapter;
     private String nodeId;
+    private HardwarePresence touchSurfacePresence;
     private boolean foreground;
     private boolean destroying;
     private Runnable stateListener;
@@ -91,9 +96,11 @@ public final class AudioNodeService extends Service {
         super.onCreate();
         nodeId = NodeIdentityStore.loadOrCreate(this);
         AndroidHardwareInventory inventory = AndroidHardwareInventory.probe(this);
+        touchSurfacePresence = inventory.touchSurfacePresence();
         capabilityRegistry = AndroidCapabilityModules.createRegistry(
                 controller,
                 imuController,
+                gamepadController,
                 () -> checkSelfPermission(Manifest.permission.RECORD_AUDIO)
                         == PackageManager.PERMISSION_GRANTED,
                 () -> Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU
@@ -166,6 +173,7 @@ public final class AudioNodeService extends Service {
             stopCapability(AudioCapabilityKind.MICROPHONE_SOURCE);
             stopCapability(AudioCapabilityKind.SPEAKER_SINK);
             stopImu();
+            stopGamepad();
         }
         return START_NOT_STICKY;
     }
@@ -189,6 +197,10 @@ public final class AudioNodeService extends Service {
         TransitionToken imu = imuController.beginStop();
         if (imu.accepted()) {
             imuAdapter.stop(imu.generation());
+        }
+        TransitionToken gamepad = gamepadController.beginStop();
+        if (gamepad.accepted()) {
+            gamepadController.completeStop(gamepad.generation());
         }
         stateListener = null;
         super.onDestroy();
@@ -243,6 +255,33 @@ public final class AudioNodeService extends Service {
             imuAdapter.stop(transition.generation());
         }
         notifyStateListener();
+    }
+
+    private void startGamepad() {
+        TransitionToken transition = gamepadController.beginStart();
+        if (transition.accepted()) {
+            if (touchSurfacePresence == HardwarePresence.PRESENT) {
+                gamepadController.completeStart(transition.generation());
+            } else {
+                gamepadController.fail(
+                        transition.generation(), "CAPY.ANDROID.GAMEPAD_HARDWARE_MISSING");
+            }
+        }
+        notifyStateListener();
+    }
+
+    private void stopGamepad() {
+        TransitionToken transition = gamepadController.beginStop();
+        if (transition.accepted()) {
+            gamepadController.completeStop(transition.generation());
+        }
+        notifyStateListener();
+    }
+
+    private void submitGamepad(long generation, GamepadControlsSnapshot controls) {
+        if (gamepadController.submit(generation, controls)) {
+            notifyStateListener();
+        }
     }
 
     private AudioPlatformAdapter.Listener listenerFor(AudioCapabilityKind kind) {
@@ -426,6 +465,29 @@ public final class AudioNodeService extends Service {
 
         public void stopImu() {
             mainHandler.post(AudioNodeService.this::stopImu);
+        }
+
+        public CapabilityLifecycleSnapshot gamepadLifecycle() {
+            return gamepadController.lifecycle();
+        }
+
+        public GamepadControlsSnapshot gamepadControls() {
+            return gamepadController.controls();
+        }
+
+        public void startGamepad() {
+            mainHandler.post(AudioNodeService.this::startGamepad);
+        }
+
+        public void submitGamepad(long generation, GamepadControlsSnapshot controls) {
+            if (controls == null) {
+                throw new IllegalArgumentException("gamepad controls are required");
+            }
+            mainHandler.post(() -> AudioNodeService.this.submitGamepad(generation, controls));
+        }
+
+        public void stopGamepad() {
+            mainHandler.post(AudioNodeService.this::stopGamepad);
         }
 
         public int speakerUnderrunCount() {

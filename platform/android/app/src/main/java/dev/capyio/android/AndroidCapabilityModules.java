@@ -16,6 +16,7 @@ import dev.capyio.android.contract.CapabilityPermissionRequirement;
 import dev.capyio.android.contract.CapabilityPortDirection;
 import dev.capyio.android.contract.CapabilityPortSnapshot;
 import dev.capyio.android.contract.CapabilitySnapshot;
+import dev.capyio.android.contract.GamepadNodeController;
 import dev.capyio.android.contract.HardwarePresence;
 
 import java.util.List;
@@ -32,6 +33,7 @@ final class AndroidCapabilityModules {
     static CapabilityModuleRegistry createRegistry(
             AudioNodeController audioController,
             CapabilityLifecycleController imuController,
+            GamepadNodeController gamepadController,
             BooleanSupplier microphonePermissionReady,
             BooleanSupplier notificationPermissionReady,
             HardwarePresence microphonePresence,
@@ -59,7 +61,11 @@ final class AndroidCapabilityModules {
                 "capyio.video.frames/1",
                 "platform-negotiated-video-frame"))));
         registry.register(controllerModule(
-                imuController, imuPresence, touchSurfacePresence, vibratorPresence));
+                imuController,
+                gamepadController,
+                imuPresence,
+                touchSurfacePresence,
+                vibratorPresence));
         registry.register(pendingModule("android.touchpad-module", List.of(pendingCapability(
                 "android.touchpad",
                 "Phone Touchpad Surface",
@@ -76,6 +82,7 @@ final class AndroidCapabilityModules {
 
     private static CapabilityModule controllerModule(
             CapabilityLifecycleController imuController,
+            GamepadNodeController gamepadController,
             HardwarePresence imuPresence,
             HardwarePresence touchSurfacePresence,
             HardwarePresence vibratorPresence) {
@@ -89,17 +96,7 @@ final class AndroidCapabilityModules {
             public List<CapabilitySnapshot> capabilities() {
                 return List.of(
                         imuCapability(imuController.snapshot(), imuPresence),
-                        pendingCapability(
-                                "android.gamepad",
-                                "Touch Gamepad",
-                                CapabilityKind.GAMEPAD,
-                                CapabilityPermissionRequirement.NONE,
-                                touchSurfacePresence,
-                                "android.gamepad.source",
-                                "Gamepad State Source",
-                                CapabilityPortDirection.SOURCE,
-                                "capyio.input.gamepad-state/1",
-                                "gamepad-state-v1"),
+                        gamepadCapability(gamepadController.lifecycle(), touchSurfacePresence),
                         pendingCapability(
                                 "android.haptics",
                                 "Phone Vibration",
@@ -145,6 +142,39 @@ final class AndroidCapabilityModules {
                         CapabilityPortDirection.SOURCE,
                         "capyio.motion.imu-samples/1",
                         List.of("imu-si-f32-le"))),
+                problemCode);
+    }
+
+    private static CapabilitySnapshot gamepadCapability(
+            CapabilityLifecycleSnapshot lifecycle,
+            HardwarePresence hardwarePresence) {
+        CapabilityAvailability availability;
+        String problemCode = null;
+        if (hardwarePresence != HardwarePresence.PRESENT) {
+            availability = CapabilityAvailability.OFFLINE;
+            problemCode = inventoryProblem(hardwarePresence);
+        } else if (lifecycle.state() == CapabilityLifecycleState.FAILED) {
+            availability = CapabilityAvailability.OFFLINE;
+            problemCode = lifecycle.problemCode();
+        } else {
+            availability = lifecycle.state().ownsAdapterLifecycle()
+                    ? CapabilityAvailability.BUSY
+                    : CapabilityAvailability.AVAILABLE;
+        }
+        return new CapabilitySnapshot(
+                "android.gamepad",
+                "Touch Gamepad",
+                CapabilityKind.GAMEPAD,
+                availability,
+                CapabilityPermissionRequirement.NONE,
+                hardwarePresence,
+                true,
+                List.of(new CapabilityPortSnapshot(
+                        "android.gamepad.source",
+                        "Gamepad State Source",
+                        CapabilityPortDirection.SOURCE,
+                        "capyio.input.gamepad-state/1",
+                        List.of("gamepad-state-v1"))),
                 problemCode);
     }
 
