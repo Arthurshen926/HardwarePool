@@ -1562,6 +1562,15 @@ operations, shell-like text and invalid transitions. `capyioCheck` compiles the
 real three-method JavaScript bridge and Service Binder calls, then runs Lint and
 assembles the debug APK. No physical sensor was opened and no APK was installed.
 
+ANDROID-A01D2 raises the composition executable to 98 assertions. It covers
+complete-state composition across buttons, d-pad, both sticks and triggers;
+reset behavior; exact field bounds; rejection of unsupported buttons, malformed
+unused fields and shell-like kinds; and stopped/active shared-UI JSON projection.
+The aggregate Gate also compiles the synchronous generation-bound Binder
+submission and packages the shared Controller code. This remains compile,
+contract and package evidence: no APK was installed and no physical touch input
+was exercised.
+
 Offline repository validation additionally pins the Gradle/AGP contract and
 checks the source manifest for the approved recording/notification/foreground
 permissions, a non-exported dual-type service, disabled backup/cleartext and no

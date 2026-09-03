@@ -53,9 +53,10 @@ Display is excluded until its feature branch is complete.
 4. **A01D — per-capability operations (IMU/gamepad lifecycle attached):** A01D1
    exposes schema-v2 `capability_control` Quick Actions for the existing IMU and
    gamepad Service lifecycles through an exact state-dependent command allow-list.
-   These actions do not create Routes or select sharing. Audio permission UX,
-   high-rate touch state, Route status and the remaining capabilities proceed in
-   separate slices.
+   A01D2 connects the shared Controller to the complete generation-bound local
+   gamepad state and hides desktop-only receiver/projection controls on Android.
+   These operations do not create Routes or select sharing. Audio permission UX,
+   Route status and the remaining capabilities proceed in separate slices.
 5. **A01E — camera integration:** only after explicit approval, add the camera
    permission/service declarations required by the selected lifecycle and run
    denial/revoke/background tests on an authorized device.

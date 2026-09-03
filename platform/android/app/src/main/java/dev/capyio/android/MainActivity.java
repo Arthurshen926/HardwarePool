@@ -28,6 +28,8 @@ import dev.capyio.android.contract.AudioCapabilitySnapshot;
 import dev.capyio.android.contract.AudioCapabilityState;
 import dev.capyio.android.contract.AudioNodeSnapshot;
 import dev.capyio.android.contract.CapabilityLifecycleSnapshot;
+import dev.capyio.android.contract.CapabilityLifecycleState;
+import dev.capyio.android.contract.GamepadControlsSnapshot;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -366,6 +368,32 @@ public final class MainActivity extends Activity {
             return AndroidUiSnapshotJson.encodeQuickActions(
                     current.imuLifecycle(),
                     current.gamepadLifecycle());
+        }
+
+        @JavascriptInterface
+        public String getGamepadStateJson() {
+            AudioNodeService.NodeBinder current = binder;
+            if (current == null) {
+                return "";
+            }
+            return AndroidUiSnapshotJson.encodeGamepadState(
+                    current.gamepadLifecycle(), current.gamepadControls());
+        }
+
+        @JavascriptInterface
+        public synchronized boolean updateGamepad(
+                String kind, String target, int x, int y, boolean pressed) {
+            AudioNodeService.NodeBinder current = binder;
+            if (current == null) {
+                return false;
+            }
+            CapabilityLifecycleSnapshot lifecycle = current.gamepadLifecycle();
+            if (lifecycle.state() != CapabilityLifecycleState.ACTIVE) {
+                return false;
+            }
+            GamepadControlsSnapshot next = AndroidGamepadUiCommand.apply(
+                    kind, target, x, y, pressed, current.gamepadControls());
+            return next != null && current.submitGamepad(lifecycle.generation(), next);
         }
 
         @JavascriptInterface

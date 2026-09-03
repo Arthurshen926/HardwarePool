@@ -278,10 +278,12 @@ public final class AudioNodeService extends Service {
         notifyStateListener();
     }
 
-    private void submitGamepad(long generation, GamepadControlsSnapshot controls) {
-        if (gamepadController.submit(generation, controls)) {
+    private boolean submitGamepad(long generation, GamepadControlsSnapshot controls) {
+        boolean accepted = gamepadController.submit(generation, controls);
+        if (accepted) {
             notifyStateListener();
         }
+        return accepted;
     }
 
     private AudioPlatformAdapter.Listener listenerFor(AudioCapabilityKind kind) {
@@ -479,11 +481,11 @@ public final class AudioNodeService extends Service {
             mainHandler.post(AudioNodeService.this::startGamepad);
         }
 
-        public void submitGamepad(long generation, GamepadControlsSnapshot controls) {
+        public boolean submitGamepad(long generation, GamepadControlsSnapshot controls) {
             if (controls == null) {
                 throw new IllegalArgumentException("gamepad controls are required");
             }
-            mainHandler.post(() -> AudioNodeService.this.submitGamepad(generation, controls));
+            return AudioNodeService.this.submitGamepad(generation, controls);
         }
 
         public void stopGamepad() {

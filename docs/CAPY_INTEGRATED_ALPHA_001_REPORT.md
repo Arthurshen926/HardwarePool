@@ -78,6 +78,15 @@ the two fixed action IDs and operations valid for the observed lifecycle state;
 unknown, malformed and invalid-transition requests fail closed. Audio, camera,
 haptics, touch surface input and cross-node Routes remain outside this slice.
 
+A01D2 connects the shared Controller surface to the Service-owned touch-gamepad
+state. The bridge admits only bounded button, d-pad, stick, trigger and reset
+commands; each is merged into and synchronously submits a complete snapshot with
+the active generation. Stop neutralization and stale-generation rejection remain
+inside the Service contract. Android hides the desktop receiver/projection
+panels and marks unavailable motion honestly. This does not create sharing,
+network transport or a Route, and it has compile/package rather than device UI
+evidence.
+
 ## Automated evidence
 
 - `cargo test --offline -p capyio-input -p capyio-dsu-adapter -p capyio-viiper-adapter -p capyio-windows-input -p capyio-desktop`: passed after the gamepad merge.
@@ -105,10 +114,11 @@ haptics, touch surface input and cross-node Routes remain outside this slice.
 - `platform/android/gradlew.bat capyioCheck --offline`: final aggregate Android
   Gate passed all contracts, composition checks, Lint, entrypoint verification
   shared-Vue asset verification and debug assembly without installing the APK.
-- the Android composition executable passed 70 assertions after A01D1, including
+- the Android composition executable passed 98 assertions after A01D2, including
   schema-4 projection, all seven capabilities, read-only flags, JSON escaping
   and disconnected-service output plus closed IMU/gamepad Quick Actions and
-  command rejection.
+  command rejection, complete touch-gamepad state composition and bounded
+  Android gamepad-state projection.
 - `jar tf platform/android/app/build/outputs/apk/debug/app-debug.apk`: confirmed
   `assets/capyio-ui/index.html` and generated JavaScript/CSS in the assembled
   archive; the entrypoint references both assets with `./assets/...` paths.
@@ -121,4 +131,4 @@ haptics, touch surface input and cross-node Routes remain outside this slice.
 - no Display merge or Display worktree modification;
 - no claim that schema-4 fixture catalogs are real hardware discovery;
 - no claim of physical Android rendering or complete mutable-command UI parity;
-  A01D1 exposes only IMU/gamepad lifecycle control and retains native audio controls.
+  A01D2 adds local Controller input while retaining native audio controls.

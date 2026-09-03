@@ -66,12 +66,18 @@ bridge into the Node Service, while sharing selection and all Route fields remai
 separate and unset. No audio permission flow, touch-state submission or remote
 transport is exposed by this slice.
 
+A01D2 connects the shared Controller surface to that Service-owned gamepad
+facade. Android exposes only bounded local button/d-pad/stick/trigger/reset
+commands; Java merges them into complete generation-scoped snapshots and Stop
+neutralizes the state. Windows/DSU receiver controls are hidden on Android,
+motion is marked unavailable rather than fabricated, and no sharing or Route is
+created.
+
 ## Remaining integration work
 
-1. Connect the shared touch-gamepad surface to the Service-owned state facade,
-   attach touchpad lifecycle without regressing standalone evidence, and route
+1. Attach touchpad lifecycle without regressing standalone evidence, and route
    IMU/gamepad samples through bounded typed data planes. Lifecycle Quick Actions
-   are attached, but they are not sharing or Route authorization. Haptics requires
+   plus local touch-gamepad state are attached, but they are not sharing or Route authorization. Haptics requires
    separate approval for the Android `VIBRATE` Manifest permission.
 2. Replace the transitional native-control fallback only after A01D maps
    schema-versioned shared UI operations to the Service with equivalent

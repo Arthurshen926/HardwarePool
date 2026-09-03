@@ -181,7 +181,7 @@ export interface UiGamepadState {
 }
 
 export interface UiGamepadMotion {
-  source: "stationary_fixture" | "android_sensors";
+  source: "stationary_fixture" | "android_sensors" | "unavailable";
   sourceTimestampNanos: number | null;
   acceleration: [number, number, number];
   angularVelocity: [number, number, number];

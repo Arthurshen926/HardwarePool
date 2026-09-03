@@ -5,6 +5,7 @@ import dev.capyio.android.contract.CapabilityLifecycleSnapshot;
 import dev.capyio.android.contract.CapabilityLifecycleState;
 import dev.capyio.android.contract.CapabilityPortSnapshot;
 import dev.capyio.android.contract.CapabilitySnapshot;
+import dev.capyio.android.contract.GamepadControlsSnapshot;
 
 import java.util.List;
 import java.util.Locale;
@@ -39,7 +40,7 @@ public final class AndroidUiSnapshotJson {
         json.append(']');
         appendEmptyCollections(json);
         json.append(",\"warnings\":[");
-        appendQuoted(json, "Android shared UI is a local read-only observer in A01C2.");
+        appendQuoted(json, "Android shared UI controls local IMU/gamepad lifecycles and touch-gamepad state.");
         json.append(',');
         appendQuoted(json, "Sharing selection, Routes, and remote catalog exchange are not attached yet.");
         json.append("],\"imuFixture\":null}");
@@ -89,6 +90,94 @@ public final class AndroidUiSnapshotJson {
                 gamepad);
         json.append(']');
         return json.toString();
+    }
+
+    public static String encodeGamepadState(
+            CapabilityLifecycleSnapshot lifecycle,
+            GamepadControlsSnapshot controls) {
+        if (lifecycle == null || controls == null) {
+            throw new IllegalArgumentException("Gamepad snapshots are required");
+        }
+        StringBuilder json = new StringBuilder(2048);
+        json.append("{\"schemaVersion\":1,\"source\":\"android_touch\"")
+                .append(",\"simulated\":false")
+                .append(",\"profile\":\"capyio.input.gamepad-state/1\"")
+                .append(",\"streamEpoch\":").append(lifecycle.generation())
+                .append(",\"sequence\":null,\"sourceTimestampNanos\":null")
+                .append(",\"pressedButtons\":[");
+        appendPressedButtons(json, controls.buttons());
+        json.append("]")
+                .append(",\"dpad\":{\"x\":").append(controls.dpadX())
+                .append(",\"y\":").append(controls.dpadY()).append('}')
+                .append(",\"leftStick\":{\"x\":").append(controls.leftX())
+                .append(",\"y\":").append(controls.leftY()).append('}')
+                .append(",\"rightStick\":{\"x\":").append(controls.rightX())
+                .append(",\"y\":").append(controls.rightY()).append('}')
+                .append(",\"leftTrigger\":").append(controls.leftTrigger())
+                .append(",\"rightTrigger\":").append(controls.rightTrigger());
+        appendStringField(json, "lastUpdate", "android.lifecycle."
+                + lower(lifecycle.state()));
+        json.append(",\"dsuProjection\":{\"supported\":false,\"status\":\"unsupported\"")
+                .append(",\"endpoint\":null,\"mode\":\"motion_only\"")
+                .append(",\"lastSubmit\":\"not_attached\",\"controlsSubmitted\":0")
+                .append(",\"controlsAccepted\":0,\"controlsQueueFull\":0")
+                .append(",\"controlsNeutralResets\":0,\"activeSubscribers\":0")
+                .append(",\"padPacketsSent\":0,\"packetSendErrors\":0}")
+                .append(",\"windowsProjection\":{\"supported\":false")
+                .append(",\"status\":\"unsupported\",\"controllerKind\":\"dualshock4\"")
+                .append(",\"deviceIdentity\":\"Not attached on Android\"")
+                .append(",\"viiperEndpoint\":null,\"usbipEndpoint\":null")
+                .append(",\"viiperReady\":false,\"usbipReady\":false")
+                .append(",\"xinputAvailable\":false,\"xinputReady\":false")
+                .append(",\"exportCount\":0,\"busId\":null,\"ownedUsbipPort\":null")
+                .append(",\"inputPackets\":0,\"nonNeutralPackets\":0")
+                .append(",\"ds4RejectedPackets\":0,\"xinputPackets\":0")
+                .append(",\"inputOfflineEvents\":0,\"lastRemoteSequence\":null")
+                .append(",\"lastEvent\":\"not_attached\",\"problemCode\":null")
+                .append(",\"problem\":null}")
+                .append(",\"androidInput\":{\"supported\":true");
+        appendStringField(json, "status", gamepadStatus(lifecycle.state()));
+        if (lifecycle.state() == CapabilityLifecycleState.ACTIVE) {
+            appendStringField(json, "endpoint", "local://shared-ui");
+        } else {
+            json.append(",\"endpoint\":null");
+        }
+        json.append(",\"lanHostHint\":null,\"pairingToken\":null")
+                .append(",\"peerConnected\":false,\"acceptedPackets\":0")
+                .append(",\"rejectedPackets\":0,\"replayedPackets\":0")
+                .append(",\"peerTimeouts\":0,\"projectionQueueFull\":0")
+                .append(",\"packetAgeMillis\":null,\"remoteSequence\":null");
+        appendStringField(json, "lastEvent", "android.lifecycle." + lower(lifecycle.state()));
+        json.append("},\"motion\":{\"source\":\"unavailable\"")
+                .append(",\"sourceTimestampNanos\":null")
+                .append(",\"acceleration\":[0,0,0],\"angularVelocity\":[0,0,0]}")
+                .append('}');
+        return json.toString();
+    }
+
+    private static void appendPressedButtons(StringBuilder json, int buttons) {
+        String[] names = {"south", "east", "west", "north", "left_shoulder",
+                "right_shoulder", "left_stick", "right_stick", "select", "start", "guide"};
+        boolean first = true;
+        for (int bit = 0; bit < names.length; bit++) {
+            if ((buttons & (1 << bit)) == 0) {
+                continue;
+            }
+            if (!first) {
+                json.append(',');
+            }
+            appendQuoted(json, names[bit]);
+            first = false;
+        }
+    }
+
+    private static String gamepadStatus(CapabilityLifecycleState state) {
+        return switch (state) {
+            case STOPPED, STOPPING -> "stopped";
+            case STARTING -> "listening";
+            case ACTIVE -> "connected";
+            case FAILED -> "failed";
+        };
     }
 
     private static void appendQuickAction(

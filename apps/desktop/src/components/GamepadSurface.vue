@@ -168,7 +168,7 @@ function isPressed(button: GamepadButton): boolean {
 
 onUnmounted(() => {
   for (const frame of stickFrames.values()) cancelAnimationFrame(frame);
-  emit("update", { kind: "reset" });
+  if (!props.disabled) emit("update", { kind: "reset" });
 });
 </script>
 
@@ -177,7 +177,7 @@ onUnmounted(() => {
     <div class="gamepad-shoulders">
       <button class="shoulder" :class="{ pressed: isPressed('left_shoulder') }" type="button" @pointerdown="beginButton('left_shoulder', $event)" @pointerup="endButton('left_shoulder', $event)" @pointercancel="endButton('left_shoulder', $event)" @lostpointercapture="endButton('left_shoulder', $event)" @keydown="keyboardButton('left_shoulder', true, $event)" @keyup="keyboardButton('left_shoulder', false, $event)">L1</button>
       <div class="trigger" role="slider" aria-label="L2" aria-valuemin="0" aria-valuemax="65535" :aria-valuenow="state.leftTrigger" tabindex="0" @pointerdown="beginTrigger('left', $event)" @pointermove="moveTrigger('left', $event)" @pointerup="endTrigger('left', $event)" @pointercancel="endTrigger('left', $event)" @lostpointercapture="endTrigger('left', $event)"><i :style="{ height: `${state.leftTrigger / 655.35}%` }"></i><span>L2</span></div>
-      <div class="controller-wordmark">CAPY PAD <small>SIMULATED</small></div>
+      <div class="controller-wordmark">CAPY PAD <small>{{ state.simulated ? "SIMULATED" : "LOCAL" }}</small></div>
       <div class="trigger" role="slider" aria-label="R2" aria-valuemin="0" aria-valuemax="65535" :aria-valuenow="state.rightTrigger" tabindex="0" @pointerdown="beginTrigger('right', $event)" @pointermove="moveTrigger('right', $event)" @pointerup="endTrigger('right', $event)" @pointercancel="endTrigger('right', $event)" @lostpointercapture="endTrigger('right', $event)"><i :style="{ height: `${state.rightTrigger / 655.35}%` }"></i><span>R2</span></div>
       <button class="shoulder" :class="{ pressed: isPressed('right_shoulder') }" type="button" @pointerdown="beginButton('right_shoulder', $event)" @pointerup="endButton('right_shoulder', $event)" @pointercancel="endButton('right_shoulder', $event)" @lostpointercapture="endButton('right_shoulder', $event)" @keydown="keyboardButton('right_shoulder', true, $event)" @keyup="keyboardButton('right_shoulder', false, $event)">R1</button>
     </div>

@@ -10,6 +10,7 @@ import dev.capyio.android.contract.CapabilityPortDirection;
 import dev.capyio.android.contract.CapabilitySnapshot;
 import dev.capyio.android.contract.HardwarePresence;
 import dev.capyio.android.contract.GamepadNodeController;
+import dev.capyio.android.contract.GamepadControlsSnapshot;
 import dev.capyio.android.contract.TransitionToken;
 
 public final class AndroidCapabilityModulesContractTest {
@@ -24,6 +25,7 @@ public final class AndroidCapabilityModulesContractTest {
         reflectsGenerationBoundGamepadLifecycleState();
         projectsTheCatalogIntoSharedUiSchemaFour();
         projectsAndAdmitsClosedCapabilityQuickActions();
+        appliesAndProjectsClosedGamepadUiCommands();
         System.out.println("Android Capability module composition: PASS ("
                 + assertions + " assertions)");
     }
@@ -269,6 +271,72 @@ public final class AndroidCapabilityModulesContractTest {
                 CapabilityLifecycleState.STOPPED) == null);
         check(AndroidCapabilityCommand.parse(null, "start", CapabilityLifecycleState.STOPPED)
                 == null);
+    }
+
+    private static void appliesAndProjectsClosedGamepadUiCommands() {
+        GamepadControlsSnapshot neutral = GamepadControlsSnapshot.neutral();
+        GamepadControlsSnapshot south = AndroidGamepadUiCommand.apply(
+                "button", "south", 0, 0, true, neutral);
+        check(south != null && south.buttons() == 1);
+        GamepadControlsSnapshot guide = AndroidGamepadUiCommand.apply(
+                "button", "guide", 0, 0, true, south);
+        check(guide != null && guide.buttons() == ((1 << 10) | 1));
+        GamepadControlsSnapshot released = AndroidGamepadUiCommand.apply(
+                "button", "south", 0, 0, false, guide);
+        check(released != null && released.buttons() == (1 << 10));
+
+        GamepadControlsSnapshot dpad = AndroidGamepadUiCommand.apply(
+                "dpad", "", -1, 1, false, released);
+        check(dpad != null && dpad.dpadX() == -1 && dpad.dpadY() == 1);
+        GamepadControlsSnapshot left = AndroidGamepadUiCommand.apply(
+                "stick", "left", -32_767, 32_767, false, dpad);
+        check(left != null && left.leftX() == -32_767 && left.leftY() == 32_767);
+        GamepadControlsSnapshot right = AndroidGamepadUiCommand.apply(
+                "stick", "right", 10, -20, false, left);
+        check(right != null && right.rightX() == 10 && right.rightY() == -20);
+        GamepadControlsSnapshot triggers = AndroidGamepadUiCommand.apply(
+                "trigger", "left", 65_535, 0, false, right);
+        triggers = AndroidGamepadUiCommand.apply(
+                "trigger", "right", 123, 0, false, triggers);
+        check(triggers != null && triggers.leftTrigger() == 65_535
+                && triggers.rightTrigger() == 123);
+        check(triggers.buttons() == (1 << 10) && triggers.leftX() == -32_767);
+
+        check(AndroidGamepadUiCommand.apply("button", "touchpad", 0, 0, true, neutral)
+                == null);
+        check(AndroidGamepadUiCommand.apply("button", "south", 1, 0, true, neutral)
+                == null);
+        check(AndroidGamepadUiCommand.apply("dpad", "", 2, 0, false, neutral) == null);
+        check(AndroidGamepadUiCommand.apply("stick", "left", 32_768, 0, false, neutral)
+                == null);
+        check(AndroidGamepadUiCommand.apply("trigger", "left", 65_536, 0, false, neutral)
+                == null);
+        check(AndroidGamepadUiCommand.apply("trigger", "left", 1, 1, false, neutral)
+                == null);
+        check(AndroidGamepadUiCommand.apply("reset", "bad", 0, 0, false, neutral)
+                == null);
+        check(AndroidGamepadUiCommand.apply("reset;start", "", 0, 0, false, neutral)
+                == null);
+        check(AndroidGamepadUiCommand.apply(null, "", 0, 0, false, neutral) == null);
+        check(AndroidGamepadUiCommand.apply("reset", "", 0, 0, false, triggers)
+                .equals(neutral));
+
+        CapabilityLifecycleController lifecycle = new CapabilityLifecycleController();
+        String stopped = AndroidUiSnapshotJson.encodeGamepadState(
+                lifecycle.snapshot(), neutral);
+        check(stopped.contains("\"source\":\"android_touch\""));
+        check(stopped.contains("\"status\":\"stopped\""));
+        check(stopped.contains("\"source\":\"unavailable\""));
+        TransitionToken start = lifecycle.beginStart();
+        check(lifecycle.completeStart(start.generation()));
+        String active = AndroidUiSnapshotJson.encodeGamepadState(
+                lifecycle.snapshot(), triggers);
+        check(active.contains("\"streamEpoch\":" + start.generation()));
+        check(active.contains("\"pressedButtons\":[\"guide\"]"));
+        check(active.contains("\"leftStick\":{\"x\":-32767,\"y\":32767}"));
+        check(active.contains("\"rightTrigger\":123"));
+        check(active.contains("\"endpoint\":\"local://shared-ui\""));
+        check(active.endsWith("}"));
     }
 
     private static CapabilitySnapshot capability(

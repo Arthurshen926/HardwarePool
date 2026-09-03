@@ -274,6 +274,15 @@ shell-like strings and invalid transitions are rejected. The command cannot
 carry an endpoint, Route, payload, permission, file path or platform handle and
 does not grant sharing or peer access.
 
+ANDROID-A01D2 adds a separate closed gamepad-state method. Its fixed `kind` and
+`target` vocabulary, integer bounds, unused-field checks and eleven-button mask
+reject malformed or extended commands before state construction. Accepted input
+is merged into a complete snapshot and submitted with the current generation;
+the Service rejects input unless that generation is Active, and Stop neutralizes
+the state. The method cannot carry network coordinates, a Route, peer identity,
+permission, path or executable text. This is local input admission, not peer
+authorization or sharing consent.
+
 The synthetic-touchpad injection harness is a local controlled-lab binary, not
 an allow-listed WebView/Node Runtime command. Its default path only projects and
 encodes fixed fixtures. Native submission requires both an explicit injection

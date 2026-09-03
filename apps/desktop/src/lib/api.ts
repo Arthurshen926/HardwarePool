@@ -8,7 +8,9 @@ declare global {
     CapyIOAndroid?: {
       getSnapshotJson(): string;
       getQuickActionsJson(): string;
+      getGamepadStateJson(): string;
       invokeQuickAction(actionId: string, operation: QuickActionOperation): boolean;
+      updateGamepad(kind: string, target: string, x: number, y: number, pressed: boolean): boolean;
     };
   }
 }
@@ -37,11 +39,47 @@ class AndroidObserverCapyIOApi implements CapyIOApi {
   getLiveImu(): Promise<UiLiveImu | null> { return Promise.resolve(null); }
   startLiveImu(): Promise<UiLiveImu> { return this.readOnly(); }
   stopLiveImu(): Promise<UiLiveImu> { return this.readOnly(); }
-  getGamepadState(): Promise<UiGamepadState | null> { return Promise.resolve(null); }
+  async getGamepadState(): Promise<UiGamepadState | null> {
+    const encoded = window.CapyIOAndroid?.getGamepadStateJson();
+    if (!encoded) return null;
+    const state = JSON.parse(encoded) as UiGamepadState;
+    if (state.schemaVersion !== 1
+      || state.source !== "android_touch"
+      || state.profile !== "capyio.input.gamepad-state/1"
+      || !Array.isArray(state.pressedButtons)) {
+      throw new Error("Android gamepad bridge returned incompatible data");
+    }
+    return state;
+  }
   refreshWindowsGamepadPreflight(): Promise<UiGamepadState> { return this.readOnly(); }
   startWindowsGamepadProjection(): Promise<UiGamepadState> { return this.readOnly(); }
   stopWindowsGamepadProjection(): Promise<UiGamepadState> { return this.readOnly(); }
-  updateGamepadState(): Promise<UiGamepadState> { return this.readOnly(); }
+  async updateGamepadState(update: GamepadControlUpdate): Promise<UiGamepadState> {
+    const bridge = window.CapyIOAndroid;
+    if (!bridge) throw new Error("Android gamepad bridge is unavailable");
+    let accepted = false;
+    switch (update.kind) {
+      case "button":
+        accepted = bridge.updateGamepad("button", update.button, 0, 0, update.pressed);
+        break;
+      case "dpad":
+        accepted = bridge.updateGamepad("dpad", "", update.x, update.y, false);
+        break;
+      case "stick":
+        accepted = bridge.updateGamepad("stick", update.stick, update.x, update.y, false);
+        break;
+      case "trigger":
+        accepted = bridge.updateGamepad("trigger", update.trigger, update.value, 0, false);
+        break;
+      case "reset":
+        accepted = bridge.updateGamepad("reset", "", 0, 0, false);
+        break;
+    }
+    if (!accepted) throw new Error("Android rejected the gamepad update");
+    const state = await this.getGamepadState();
+    if (!state) throw new Error("Android gamepad state became unavailable");
+    return state;
+  }
   startGamepadDsu(): Promise<UiGamepadState> { return this.readOnly(); }
   stopGamepadDsu(): Promise<UiGamepadState> { return this.readOnly(); }
   startAndroidGamepad(): Promise<UiGamepadState> { return this.readOnly(); }

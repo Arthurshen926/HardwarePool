@@ -796,6 +796,16 @@ do not select sharing, authorize or create a Route, transmit samples, request a
 permission or submit high-rate gamepad state. Audio permission UX and Route
 composition remain later A01D slices.
 
+ANDROID-A01D2 connects the shared Controller surface to the existing
+Service-owned gamepad facade. The JavaScript bridge accepts only five primitive,
+bounded command shapes; a dependency-free mapper combines each command with the
+latest complete state, then submits the full snapshot with the observed Service
+generation. Submission is synchronous at this in-process state boundary so
+serialized UI updates cannot overwrite one another; the controller still rejects
+non-Active or stale-generation input and neutralizes on Stop. Android-only UI
+hides Windows/DSU receiver controls, does not fabricate IMU motion, and does not
+claim a Route or remote transport.
+
 ADR 0044 subsequently adds the approved network permission and a separate
 dependency-free LAN codec/socket worker boundary. ADRs 0046 and 0047 now attach
 the speaker Sink and microphone Source respectively: `AudioTrack` consumes the
