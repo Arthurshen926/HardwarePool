@@ -934,6 +934,11 @@ The protocol boundary also exposes the symmetric publication operation: one
 typed Session ID plus a validated Core Node catalog becomes a fresh-message-ID
 CatalogSnapshot under the same 1 MiB envelope bound. Its encode/decode
 round-trip is covered without claiming delivery, authentication or discovery.
+The same protocol boundary now fails closed on catalog semantic amplification:
+fixed Adapter/Capability/Port/format/metadata/version counts and a 2 KiB
+per-string ceiling apply on both canonical publication encoding and inbound
+CatalogSnapshot validation under the existing 1 MiB Envelope limit. Protocol
+coverage is 13 integration tests plus three codec unit tests.
 
 `capyio-control-host` now performs the reusable decoder-to-Runtime handoff for
 one exact caller-admitted Session/peer tuple. It also projects outbound catalogs

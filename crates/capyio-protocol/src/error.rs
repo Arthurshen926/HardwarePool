@@ -26,6 +26,20 @@ pub enum ProtocolError {
     #[error("control envelope is {actual} bytes; maximum is {limit}")]
     MessageTooLarge { limit: usize, actual: usize },
 
+    #[error("{field} has {actual} entries; maximum is {limit}")]
+    CatalogCountLimit {
+        field: &'static str,
+        limit: usize,
+        actual: usize,
+    },
+
+    #[error("{field} is {actual} bytes; maximum is {limit}")]
+    CatalogStringLimit {
+        field: &'static str,
+        limit: usize,
+        actual: usize,
+    },
+
     #[error("numeric value in {field} is out of range: {value}")]
     NumericRange { field: &'static str, value: u64 },
 

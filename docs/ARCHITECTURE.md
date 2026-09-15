@@ -116,6 +116,10 @@ It binds one exact Session/peer tuple, applies only complete CatalogSnapshot
 messages and retains at most 256 recent message IDs for accidental duplicate
 suppression. Platform hosts still own authentication, cryptographic replay
 protection, deadlines, framing I/O and reconnect.
+Catalog bytes crossing this seam are independently bounded by both the 1 MiB
+Envelope ceiling and fixed descriptor, metadata and per-string limits before
+Core conversion. These parser bounds constrain host work but do not establish
+the admitted binding or replace transport authentication.
 
 ### Adapter SDK and Host
 

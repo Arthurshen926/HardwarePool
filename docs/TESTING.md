@@ -46,6 +46,8 @@ Frontend uses `corepack pnpm typecheck` and `corepack pnpm build`.
   removal offlines only dependent Routes;
 - the dedicated CatalogSnapshot decoder requires a typed Session ID, exact
   payload and complete valid Node descriptor before returning a Core value;
+  encoder/decoder regressions reject excessive descriptor counts and catalog
+  strings before Core conversion;
 - the shared control host composes decoder and Runtime admission, rejects
   mismatched Session/peer and recent duplicate IDs before mutation, does not
   consume an ID after Runtime rejection and bounds retention to 256;

@@ -152,12 +152,17 @@ request failure and does not itself desynchronize the channel.
 
 ## Parser limits
 
-The Rust envelope codec rejects messages larger than 1 MiB before decode. Core
-then validates required IDs, enum values, catalog ownership and Port/Profile
-semantics. Descriptor-count and metadata-string limits are still required
-before an untrusted production transport is enabled. Sidecar control uses the
-smaller dedicated stdout/stderr limits and terminal desynchronization policy
-above.
+The Rust envelope codec rejects messages larger than 1 MiB before decode. A
+CatalogSnapshot additionally permits at most 64 Adapters, 256 Capabilities, 32
+Ports per Capability, 32 formats per Port, 64 Capability metadata entries or
+format parameters, and 16 protocol versions. Adapter ownership references are
+bounded by the Capability limit; QoS and Route-mode enum lists are limited to
+16. Every catalog string is limited to 2 KiB. The same checks run on the
+canonical encoder and checked/decode paths before Core conversion; Core then
+validates required IDs, enum values, ownership and Port/Profile semantics.
+These allocation/semantic bounds do not make a transport authenticated or safe
+by themselves. Sidecar control uses the smaller dedicated stdout/stderr limits
+and terminal desynchronization policy above.
 
 ## Error behavior
 

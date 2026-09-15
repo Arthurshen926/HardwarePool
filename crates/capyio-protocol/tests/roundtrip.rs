@@ -3,8 +3,9 @@ use capyio_core::{
     ProblemSeverity, Route,
 };
 use capyio_protocol::{
-    PROTOCOL_MAJOR, ProtocolError, decode_catalog_snapshot, decode_envelope,
-    encode_catalog_snapshot, encode_envelope, new_envelope, v1,
+    MAX_CATALOG_CAPABILITIES, MAX_CATALOG_STRING_BYTES, PROTOCOL_MAJOR, ProtocolError,
+    decode_catalog_snapshot, decode_envelope, encode_catalog_snapshot, encode_envelope,
+    new_envelope, v1,
 };
 use capyio_testkit::{DemoLab, android_node};
 
@@ -158,6 +159,43 @@ fn catalog_decoder_requires_session_payload_and_node() {
     assert!(matches!(
         decode_catalog_snapshot(&encode_envelope(&without_node)),
         Err(ProtocolError::MissingField("catalog_snapshot.node"))
+    ));
+}
+
+#[test]
+fn catalog_encoder_rejects_oversized_semantic_strings() {
+    let lab = DemoLab::new().expect("demo lab");
+    let mut node = android_node();
+    node.display_name = "x".repeat(MAX_CATALOG_STRING_BYTES + 1);
+
+    assert!(matches!(
+        encode_catalog_snapshot(lab.session_id, &node),
+        Err(ProtocolError::CatalogStringLimit {
+            field: "node.display_name",
+            limit: MAX_CATALOG_STRING_BYTES,
+            actual
+        }) if actual == MAX_CATALOG_STRING_BYTES + 1
+    ));
+}
+
+#[test]
+fn catalog_decoder_rejects_oversized_descriptor_counts_before_core_conversion() {
+    let lab = DemoLab::new().expect("demo lab");
+    let mut node = v1::NodeDescriptor::try_from(&android_node()).expect("wire node");
+    let capability = node.capabilities[0].clone();
+    node.capabilities = vec![capability; MAX_CATALOG_CAPABILITIES + 1];
+    let envelope = new_envelope(
+        Some(lab.session_id),
+        v1::envelope::Payload::CatalogSnapshot(v1::CatalogSnapshot { node: Some(node) }),
+    );
+
+    assert!(matches!(
+        decode_catalog_snapshot(&encode_envelope(&envelope)),
+        Err(ProtocolError::CatalogCountLimit {
+            field: "node.capabilities",
+            limit: MAX_CATALOG_CAPABILITIES,
+            actual
+        }) if actual == MAX_CATALOG_CAPABILITIES + 1
     ));
 }
 

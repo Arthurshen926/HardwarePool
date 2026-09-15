@@ -34,6 +34,11 @@ The symmetric encoder accepts a typed Session ID and validated Core Node
 catalog, assigns a fresh message ID, converts the complete public descriptor
 and enforces the common 1 MiB control-envelope limit. Platform hosts therefore
 do not need to construct CatalogSnapshot envelopes independently.
+Both canonical encoding and inbound validation now enforce semantic catalog
+bounds inside that byte ceiling: 64 Adapters, 256 Capabilities, 32 Ports per
+Capability, 32 formats per Port, 64 metadata/format-parameter entries, 16
+protocol versions and 2 KiB per catalog string. Excess counts and strings have
+typed protocol errors and are rejected before Core conversion.
 
 `capyio-control-host` now composes both steps. A caller supplies one exact
 Session/peer binding after connection admission; the host decodes a catalog,
@@ -73,7 +78,7 @@ authenticated encoder invocation; it does not send the catalog.
 ## Evidence
 
 - `cargo test -p capyio-testkit`: 18 passed.
-- `cargo test -p capyio-protocol`: 11 passed.
+- `cargo test -p capyio-protocol`: 13 integration tests and 3 unit tests passed.
 - `cargo test -p capyio-control-host`: 9 passed.
 - `cargo test -p capyio-desktop --lib`: 56 passed, 6 intentionally ignored
   physical/installed-device tests.

@@ -59,6 +59,12 @@ authentication, and bounded recent-ID suppression is not cryptographic replay
 defense: an authenticated transport must bind identities and versions, reject
 replays across reconnect/process restart and supply fresh keys before invoking
 this host.
+CatalogSnapshot parsing now also rejects excessive Adapter, Capability, Port,
+format, metadata, protocol-version and ownership-reference counts, plus any
+catalog string larger than 2 KiB, under the existing 1 MiB Envelope ceiling.
+The canonical outbound helper applies the same limits. This bounds semantic
+work and retained allocations after Protobuf decode; it does not authenticate
+the sender or turn the future transport binding into a credential.
 
 ADR 0041 now represents Session/Route/Stream/epoch and the exact selected audio
 specification as one validated media-stream binding before any transport
