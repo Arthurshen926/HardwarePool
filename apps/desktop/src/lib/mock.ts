@@ -6,6 +6,7 @@ import type {
   UiCapabilityPort,
   UiAudioEndpointCatalog,
   UiAndroidAudioState,
+  UiAndroidCameraSettings,
   GamepadButton,
   GamepadControlUpdate,
   UiGamepadState,
@@ -335,6 +336,17 @@ export class BrowserMockCapyIOApi implements CapyIOApi {
 
   async getAndroidAudioState(): Promise<UiAndroidAudioState | null> {
     return null;
+  }
+
+  async getAndroidCameraSettings(): Promise<UiAndroidCameraSettings | null> { return null; }
+  async refreshAndroidCameraSources(): Promise<UiAndroidCameraSettings> {
+    throw new Error("Android camera inventory requires the Android backend.");
+  }
+  async selectAndroidCameraSource(): Promise<UiAndroidCameraSettings> {
+    throw new Error("Android camera selection requires the Android backend.");
+  }
+  async selectAndroidCameraQuality(): Promise<UiAndroidCameraSettings> {
+    throw new Error("Android camera quality requires the Android backend.");
   }
 
   async selectAudioEndpoint(_actionId: string, _selectionToken: string): Promise<UiQuickAction> {

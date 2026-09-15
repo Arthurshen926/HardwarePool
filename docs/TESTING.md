@@ -1619,6 +1619,14 @@ the V2419A vibration service recorded the exact `dev.capyio.android` 35 ms,
 `ignored_for_settings`, so physical sensation is not claimed and the device
 setting was not changed. The test does not claim a Windows feedback Route.
 
+ANDROID-A01E2 type-checks the common Vue Camera2 settings panel and compiles/
+lints its four-method Android bridge plus the reused inventory boundary. On the
+authorized V2419A, the panel enumerated seven bounded choices across directly
+openable IDs 0 and 1, selected `1@auto` with `clear` quality, and Camera Service
+then reported active ID 1 for `dev.capyio.android`. Source/quality changes were
+rejected while Active; UI Stop recorded ID 1 disconnect and left no camera
+client. No frames were retained.
+
 Offline repository validation additionally pins the Gradle/AGP contract and
 checks the source manifest for the approved audio/camera/notification/foreground
 permissions, non-exported platform services, disabled backup/cleartext and the

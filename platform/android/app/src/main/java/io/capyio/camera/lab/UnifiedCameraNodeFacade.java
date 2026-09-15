@@ -4,10 +4,24 @@ import android.content.Context;
 
 import io.capyio.camera.contract.AvcQualityPreset;
 import io.capyio.camera.contract.CameraTransportEndpoint;
+import io.capyio.camera.contract.CameraSourceSelection;
 import io.capyio.camera.contract.FrameObservation;
+
+import org.json.JSONArray;
+import org.json.JSONException;
+import org.json.JSONObject;
+
+import java.util.List;
+import java.util.Locale;
 
 /** Narrow public facade used by the unified Node host without exposing camera internals. */
 public final class UnifiedCameraNodeFacade {
+    private static final int MAX_SELECTION_KEY_LENGTH = 96;
+    private static CameraSourceSelection preferredSource;
+    private static AvcQualityPreset preferredQuality = AvcQualityPreset.BALANCED;
+    private static List<CameraSourceSelection> availableSources = List.of();
+    private static String inventoryProblemCode;
+
     public record Snapshot(
             String state,
             long generation,
@@ -27,12 +41,15 @@ public final class UnifiedCameraNodeFacade {
 
     private UnifiedCameraNodeFacade() {}
 
-    public static void start(Context context) {
+    public static synchronized void start(Context context) {
+        FrameObservation.LensFacing facing = preferredSource == null
+                ? FrameObservation.LensFacing.BACK
+                : mapFacing(preferredSource.facing());
         CameraCaptureService.start(
                 context,
-                FrameObservation.LensFacing.BACK,
-                null,
-                AvcQualityPreset.BALANCED,
+                facing,
+                preferredSource,
+                preferredQuality,
                 CameraTransportEndpoint.adbReverse());
     }
 
@@ -65,5 +82,99 @@ public final class UnifiedCameraNodeFacade {
                 source.phase() == CameraCaptureService.Phase.ERROR
                         ? "CAPY.ANDROID.CAMERA_CAPTURE_FAILED"
                         : null);
+    }
+
+    public static synchronized boolean refreshSources(Context context) {
+        if (isRunning()) {
+            return false;
+        }
+        try {
+            availableSources = CameraSourceSelection.enumerate(
+                    CameraInventoryCollector.collect(context));
+            if (preferredSource != null && !availableSources.contains(preferredSource)) {
+                preferredSource = null;
+            }
+            inventoryProblemCode = null;
+            return true;
+        } catch (Exception failure) {
+            availableSources = List.of();
+            preferredSource = null;
+            inventoryProblemCode = "CAPY.ANDROID.CAMERA_INVENTORY_FAILED";
+            return false;
+        }
+    }
+
+    public static synchronized boolean selectSource(String sourceKey) {
+        if (sourceKey == null || sourceKey.length() > MAX_SELECTION_KEY_LENGTH || isRunning()) {
+            return false;
+        }
+        if (sourceKey.isEmpty()) {
+            preferredSource = null;
+            return true;
+        }
+        for (CameraSourceSelection candidate : availableSources) {
+            if (candidate.key().equals(sourceKey)) {
+                preferredSource = candidate;
+                return true;
+            }
+        }
+        return false;
+    }
+
+    public static synchronized boolean selectQuality(String quality) {
+        if (quality == null || quality.length() > 16 || isRunning()) {
+            return false;
+        }
+        try {
+            preferredQuality = AvcQualityPreset.valueOf(quality.toUpperCase(Locale.ROOT));
+            return true;
+        } catch (IllegalArgumentException rejected) {
+            return false;
+        }
+    }
+
+    public static synchronized String settingsJson(boolean permissionReady) {
+        Snapshot lifecycle = snapshot();
+        try {
+            JSONObject result = new JSONObject()
+                    .put("schemaVersion", 1)
+                    .put("state", lifecycle.state())
+                    .put("generation", lifecycle.generation())
+                    .put("permissionReady", permissionReady)
+                    .put("selectedSourceKey", preferredSource == null
+                            ? JSONObject.NULL : preferredSource.key())
+                    .put("quality", preferredQuality.name().toLowerCase(Locale.ROOT))
+                    .put("problemCode", inventoryProblemCode == null
+                            ? JSONObject.NULL : inventoryProblemCode);
+            JSONArray sources = new JSONArray();
+            for (CameraSourceSelection source : availableSources) {
+                sources.put(new JSONObject()
+                        .put("key", source.key())
+                        .put("cameraId", source.cameraId())
+                        .put("facing", source.facing().name().toLowerCase(Locale.ROOT))
+                        .put("zoomRatioMilli", source.targetZoomRatioMilli() == null
+                                ? JSONObject.NULL : source.targetZoomRatioMilli()));
+            }
+            result.put("sources", sources);
+            return result.toString();
+        } catch (JSONException impossible) {
+            throw new IllegalStateException("Camera settings JSON construction failed", impossible);
+        }
+    }
+
+    private static boolean isRunning() {
+        CameraCaptureService.Phase phase = CameraCaptureService.snapshot().phase();
+        return phase == CameraCaptureService.Phase.STARTING
+                || phase == CameraCaptureService.Phase.STREAMING;
+    }
+
+    private static FrameObservation.LensFacing mapFacing(
+            io.capyio.camera.contract.CameraInventory.LensFacing facing) {
+        return switch (facing) {
+            case FRONT -> FrameObservation.LensFacing.FRONT;
+            case BACK -> FrameObservation.LensFacing.BACK;
+            case EXTERNAL -> FrameObservation.LensFacing.EXTERNAL;
+            case UNKNOWN -> FrameObservation.LensFacing.UNKNOWN;
+        };
     }
 }

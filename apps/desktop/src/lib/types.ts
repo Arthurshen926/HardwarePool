@@ -335,6 +335,24 @@ export interface UiAndroidAudioState {
   speaker: UiAndroidAudioCapability;
 }
 
+export interface UiAndroidCameraSource {
+  key: string;
+  cameraId: string;
+  facing: "front" | "back" | "external" | "unknown";
+  zoomRatioMilli: number | null;
+}
+
+export interface UiAndroidCameraSettings {
+  schemaVersion: 1;
+  state: "stopped" | "starting" | "active" | "failed";
+  generation: number;
+  permissionReady: boolean;
+  selectedSourceKey: string | null;
+  quality: "economy" | "balanced" | "clear";
+  problemCode: string | null;
+  sources: UiAndroidCameraSource[];
+}
+
 export interface UiSnapshot {
   backendMode: BackendMode;
   schemaVersion: 4;
@@ -371,5 +389,9 @@ export interface CapyIOApi {
   invokeQuickAction(actionId: string, operation: QuickActionOperation): Promise<UiQuickAction>;
   getAudioEndpoints(): Promise<UiAudioEndpointCatalog | null>;
   getAndroidAudioState(): Promise<UiAndroidAudioState | null>;
+  getAndroidCameraSettings(): Promise<UiAndroidCameraSettings | null>;
+  refreshAndroidCameraSources(): Promise<UiAndroidCameraSettings>;
+  selectAndroidCameraSource(sourceKey: string): Promise<UiAndroidCameraSettings>;
+  selectAndroidCameraQuality(quality: UiAndroidCameraSettings["quality"]): Promise<UiAndroidCameraSettings>;
   selectAudioEndpoint(actionId: string, selectionToken: string): Promise<UiQuickAction>;
 }

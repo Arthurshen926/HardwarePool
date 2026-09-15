@@ -319,6 +319,13 @@ strength or duration. The single-actuator projection accepts no peer, endpoint,
 Route, path or text payload; authorization remains mandatory before a future
 network worker may call it.
 
+ANDROID-A01E2 exposes no arbitrary Camera2 request fields. Refresh uses the
+read-only bounded inventory only after platform consent. Source mutation accepts
+an empty automatic token or an exact key from that session's cached inventory;
+quality accepts three fixed names. Both fail while capture owns resources. The
+DTO contains IDs, facing, bounded Zoom targets and lifecycle only—no pixels,
+access units, peer address or authorization secret.
+
 The synthetic-touchpad injection harness is a local controlled-lab binary, not
 an allow-listed WebView/Node Runtime command. Its default path only projects and
 encodes fixed fixtures. Native submission requires both an explicit injection

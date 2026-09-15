@@ -856,6 +856,14 @@ generation; Stop cancels the platform effect. The shared action controls this
 local lifecycle and emits one short confirmation pulse on Start. No feedback
 Route, peer authority or dual-motor fidelity is inferred.
 
+ANDROID-A01E2 moves the retained lab's bounded Camera2 inventory and AVC quality
+selection into the shared presentation. The Android bridge returns a schema-1
+settings DTO and admits only an exact cached source key, automatic selection or
+one of three quality names. Inventory requires existing CAMERA consent and a
+visible refresh; all mutations require a stopped capture. The service receives
+an immutable copy on Start, so a running camera/encoder cannot be reconfigured
+through the WebView.
+
 ADR 0044 subsequently adds the approved network permission and a separate
 dependency-free LAN codec/socket worker boundary. ADRs 0046 and 0047 now attach
 the speaker Sink and microphone Source respectively: `AudioTrack` consumes the

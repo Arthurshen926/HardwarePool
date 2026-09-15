@@ -32,6 +32,13 @@ One explicitly authorized Android 16 device run accepted the two-Surface session
 and produced 1280x720 AVC output. The unified default still uses the fixed
 ADB-reverse development endpoint; it is not production discovery, pairing,
 encryption or Route authorization.
+
+Version `0.5.2-dev` moves the bounded camera inventory into the common Vue UI.
+After CAMERA consent and only while stopped, users can refresh directly openable
+Camera2 IDs, choose automatic or reviewed vendor Zoom targets and select one of
+three AVC quality presets. These are session-local Adapter settings, not sharing
+consent or a Route.
+
 Every future APK install/update still requires an explicitly selected ADB target
 and the applicable human authorization.
 

@@ -1,7 +1,7 @@
 import { invoke } from "@tauri-apps/api/core";
 
 import { BrowserMockCapyIOApi } from "./mock";
-import type { CapyIOApi, GamepadControlUpdate, QuickActionOperation, TouchpadControlUpdate, UiAndroidAudioState, UiAudioEndpointCatalog, UiGamepadState, UiLiveImu, UiQuickAction, UiSnapshot, UiTouchpadState, WindowsControllerKind } from "./types";
+import type { CapyIOApi, GamepadControlUpdate, QuickActionOperation, TouchpadControlUpdate, UiAndroidAudioState, UiAndroidCameraSettings, UiAudioEndpointCatalog, UiGamepadState, UiLiveImu, UiQuickAction, UiSnapshot, UiTouchpadState, WindowsControllerKind } from "./types";
 
 declare global {
   interface Window {
@@ -11,10 +11,14 @@ declare global {
       getGamepadStateJson(): string;
       getTouchpadStateJson(): string;
       getAudioStateJson(): string;
+      getCameraSettingsJson(): string;
       setLocalCapabilityShared(capabilityId: string, selected: boolean): boolean;
       invokeQuickAction(actionId: string, operation: QuickActionOperation): boolean;
       updateGamepad(kind: string, target: string, x: number, y: number, pressed: boolean): boolean;
       updateTouchpad(encodedContacts: string): boolean;
+      refreshCameraSources(): boolean;
+      selectCameraSource(sourceKey: string): boolean;
+      selectCameraQuality(quality: string): boolean;
     };
   }
 }
@@ -113,6 +117,40 @@ class AndroidNodeCapyIOApi implements CapyIOApi {
       || !state.microphone || !state.speaker) {
       throw new Error("Android audio bridge returned incompatible data");
     }
+    return state;
+  }
+  async getAndroidCameraSettings(): Promise<UiAndroidCameraSettings | null> {
+    const encoded = window.CapyIOAndroid?.getCameraSettingsJson();
+    if (!encoded) return null;
+    const state = JSON.parse(encoded) as UiAndroidCameraSettings;
+    if (state.schemaVersion !== 1 || !Array.isArray(state.sources)
+      || !["economy", "balanced", "clear"].includes(state.quality)) {
+      throw new Error("Android camera bridge returned incompatible data");
+    }
+    return state;
+  }
+  async refreshAndroidCameraSources(): Promise<UiAndroidCameraSettings> {
+    if (!window.CapyIOAndroid?.refreshCameraSources()) {
+      throw new Error("Android rejected camera inventory refresh");
+    }
+    const state = await this.getAndroidCameraSettings();
+    if (!state) throw new Error("Android camera settings became unavailable");
+    return state;
+  }
+  async selectAndroidCameraSource(sourceKey: string): Promise<UiAndroidCameraSettings> {
+    if (!window.CapyIOAndroid?.selectCameraSource(sourceKey)) {
+      throw new Error("Android rejected camera source selection");
+    }
+    const state = await this.getAndroidCameraSettings();
+    if (!state) throw new Error("Android camera settings became unavailable");
+    return state;
+  }
+  async selectAndroidCameraQuality(quality: UiAndroidCameraSettings["quality"]): Promise<UiAndroidCameraSettings> {
+    if (!window.CapyIOAndroid?.selectCameraQuality(quality)) {
+      throw new Error("Android rejected camera quality selection");
+    }
+    const state = await this.getAndroidCameraSettings();
+    if (!state) throw new Error("Android camera settings became unavailable");
     return state;
   }
   async updateTouchpadState(update: TouchpadControlUpdate): Promise<UiTouchpadState> {
@@ -255,6 +293,11 @@ class TauriCapyIOApi implements CapyIOApi {
   getAndroidAudioState(): Promise<UiAndroidAudioState | null> {
     return Promise.resolve(null);
   }
+
+  getAndroidCameraSettings(): Promise<UiAndroidCameraSettings | null> { return Promise.resolve(null); }
+  refreshAndroidCameraSources(): Promise<UiAndroidCameraSettings> { return Promise.reject(new Error("Android camera settings require the Android backend")); }
+  selectAndroidCameraSource(): Promise<UiAndroidCameraSettings> { return Promise.reject(new Error("Android camera settings require the Android backend")); }
+  selectAndroidCameraQuality(): Promise<UiAndroidCameraSettings> { return Promise.reject(new Error("Android camera settings require the Android backend")); }
 
   selectAudioEndpoint(actionId: string, selectionToken: string): Promise<UiQuickAction> {
     return invoke<UiQuickAction>("select_audio_endpoint", {

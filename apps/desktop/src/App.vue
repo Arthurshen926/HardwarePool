@@ -9,7 +9,7 @@ import QuickActionCard from "./components/QuickActionCard.vue";
 import StatusPill from "./components/StatusPill.vue";
 import TouchpadSurface from "./components/TouchpadSurface.vue";
 import { createCapyIOApi } from "./lib/api";
-import type { DsuProjectionMode, GamepadControlUpdate, QuickActionOperation, TouchpadControlUpdate, UiAndroidAudioCapability, UiAndroidAudioState, UiAudioEndpointCatalog, UiCapability, UiGamepadState, UiLiveImu, UiQuickAction, UiRoute, UiSnapshot, UiTouchpadState, WindowsControllerKind } from "./lib/types";
+import type { DsuProjectionMode, GamepadControlUpdate, QuickActionOperation, TouchpadControlUpdate, UiAndroidAudioCapability, UiAndroidAudioState, UiAndroidCameraSettings, UiAudioEndpointCatalog, UiCapability, UiGamepadState, UiLiveImu, UiQuickAction, UiRoute, UiSnapshot, UiTouchpadState, WindowsControllerKind } from "./lib/types";
 
 const api = createCapyIOApi();
 const snapshot = ref<UiSnapshot | null>(null);
@@ -29,6 +29,8 @@ const gamepadBusy = ref(false);
 const touchpad = ref<UiTouchpadState | null>(null);
 const touchpadBusy = ref(false);
 const androidAudio = ref<UiAndroidAudioState | null>(null);
+const androidCamera = ref<UiAndroidCameraSettings | null>(null);
+const cameraSettingsBusy = ref(false);
 const gamepadDsuPort = ref(26760);
 const gamepadDsuMode = ref<DsuProjectionMode>("motion_only");
 const gamepadDsuBusy = ref(false);
@@ -59,12 +61,13 @@ async function load(): Promise<void> {
   loading.value = true;
   errorMessage.value = "";
   try {
-    const [nextSnapshot, nextLiveImu, nextGamepad, nextTouchpad, nextAndroidAudio, nextQuickActions, nextAudioEndpoints] = await Promise.all([api.getSnapshot(), api.getLiveImu(), api.getGamepadState(), api.getTouchpadState(), api.getAndroidAudioState(), api.getQuickActions(), api.getAudioEndpoints()]);
+    const [nextSnapshot, nextLiveImu, nextGamepad, nextTouchpad, nextAndroidAudio, nextAndroidCamera, nextQuickActions, nextAudioEndpoints] = await Promise.all([api.getSnapshot(), api.getLiveImu(), api.getGamepadState(), api.getTouchpadState(), api.getAndroidAudioState(), api.getAndroidCameraSettings(), api.getQuickActions(), api.getAudioEndpoints()]);
     snapshot.value = nextSnapshot;
     liveImu.value = nextLiveImu;
     gamepad.value = nextGamepad;
     touchpad.value = nextTouchpad;
     androidAudio.value = nextAndroidAudio;
+    androidCamera.value = nextAndroidCamera;
     quickActions.value = nextQuickActions;
     audioEndpoints.value = nextAudioEndpoints;
   }
@@ -125,6 +128,40 @@ async function refreshTouchpad(): Promise<void> {
 async function refreshAndroidAudio(): Promise<void> {
   try { androidAudio.value = await api.getAndroidAudioState(); }
   catch (error) { errorMessage.value = normalizeError(error); }
+}
+
+async function refreshAndroidCamera(): Promise<void> {
+  try { androidCamera.value = await api.getAndroidCameraSettings(); }
+  catch (error) { errorMessage.value = normalizeError(error); }
+}
+
+async function refreshCameraSources(): Promise<void> {
+  cameraSettingsBusy.value = true;
+  errorMessage.value = "";
+  try { androidCamera.value = await api.refreshAndroidCameraSources(); }
+  catch (error) { errorMessage.value = normalizeError(error); }
+  finally { cameraSettingsBusy.value = false; }
+}
+
+async function selectCameraSource(event: Event): Promise<void> {
+  cameraSettingsBusy.value = true;
+  errorMessage.value = "";
+  try { androidCamera.value = await api.selectAndroidCameraSource((event.target as HTMLSelectElement).value); }
+  catch (error) { errorMessage.value = normalizeError(error); }
+  finally { cameraSettingsBusy.value = false; }
+}
+
+async function selectCameraQuality(event: Event): Promise<void> {
+  cameraSettingsBusy.value = true;
+  errorMessage.value = "";
+  try { androidCamera.value = await api.selectAndroidCameraQuality((event.target as HTMLSelectElement).value as UiAndroidCameraSettings["quality"]); }
+  catch (error) { errorMessage.value = normalizeError(error); }
+  finally { cameraSettingsBusy.value = false; }
+}
+
+function cameraSourceLabel(source: UiAndroidCameraSettings["sources"][number]): string {
+  const zoom = source.zoomRatioMilli === null ? "auto" : `${(source.zoomRatioMilli / 1000).toFixed(3)}x`;
+  return `Camera2 ${source.cameraId} · ${source.facing} · ${zoom}`;
 }
 
 function describeAudio(capability: UiAndroidAudioCapability): string {
@@ -256,7 +293,7 @@ function normalizeError(error: unknown): string {
 
 onMounted(() => {
   void load();
-  livePoll = setInterval(() => { void refreshLiveImu(); void refreshGamepad(); void refreshTouchpad(); void refreshAndroidAudio(); void refreshQuickActions(); }, 500);
+  livePoll = setInterval(() => { void refreshLiveImu(); void refreshGamepad(); void refreshTouchpad(); void refreshAndroidAudio(); void refreshAndroidCamera(); void refreshQuickActions(); }, 500);
   window.addEventListener("capyio-native-state", refreshSnapshot);
 });
 onUnmounted(() => {
@@ -265,12 +302,13 @@ onUnmounted(() => {
 });
 
 function refreshSnapshot(): void {
-  void Promise.all([api.getSnapshot(), api.getGamepadState(), api.getTouchpadState(), api.getAndroidAudioState(), api.getQuickActions()])
-    .then(([nextSnapshot, nextGamepad, nextTouchpad, nextAndroidAudio, nextQuickActions]) => {
+  void Promise.all([api.getSnapshot(), api.getGamepadState(), api.getTouchpadState(), api.getAndroidAudioState(), api.getAndroidCameraSettings(), api.getQuickActions()])
+    .then(([nextSnapshot, nextGamepad, nextTouchpad, nextAndroidAudio, nextAndroidCamera, nextQuickActions]) => {
       snapshot.value = nextSnapshot;
       gamepad.value = nextGamepad;
       touchpad.value = nextTouchpad;
       androidAudio.value = nextAndroidAudio;
+      androidCamera.value = nextAndroidCamera;
       quickActions.value = nextQuickActions;
     })
     .catch((error: unknown) => { errorMessage.value = normalizeError(error); });
@@ -379,6 +417,35 @@ function refreshSnapshot(): void {
           <p v-if="androidAudio.speaker.problemCode" class="error-banner">{{ androidAudio.speaker.problemCode }}</p>
         </article>
       </div>
+    </section>
+
+    <section v-if="view === 'quick' && androidCamera" class="info-panel imu-lab" aria-labelledby="android-camera-title">
+      <header class="imu-lab__header">
+        <div>
+          <p class="eyebrow">Android Node · Camera2 Source</p>
+          <h2 id="android-camera-title">本机摄像头设置</h2>
+          <p>选择只在停止状态生效；权限、采集生命周期、共享勾选与 Route 保持分离。</p>
+        </div>
+        <StatusPill :tone="androidCamera.state === 'active' ? 'success' : androidCamera.state === 'failed' ? 'danger' : 'warning'" :label="androidCamera.state" />
+      </header>
+      <form class="imu-live__controls" @submit.prevent="refreshCameraSources">
+        <label>具体 Camera2 来源
+          <select :value="androidCamera.selectedSourceKey ?? ''" :disabled="cameraSettingsBusy || ['starting', 'active'].includes(androidCamera.state) || !androidCamera.permissionReady" @change="selectCameraSource">
+            <option value="">自动（优先后置）</option>
+            <option v-for="source in androidCamera.sources" :key="source.key" :value="source.key">{{ cameraSourceLabel(source) }}</option>
+          </select>
+        </label>
+        <label>AVC 质量
+          <select :value="androidCamera.quality" :disabled="cameraSettingsBusy || ['starting', 'active'].includes(androidCamera.state)" @change="selectCameraQuality">
+            <option value="economy">Economy · 2 Mbit/s 基准</option>
+            <option value="balanced">Balanced · 4 Mbit/s 基准</option>
+            <option value="clear">Clear · 6 Mbit/s 基准</option>
+          </select>
+        </label>
+        <button class="ghost-button" type="submit" :disabled="cameraSettingsBusy || ['starting', 'active'].includes(androidCamera.state) || !androidCamera.permissionReady">刷新硬件来源</button>
+      </form>
+      <p v-if="!androidCamera.permissionReady" class="gamepad-lab__note">首次在 Quick Actions 启动 Camera 后由 Android 请求权限；停止后即可刷新并选择具体 Camera2 ID/厂商 Zoom 目标。</p>
+      <p v-if="androidCamera.problemCode" class="error-banner" role="status">{{ androidCamera.problemCode }}</p>
     </section>
 
     <section v-if="view === 'controller' && gamepad" class="info-panel gamepad-lab gamepad-lab--primary" aria-labelledby="gamepad-lab-title">

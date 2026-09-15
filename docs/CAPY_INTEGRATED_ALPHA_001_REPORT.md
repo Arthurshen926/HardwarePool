@@ -137,6 +137,12 @@ actuator. The explicitly approved `VIBRATE` permission has no runtime prompt.
 This provides the local Sink boundary; Windows feedback delivery still needs an
 authorized Route.
 
+A01E2 closes the unified camera source/quality UI gap. The common Vue panel now
+refreshes the existing bounded Camera2 inventory after consent and selects an
+exact source/vendor-Zoom token plus one of three AVC presets only while stopped.
+The V2419A enumerated seven choices; selecting front `1@auto` and `clear` caused
+Camera Service to open ID 1. Active mutation was rejected and Stop released it.
+
 ## Automated evidence
 
 - `cargo test --offline -p capyio-input -p capyio-dsu-adapter -p capyio-viiper-adapter -p capyio-windows-input -p capyio-desktop`: passed after the gamepad merge.
@@ -184,12 +190,15 @@ authorized Route.
   removed the service, recorded DISCONNECT and left no active camera client. The
   final installed `0.5.0-dev` APK SHA-256 is
   `07C6D2943C5ED98D824838FDD7DD61145A81DC6759B7F98B8EED74BCAF04EC39`.
-- the final `0.5.1-dev` APK SHA-256 is
+- the haptics `0.5.1-dev` APK SHA-256 is
   `EAAA1FAB46268FA2CAEF3A1DC6053DD2EA6A963F95FF3BBCC1F055FFE60BAAEF`.
   The VIBRATE permission was granted; shared-UI Start reached Active and Android
   recorded CapyIO's bounded 35 ms / 0.28 request. The OS suppressed it under the
   current haptic setting, so tactile perception is not claimed. UI Stop returned
   Idle and `CurrentVibration` was null.
+- the installed `0.5.2-dev` APK SHA-256 is
+  `E55B6305E1F1DC143C50F134A0AE9A446F6DD8795C708B6EE0768760F7E79223`;
+  shared-UI Camera2 inventory/selection physically opened and released front ID 1.
 - `jar tf platform/android/app/build/outputs/apk/debug/app-debug.apk`: confirmed
   `assets/capyio-ui/index.html` and generated JavaScript/CSS in the assembled
   archive; the entrypoint references both assets with `./assets/...` paths.

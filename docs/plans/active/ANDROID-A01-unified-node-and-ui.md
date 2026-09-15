@@ -75,7 +75,9 @@ Display is excluded until its feature branch is complete.
    foreground-service declarations, attaches the existing service-owned
    Camera2/MediaCodec Source and exposes a closed shared-UI action. An authorized
    V2419A run proves system permission, active Camera2 ownership and UI-driven
-   release. Denial, revoke, process-death and long-background qualification remain.
+   release. A01E2 adds bounded concrete Camera2 source/vendor-Zoom and AVC
+   quality selection to the shared UI and physically proves front-camera ID 1.
+   Denial, revoke, process-death and long-background qualification remain.
 6. **A01F — input data-plane integration:** connect the attached Controller and
    Touchpad UI states to their bounded native Sources and product Routes. Retain
    exact foreground-loss and neutral/cancel behavior.

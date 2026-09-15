@@ -63,8 +63,8 @@ android {
         applicationId = 'dev.capyio.android'
         minSdk = 29
         targetSdk = 36
-        versionCode = 13
-        versionName = '0.5.1-dev'
+        versionCode = 14
+        versionName = '0.5.2-dev'
         manifestPlaceholders = [
             capyioSpeakerLabEnabled: System.getenv('CAPYIO_ANDROID_SPEAKER_PEER_IPV4') == null
                     ? 'false' : 'true',

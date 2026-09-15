@@ -435,6 +435,39 @@ public final class MainActivity extends Activity {
         }
 
         @JavascriptInterface
+        public String getCameraSettingsJson() {
+            return UnifiedCameraNodeFacade.settingsJson(cameraPermissionsGranted());
+        }
+
+        @JavascriptInterface
+        public boolean refreshCameraSources() {
+            if (!cameraPermissionsGranted()) {
+                return false;
+            }
+            boolean accepted = UnifiedCameraNodeFacade.refreshSources(MainActivity.this);
+            dispatchSharedUiState();
+            return accepted;
+        }
+
+        @JavascriptInterface
+        public boolean selectCameraSource(String sourceKey) {
+            boolean accepted = UnifiedCameraNodeFacade.selectSource(sourceKey);
+            if (accepted) {
+                dispatchSharedUiState();
+            }
+            return accepted;
+        }
+
+        @JavascriptInterface
+        public boolean selectCameraQuality(String quality) {
+            boolean accepted = UnifiedCameraNodeFacade.selectQuality(quality);
+            if (accepted) {
+                dispatchSharedUiState();
+            }
+            return accepted;
+        }
+
+        @JavascriptInterface
         public String getGamepadStateJson() {
             AudioNodeService.NodeBinder current = binder;
             if (current == null) {
