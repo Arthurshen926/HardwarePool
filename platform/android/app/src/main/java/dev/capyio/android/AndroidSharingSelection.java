@@ -1,7 +1,9 @@
 package dev.capyio.android;
 
 import dev.capyio.android.contract.CapabilityCatalogSnapshot;
+import dev.capyio.android.contract.CapabilityAvailability;
 import dev.capyio.android.contract.CapabilityPortDirection;
+import dev.capyio.android.contract.CapabilityPublicationProjection;
 import dev.capyio.android.contract.CapabilitySnapshot;
 import dev.capyio.android.contract.HardwarePresence;
 
@@ -23,14 +25,22 @@ final class AndroidSharingSelection {
             return false;
         }
         CapabilitySnapshot capability = findCapability(catalog, capabilityId);
-        if (capability == null || !isSelectable(capability)) {
+        if (capability == null || !hasSource(capability)) {
             return false;
         }
+        Set<String> candidate = new LinkedHashSet<>(selectedCapabilityIds);
         if (selected) {
-            selectedCapabilityIds.add(capabilityId);
+            candidate.add(capabilityId);
         } else {
-            selectedCapabilityIds.remove(capabilityId);
+            candidate.remove(capabilityId);
         }
+        try {
+            CapabilityPublicationProjection.project(catalog, candidate);
+        } catch (IllegalArgumentException invalid) {
+            return false;
+        }
+        selectedCapabilityIds.clear();
+        selectedCapabilityIds.addAll(candidate);
         return true;
     }
 
@@ -38,11 +48,21 @@ final class AndroidSharingSelection {
         return Set.copyOf(selectedCapabilityIds);
     }
 
+    synchronized CapabilityCatalogSnapshot publicationCatalog(
+            CapabilityCatalogSnapshot catalog) {
+        return CapabilityPublicationProjection.project(catalog, selectedCapabilityIds);
+    }
+
     static boolean isSelectable(CapabilitySnapshot capability) {
         return capability.adapterAttached()
                 && capability.hardwarePresence() == HardwarePresence.PRESENT
-                && capability.ports().stream().anyMatch(
-                        port -> port.direction() == CapabilityPortDirection.SOURCE);
+                && capability.availability() != CapabilityAvailability.OFFLINE
+                && hasSource(capability);
+    }
+
+    private static boolean hasSource(CapabilitySnapshot capability) {
+        return capability.ports().stream().anyMatch(
+                port -> port.direction() == CapabilityPortDirection.SOURCE);
     }
 
     private static CapabilitySnapshot findCapability(

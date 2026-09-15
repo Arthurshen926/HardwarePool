@@ -959,6 +959,12 @@ The desktop Source checkbox now validates its cloned candidate selection through
 the eventual outbound catalog and permits stale intent to be removed after a
 Source transitions Offline. Desktop coverage is 56 passing tests plus six
 explicitly ignored physical/installed-device tests.
+Android now performs the matching local operation without adding a transport:
+its Service-owned candidate selection is projected against the current catalog
+before commit, unselected Source-bearing Capabilities are omitted and
+Sink/Control-only Capabilities remain visible. The hardware-free Android
+composition suite passes 208 assertions, including Offline deselection and
+fail-closed reselection. No APK was built or installed for this slice.
 
 The apparent post-stop UDP restart failure was then isolated from CapyIO. With
 UU Remote running, every tested port in 45980--46030 returned Winsock 10048

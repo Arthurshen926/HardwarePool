@@ -115,6 +115,10 @@ The same shared host now turns validated Source publication selections into an
 outbound catalog: it omits every unselected Source-bearing Capability, retains
 Sink/Control-only inventory, prunes Adapter ownership and fails closed on stale,
 non-Source or Offline selections. Platform invocation and delivery remain open.
+Android now mirrors that filtering rule in a pure local projector owned by the
+Node-side contract: its Service selection commits only after the whole candidate
+projects successfully, and stale Offline intent can be removed. The result is
+not yet encoded or delivered through a Session-bound control transport.
 
 The Windows Tauri host no longer retains `DemoLab` as its long-lived state.
 It consumes the fixture once at startup, then all desktop feature workers and

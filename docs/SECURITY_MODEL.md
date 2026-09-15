@@ -336,6 +336,13 @@ The Windows Tauri selection command uses the same projection transactionally:
 it commits the candidate set only after projection succeeds. Removing a stale
 selection is allowed after the corresponding Source becomes Offline, preventing
 an unavailable device from becoming permanently selected.
+Android applies the equivalent fail-closed rule in its Service-owned selection
+boundary and pure local publication projector. The projector rechecks every
+selected ID against the current catalog, preserves only unselected
+Sink/Control-only inventory and refuses an Offline, detached, absent or
+non-Source selection. Candidate state commits only after this complete
+projection succeeds; deselection remains possible after the selected Source
+goes Offline. No recipient, Session or endpoint is accepted from the WebView.
 
 ANDROID-A01E accepts only the fixed camera action ID and lifecycle-valid
 start/stop/retry. Start is returned to the visible Activity so Android owns the

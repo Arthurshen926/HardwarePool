@@ -8,6 +8,7 @@ import dev.capyio.android.contract.CapabilityCatalogSnapshot;
 import dev.capyio.android.contract.CapabilityLifecycleController;
 import dev.capyio.android.contract.CapabilityLifecycleState;
 import dev.capyio.android.contract.CapabilityPortDirection;
+import dev.capyio.android.contract.CapabilityPublicationProjection;
 import dev.capyio.android.contract.CapabilitySnapshot;
 import dev.capyio.android.contract.HardwarePresence;
 import dev.capyio.android.contract.GamepadNodeController;
@@ -32,6 +33,8 @@ public final class AndroidCapabilityModulesContractTest {
         reflectsGenerationBoundTouchpadLifecycleState();
         projectsTheCatalogIntoSharedUiSchemaFour();
         admitsOnlyLocalAttachedSourceSharingIntent();
+        projectsSelectedAndroidPublicationCatalog();
+        permitsDeselectionAfterAnAndroidSourceGoesOffline();
         projectsAndAdmitsClosedCapabilityQuickActions();
         appliesAndProjectsClosedGamepadUiCommands();
         parsesAndProjectsClosedTouchpadUiFrames();
@@ -279,6 +282,71 @@ public final class AndroidCapabilityModulesContractTest {
         check(selection.snapshot().size() == 3);
         check(selection.update(catalog, "test-node:android.imu", false));
         check(selection.snapshot().size() == 3);
+    }
+
+    private static void projectsSelectedAndroidPublicationCatalog() {
+        CapabilityCatalogSnapshot catalog = AndroidCapabilityModules.createRegistry(
+                new AudioNodeController(),
+                new CapabilityLifecycleController(),
+                new GamepadNodeController(),
+                new TouchpadNodeController(),
+                () -> true,
+                () -> true,
+                HardwarePresence.PRESENT,
+                HardwarePresence.PRESENT,
+                HardwarePresence.PRESENT,
+                HardwarePresence.PRESENT,
+                HardwarePresence.PRESENT,
+                HardwarePresence.PRESENT).snapshot("test-node");
+        AndroidSharingSelection selection = new AndroidSharingSelection();
+        check(selection.update(catalog, "test-node:android.microphone", true));
+        var published = selection.publicationCatalog(catalog);
+
+        check(published.nodeId().equals(catalog.nodeId()));
+        check(published.moduleCount() == catalog.moduleCount());
+        check(published.capabilities().size() == 3);
+        check(capability(published, "android.microphone") != null);
+        check(capability(published, "android.speaker") != null);
+        check(capability(published, "android.haptics") != null);
+        check(published.capabilities().stream().noneMatch(
+                capability -> "android.imu".equals(capability.capabilityKey())));
+        boolean rejected = false;
+        try {
+            CapabilityPublicationProjection.project(
+                    catalog,
+                    java.util.Set.of("test-node:android.speaker"));
+        } catch (IllegalArgumentException expected) {
+            rejected = true;
+        }
+        check(rejected);
+    }
+
+    private static void permitsDeselectionAfterAnAndroidSourceGoesOffline() {
+        CapabilityLifecycleController imu = new CapabilityLifecycleController();
+        var registry = AndroidCapabilityModules.createRegistry(
+                new AudioNodeController(),
+                imu,
+                new GamepadNodeController(),
+                new TouchpadNodeController(),
+                () -> true,
+                () -> true,
+                HardwarePresence.PRESENT,
+                HardwarePresence.PRESENT,
+                HardwarePresence.PRESENT,
+                HardwarePresence.PRESENT,
+                HardwarePresence.PRESENT,
+                HardwarePresence.PRESENT);
+        AndroidSharingSelection selection = new AndroidSharingSelection();
+        CapabilityCatalogSnapshot initialCatalog = registry.snapshot("test-node");
+
+        check(selection.update(initialCatalog, "test-node:android.imu", true));
+        TransitionToken start = imu.beginStart();
+        check(imu.fail(start.generation(), "CAPY.ANDROID.IMU_START_FAILED"));
+        CapabilityCatalogSnapshot offlineCatalog = registry.snapshot("test-node");
+        check(!AndroidSharingSelection.isSelectable(capability(offlineCatalog, "android.imu")));
+        check(selection.update(offlineCatalog, "test-node:android.imu", false));
+        check(selection.snapshot().isEmpty());
+        check(!selection.update(offlineCatalog, "test-node:android.imu", true));
     }
 
     private static int occurrences(String value, String target) {

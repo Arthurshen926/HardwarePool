@@ -1634,6 +1634,15 @@ the V2419A vibration service recorded the exact `dev.capyio.android` 35 ms,
 `ignored_for_settings`, so physical sensation is not claimed and the device
 setting was not changed. The test does not claim a Windows feedback Route.
 
+CAPY-INTEGRATED-ALPHA-002 raises the Android composition executable to 208
+assertions. The added checks project one selected microphone Source into a
+catalog that omits unselected IMU/gamepad/touchpad/camera Sources while retaining
+speaker and haptics Sinks, and reject a Sink presented as publication intent.
+They also prove that an already-selected IMU can be removed after entering
+Offline, cannot be selected again while Offline and leaves no stale selection.
+This is hardware-free local projection evidence, not transport delivery or peer
+admission evidence.
+
 ANDROID-A01E2 type-checks the common Vue Camera2 settings panel and compiles/
 lints its four-method Android bridge plus the reused inventory boundary. On the
 authorized V2419A, the panel enumerated seven bounded choices across directly

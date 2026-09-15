@@ -531,6 +531,11 @@ public final class AudioNodeService extends Service {
             return sharingSelection.snapshot();
         }
 
+        public CapabilityCatalogSnapshot publicationCatalog() {
+            return sharingSelection.publicationCatalog(
+                    AudioNodeService.this.capabilityCatalogSnapshot());
+        }
+
         public boolean setLocalCapabilityShared(String capabilityId, boolean selected) {
             boolean accepted = sharingSelection.update(
                     AudioNodeService.this.capabilityCatalogSnapshot(), capabilityId, selected);

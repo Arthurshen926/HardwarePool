@@ -62,6 +62,14 @@ cloned candidate set before committing it. This removes duplicated eligibility
 policy and permits an already-selected Source to be deselected after it becomes
 Offline.
 
+The Android Service-owned selection now follows the same publication policy at
+its Java boundary. A pure Android-local projector revalidates every selected
+Source against the current catalog, removes unselected Source-bearing
+Capabilities and retains Sink/Control-only inventory. Selection commits only
+after projection succeeds, while an already-selected Source may still be
+removed after it becomes Offline. This prepares an Android catalog for a future
+authenticated encoder invocation; it does not send the catalog.
+
 ## Evidence
 
 - `cargo test -p capyio-testkit`: 18 passed.
@@ -69,6 +77,10 @@ Offline.
 - `cargo test -p capyio-control-host`: 9 passed.
 - `cargo test -p capyio-desktop --lib`: 56 passed, 6 intentionally ignored
   physical/installed-device tests.
+- `platform/android/gradlew.bat --offline :app:capabilityCompositionTest`:
+  passed, 208 assertions.
+- `platform/android/gradlew.bat --offline :app:verifyDebugEntrypoints`: passed;
+  the unified Android service and bridge compiled against the existing SDK.
 - `cargo clippy -p capyio-runtime -p capyio-testkit --all-targets -- -D warnings`:
   passed.
 - Three focused regressions cover accepted replacement and Route
@@ -84,7 +96,8 @@ Offline.
   It opens no socket and does not authenticate a peer. The adjacent protocol
   helper decodes Protobuf but likewise grants no trust.
 - No Android or Windows host currently invokes it from a network control
-  connection. Windows now has the necessary process-owned Runtime seam only.
+  connection. Windows now has the necessary process-owned Runtime seam, and
+  Android can produce a locally filtered catalog only.
 - Platform invocation/delivery of projected catalogs, Route authorization,
   encrypted data-plane binding, replay defense, reconnect and pairing remain
   separate work.

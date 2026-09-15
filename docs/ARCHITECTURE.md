@@ -873,6 +873,13 @@ Source Port. A Sink, Control-only capability or foreign Node ID cannot be
 selected. An unattached capability cannot be selected; A01E therefore makes
 camera eligible only after attaching its Adapter. Selection does not start hardware, grant permission,
 authorize a Route or claim that a peer catalog has received the advertisement.
+The Android host now derives a separate local publication catalog from that
+selection before any future transport encoding. It retains Sink/Control-only
+Capabilities, removes unselected Source-bearing Capabilities and revalidates
+the complete candidate selection transactionally. A selected Source that later
+becomes Offline can still be removed, but cannot be selected again while
+ineligible. This is a local projection boundary only; Android still has no
+authenticated catalog transport.
 
 ANDROID-A01E composes the existing headless Camera2/MediaCodec service into the
 unified APK behind a narrow facade. The unexported camera foreground service,

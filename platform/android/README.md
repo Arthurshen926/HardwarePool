@@ -13,6 +13,14 @@ removed.
 The Android host will provide the phone's microphone, speaker and explicitly
 shared camera while reusing the shared Rust Core, Protocol and Runtime.
 
+The Node Service also owns the local Source publication selection. Before any
+future transport call, a pure contract projector revalidates the complete
+selection against the current Android catalog, omits unselected Source-bearing
+capabilities and retains Sink/Control-only inventory. Offline, detached,
+missing and non-Source selections fail closed; a previously selected Source can
+still be deselected after it goes Offline. This produces only a local catalog
+snapshot and does not imply Session trust, Route authorization or delivery.
+
 ## Camera2 service and retained lab
 
 The unified Node now compiles the proven `capyio-camera-app` Camera2/MediaCodec
