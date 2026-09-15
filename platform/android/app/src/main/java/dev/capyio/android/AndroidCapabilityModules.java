@@ -50,11 +50,13 @@ final class AndroidCapabilityModules {
                 imuController,
                 gamepadController,
                 touchpadController,
+                new CapabilityLifecycleController(),
                 microphonePermissionReady,
                 notificationPermissionReady,
                 () -> new CapabilityLifecycleSnapshot(
                         CapabilityLifecycleState.STOPPED, 0, null),
                 () -> false,
+                false,
                 false,
                 microphonePresence,
                 speakerPresence,
@@ -69,11 +71,13 @@ final class AndroidCapabilityModules {
             CapabilityLifecycleController imuController,
             GamepadNodeController gamepadController,
             TouchpadNodeController touchpadController,
+            CapabilityLifecycleController hapticsController,
             BooleanSupplier microphonePermissionReady,
             BooleanSupplier notificationPermissionReady,
             Supplier<CapabilityLifecycleSnapshot> cameraLifecycle,
             BooleanSupplier cameraPermissionReady,
             boolean cameraAdapterAttached,
+            boolean hapticsAdapterAttached,
             HardwarePresence microphonePresence,
             HardwarePresence speakerPresence,
             HardwarePresence cameraPresence,
@@ -115,9 +119,11 @@ final class AndroidCapabilityModules {
         registry.register(controllerModule(
                 imuController,
                 gamepadController,
+                hapticsController,
                 imuPresence,
                 touchSurfacePresence,
-                vibratorPresence));
+                vibratorPresence,
+                hapticsAdapterAttached));
         registry.register(new CapabilityModule() {
             @Override
             public String moduleKey() {
@@ -171,9 +177,11 @@ final class AndroidCapabilityModules {
     private static CapabilityModule controllerModule(
             CapabilityLifecycleController imuController,
             GamepadNodeController gamepadController,
+            CapabilityLifecycleController hapticsController,
             HardwarePresence imuPresence,
             HardwarePresence touchSurfacePresence,
-            HardwarePresence vibratorPresence) {
+            HardwarePresence vibratorPresence,
+            boolean hapticsAdapterAttached) {
         return new CapabilityModule() {
             @Override
             public String moduleKey() {
@@ -185,19 +193,53 @@ final class AndroidCapabilityModules {
                 return List.of(
                         imuCapability(imuController.snapshot(), imuPresence),
                         gamepadCapability(gamepadController.lifecycle(), touchSurfacePresence),
-                        pendingCapability(
-                                "android.haptics",
-                                "Phone Vibration",
-                                CapabilityKind.HAPTICS,
-                                CapabilityPermissionRequirement.NONE,
-                                vibratorPresence,
-                                "android.haptics.sink",
-                                "Haptics Feedback Sink",
-                                CapabilityPortDirection.SINK,
-                                "capyio.haptics.feedback/1",
-                                "dual-rumble-v1"));
+                        hapticsAdapterAttached
+                                ? hapticsCapability(hapticsController.snapshot(), vibratorPresence)
+                                : pendingCapability(
+                                        "android.haptics",
+                                        "Phone Vibration",
+                                        CapabilityKind.HAPTICS,
+                                        CapabilityPermissionRequirement.NONE,
+                                        vibratorPresence,
+                                        "android.haptics.sink",
+                                        "Haptics Feedback Sink",
+                                        CapabilityPortDirection.SINK,
+                                        "capyio.haptics.feedback/1",
+                                        "dual-rumble-v1"));
             }
         };
+    }
+
+    private static CapabilitySnapshot hapticsCapability(
+            CapabilityLifecycleSnapshot lifecycle,
+            HardwarePresence hardwarePresence) {
+        CapabilityAvailability availability;
+        String problemCode = lifecycle.problemCode();
+        if (hardwarePresence != HardwarePresence.PRESENT) {
+            availability = CapabilityAvailability.OFFLINE;
+            problemCode = inventoryProblem(hardwarePresence);
+        } else if (lifecycle.state() == CapabilityLifecycleState.FAILED) {
+            availability = CapabilityAvailability.OFFLINE;
+        } else {
+            availability = lifecycle.state().ownsAdapterLifecycle()
+                    ? CapabilityAvailability.BUSY
+                    : CapabilityAvailability.AVAILABLE;
+        }
+        return new CapabilitySnapshot(
+                "android.haptics",
+                "Phone Vibration",
+                CapabilityKind.HAPTICS,
+                availability,
+                CapabilityPermissionRequirement.NONE,
+                hardwarePresence,
+                true,
+                List.of(new CapabilityPortSnapshot(
+                        "android.haptics.sink",
+                        "Haptics Feedback Sink",
+                        CapabilityPortDirection.SINK,
+                        "capyio.haptics.feedback/1",
+                        List.of("dual-rumble-v1"))),
+                problemCode);
     }
 
     private static CapabilitySnapshot imuCapability(

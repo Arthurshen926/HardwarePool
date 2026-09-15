@@ -312,6 +312,13 @@ export endpoint is fixed by the facade and cannot be supplied through the UI
 command. Stop closes exporter, codec and camera resources and removes the
 foreground service.
 
+ANDROID-A01H adds only the fixed haptics lifecycle action and one bounded Binder
+command. Magnitudes are restricted to 0..1000, non-zero rumble duration to
+1..10000 ms, and the generation must match the Active Sink. Stop carries no
+strength or duration. The single-actuator projection accepts no peer, endpoint,
+Route, path or text payload; authorization remains mandatory before a future
+network worker may call it.
+
 The synthetic-touchpad injection harness is a local controlled-lab binary, not
 an allow-listed WebView/Node Runtime command. Its default path only projects and
 encodes fixed fixtures. Native submission requires both an explicit injection

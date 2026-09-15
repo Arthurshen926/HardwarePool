@@ -37,6 +37,7 @@ public final class AndroidCapabilityModulesContractTest {
         parsesAndProjectsClosedTouchpadUiFrames();
         projectsAndAdmitsClosedAudioQuickActions();
         attachesAndAdmitsClosedCameraQuickAction();
+        attachesAndAdmitsHapticsSink();
         System.out.println("Android Capability module composition: PASS ("
                 + assertions + " assertions)");
     }
@@ -467,7 +468,7 @@ public final class AndroidCapabilityModulesContractTest {
                 lifecycle.snapshot(),
                 lifecycle.snapshot(),
                 lifecycle.snapshot());
-        check(occurrences(stopped, "\"kind\":\"capability_control\"") == 6);
+        check(occurrences(stopped, "\"kind\":\"capability_control\"") == 7);
         check(stopped.contains("capyio.quick-action.android-microphone"));
         check(stopped.contains("capyio.quick-action.android-speaker"));
         check(stopped.contains("capyio.quick-action.android-camera"));
@@ -520,11 +521,13 @@ public final class AndroidCapabilityModulesContractTest {
                 new CapabilityLifecycleController(),
                 new GamepadNodeController(),
                 new TouchpadNodeController(),
+                new CapabilityLifecycleController(),
                 () -> true,
                 () -> true,
                 camera::snapshot,
                 () -> false,
                 true,
+                false,
                 HardwarePresence.PRESENT,
                 HardwarePresence.PRESENT,
                 HardwarePresence.PRESENT,
@@ -544,8 +547,9 @@ public final class AndroidCapabilityModulesContractTest {
                 false,
                 new CapabilityLifecycleController().snapshot(),
                 new GamepadNodeController().lifecycle(),
-                new TouchpadNodeController().lifecycle());
-        check(occurrences(stopped, "\"kind\":\"capability_control\"") == 6);
+                new TouchpadNodeController().lifecycle(),
+                new CapabilityLifecycleController().snapshot());
+        check(occurrences(stopped, "\"kind\":\"capability_control\"") == 7);
         check(stopped.contains("capyio.quick-action.android-camera"));
         check(stopped.contains("CAPY.ANDROID.PERMISSION_REQUIRED"));
         check(AndroidCameraCommand.parse(
@@ -571,6 +575,64 @@ public final class AndroidCapabilityModulesContractTest {
                 AndroidCameraCommand.ACTION_ID,
                 "start",
                 CapabilityLifecycleState.ACTIVE) == null);
+    }
+
+    private static void attachesAndAdmitsHapticsSink() {
+        CapabilityLifecycleController haptics = new CapabilityLifecycleController();
+        CapabilityCatalogSnapshot catalog = AndroidCapabilityModules.createRegistry(
+                new AudioNodeController(),
+                new CapabilityLifecycleController(),
+                new GamepadNodeController(),
+                new TouchpadNodeController(),
+                haptics,
+                () -> true,
+                () -> true,
+                () -> new dev.capyio.android.contract.CapabilityLifecycleSnapshot(
+                        CapabilityLifecycleState.STOPPED, 0, null),
+                () -> true,
+                true,
+                true,
+                HardwarePresence.PRESENT,
+                HardwarePresence.PRESENT,
+                HardwarePresence.PRESENT,
+                HardwarePresence.PRESENT,
+                HardwarePresence.PRESENT,
+                HardwarePresence.PRESENT).snapshot("test-node");
+        CapabilitySnapshot sink = capability(catalog, "android.haptics");
+        check(sink.adapterAttached());
+        check(sink.availability() == CapabilityAvailability.AVAILABLE);
+        check(sink.ports().get(0).direction() == CapabilityPortDirection.SINK);
+        check(!AndroidSharingSelection.isSelectable(sink));
+
+        check(AndroidCapabilityCommand.parse(
+                "capyio.quick-action.android-haptics", "start",
+                CapabilityLifecycleState.STOPPED).target()
+                == AndroidCapabilityCommand.Target.HAPTICS);
+        check(AndroidCapabilityCommand.parse(
+                "capyio.quick-action.android-haptics", "stop",
+                CapabilityLifecycleState.ACTIVE).operation()
+                == AndroidCapabilityCommand.Operation.STOP);
+        check(AndroidCapabilityCommand.parse(
+                "capyio.quick-action.android-haptics", "start",
+                CapabilityLifecycleState.ACTIVE) == null);
+
+        AndroidHapticsCommand rumble = AndroidHapticsCommand.rumble(4, 250, 800, 120);
+        check(rumble.generation() == 4 && rumble.highFrequency() == 800);
+        check(AndroidHapticsCommand.stop(4).stop());
+        boolean rejected = false;
+        try {
+            AndroidHapticsCommand.rumble(4, 0, 0, 120);
+        } catch (IllegalArgumentException expected) {
+            rejected = true;
+        }
+        check(rejected);
+        rejected = false;
+        try {
+            AndroidHapticsCommand.rumble(4, 1, 1, 10_001);
+        } catch (IllegalArgumentException expected) {
+            rejected = true;
+        }
+        check(rejected);
     }
 
     private static CapabilitySnapshot capability(

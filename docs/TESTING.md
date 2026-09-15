@@ -1607,6 +1607,18 @@ camera Start held Camera ID 0 under `dev.capyio.android` in a camera foreground
 service, and shared Stop removed the service and left `Active Camera Clients: []`.
 No camera pixels were retained.
 
+ANDROID-A01H raises the composition executable to 193 assertions. It covers the
+attached non-shareable haptics Sink, Available lifecycle projection, exact
+shared action admission and rejection, generation-bound command construction,
+zero-strength rejection and the 10-second duration ceiling. Android compilation
+and Lint cover the service-owned `Vibrator` projection and approved `VIBRATE`
+permission. The physical confirmation pulse remains a designated-device check;
+the V2419A vibration service recorded the exact `dev.capyio.android` 35 ms,
+0.28-amplitude request and UI Stop returned the lifecycle to Idle with
+`CurrentVibration: null`. The OS classified the pulse as
+`ignored_for_settings`, so physical sensation is not claimed and the device
+setting was not changed. The test does not claim a Windows feedback Route.
+
 Offline repository validation additionally pins the Gradle/AGP contract and
 checks the source manifest for the approved audio/camera/notification/foreground
 permissions, non-exported platform services, disabled backup/cleartext and the

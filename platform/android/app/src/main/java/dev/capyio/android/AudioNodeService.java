@@ -16,6 +16,7 @@ import android.os.Build;
 import android.os.Handler;
 import android.os.IBinder;
 import android.os.Looper;
+import android.os.Vibrator;
 
 import dev.capyio.android.contract.ActualAudioFormat;
 import dev.capyio.android.contract.AudioCapabilityKind;
@@ -63,12 +64,15 @@ public final class AudioNodeService extends Service {
             new CapabilityLifecycleController();
     private final GamepadNodeController gamepadController = new GamepadNodeController();
     private final TouchpadNodeController touchpadController = new TouchpadNodeController();
+    private final CapabilityLifecycleController hapticsController =
+            new CapabilityLifecycleController();
     private final AndroidSharingSelection sharingSelection = new AndroidSharingSelection();
 
     private CapabilityModuleRegistry capabilityRegistry;
     private MicrophoneSourceAdapter microphoneAdapter;
     private SpeakerSinkAdapter speakerAdapter;
     private ImuSourceAdapter imuAdapter;
+    private AndroidHapticsSinkAdapter hapticsAdapter;
     private String nodeId;
     private HardwarePresence touchSurfacePresence;
     private boolean foreground;
@@ -109,6 +113,7 @@ public final class AudioNodeService extends Service {
                 imuController,
                 gamepadController,
                 touchpadController,
+                hapticsController,
                 () -> checkSelfPermission(Manifest.permission.RECORD_AUDIO)
                         == PackageManager.PERMISSION_GRANTED,
                 () -> Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU
@@ -117,6 +122,7 @@ public final class AudioNodeService extends Service {
                 AudioNodeService::cameraLifecycleSnapshot,
                 () -> checkSelfPermission(Manifest.permission.CAMERA)
                         == PackageManager.PERMISSION_GRANTED,
+                true,
                 true,
                 inventory.microphonePresence(),
                 inventory.speakerPresence(),
@@ -145,6 +151,8 @@ public final class AudioNodeService extends Service {
                         notifyStateListener();
                     }
                 });
+        hapticsAdapter = new AndroidHapticsSinkAdapter(
+                getSystemService(Vibrator.class), hapticsController, this::notifyStateListener);
         createNotificationChannel();
         NativeLanMicrophoneSessionConfig microphoneConfig;
         try {
@@ -186,6 +194,9 @@ public final class AudioNodeService extends Service {
             stopCapability(AudioCapabilityKind.SPEAKER_SINK);
             stopImu();
             stopGamepad();
+            stopTouchpad();
+            hapticsAdapter.stop();
+            UnifiedCameraNodeFacade.stop(this);
         }
         return START_NOT_STICKY;
     }
@@ -214,6 +225,11 @@ public final class AudioNodeService extends Service {
         if (gamepad.accepted()) {
             gamepadController.completeStop(gamepad.generation());
         }
+        TransitionToken touchpad = touchpadController.beginStop();
+        if (touchpad.accepted()) {
+            touchpadController.completeStop(touchpad.generation());
+        }
+        hapticsAdapter.stop();
         stateListener = null;
         super.onDestroy();
     }
@@ -581,6 +597,36 @@ public final class AudioNodeService extends Service {
 
         public void stopTouchpad() {
             mainHandler.post(AudioNodeService.this::stopTouchpad);
+        }
+
+        public CapabilityLifecycleSnapshot hapticsLifecycle() {
+            return hapticsController.snapshot();
+        }
+
+        public void startHaptics() {
+            mainHandler.post(hapticsAdapter::start);
+        }
+
+        public void stopHaptics() {
+            mainHandler.post(hapticsAdapter::stop);
+        }
+
+        public boolean submitHaptics(
+                long generation, int lowFrequency, int highFrequency, int durationMillis) {
+            try {
+                return hapticsAdapter.submit(AndroidHapticsCommand.rumble(
+                        generation, lowFrequency, highFrequency, durationMillis));
+            } catch (IllegalArgumentException rejected) {
+                return false;
+            }
+        }
+
+        public boolean cancelHaptics(long generation) {
+            try {
+                return hapticsAdapter.submit(AndroidHapticsCommand.stop(generation));
+            } catch (IllegalArgumentException rejected) {
+                return false;
+            }
         }
 
         public int speakerUnderrunCount() {

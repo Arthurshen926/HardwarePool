@@ -156,6 +156,12 @@ owns foreground lifecycle. A foreground-only speaker run displayed 1,000
 received datagrams, 500 complete packets and 240,000 rendered frames without an
 Activity background/foreground rebind, with every error/drop counter at zero.
 
+The unified `0.5.1-dev` host also declares the explicitly approved normal
+`VIBRATE` permission. Its service-owned haptics Sink has a generation-bound
+0..1000 dual-rumble command, maps the stronger channel to the phone's single
+actuator and caps each effect at 10 seconds. Starting the local shared-UI action
+emits a short confirmation pulse; it does not claim remote feedback routing.
+
 ## Touchpad bridge slice
 
 `capyio-jni` and `touchpad-bridge` provide a buildable, primitive-only

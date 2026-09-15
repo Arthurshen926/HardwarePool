@@ -7,7 +7,8 @@ public record AndroidCapabilityCommand(Target target, Operation operation) {
     public enum Target {
         IMU,
         GAMEPAD,
-        TOUCHPAD
+        TOUCHPAD,
+        HAPTICS
     }
 
     public enum Operation {
@@ -37,6 +38,8 @@ public record AndroidCapabilityCommand(Target target, Operation operation) {
             target = Target.GAMEPAD;
         } else if ("capyio.quick-action.android-touchpad".equals(actionId)) {
             target = Target.TOUCHPAD;
+        } else if ("capyio.quick-action.android-haptics".equals(actionId)) {
+            target = Target.HAPTICS;
         } else {
             return null;
         }

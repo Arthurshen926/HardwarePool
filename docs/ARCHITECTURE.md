@@ -848,6 +848,14 @@ packaged ES module and stylesheet. The host now uses a fixed
 APK-asset `WebViewClient`; file/content access is disabled and every other
 scheme, host, port or path returns a denied response.
 
+ANDROID-A01H attaches the catalogued haptics Sink to a Service-owned default
+Android vibrator. One generation-bound Adapter maps the maximum of the portable
+dual-rumble magnitudes onto the single actuator while retaining the contract's
+10-second duration bound. It accepts commands only for the current Active
+generation; Stop cancels the platform effect. The shared action controls this
+local lifecycle and emits one short confirmation pulse on Start. No feedback
+Route, peer authority or dual-motor fidelity is inferred.
+
 ADR 0044 subsequently adds the approved network permission and a separate
 dependency-free LAN codec/socket worker boundary. ADRs 0046 and 0047 now attach
 the speaker Sink and microphone Source respectively: `AudioTrack` consumes the

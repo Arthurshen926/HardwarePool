@@ -41,10 +41,10 @@ Display is excluded until its feature branch is complete.
    separate. A01B3 supplies the generation-bound non-audio lifecycle contract,
    attaches accelerometer/gyroscope registration to the unified Service, and
    attaches a bounded, generation-scoped touch-gamepad snapshot facade that
-   neutralizes on Stop. Its shared UI surface, haptics and touchpad remain
-   pending while standalone labs are preserved. Haptics is held
-   behind separate approval for the `VIBRATE` Manifest permission. None of these
-   slices adds a permission or service declaration.
+   neutralizes on Stop. Its shared UI surface and touchpad were completed by
+   A01D; the service-owned haptics Sink and its bounded feedback command are
+   completed by A01H after explicit `VIBRATE` approval. Standalone labs remain
+   available as parity harnesses.
 3. **A01C — Android observer shell (complete):** A01C1 builds the
    shared Vue source and packages it under `assets/capyio-ui`, with relative-path
    and required-asset gates. A01C2 renders it on demand in a network-blocked
@@ -81,6 +81,11 @@ Display is excluded until its feature branch is complete.
    exact foreground-loss and neutral/cancel behavior.
 7. **A01G — migration closeout:** remove redundant product launchers only after
    parity evidence, rollback instructions and the unified APK gate pass.
+8. **A01H — haptics Sink (complete):** after explicit approval, declare the
+   normal `VIBRATE` permission, attach a generation-bound single-actuator
+   projection of `dual-rumble-v1`, expose shared-UI lifecycle control and a
+   bounded Binder command. Start emits one short visible-action confirmation
+   pulse; remote feedback still requires an authorized Route.
 
 ## Acceptance
 

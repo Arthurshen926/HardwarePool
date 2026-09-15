@@ -58,7 +58,7 @@ public final class AndroidUiSnapshotJson {
         json.append(']');
         appendEmptyCollections(json);
         json.append(",\"warnings\":[");
-        appendQuoted(json, "Android shared UI controls local IMU, gamepad and touchpad lifecycles and input state.");
+        appendQuoted(json, "Android shared UI controls local audio, camera, IMU, gamepad, haptics and touchpad lifecycles plus bounded input state.");
         json.append(',');
         appendQuoted(json, "Sharing selection records local publication intent; Routes and remote catalog exchange are not attached yet.");
         json.append("],\"imuFixture\":null}");
@@ -133,7 +133,8 @@ public final class AndroidUiSnapshotJson {
                 false,
                 imu,
                 gamepad,
-                touchpad);
+                touchpad,
+                new CapabilityLifecycleSnapshot(CapabilityLifecycleState.STOPPED, 0, null));
     }
 
     public static String encodeQuickActions(
@@ -144,8 +145,10 @@ public final class AndroidUiSnapshotJson {
             boolean cameraPermissionReady,
             CapabilityLifecycleSnapshot imu,
             CapabilityLifecycleSnapshot gamepad,
-            CapabilityLifecycleSnapshot touchpad) {
-        if (audio == null || camera == null || imu == null || gamepad == null || touchpad == null) {
+            CapabilityLifecycleSnapshot touchpad,
+            CapabilityLifecycleSnapshot haptics) {
+        if (audio == null || camera == null || imu == null || gamepad == null
+                || touchpad == null || haptics == null) {
             throw new IllegalArgumentException("Audio and input snapshots are required");
         }
         StringBuilder json = new StringBuilder(3584);
@@ -176,6 +179,9 @@ public final class AndroidUiSnapshotJson {
         json.append(',');
         appendQuickAction(json, "capyio.quick-action.android-touchpad", "Touchpad surface",
                 "Start or stop the service-owned complete multi-touch state Adapter.", touchpad);
+        json.append(',');
+        appendQuickAction(json, "capyio.quick-action.android-haptics", "Phone vibration",
+                "Start the service-owned feedback Sink with a short confirmation pulse.", haptics);
         json.append(']');
         return json.toString();
     }

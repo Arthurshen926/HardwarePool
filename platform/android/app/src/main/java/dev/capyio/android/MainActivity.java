@@ -418,7 +418,8 @@ public final class MainActivity extends Activity {
                     cameraPermissionsGranted(),
                     current.imuLifecycle(),
                     current.gamepadLifecycle(),
-                    current.touchpadLifecycle());
+                    current.touchpadLifecycle(),
+                    current.hapticsLifecycle());
         }
 
         @JavascriptInterface
@@ -541,6 +542,8 @@ public final class MainActivity extends Activity {
                 lifecycle = current.gamepadLifecycle();
             } else if ("capyio.quick-action.android-touchpad".equals(actionId)) {
                 lifecycle = current.touchpadLifecycle();
+            } else if ("capyio.quick-action.android-haptics".equals(actionId)) {
+                lifecycle = current.hapticsLifecycle();
             } else {
                 return false;
             }
@@ -571,6 +574,13 @@ public final class MainActivity extends Activity {
                         current.stopTouchpad();
                     } else {
                         current.startTouchpad();
+                    }
+                }
+                case HAPTICS -> {
+                    if (command.operation() == AndroidCapabilityCommand.Operation.STOP) {
+                        current.stopHaptics();
+                    } else {
+                        current.startHaptics();
                     }
                 }
             }

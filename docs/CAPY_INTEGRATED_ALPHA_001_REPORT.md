@@ -129,6 +129,14 @@ the packaged ES module or stylesheet because its origin was null. The unified
 host now serves only the packaged subtree from a fixed APK-only HTTPS origin,
 with file/content access disabled and every non-CapyIO request denied.
 
+A01H attaches the remaining Android haptics catalog entry. The Node Service owns
+one generation-bound vibrator Sink, the shared UI controls its lifecycle, and a
+bounded Binder command preserves normalized strength and maximum-duration
+validation while projecting two rumble channels onto the phone's single
+actuator. The explicitly approved `VIBRATE` permission has no runtime prompt.
+This provides the local Sink boundary; Windows feedback delivery still needs an
+authorized Route.
+
 ## Automated evidence
 
 - `cargo test --offline -p capyio-input -p capyio-dsu-adapter -p capyio-viiper-adapter -p capyio-windows-input -p capyio-desktop`: passed after the gamepad merge.
@@ -167,12 +175,21 @@ with file/content access disabled and every non-CapyIO request denied.
 - the A01E composition executable passed 182 assertions, adding attached camera
   catalog/format/permission/lifecycle/publication checks and exact camera command
   admission/rejection.
+- the A01H composition executable passed 193 assertions, adding attached Sink
+  availability, haptics lifecycle admission, generation/strength/duration bounds
+  and malformed-command rejection.
 - an authorized V2419A Android 16 run installed the unified debug APK and rendered
   the shared Vue UI. Its camera action produced an active unexported foreground
   service and Camera Service client for `dev.capyio.android` on ID 0; UI Stop
   removed the service, recorded DISCONNECT and left no active camera client. The
   final installed `0.5.0-dev` APK SHA-256 is
   `07C6D2943C5ED98D824838FDD7DD61145A81DC6759B7F98B8EED74BCAF04EC39`.
+- the final `0.5.1-dev` APK SHA-256 is
+  `EAAA1FAB46268FA2CAEF3A1DC6053DD2EA6A963F95FF3BBCC1F055FFE60BAAEF`.
+  The VIBRATE permission was granted; shared-UI Start reached Active and Android
+  recorded CapyIO's bounded 35 ms / 0.28 request. The OS suppressed it under the
+  current haptic setting, so tactile perception is not claimed. UI Stop returned
+  Idle and `CurrentVibration` was null.
 - `jar tf platform/android/app/build/outputs/apk/debug/app-debug.apk`: confirmed
   `assets/capyio-ui/index.html` and generated JavaScript/CSS in the assembled
   archive; the entrypoint references both assets with `./assets/...` paths.
@@ -181,7 +198,8 @@ with file/content access disabled and every non-CapyIO request denied.
 
 - no push, pull request, package publication or production signing;
 - no APK installation or Android permission/service change except the explicitly
-  authorized A01E unified debug APK, CAMERA and camera foreground-service slice;
+  authorized A01E/A01H unified debug APK, CAMERA, camera foreground-service and
+  normal VIBRATE slices;
 - no Windows driver install/removal, restart or boot/security-policy change;
 - no Display merge or Display worktree modification;
 - no claim that the Tauri schema-4 fixture catalog is real hardware discovery;

@@ -202,12 +202,16 @@ def validate_android_audio_shell() -> None:
     )
     required_manifest = [
         'android.permission.RECORD_AUDIO',
+        'android.permission.CAMERA',
+        'android.permission.VIBRATE',
         'android.permission.POST_NOTIFICATIONS',
         'android.permission.FOREGROUND_SERVICE',
         'android.permission.FOREGROUND_SERVICE_MICROPHONE',
         'android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK',
+        'android.permission.FOREGROUND_SERVICE_CAMERA',
         'android.permission.INTERNET',
         'android:foregroundServiceType="microphone|mediaPlayback"',
+        'android:foregroundServiceType="camera"',
         'android:exported="false"',
         'android:stopWithTask="false"',
         'android:usesCleartextTraffic="false"',
@@ -231,6 +235,8 @@ def validate_android_audio_shell() -> None:
         "verifyDebugEntrypoints",
         "dev/capyio/android/MainActivity.class",
         "dev/capyio/android/AudioNodeService.class",
+        "dev/capyio/android/AndroidHapticsSinkAdapter.class",
+        "io/capyio/camera/lab/CameraCaptureService.class",
     ]
     missing_build = [token for token in build_required if token not in app_build]
     if missing_build:

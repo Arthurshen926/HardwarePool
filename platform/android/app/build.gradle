@@ -63,8 +63,8 @@ android {
         applicationId = 'dev.capyio.android'
         minSdk = 29
         targetSdk = 36
-        versionCode = 12
-        versionName = '0.5.0-dev'
+        versionCode = 13
+        versionName = '0.5.1-dev'
         manifestPlaceholders = [
             capyioSpeakerLabEnabled: System.getenv('CAPYIO_ANDROID_SPEAKER_PEER_IPV4') == null
                     ? 'false' : 'true',
@@ -139,6 +139,8 @@ tasks.register('verifyDebugEntrypoints') {
             'dev/capyio/android/AndroidCapabilityCommand.class',
             'dev/capyio/android/AndroidAudioCommand.class',
             'dev/capyio/android/AndroidCameraCommand.class',
+            'dev/capyio/android/AndroidHapticsCommand.class',
+            'dev/capyio/android/AndroidHapticsSinkAdapter.class',
             'dev/capyio/android/AndroidAssetWebViewClient.class',
             'dev/capyio/android/AndroidSharingSelection.class',
             'dev/capyio/android/AndroidGamepadUiCommand.class',
@@ -163,6 +165,7 @@ tasks.register('compileCapabilityCompositionTest', JavaCompile) {
     source file('src/main/java/dev/capyio/android/AndroidCapabilityCommand.java')
     source file('src/main/java/dev/capyio/android/AndroidAudioCommand.java')
     source file('src/main/java/dev/capyio/android/AndroidCameraCommand.java')
+    source file('src/main/java/dev/capyio/android/AndroidHapticsCommand.java')
     source file('src/main/java/dev/capyio/android/AndroidSharingSelection.java')
     source file('src/main/java/dev/capyio/android/AndroidGamepadUiCommand.java')
     source file('src/main/java/dev/capyio/android/AndroidTouchpadUiFrame.java')
