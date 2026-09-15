@@ -75,6 +75,12 @@ after projection succeeds, while an already-selected Source may still be
 removed after it becomes Offline. This prepares an Android catalog for a future
 authenticated encoder invocation; it does not send the catalog.
 
+ADR 1404 supplies the stable identity layer needed by the next Android Core
+projection. Both Java and Rust derive Adapter, Capability and Port UUIDv5 values
+from the persisted Node UUID and typed canonical-key paths, with shared fixed
+vectors. The mapping does not yet fill Core Adapter, QoS or interoperability
+fields and therefore does not claim a complete Android wire catalog.
+
 ## Evidence
 
 - `cargo test -p capyio-testkit`: 18 passed.
@@ -86,6 +92,10 @@ authenticated encoder invocation; it does not send the catalog.
   passed, 208 assertions.
 - `platform/android/gradlew.bat --offline :app:verifyDebugEntrypoints`: passed;
   the unified Android service and bridge compiled against the existing SDK.
+- `cargo test -p capyio-android-host --offline`: 13 tests passed, including
+  three cross-language identity-contract tests.
+- `platform/android/gradlew.bat --offline
+  :node-contract:capabilityCatalogContractTest`: passed, 22 assertions.
 - `cargo clippy -p capyio-runtime -p capyio-testkit --all-targets -- -D warnings`:
   passed.
 - Three focused regressions cover accepted replacement and Route
@@ -114,7 +124,8 @@ authenticated encoder invocation; it does not send the catalog.
   across Android and desktop hosts.
 - Dependencies: workspace `capyio-core`, `capyio-protocol`, `capyio-runtime`
   and `thiserror`; Windows desktop now consumes the internal control-host crate.
-  No new third-party package or network stack was added.
+  ADR 1404 adds the already locked RustCrypto `sha1` 0.11 crate to the Android
+  host solely for UUIDv5 fixed-vector parity. No network stack was added.
 - License/maintenance: Apache-2.0 workspace crate maintained with the main
   Runtime and protocol contracts.
 - Alternatives considered: duplicating admission in each platform host would

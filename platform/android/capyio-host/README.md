@@ -1,7 +1,16 @@
 # CapyIO Android Host boundary
 
 This crate owns the platform-side pure data boundary for a future unified
-Android Node host. `CAPY-PTP-002A` adds a narrow `MotionEvent` DTO mapper; it:
+Android Node host.
+
+ADR 1404 also defines the pure catalog identity boundary. A persisted Android
+Node UUID namespaces domain-separated UUIDv5 names for one current Adapter per
+Capability key, each Capability and each Port. Java and Rust share fixed
+vectors, and canonical Android keys remain bounded to 96 bytes. These public
+identifiers do not supply Adapter lifecycle, QoS, interoperability, Session
+trust or Route authorization.
+
+`CAPY-PTP-002A` adds a narrow `MotionEvent` DTO mapper; it:
 
 - requires an initial `cancel_all` for each stream epoch;
 - maps Android post-event pointer lifecycles to complete `TouchpadFrame`

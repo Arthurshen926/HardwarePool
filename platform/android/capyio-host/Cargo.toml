@@ -9,3 +9,5 @@ license.workspace = true
 [dependencies]
 capyio-core = { path = "../../../crates/capyio-core" }
 capyio-input = { path = "../../../crates/capyio-input" }
+sha1.workspace = true
+uuid.workspace = true

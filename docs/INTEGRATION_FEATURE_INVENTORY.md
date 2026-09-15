@@ -119,6 +119,10 @@ Android now mirrors that filtering rule in a pure local projector owned by the
 Node-side contract: its Service selection commits only after the whole candidate
 projects successfully, and stale Offline intent can be removed. The result is
 not yet encoded or delivered through a Session-bound control transport.
+The Android host and Java contract now also share stable UUIDv5 derivation for
+Adapter, Capability and Port identity under the persisted Node UUID. Complete
+Core catalog mapping still needs explicit QoS/interoperability and Adapter
+lifecycle fields before protocol encoding.
 
 The Windows Tauri host no longer retains `DemoLab` as its long-lived state.
 It consumes the fixture once at startup, then all desktop feature workers and

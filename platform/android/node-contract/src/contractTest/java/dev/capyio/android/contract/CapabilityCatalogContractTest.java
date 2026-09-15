@@ -11,6 +11,7 @@ public final class CapabilityCatalogContractTest {
         preservesPortDirectionAndModuleOrder();
         rejectsDuplicateAndUnboundedState();
         distinguishesUnattachedModulesFromAvailableHardware();
+        derivesStableCrossLanguageCatalogIdentities();
         System.out.println("Android Capability catalog contract: PASS ("
                 + assertions + " assertions)");
     }
@@ -105,6 +106,21 @@ public final class CapabilityCatalogContractTest {
         check(pending.availability() == CapabilityAvailability.OFFLINE);
         check(pending.hardwarePresence() == HardwarePresence.PRESENT);
         check("CAPY.ANDROID.MODULE_NOT_ATTACHED".equals(pending.problemCode()));
+    }
+
+    private static void derivesStableCrossLanguageCatalogIdentities() {
+        String nodeId = "00000000-0000-4000-8000-00000000a001";
+        check("b6cfd6b8-f99c-5fe4-8b55-cba830f956d0".equals(
+                AndroidCatalogIdentity.adapterId(nodeId, "android.imu")));
+        check("ecaefa6d-6e4e-577e-9ef3-73760663dba7".equals(
+                AndroidCatalogIdentity.capabilityId(nodeId, "android.imu")));
+        check("44a9ac57-5493-5083-9bae-6cb997420e4a".equals(
+                AndroidCatalogIdentity.portId(
+                        nodeId, "android.imu", "android.imu.source")));
+        check(!AndroidCatalogIdentity.adapterId(nodeId, "android.imu").equals(
+                AndroidCatalogIdentity.capabilityId(nodeId, "android.imu")));
+        expectFailure(() -> AndroidCatalogIdentity.capabilityId("not-a-uuid", "android.imu"));
+        expectFailure(() -> AndroidCatalogIdentity.portId(nodeId, "android.imu", "Bad Port"));
     }
 
     private static CapabilityModule module(String moduleKey, CapabilitySnapshot capability) {

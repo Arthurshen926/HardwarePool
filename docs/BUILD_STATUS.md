@@ -970,6 +970,12 @@ before commit, unselected Source-bearing Capabilities are omitted and
 Sink/Control-only Capabilities remain visible. The hardware-free Android
 composition suite passes 208 assertions, including Offline deselection and
 fail-closed reselection. No APK was built or installed for this slice.
+ADR 1404 now closes the next Android-to-Core identity prerequisite. Java and
+Rust derive matching, domain-separated RFC 4122 UUIDv5 Adapter, Capability and
+Port IDs from the persisted Node UUID plus canonical platform keys. The Android
+host has three new deterministic identity tests and the Java catalog contract
+passes 22 assertions. QoS, interoperability and complete NodeDescriptor mapping
+remain deliberately separate.
 
 The apparent post-stop UDP restart failure was then isolated from CapyIO. With
 UU Remote running, every tested port in 45980--46030 returned Winsock 10048

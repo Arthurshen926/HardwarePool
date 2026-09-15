@@ -1645,6 +1645,13 @@ Offline, cannot be selected again while Offline and leaves no stale selection.
 This is hardware-free local projection evidence, not transport delivery or peer
 admission evidence.
 
+ADR 1404 adds three `capyio-android-host` identity tests and raises the Android
+Capability catalog contract to 22 assertions. Java and Rust match the same
+Adapter/Capability/Port UUIDv5 vectors, prove Node and identity-domain
+separation, and reject malformed or overlong platform keys. These tests prove
+stable identifier derivation only; they do not yet construct a complete Core
+NodeDescriptor or encode an Android CatalogSnapshot.
+
 ANDROID-A01E2 type-checks the common Vue Camera2 settings panel and compiles/
 lints its four-method Android bridge plus the reused inventory boundary. On the
 authorized V2419A, the panel enumerated seven bounded choices across directly

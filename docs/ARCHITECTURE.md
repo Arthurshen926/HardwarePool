@@ -884,6 +884,12 @@ the complete candidate selection transactionally. A selected Source that later
 becomes Offline can still be removed, but cannot be selected again while
 ineligible. This is a local projection boundary only; Android still has no
 authenticated catalog transport.
+ADR 1404 gives that future Core projection stable typed identities without
+persisting a second catalog database. The persisted Android Node UUID is the
+UUIDv5 namespace; typed `adapter/`, `capability/` and `port/` paths over bounded
+platform keys are shared by Java and Rust fixed vectors. This defines identity
+only and does not infer Adapter readiness, QoS, interoperability or Route
+support.
 
 ANDROID-A01E composes the existing headless Camera2/MediaCodec service into the
 unified APK behind a narrow facade. The unexported camera foreground service,

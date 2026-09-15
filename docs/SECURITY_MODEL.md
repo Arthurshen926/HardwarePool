@@ -349,6 +349,12 @@ Sink/Control-only inventory and refuses an Offline, detached, absent or
 non-Source selection. Candidate state commits only after this complete
 projection succeeds; deselection remains possible after the selected Source
 goes Offline. No recipient, Session or endpoint is accepted from the WebView.
+Android descendant catalog UUIDs are deterministic UUIDv5 values namespaced by
+the app-private persisted Node UUID and domain-separated for Adapter,
+Capability and Port identities. Platform keys are locally authored, canonical
+and bounded before hashing. UUIDv5's SHA-1 digest is not used for secrecy,
+signing or peer authentication; every derived ID remains public and still
+requires Session and Route authorization.
 
 ANDROID-A01E accepts only the fixed camera action ID and lifecycle-valid
 start/stop/retry. Start is returned to the visible Activity so Android owns the
