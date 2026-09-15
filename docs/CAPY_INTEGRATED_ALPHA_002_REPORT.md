@@ -57,13 +57,17 @@ bootstrap Session ID and demo Route allow-list; every existing desktop feature
 worker and UI command shares that Runtime directly. This is the required state
 ownership seam for a later authenticated control connection, not a network or
 authentication implementation.
+Windows desktop publication selection now calls the shared projection on a
+cloned candidate set before committing it. This removes duplicated eligibility
+policy and permits an already-selected Source to be deselected after it becomes
+Offline.
 
 ## Evidence
 
 - `cargo test -p capyio-testkit`: 18 passed.
 - `cargo test -p capyio-protocol`: 11 passed.
 - `cargo test -p capyio-control-host`: 9 passed.
-- `cargo test -p capyio-desktop --lib`: 55 passed, 6 intentionally ignored
+- `cargo test -p capyio-desktop --lib`: 56 passed, 6 intentionally ignored
   physical/installed-device tests.
 - `cargo clippy -p capyio-runtime -p capyio-testkit --all-targets -- -D warnings`:
   passed.
@@ -91,7 +95,8 @@ authentication implementation.
 - Purpose: keep protocol decoding and Runtime mutation composition identical
   across Android and desktop hosts.
 - Dependencies: workspace `capyio-core`, `capyio-protocol`, `capyio-runtime`
-  and `thiserror`; no new third-party package or network stack was added.
+  and `thiserror`; Windows desktop now consumes the internal control-host crate.
+  No new third-party package or network stack was added.
 - License/maintenance: Apache-2.0 workspace crate maintained with the main
   Runtime and protocol contracts.
 - Alternatives considered: duplicating admission in each platform host would

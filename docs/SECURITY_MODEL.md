@@ -332,6 +332,10 @@ authenticate the recipient or authorize a Route.
 The outbound operation obtains its Session ID from the same exact peer binding
 used for inbound admission; the platform caller supplies only the current local
 catalog and publication selection, not a second Session identifier.
+The Windows Tauri selection command uses the same projection transactionally:
+it commits the candidate set only after projection succeeds. Removing a stale
+selection is allowed after the corresponding Source becomes Offline, preventing
+an unavailable device from becoming permanently selected.
 
 ANDROID-A01E accepts only the fixed camera action ID and lifecycle-valid
 start/stop/retry. Start is returned to the visible Activity so Android owns the

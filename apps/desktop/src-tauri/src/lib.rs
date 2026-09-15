@@ -11,6 +11,7 @@ use std::{
     time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
 
+use capyio_control_host::project_publication_catalog;
 use capyio_core::{
     AdapterDeploymentMode, Availability, CapabilityClass, CapabilityId, NodeDescriptor,
     OnlineState, PermissionRequirement, PortDirection, PortRef, QosMode, Route, RouteId,
@@ -1257,26 +1258,20 @@ fn update_local_capability_selection(
     enabled: bool,
 ) -> Result<(), String> {
     let snapshot = runtime.snapshot();
-    let capability = snapshot
+    snapshot
         .local_node
         .capabilities
         .get(&capability_id)
         .ok_or_else(|| "Capability is not advertised by the local Node".to_owned())?;
-    if capability.availability == Availability::Offline {
-        return Err("offline Capability cannot be selected for sharing".to_owned());
-    }
-    if !capability
-        .ports
-        .values()
-        .any(|port| port.direction == PortDirection::Source)
-    {
-        return Err("Capability has no local Source Port to share".to_owned());
-    }
+    let mut candidate = selected.clone();
     if enabled {
-        selected.insert(capability_id);
+        candidate.insert(capability_id);
     } else {
-        selected.remove(&capability_id);
+        candidate.remove(&capability_id);
     }
+    project_publication_catalog(&snapshot.local_node, &candidate)
+        .map_err(|error| error.to_string())?;
+    *selected = candidate;
     Ok(())
 }
 
@@ -1620,6 +1615,49 @@ mod tests {
 
         assert_eq!(error, "Route is not controlled by the deterministic demo");
         assert_eq!(node.runtime.snapshot(), before);
+    }
+
+    #[test]
+    fn desktop_can_remove_stale_publication_intent_after_source_goes_offline() {
+        let mut node = DesktopNodeState::demo().expect("demo Runtime bootstrap");
+        let snapshot = node.runtime.snapshot();
+        let source = snapshot
+            .local_node
+            .capabilities
+            .values()
+            .find(|capability| {
+                capability.availability != Availability::Offline
+                    && capability
+                        .ports
+                        .values()
+                        .any(|port| port.direction == PortDirection::Source)
+            })
+            .expect("available Source Capability");
+        let capability_id = source.id;
+        let adapter_id = source.adapter_instance_id;
+        let mut selected = BTreeSet::new();
+        update_local_capability_selection(&node.runtime, &mut selected, capability_id, true)
+            .expect("select Source");
+
+        let mut replacement: Vec<_> = snapshot
+            .local_node
+            .capabilities
+            .values()
+            .filter(|capability| capability.adapter_instance_id == adapter_id)
+            .cloned()
+            .collect();
+        replacement
+            .iter_mut()
+            .find(|capability| capability.id == capability_id)
+            .expect("selected Source in Adapter catalog")
+            .availability = Availability::Offline;
+        node.runtime
+            .replace_adapter_catalog(snapshot.local_node.id, adapter_id, replacement)
+            .expect("replace local Adapter catalog");
+
+        update_local_capability_selection(&node.runtime, &mut selected, capability_id, false)
+            .expect("remove stale selection");
+        assert!(selected.is_empty());
     }
 
     #[test]

@@ -15,6 +15,9 @@ components Windows-only.
 Tauri and browser catalogs are fixtures and are visibly labeled as such. A
 local Source selection is process-local publication intent, not permission,
 Session authorization, Route start or proof of physical hardware discovery.
+The Tauri host validates that intent with the shared control-host publication
+projection before committing it, so the eventual outbound Catalog uses the same
+eligibility policy. No control transport is opened by the checkbox.
 
 See `docs/adr/1400-share-vue-tauri-ui-across-platform-hosts.md` and
 `docs/plans/active/ANDROID-A01-unified-node-and-ui.md`.

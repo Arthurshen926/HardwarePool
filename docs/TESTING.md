@@ -1272,6 +1272,9 @@ typed capability, availability, permission and Port-direction fields, and the
 UI build typechecks both local and peer catalog components. These tests prove
 catalog projection and selection policy only, not physical hardware discovery,
 peer authentication, permission grant or data publication.
+The desktop selection regression also changes a selected local Source to
+Offline through Runtime catalog replacement and verifies deselection succeeds;
+candidate projection failures never partially commit the selection set.
 
 ## Audio Share external-process probe tests
 

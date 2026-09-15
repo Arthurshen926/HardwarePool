@@ -173,6 +173,10 @@ Capability is indivisible and is omitted as a whole when unselected.
 The final outbound encoder is a method on the same admitted peer-control object
 that processes inbound catalogs, so platform code cannot independently choose a
 different Session ID for publication.
+Windows desktop selection now executes this shared projection against a cloned
+candidate set before committing process-local intent. A failed projection leaves
+the previous selection unchanged, while deselection remains possible after a
+previously selected Source becomes Offline.
 
 The built-in Controller view is shared presentation code for desktop and a
 future Android host. It emits closed semantic control changes; a trusted host

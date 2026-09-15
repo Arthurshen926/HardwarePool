@@ -954,6 +954,11 @@ restricted to the retained allow-list. This removes the fixture wrapper from
 the long-lived platform state and prepares one Runtime ownership seam for later
 authenticated catalog admission; no network listener or trust establishment is
 added.
+The desktop Source checkbox now validates its cloned candidate selection through
+`capyio-control-host` before committing it. This aligns Windows UI intent with
+the eventual outbound catalog and permits stale intent to be removed after a
+Source transitions Offline. Desktop coverage is 56 passing tests plus six
+explicitly ignored physical/installed-device tests.
 
 The apparent post-stop UDP restart failure was then isolated from CapyIO. With
 UU Remote running, every tested port in 45980--46030 returned Winsock 10048

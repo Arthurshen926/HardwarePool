@@ -122,6 +122,9 @@ UI commands share a process-owned `NodeRuntime`; only the bootstrap Session and
 demo Route allow-list remain alongside it. This establishes the state-ownership
 seam needed for a future authenticated control connection without claiming that
 such a connection exists today.
+Windows Source-checkbox mutations now validate the complete candidate set using
+the same shared publication projection before committing process-local state;
+stale selections can be removed after a Source becomes Offline.
 
 1. Route touchpad, IMU, gamepad and haptics through bounded typed data planes.
    Their local lifecycles/UI state and publication selection are attached, but
