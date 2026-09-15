@@ -14,18 +14,19 @@ use std::{
 use capyio_core::{
     AdapterDeploymentMode, Availability, CapabilityClass, CapabilityId, NodeDescriptor,
     OnlineState, PermissionRequirement, PortDirection, PortRef, QosMode, Route, RouteId,
-    RouteState,
+    RouteState, SessionId,
 };
 use capyio_data_plane::{
     BoundedFanout, BoundedJsonlRecorder, ImuSampleV1, NumericImuPanel, RecorderOutcome,
     parse_imu_fixture_jsonl,
 };
+use capyio_runtime::NodeRuntime;
 use capyio_sensor_server_adapter::{
     AssembleOutcome, SensorKind, SensorServerConnectionConfig, SensorServerEndpoint,
     SensorServerImuAssembler, SensorServerReadOutcome, SensorServerReading,
     SensorServerWebSocketClient,
 };
-use capyio_testkit::DemoLab;
+use capyio_testkit::{DemoLab, DemoRoutes};
 use serde::{Deserialize, Serialize};
 use tauri::State;
 
@@ -48,7 +49,7 @@ use quick_actions::{
 use windows_gamepad_host::WindowsGamepadHost;
 
 struct AppState {
-    lab: Arc<Mutex<DemoLab>>,
+    node: Arc<Mutex<DesktopNodeState>>,
     local_shared_capabilities: Mutex<BTreeSet<CapabilityId>>,
     physical_imu: PhysicalImuRoute,
     live_imu: Arc<Mutex<UiLiveImu>>,
@@ -59,6 +60,40 @@ struct AppState {
     audio_share: Arc<Mutex<AudioShareQuickAction>>,
     microphone: Arc<Mutex<MicrophoneQuickAction>>,
     audio_worker: AudioQuickActionWorker,
+}
+
+/// Process-owned Node state. `DemoLab` is only a deterministic bootstrap source;
+/// long-lived platform workers and future authenticated control connections share
+/// this Runtime directly instead of depending on the test fixture wrapper.
+struct DesktopNodeState {
+    runtime: NodeRuntime,
+    bootstrap_session_id: SessionId,
+    demo_routes: DemoRoutes,
+}
+
+impl DesktopNodeState {
+    fn demo() -> Result<Self, String> {
+        let lab = DemoLab::new().map_err(|error| error.to_string())?;
+        Ok(Self {
+            runtime: lab.runtime,
+            bootstrap_session_id: lab.session_id,
+            demo_routes: lab.routes,
+        })
+    }
+
+    fn set_demo_route_active(
+        &mut self,
+        route_id: RouteId,
+        active: bool,
+        now_ms: u64,
+    ) -> Result<(), String> {
+        if !self.demo_routes.all().contains(&route_id) {
+            return Err("Route is not controlled by the deterministic demo".to_owned());
+        }
+        self.runtime
+            .set_route_active(route_id, active, now_ms)
+            .map_err(|error| error.to_string())
+    }
 }
 
 struct AtomicSingleFlight<'a> {
@@ -95,18 +130,18 @@ impl Drop for AppState {
         if let Some(worker) = self.gamepad_worker.worker.take() {
             let _ = worker.join();
         }
-        if let (Ok(mut lab), Ok(mut gamepad)) = (self.lab.lock(), self.gamepad_lab.lock()) {
-            let _ = gamepad.stop_windows_projection(&mut lab.runtime);
+        if let (Ok(mut node), Ok(mut gamepad)) = (self.node.lock(), self.gamepad_lab.lock()) {
+            let _ = gamepad.stop_windows_projection(&mut node.runtime);
         }
         if let Ok(mut audio_share) = self.audio_share.lock()
-            && let Ok(mut lab) = self.lab.lock()
+            && let Ok(mut node) = self.node.lock()
         {
-            audio_share.shutdown(&mut lab.runtime);
+            audio_share.shutdown(&mut node.runtime);
         }
         if let Ok(mut microphone) = self.microphone.lock()
-            && let Ok(mut lab) = self.lab.lock()
+            && let Ok(mut node) = self.node.lock()
         {
-            microphone.shutdown(&mut lab.runtime);
+            microphone.shutdown(&mut node.runtime);
         }
     }
 }
@@ -363,12 +398,12 @@ struct UiVector3 {
 
 #[tauri::command]
 fn get_snapshot(state: State<'_, AppState>) -> Result<UiSnapshot, String> {
-    let lab = state.lab.lock().map_err(|_| "demo state lock poisoned")?;
+    let node = state.node.lock().map_err(|_| "Node state lock poisoned")?;
     let selected = state
         .local_shared_capabilities
         .lock()
         .map_err(|_| "local Capability selection lock poisoned")?;
-    Ok(to_ui_snapshot(&lab, &selected))
+    Ok(to_ui_snapshot(&node, &selected))
 }
 
 #[tauri::command]
@@ -394,14 +429,13 @@ fn set_route(request: SetRouteRequest, state: State<'_, AppState>) -> Result<UiS
             "use the versioned Quick Action to control the physical microphone Route".to_owned(),
         );
     }
-    let mut lab = state.lab.lock().map_err(|_| "demo state lock poisoned")?;
-    lab.set_route_active(route_id, request.active, unix_time_ms()?)
-        .map_err(|error| error.to_string())?;
+    let mut node = state.node.lock().map_err(|_| "Node state lock poisoned")?;
+    node.set_demo_route_active(route_id, request.active, unix_time_ms()?)?;
     let selected = state
         .local_shared_capabilities
         .lock()
         .map_err(|_| "local Capability selection lock poisoned")?;
-    Ok(to_ui_snapshot(&lab, &selected))
+    Ok(to_ui_snapshot(&node, &selected))
 }
 
 #[tauri::command]
@@ -411,13 +445,18 @@ fn set_local_capability_shared(
 ) -> Result<UiSnapshot, String> {
     let capability_id = CapabilityId::from_str(&request.capability_id)
         .map_err(|_| "invalid Capability ID".to_owned())?;
-    let lab = state.lab.lock().map_err(|_| "demo state lock poisoned")?;
+    let node = state.node.lock().map_err(|_| "Node state lock poisoned")?;
     let mut selected = state
         .local_shared_capabilities
         .lock()
         .map_err(|_| "local Capability selection lock poisoned")?;
-    update_local_capability_selection(&lab, &mut selected, capability_id, request.selected)?;
-    Ok(to_ui_snapshot(&lab, &selected))
+    update_local_capability_selection(
+        &node.runtime,
+        &mut selected,
+        capability_id,
+        request.selected,
+    )?;
+    Ok(to_ui_snapshot(&node, &selected))
 }
 
 #[tauri::command]
@@ -450,10 +489,10 @@ fn reset_demo(state: State<'_, AppState>) -> Result<UiSnapshot, String> {
     {
         return Err("stop the physical IMU Route before resetting the demo".to_owned());
     }
-    let mut lab = state.lab.lock().map_err(|_| "demo state lock poisoned")?;
-    *lab = DemoLab::new().map_err(|error| error.to_string())?;
-    let session_id = lab.session_id;
-    PhysicalImuRoute::install(&mut lab.runtime, session_id)?;
+    let mut node = state.node.lock().map_err(|_| "Node state lock poisoned")?;
+    *node = DesktopNodeState::demo()?;
+    let session_id = node.bootstrap_session_id;
+    PhysicalImuRoute::install(&mut node.runtime, session_id)?;
     *state
         .gamepad_lab
         .lock()
@@ -463,7 +502,7 @@ fn reset_demo(state: State<'_, AppState>) -> Result<UiSnapshot, String> {
         .lock()
         .map_err(|_| "local Capability selection lock poisoned")?;
     selected.clear();
-    Ok(to_ui_snapshot(&lab, &selected))
+    Ok(to_ui_snapshot(&node, &selected))
 }
 
 #[tauri::command]
@@ -473,16 +512,16 @@ fn get_quick_actions(state: State<'_, AppState>) -> Result<Vec<UiQuickAction>, S
             .audio_share
             .lock()
             .map_err(|_| "Audio Share state lock poisoned")?;
-        let lab = state.lab.lock().map_err(|_| "demo state lock poisoned")?;
-        audio_share.dto(&lab.runtime)?
+        let node = state.node.lock().map_err(|_| "Node state lock poisoned")?;
+        audio_share.dto(&node.runtime)?
     };
     let microphone = {
         let microphone = state
             .microphone
             .lock()
             .map_err(|_| "MicYou state lock poisoned")?;
-        let lab = state.lab.lock().map_err(|_| "demo state lock poisoned")?;
-        microphone.dto(&lab.runtime)?
+        let node = state.node.lock().map_err(|_| "Node state lock poisoned")?;
+        microphone.dto(&node.runtime)?
     };
     Ok(vec![speaker, microphone])
 }
@@ -497,15 +536,15 @@ fn invoke_quick_action(
             .microphone
             .lock()
             .map_err(|_| "MicYou state lock poisoned")?;
-        let mut lab = state.lab.lock().map_err(|_| "demo state lock poisoned")?;
-        microphone.invoke(&mut lab.runtime, request, unix_time_ms()?)
+        let mut node = state.node.lock().map_err(|_| "Node state lock poisoned")?;
+        microphone.invoke(&mut node.runtime, request, unix_time_ms()?)
     } else {
         let mut audio_share = state
             .audio_share
             .lock()
             .map_err(|_| "Audio Share state lock poisoned")?;
-        let mut lab = state.lab.lock().map_err(|_| "demo state lock poisoned")?;
-        audio_share.invoke(&mut lab.runtime, request, unix_time_ms()?)
+        let mut node = state.node.lock().map_err(|_| "Node state lock poisoned")?;
+        audio_share.invoke(&mut node.runtime, request, unix_time_ms()?)
     }
 }
 
@@ -516,8 +555,8 @@ fn get_audio_endpoints(state: State<'_, AppState>) -> Result<UiAudioEndpointCata
         .lock()
         .map_err(|_| "Audio Share state lock poisoned")?;
     let can_select = {
-        let lab = state.lab.lock().map_err(|_| "demo state lock poisoned")?;
-        audio_share.endpoint_selection_available(&lab.runtime)
+        let node = state.node.lock().map_err(|_| "Node state lock poisoned")?;
+        audio_share.endpoint_selection_available(&node.runtime)
     };
     Ok(audio_share.endpoint_catalog(can_select))
 }
@@ -531,8 +570,8 @@ fn select_audio_endpoint(
         .audio_share
         .lock()
         .map_err(|_| "Audio Share state lock poisoned")?;
-    let lab = state.lab.lock().map_err(|_| "demo state lock poisoned")?;
-    audio_share.select_endpoint(&lab.runtime, request)
+    let node = state.node.lock().map_err(|_| "Node state lock poisoned")?;
+    audio_share.select_endpoint(&node.runtime, request)
 }
 
 #[tauri::command]
@@ -636,22 +675,22 @@ fn start_windows_gamepad_projection(
     request: StartWindowsGamepadProjectionRequest,
     state: State<'_, AppState>,
 ) -> Result<UiGamepadState, String> {
-    let mut lab = state.lab.lock().map_err(|_| "demo state lock poisoned")?;
+    let mut node = state.node.lock().map_err(|_| "Node state lock poisoned")?;
     state
         .gamepad_lab
         .lock()
         .map_err(|_| "gamepad lab state lock poisoned".to_owned())?
-        .start_windows_projection(&mut lab.runtime, request.enable_xinput_companion)
+        .start_windows_projection(&mut node.runtime, request.enable_xinput_companion)
 }
 
 #[tauri::command]
 fn stop_windows_gamepad_projection(state: State<'_, AppState>) -> Result<UiGamepadState, String> {
-    let mut lab = state.lab.lock().map_err(|_| "demo state lock poisoned")?;
+    let mut node = state.node.lock().map_err(|_| "Node state lock poisoned")?;
     state
         .gamepad_lab
         .lock()
         .map_err(|_| "gamepad lab state lock poisoned".to_owned())?
-        .stop_windows_projection(&mut lab.runtime)
+        .stop_windows_projection(&mut node.runtime)
 }
 
 #[tauri::command]
@@ -683,13 +722,13 @@ fn start_live_imu(
         return Err("live IMU lab is already running".to_owned());
     }
     let (epoch, route_id) = {
-        let mut lab = state
-            .lab
+        let mut node = state
+            .node
             .lock()
             .map_err(|_| "physical IMU Runtime lock poisoned".to_owned())?;
         let epoch = state
             .physical_imu
-            .begin_start(&mut lab.runtime, unix_time_ms()?)?;
+            .begin_start(&mut node.runtime, unix_time_ms()?)?;
         (epoch, state.physical_imu.route_id().to_string())
     };
     {
@@ -718,7 +757,7 @@ fn start_live_imu(
     let stop = Arc::new(AtomicBool::new(false));
     let worker_stop = Arc::clone(&stop);
     let shared = Arc::clone(&state.live_imu);
-    let runtime = Arc::clone(&state.lab);
+    let runtime = Arc::clone(&state.node);
     let route = state.physical_imu;
     let worker = thread::spawn(move || {
         run_live_imu(endpoint, epoch, &worker_stop, &shared, &runtime, route)
@@ -746,14 +785,14 @@ fn stop_live_imu(state: State<'_, AppState>) -> Result<UiLiveImu, String> {
             .map_err(|_| "live IMU worker panicked".to_owned())?;
     }
     let (route_state, route_epoch) = {
-        let mut lab = state
-            .lab
+        let mut node = state
+            .node
             .lock()
             .map_err(|_| "physical IMU Runtime lock poisoned".to_owned())?;
-        state.physical_imu.stop(&mut lab.runtime)?;
+        state.physical_imu.stop(&mut node.runtime)?;
         (
-            state.physical_imu.route_state(&lab.runtime)?,
-            state.physical_imu.route_epoch(&lab.runtime)?,
+            state.physical_imu.route_state(&node.runtime)?,
+            state.physical_imu.route_epoch(&node.runtime)?,
         )
     };
     let mut snapshot = state
@@ -771,7 +810,7 @@ fn run_live_imu(
     epoch: u64,
     stop: &Arc<AtomicBool>,
     shared: &Arc<Mutex<UiLiveImu>>,
-    runtime: &Arc<Mutex<DemoLab>>,
+    runtime: &Arc<Mutex<DesktopNodeState>>,
     route: PhysicalImuRoute,
 ) {
     if let Err(problem) = run_live_imu_inner(endpoint, epoch, stop, shared, runtime, route) {
@@ -779,12 +818,12 @@ fn run_live_imu(
         let runtime_update = runtime
             .lock()
             .map_err(|_| "physical IMU Runtime lock poisoned".to_owned())
-            .and_then(|mut lab| {
-                route.report_offline(&mut lab.runtime, problem.clone())?;
-                let retained = route.latest_problem(&lab.runtime);
+            .and_then(|mut node| {
+                route.report_offline(&mut node.runtime, problem.clone())?;
+                let retained = route.latest_problem(&node.runtime);
                 Ok((
-                    route.route_state(&lab.runtime)?,
-                    route.route_epoch(&lab.runtime)?,
+                    route.route_state(&node.runtime)?,
+                    route.route_epoch(&node.runtime)?,
                     retained,
                 ))
             });
@@ -815,7 +854,7 @@ fn run_live_imu_inner(
     epoch: u64,
     stop: &Arc<AtomicBool>,
     shared: &Arc<Mutex<UiLiveImu>>,
-    runtime: &Arc<Mutex<DemoLab>>,
+    runtime: &Arc<Mutex<DesktopNodeState>>,
     route: PhysicalImuRoute,
 ) -> Result<(), String> {
     let config =
@@ -859,13 +898,13 @@ fn run_live_imu_inner(
         match event {
             LiveWorkerEvent::Connected(SensorKind::Gyroscope) => {
                 let (route_state, route_epoch) = {
-                    let mut lab = runtime
+                    let mut node = runtime
                         .lock()
                         .map_err(|_| "physical IMU Runtime lock poisoned".to_owned())?;
-                    route.activate(&mut lab.runtime)?;
+                    route.activate(&mut node.runtime)?;
                     (
-                        route.route_state(&lab.runtime)?,
-                        route.route_epoch(&lab.runtime)?,
+                        route.route_state(&node.runtime)?,
+                        route.route_epoch(&node.runtime)?,
                     )
                 };
                 let mut snapshot = shared
@@ -999,40 +1038,41 @@ pub fn run_windows_gamepad_read_only_preflight() -> Result<(), String> {
 }
 
 pub fn run() {
-    let mut lab = DemoLab::new().expect("valid deterministic demo lab");
-    let session_id = lab.session_id;
-    let physical_imu = PhysicalImuRoute::install(&mut lab.runtime, session_id)
+    let mut node = DesktopNodeState::demo().expect("valid deterministic demo bootstrap");
+    let session_id = node.bootstrap_session_id;
+    let physical_imu = PhysicalImuRoute::install(&mut node.runtime, session_id)
         .expect("valid physical IMU Runtime catalog");
-    let live_imu = UiLiveImu::idle(physical_imu, &lab.runtime).expect("valid physical IMU Route");
+    let live_imu = UiLiveImu::idle(physical_imu, &node.runtime).expect("valid physical IMU Route");
     let audio_share = Arc::new(Mutex::new(AudioShareQuickAction::install(
-        &mut lab.runtime,
+        &mut node.runtime,
         session_id,
     )));
     let microphone = Arc::new(Mutex::new(MicrophoneQuickAction::install(
-        &mut lab.runtime,
+        &mut node.runtime,
         session_id,
     )));
-    let windows_host = WindowsGamepadHost::install(&mut lab.runtime, session_id)
+    let windows_host = WindowsGamepadHost::install(&mut node.runtime, session_id)
         .expect("valid fixed Windows gamepad host configuration");
     let gamepad_lab = Arc::new(Mutex::new(
         GamepadLab::new_with_windows_host(windows_host).expect("valid gamepad simulator"),
     ));
-    let lab = Arc::new(Mutex::new(lab));
+    let node = Arc::new(Mutex::new(node));
     let audio_stop = Arc::new(AtomicBool::new(false));
     let worker_stop = Arc::clone(&audio_stop);
     let worker_audio_share = Arc::clone(&audio_share);
     let worker_microphone = Arc::clone(&microphone);
-    let worker_lab = Arc::clone(&lab);
+    let worker_node = Arc::clone(&node);
     let audio_worker = thread::spawn(move || {
         while !worker_stop.load(Ordering::Acquire) {
-            if let (Ok(mut audio_share), Ok(mut lab)) =
-                (worker_audio_share.lock(), worker_lab.lock())
+            if let (Ok(mut audio_share), Ok(mut node)) =
+                (worker_audio_share.lock(), worker_node.lock())
             {
-                audio_share.poll(&mut lab.runtime);
+                audio_share.poll(&mut node.runtime);
             }
-            if let (Ok(mut microphone), Ok(mut lab)) = (worker_microphone.lock(), worker_lab.lock())
+            if let (Ok(mut microphone), Ok(mut node)) =
+                (worker_microphone.lock(), worker_node.lock())
             {
-                microphone.poll(&mut lab.runtime);
+                microphone.poll(&mut node.runtime);
             }
             thread::sleep(Duration::from_millis(250));
         }
@@ -1040,13 +1080,14 @@ pub fn run() {
     let gamepad_stop = Arc::new(AtomicBool::new(false));
     let worker_stop = Arc::clone(&gamepad_stop);
     let worker_gamepad = Arc::clone(&gamepad_lab);
-    let worker_lab = Arc::clone(&lab);
+    let worker_node = Arc::clone(&node);
     let gamepad_worker = thread::Builder::new()
         .name("capyio-windows-gamepad".to_owned())
         .spawn(move || {
             while !worker_stop.load(Ordering::Acquire) {
-                if let (Ok(mut lab), Ok(mut gamepad)) = (worker_lab.lock(), worker_gamepad.lock()) {
-                    gamepad.poll_windows_projection(&mut lab.runtime);
+                if let (Ok(mut node), Ok(mut gamepad)) = (worker_node.lock(), worker_gamepad.lock())
+                {
+                    gamepad.poll_windows_projection(&mut node.runtime);
                 }
                 thread::sleep(Duration::from_millis(4));
             }
@@ -1054,7 +1095,7 @@ pub fn run() {
         .expect("start Windows gamepad projection worker");
     tauri::Builder::default()
         .manage(AppState {
-            lab,
+            node,
             local_shared_capabilities: Mutex::new(BTreeSet::new()),
             physical_imu,
             live_imu: Arc::new(Mutex::new(live_imu)),
@@ -1098,8 +1139,8 @@ pub fn run() {
         .expect("run CapyIO Tauri application");
 }
 
-fn to_ui_snapshot(lab: &DemoLab, selected: &BTreeSet<CapabilityId>) -> UiSnapshot {
-    let snapshot = lab.runtime.snapshot();
+fn to_ui_snapshot(node: &DesktopNodeState, selected: &BTreeSet<CapabilityId>) -> UiSnapshot {
+    let snapshot = node.runtime.snapshot();
     let local_node_id = snapshot.local_node.id;
     let all_nodes = std::iter::once(&snapshot.local_node).chain(snapshot.peers.iter());
     let nodes = all_nodes
@@ -1180,7 +1221,7 @@ fn to_ui_snapshot(lab: &DemoLab, selected: &BTreeSet<CapabilityId>) -> UiSnapsho
     let routes = snapshot
         .routes
         .iter()
-        .filter(|route| lab.routes.all().contains(&route.id))
+        .filter(|route| node.demo_routes.all().contains(&route.id))
         .map(|route| route_to_ui(route, &snapshot.local_node, &snapshot.peers))
         .collect();
     let events = snapshot
@@ -1203,19 +1244,19 @@ fn to_ui_snapshot(lab: &DemoLab, selected: &BTreeSet<CapabilityId>) -> UiSnapsho
         events,
         warnings: vec![
             "Tauri Demo 的 Route/授权/指标仍为确定性数据；只有显式启动的 Physical IMU Lab 会访问一个经校验的 IP 端点。".to_owned(),
-            "能力目录来自 Runtime fixture；选择仅保存在当前进程，不代表真实硬件枚举、授权或网络发布。".to_owned(),
+            "能力目录当前由确定性 bootstrap 初始化；选择仅保存在当前进程，不代表真实硬件枚举、授权或网络发布。".to_owned(),
         ],
         imu_fixture: build_imu_fixture(),
     }
 }
 
 fn update_local_capability_selection(
-    lab: &DemoLab,
+    runtime: &NodeRuntime,
     selected: &mut BTreeSet<CapabilityId>,
     capability_id: CapabilityId,
     enabled: bool,
 ) -> Result<(), String> {
-    let snapshot = lab.runtime.snapshot();
+    let snapshot = runtime.snapshot();
     let capability = snapshot
         .local_node
         .capabilities
@@ -1470,18 +1511,18 @@ mod tests {
 
     use super::*;
 
-    fn physical_lab() -> (DemoLab, PhysicalImuRoute) {
-        let mut lab = DemoLab::new().expect("demo Runtime fixture");
-        let session_id = lab.session_id;
-        let route = PhysicalImuRoute::install(&mut lab.runtime, session_id)
+    fn physical_node() -> (DesktopNodeState, PhysicalImuRoute) {
+        let mut node = DesktopNodeState::demo().expect("demo Runtime bootstrap");
+        let session_id = node.bootstrap_session_id;
+        let route = PhysicalImuRoute::install(&mut node.runtime, session_id)
             .expect("physical Route fixture");
-        (lab, route)
+        (node, route)
     }
 
     #[test]
     fn idle_live_imu_dto_is_explicitly_real_but_inactive() {
-        let (lab, route) = physical_lab();
-        let snapshot = UiLiveImu::idle(route, &lab.runtime).expect("idle DTO");
+        let (node, route) = physical_node();
+        let snapshot = UiLiveImu::idle(route, &node.runtime).expect("idle DTO");
         assert_eq!(snapshot.status, "idle");
         assert!(!snapshot.simulated);
         assert_eq!(snapshot.route_state, "draft");
@@ -1492,8 +1533,8 @@ mod tests {
 
     #[test]
     fn capability_catalog_separates_local_sharing_from_peer_inventory() {
-        let lab = DemoLab::new().expect("demo Runtime fixture");
-        let runtime = lab.runtime.snapshot();
+        let node = DesktopNodeState::demo().expect("demo Runtime bootstrap");
+        let runtime = node.runtime.snapshot();
         let local_source = runtime
             .local_node
             .capabilities
@@ -1534,12 +1575,18 @@ mod tests {
             .id;
         let mut selected = BTreeSet::new();
 
-        update_local_capability_selection(&lab, &mut selected, local_source, true)
+        update_local_capability_selection(&node.runtime, &mut selected, local_source, true)
             .expect("select local Source");
-        assert!(update_local_capability_selection(&lab, &mut selected, local_sink, true).is_err());
-        assert!(update_local_capability_selection(&lab, &mut selected, peer_source, true).is_err());
+        assert!(
+            update_local_capability_selection(&node.runtime, &mut selected, local_sink, true)
+                .is_err()
+        );
+        assert!(
+            update_local_capability_selection(&node.runtime, &mut selected, peer_source, true)
+                .is_err()
+        );
 
-        let dto = to_ui_snapshot(&lab, &selected);
+        let dto = to_ui_snapshot(&node, &selected);
         assert_eq!(dto.schema_version, 4);
         assert!(dto.capabilities.iter().any(|capability| {
             capability.local
@@ -1560,6 +1607,19 @@ mod tests {
                 .count(),
             2
         );
+    }
+
+    #[test]
+    fn desktop_node_only_exposes_fixture_routes_to_demo_mutation() {
+        let (mut node, physical_imu) = physical_node();
+        let before = node.runtime.snapshot();
+
+        let error = node
+            .set_demo_route_active(physical_imu.route_id(), true, 1)
+            .expect_err("physical Route must use its own lifecycle boundary");
+
+        assert_eq!(error, "Route is not controlled by the deterministic demo");
+        assert_eq!(node.runtime.snapshot(), before);
     }
 
     #[test]
@@ -1614,11 +1674,11 @@ mod tests {
             }
         });
         let endpoint = SensorServerEndpoint::new(address.ip(), address.port()).expect("endpoint");
-        let (mut lab, route) = physical_lab();
+        let (mut node, route) = physical_node();
         let epoch = route
-            .begin_start(&mut lab.runtime, 1)
+            .begin_start(&mut node.runtime, 1)
             .expect("begin physical Route");
-        let route_runtime = Arc::new(Mutex::new(lab));
+        let route_runtime = Arc::new(Mutex::new(node));
         let stop = Arc::new(AtomicBool::new(false));
         let shared = Arc::new(Mutex::new(
             UiLiveImu::idle(route, &route_runtime.lock().expect("Runtime lock").runtime)
@@ -1668,11 +1728,11 @@ mod tests {
         let address = listener.local_addr().expect("loopback address");
         drop(listener);
         let endpoint = SensorServerEndpoint::new(address.ip(), address.port()).expect("endpoint");
-        let (mut lab, route) = physical_lab();
+        let (mut node, route) = physical_node();
         let first_epoch = route
-            .begin_start(&mut lab.runtime, 1)
+            .begin_start(&mut node.runtime, 1)
             .expect("begin physical Route");
-        let route_runtime = Arc::new(Mutex::new(lab));
+        let route_runtime = Arc::new(Mutex::new(node));
         let shared = Arc::new(Mutex::new(
             UiLiveImu::idle(route, &route_runtime.lock().expect("Runtime lock").runtime)
                 .expect("idle DTO"),
@@ -1714,11 +1774,11 @@ mod tests {
             .parse::<u16>()
             .expect("CAPYIO_LIVE_IMU_PORT must be a valid port");
         let endpoint = SensorServerEndpoint::new(ip, port).expect("valid physical endpoint");
-        let (mut lab, route) = physical_lab();
+        let (mut node, route) = physical_node();
         let epoch = route
-            .begin_start(&mut lab.runtime, 1)
+            .begin_start(&mut node.runtime, 1)
             .expect("begin physical Route");
-        let route_runtime = Arc::new(Mutex::new(lab));
+        let route_runtime = Arc::new(Mutex::new(node));
         let stop = Arc::new(AtomicBool::new(false));
         let shared = Arc::new(Mutex::new(
             UiLiveImu::idle(route, &route_runtime.lock().expect("Runtime lock").runtime)

@@ -110,6 +110,13 @@ Session/peer tuple with bounded recent-message deduplication. No platform
 transport constructs that binding yet, so this is product-composition
 infrastructure rather than a discovery or pairing claim.
 
+The Windows Tauri host no longer retains `DemoLab` as its long-lived state.
+It consumes the fixture once at startup, then all desktop feature workers and
+UI commands share a process-owned `NodeRuntime`; only the bootstrap Session and
+demo Route allow-list remain alongside it. This establishes the state-ownership
+seam needed for a future authenticated control connection without claiming that
+such a connection exists today.
+
 1. Route touchpad, IMU, gamepad and haptics through bounded typed data planes.
    Their local lifecycles/UI state and publication selection are attached, but
    peer catalog exchange and Route authorization are not. The Android vibrator
@@ -117,8 +124,9 @@ infrastructure rather than a discovery or pairing claim.
 2. Physically verify the shared audio controls and remove the transitional
    native fallback only after equivalent permission, lifecycle and device evidence.
 3. Implement real Adapter-driven local hardware discovery and an authenticated
-   platform transport that constructs the new control-host binding; schema 4
-   currently projects deterministic Runtime fixture catalogs.
+   platform transport that constructs the new control-host binding and updates
+   the now process-owned desktop Runtime; schema 4 currently projects
+   deterministic bootstrap catalogs.
 4. Connect touchpad and camera to authenticated product Routes rather than
    local lifecycle and lab transport boundaries; add authenticated endpoint
    parity before retiring the standalone lab.

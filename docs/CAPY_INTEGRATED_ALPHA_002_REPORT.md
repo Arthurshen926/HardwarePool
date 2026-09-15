@@ -36,11 +36,20 @@ checks both identities, suppresses recently applied duplicate message IDs and
 then invokes Runtime. Only successful Runtime application consumes an ID, and
 retention is fixed at 256.
 
+The Windows Tauri host now consumes `DemoLab` only to create deterministic
+bootstrap state. Its long-lived `DesktopNodeState` owns the `NodeRuntime`,
+bootstrap Session ID and demo Route allow-list; every existing desktop feature
+worker and UI command shares that Runtime directly. This is the required state
+ownership seam for a later authenticated control connection, not a network or
+authentication implementation.
+
 ## Evidence
 
 - `cargo test -p capyio-testkit`: 18 passed.
 - `cargo test -p capyio-protocol`: 10 passed.
 - `cargo test -p capyio-control-host`: 6 passed.
+- `cargo test -p capyio-desktop --lib`: 55 passed, 6 intentionally ignored
+  physical/installed-device tests.
 - `cargo clippy -p capyio-runtime -p capyio-testkit --all-targets -- -D warnings`:
   passed.
 - Three focused regressions cover accepted replacement and Route
@@ -56,7 +65,7 @@ retention is fixed at 256.
   It opens no socket and does not authenticate a peer. The adjacent protocol
   helper decodes Protobuf but likewise grants no trust.
 - No Android or Windows host currently invokes it from a network control
-  connection.
+  connection. Windows now has the necessary process-owned Runtime seam only.
 - Capability publication, Route authorization, encrypted data-plane binding,
   replay defense, reconnect and pairing remain separate work.
 - No APK, driver, service, Display branch or system configuration was changed.

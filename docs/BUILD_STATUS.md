@@ -936,6 +936,14 @@ success, wrong identity, duplicate delivery, Runtime rejection/retry and the
 fixed 256-ID retention bound. No platform transport, socket or cryptographic
 identity is introduced by this slice.
 
+The Windows Tauri host now consumes `DemoLab` only as deterministic startup
+input. Its UI commands and audio, microphone, IMU and gamepad workers share a
+process-owned `DesktopNodeState`/`NodeRuntime`, while demo Route mutation is
+restricted to the retained allow-list. This removes the fixture wrapper from
+the long-lived platform state and prepares one Runtime ownership seam for later
+authenticated catalog admission; no network listener or trust establishment is
+added.
+
 The apparent post-stop UDP restart failure was then isolated from CapyIO. With
 UU Remote running, every tested port in 45980--46030 returned Winsock 10048
 without an enumerated endpoint owner, including unused 46012. The 40000/40001/

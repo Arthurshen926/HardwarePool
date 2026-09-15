@@ -144,6 +144,14 @@ Quick Actions select Route Templates. Workspace exposes the technical graph.
 The WebView sees narrow DTO commands only and has no arbitrary shell/filesystem
 power.
 
+The Windows Tauri process owns one `DesktopNodeState` containing the
+`NodeRuntime`, bootstrap Session identity and demo Route allow-list. `DemoLab`
+is consumed only to construct deterministic startup data; background audio,
+microphone, IMU and gamepad workers share the process-owned Runtime directly.
+This removes the test-fixture wrapper from the long-lived host ownership
+boundary so a later authenticated control connection can mutate the same
+Runtime. It does not itself create a connection or grant peer trust.
+
 ADR 1400 makes the Vue 3/TypeScript presentation shared across the Windows and
 future Android Tauri shells while keeping each platform's Runtime service,
 permissions, hardware APIs and real-time workers native. `UiSnapshot` schema 4
