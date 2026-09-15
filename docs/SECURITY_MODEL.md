@@ -255,21 +255,19 @@ needs signing and provenance.
 Narrow DTO commands, Rust-side validation, CSP, no remote WebView content and no
 arbitrary shell/filesystem/updater plugin in the foundation.
 
-ANDROID-A01C2 loads only the build-packaged `file:///android_asset/capyio-ui/`
-presentation. Its WebView blocks network loads and content access, denies
-file-origin universal access and refuses top-level navigation outside that
-asset subtree. The injected `CapyIOAndroid` object exposes one no-argument,
-read-only catalog snapshot method; it cannot start hardware, request permission,
-select sharing, construct a Route, choose an endpoint or access platform handles.
-The bridge is removed when the Activity is destroyed. This is a narrow local
-observation boundary, not authentication or authorization for future mutable
-commands.
+ANDROID-A01C2/A01E load only the build-packaged shared presentation from the
+fixed `https://appassets.androidplatform.net/capyio-ui/` origin. The custom
+asset client validates the exact scheme, host, absent port and bounded path,
+serves only APK assets and returns 403 for all other requests. File and content
+access remain disabled. Allowing the WebView network stack is required for the
+intercepted HTTPS origin; it does not create an external fetch path because the
+client fails closed. The bridge is removed when the Activity is destroyed.
 
-ANDROID-A01D1 extends that bridge only for two closed local Capability actions.
-The presentation may read the two bounded Quick Action DTOs and submit one exact
+ANDROID-A01D1 and later slices extend that bridge only for closed local
+Capability actions. The presentation may read bounded Quick Action DTOs and submit one exact
 action ID plus `start`, `retry` or `stop`. A dependency-free parser checks the
 ID, operation length, current lifecycle state and permitted transition before a
-Binder request is queued. Unknown camera/audio/haptics IDs, unknown operations,
+Binder request is queued. Unknown action/haptics IDs, unknown operations,
 shell-like strings and invalid transitions are rejected. The command cannot
 carry an endpoint, Route, payload, permission, file path or platform handle and
 does not grant sharing or peer access.
@@ -301,9 +299,18 @@ contains no PCM, endpoint secret, launch argument, path or peer authority.
 ANDROID-A01D5 admits sharing-selection mutations only for an exact capability
 ID in the Service's current catalog. The capability must have present hardware,
 an attached Adapter and a Source Port. Unknown/foreign IDs, overlong IDs,
-unattached camera entries and Sink capabilities are rejected. This session-local
+unattached entries and Sink capabilities are rejected. A01E attaches camera, so
+its present Source becomes eligible without bypassing this rule. This session-local
 set is publication intent only and conveys no Session trust, Route authority,
 permission grant or transport endpoint.
+
+ANDROID-A01E accepts only the fixed camera action ID and lifecycle-valid
+start/stop/retry. Start is returned to the visible Activity so Android owns the
+CAMERA/notification prompts; the WebView cannot grant consent. The unexported
+foreground service owns Camera2 and the privacy notification. The default
+export endpoint is fixed by the facade and cannot be supplied through the UI
+command. Stop closes exporter, codec and camera resources and removes the
+foreground service.
 
 The synthetic-touchpad injection harness is a local controlled-lab binary, not
 an allow-listed WebView/Node Runtime command. Its default path only projects and

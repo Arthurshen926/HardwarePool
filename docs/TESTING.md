@@ -1597,10 +1597,20 @@ capability identity, unknown/null/overlong rejection, and schema-4 selected-stat
 projection. These checks prove local publication-intent admission only; they do
 not prove peer discovery, Route authorization or a data-plane connection.
 
+ANDROID-A01E raises the composition executable to 182 assertions. It covers the
+attached camera Source and CAVC format, hardware/permission/lifecycle projection,
+Source-only publication eligibility, six independent Quick Actions and exact
+state-dependent camera command rejection. Lint/debug compilation cover the
+reused Camera2 service and narrow facade. On the authorized V2419A, the installed
+unified APK rendered the common Vue UI from the APK-only HTTPS origin; a shared
+camera Start held Camera ID 0 under `dev.capyio.android` in a camera foreground
+service, and shared Stop removed the service and left `Active Camera Clients: []`.
+No camera pixels were retained.
+
 Offline repository validation additionally pins the Gradle/AGP contract and
-checks the source manifest for the approved recording/notification/foreground
-permissions, a non-exported dual-type service, disabled backup/cleartext and no
-Internet permission. It also requires real `AudioRecord`/`AudioTrack` builders,
+checks the source manifest for the approved audio/camera/notification/foreground
+permissions, non-exported platform services, disabled backup/cleartext and the
+approved Internet permission. It also requires real `AudioRecord`/`AudioTrack` builders,
 `START_NOT_STICKY` and foreground notification ownership. This static check is
 not an APK or hardware result.
 

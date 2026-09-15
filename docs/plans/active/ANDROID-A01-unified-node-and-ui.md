@@ -20,7 +20,8 @@ Display is excluded until its feature branch is complete.
 ## Current baseline
 
 - `platform/android/app` is the proven microphone/speaker Node host and service.
-- `platform/android/capyio-camera-app` is a separate camera lab application.
+- `platform/android/app` now composes the proven camera service sources behind a
+  narrow facade; the standalone camera lab remains as a rollback/parity harness.
 - `apps/android/controller-lab` is a separate touch+IMU controller lab.
 - `platform/android/touchpad-bridge/lab-app` is a separate touchpad lab.
 - `apps/desktop/src` is the schema-4 shared presentation source. A01C1 packages
@@ -69,9 +70,12 @@ Display is excluded until its feature branch is complete.
    `android_observer` label to `android_node` without widening its authority.
    These operations do not create Routes. Audio permission UX, Route status and
    the remaining capabilities proceed in separate slices.
-5. **A01E — camera integration:** only after explicit approval, add the camera
-   permission/service declarations required by the selected lifecycle and run
-   denial/revoke/background tests on an authorized device.
+5. **A01E — camera integration (positive path complete):** after explicit
+   approval, the unified APK adds optional camera inventory plus CAMERA/camera
+   foreground-service declarations, attaches the existing service-owned
+   Camera2/MediaCodec Source and exposes a closed shared-UI action. An authorized
+   V2419A run proves system permission, active Camera2 ownership and UI-driven
+   release. Denial, revoke, process-death and long-background qualification remain.
 6. **A01F — input data-plane integration:** connect the attached Controller and
    Touchpad UI states to their bounded native Sources and product Routes. Retain
    exact foreground-loss and neutral/cancel behavior.
@@ -93,6 +97,7 @@ Display is excluded until its feature branch is complete.
 
 ## Approval boundaries
 
-This plan does not itself authorize an Android manifest permission change,
-foreground-service declaration change, APK installation, driver operation,
-device reset, production signing or remote publication.
+The A01E CAMERA/foreground-service declarations and one designated debug APK
+installation were separately authorized on 2026-09-16. This plan does not
+authorize any other permission, driver operation, device reset, production
+signing or remote publication.

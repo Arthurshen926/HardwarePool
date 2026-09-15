@@ -14,9 +14,7 @@ import android.os.Handler;
 import android.os.IBinder;
 import android.os.Looper;
 import android.webkit.JavascriptInterface;
-import android.webkit.WebResourceRequest;
 import android.webkit.WebView;
-import android.webkit.WebViewClient;
 import android.view.KeyEvent;
 import android.view.View;
 import android.widget.Button;
@@ -31,6 +29,7 @@ import dev.capyio.android.contract.CapabilityLifecycleSnapshot;
 import dev.capyio.android.contract.CapabilityLifecycleState;
 import dev.capyio.android.contract.GamepadControlsSnapshot;
 import dev.capyio.android.contract.TouchpadContactSnapshot;
+import io.capyio.camera.lab.UnifiedCameraNodeFacade;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -38,9 +37,10 @@ import java.util.concurrent.atomic.AtomicBoolean;
 
 public final class MainActivity extends Activity {
     private static final int REQUEST_AUDIO_PERMISSIONS = 8101;
+    private static final int REQUEST_CAMERA_PERMISSIONS = 8102;
     private static final long REFRESH_INTERVAL_MILLIS = 250;
-    private static final String SHARED_UI_URL =
-            "file:///android_asset/capyio-ui/index.html?view=workspace";
+    private static final String SHARED_UI_URL = AndroidAssetWebViewClient.ORIGIN
+            + "/capyio-ui/index.html?view=workspace";
 
     private final Handler handler = new Handler(Looper.getMainLooper());
     private final AtomicBoolean refreshQueued = new AtomicBoolean();
@@ -71,6 +71,7 @@ public final class MainActivity extends Activity {
 
     private volatile AudioNodeService.NodeBinder binder;
     private AudioCapabilityKind pendingStart;
+    private boolean pendingCameraStart;
     private boolean bound;
 
     private TextView nodeIdView;
@@ -123,20 +124,17 @@ public final class MainActivity extends Activity {
     @SuppressLint("SetJavaScriptEnabled")
     @SuppressWarnings("deprecation")
     private void configureSharedUi() {
+        if (BuildConfig.DEBUG) {
+            WebView.setWebContentsDebuggingEnabled(true);
+        }
         sharedUi.getSettings().setJavaScriptEnabled(true);
         sharedUi.getSettings().setAllowContentAccess(false);
-        sharedUi.getSettings().setAllowFileAccess(true);
+        sharedUi.getSettings().setAllowFileAccess(false);
         sharedUi.getSettings().setAllowFileAccessFromFileURLs(false);
         sharedUi.getSettings().setAllowUniversalAccessFromFileURLs(false);
-        sharedUi.getSettings().setBlockNetworkLoads(true);
+        sharedUi.getSettings().setBlockNetworkLoads(false);
         sharedUi.addJavascriptInterface(new ObserverBridge(), "CapyIOAndroid");
-        sharedUi.setWebViewClient(new WebViewClient() {
-            @Override
-            public boolean shouldOverrideUrlLoading(WebView view, WebResourceRequest request) {
-                return !request.getUrl().toString().startsWith(
-                        "file:///android_asset/capyio-ui/");
-            }
-        });
+        sharedUi.setWebViewClient(new AndroidAssetWebViewClient(getAssets()));
     }
 
     private void showSharedUi() {
@@ -201,6 +199,18 @@ public final class MainActivity extends Activity {
             String[] permissions,
             int[] grantResults) {
         super.onRequestPermissionsResult(requestCode, permissions, grantResults);
+        if (requestCode == REQUEST_CAMERA_PERMISSIONS) {
+            boolean requested = pendingCameraStart;
+            pendingCameraStart = false;
+            if (requested && cameraPermissionsGranted()) {
+                UnifiedCameraNodeFacade.start(this);
+                renderPermissionState(null);
+            } else {
+                renderPermissionState(getString(R.string.permission_denied));
+            }
+            dispatchSharedUiState();
+            return;
+        }
         if (requestCode != REQUEST_AUDIO_PERMISSIONS) {
             return;
         }
@@ -242,6 +252,33 @@ public final class MainActivity extends Activity {
                 || checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS)
                         == PackageManager.PERMISSION_GRANTED;
         return microphoneGranted && notificationGranted;
+    }
+
+    private void requestStartCamera() {
+        List<String> missing = new ArrayList<>();
+        if (checkSelfPermission(Manifest.permission.CAMERA) != PackageManager.PERMISSION_GRANTED) {
+            missing.add(Manifest.permission.CAMERA);
+        }
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU
+                && checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS)
+                        != PackageManager.PERMISSION_GRANTED) {
+            missing.add(Manifest.permission.POST_NOTIFICATIONS);
+        }
+        if (!missing.isEmpty()) {
+            pendingCameraStart = true;
+            requestPermissions(missing.toArray(new String[0]), REQUEST_CAMERA_PERMISSIONS);
+            return;
+        }
+        UnifiedCameraNodeFacade.start(this);
+    }
+
+    private boolean cameraPermissionsGranted() {
+        boolean cameraGranted = checkSelfPermission(Manifest.permission.CAMERA)
+                == PackageManager.PERMISSION_GRANTED;
+        boolean notificationGranted = Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU
+                || checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS)
+                        == PackageManager.PERMISSION_GRANTED;
+        return cameraGranted && notificationGranted;
     }
 
     private void startCapability(AudioCapabilityKind kind) {
@@ -377,6 +414,8 @@ public final class MainActivity extends Activity {
                     current.snapshot(),
                     requiredPermissionsGranted(AudioCapabilityKind.MICROPHONE_SOURCE),
                     requiredPermissionsGranted(AudioCapabilityKind.SPEAKER_SINK),
+                    current.cameraLifecycle(),
+                    cameraPermissionsGranted(),
                     current.imuLifecycle(),
                     current.gamepadLifecycle(),
                     current.touchpadLifecycle());
@@ -451,6 +490,21 @@ public final class MainActivity extends Activity {
             AudioNodeService.NodeBinder current = binder;
             if (current == null) {
                 return false;
+            }
+            if (AndroidCameraCommand.ACTION_ID.equals(actionId)) {
+                AndroidCameraCommand cameraCommand = AndroidCameraCommand.parse(
+                        actionId, operation, current.cameraLifecycle().state());
+                if (cameraCommand == null) {
+                    return false;
+                }
+                handler.post(() -> {
+                    if (cameraCommand.operation() == AndroidCameraCommand.Operation.STOP) {
+                        UnifiedCameraNodeFacade.stop(MainActivity.this);
+                    } else {
+                        requestStartCamera();
+                    }
+                });
+                return true;
             }
             AudioNodeSnapshot audio = current.snapshot();
             AudioCapabilitySnapshot audioCapability;

@@ -115,6 +115,20 @@ therefore qualify; speaker, haptics and the unattached camera do not. The state
 is session-local publication intent and neither starts hardware nor establishes
 peer discovery, authorization, a Route or a data plane.
 
+A01E composes the existing headless Camera2/MediaCodec pipeline into the same
+`dev.capyio.android` APK and Node catalog. A narrow facade fixes the current
+default to the back camera, balanced AVC and existing ADB-reverse development
+endpoint; the unexported camera foreground service still owns capture, encoding,
+export and cleanup. The common UI adds a lifecycle-valid camera Quick Action and
+camera Source publication selection, while permission, capture, selection and
+Route state remain separate. The standalone camera lab is retained until source,
+quality and end-to-end Route controls reach parity.
+
+The physical WebView run also exposed that the earlier `file:` host did not load
+the packaged ES module or stylesheet because its origin was null. The unified
+host now serves only the packaged subtree from a fixed APK-only HTTPS origin,
+with file/content access disabled and every non-CapyIO request denied.
+
 ## Automated evidence
 
 - `cargo test --offline -p capyio-input -p capyio-dsu-adapter -p capyio-viiper-adapter -p capyio-windows-input -p capyio-desktop`: passed after the gamepad merge.
@@ -150,6 +164,15 @@ peer discovery, authorization, a Route or a data plane.
   Android gamepad-state projection plus touchpad attachment, complete-frame
   bounds, lifecycle neutralization and bridge parsing plus independent audio
   action admission, permission projection and actual-format/frame state.
+- the A01E composition executable passed 182 assertions, adding attached camera
+  catalog/format/permission/lifecycle/publication checks and exact camera command
+  admission/rejection.
+- an authorized V2419A Android 16 run installed the unified debug APK and rendered
+  the shared Vue UI. Its camera action produced an active unexported foreground
+  service and Camera Service client for `dev.capyio.android` on ID 0; UI Stop
+  removed the service, recorded DISCONNECT and left no active camera client. The
+  final installed `0.5.0-dev` APK SHA-256 is
+  `07C6D2943C5ED98D824838FDD7DD61145A81DC6759B7F98B8EED74BCAF04EC39`.
 - `jar tf platform/android/app/build/outputs/apk/debug/app-debug.apk`: confirmed
   `assets/capyio-ui/index.html` and generated JavaScript/CSS in the assembled
   archive; the entrypoint references both assets with `./assets/...` paths.
@@ -157,10 +180,12 @@ peer discovery, authorization, a Route or a data plane.
 ## Explicit exclusions
 
 - no push, pull request, package publication or production signing;
-- no APK installation and no Android permission/foreground-service change;
+- no APK installation or Android permission/service change except the explicitly
+  authorized A01E unified debug APK, CAMERA and camera foreground-service slice;
 - no Windows driver install/removal, restart or boot/security-policy change;
 - no Display merge or Display worktree modification;
 - no claim that the Tauri schema-4 fixture catalog is real hardware discovery;
 - no claim that Android publication selection has reached a remote peer;
-- no claim of physical Android rendering or complete mutable-command UI parity;
-  A01D4 adds shared audio operations while retaining native controls as fallback.
+- physical Android rendering and the camera positive lifecycle are proven; no
+  claim is made for complete Route/peer parity or camera denial/revoke/background
+  qualification. Native audio controls remain as a fallback.

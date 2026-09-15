@@ -26,7 +26,7 @@ difference is recorded in ADR 0007.
 - ADB and an explicitly designated physical device.
 
 The Android project pins Gradle 9.5.0 by distribution SHA-256, Android Gradle Plugin
-9.3.1, compile/target SDK 36, min SDK 26 and Java 17 source/target bytecode. The
+9.3.1, compile/target SDK 36, min SDK 29 and Java 17 source/target bytecode. The
 current host has SDK Platform 36, Build Tools 36.x and a compatible JDK. Run
 `cargo xtask android-check` for contract tests, Lint and debug APK assembly.
 This command never invokes ADB or installs/grants/starts anything on a device.

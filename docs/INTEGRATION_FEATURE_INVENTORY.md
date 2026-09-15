@@ -14,7 +14,7 @@ is not modified.
 | Capability | Integrated source baseline | Android boundary | Windows boundary | Current product-composition status |
 |---|---|---|---|---|
 | Bidirectional audio | `codex/capyio-native-audio-subsystem` at `50f3921` | unified audio Node service plus shared status/Quick Actions for independent microphone Source and speaker Sink | unified desktop Quick Actions plus service/host and virtual audio boundaries | shared operation surface and physically proven native paths are present; shared-UI device parity and production pairing/security remain open |
-| Camera | `codex/capyio-camera` at `9808d2c` | separate Camera2/MediaCodec lab and private AVC record/transport boundary; main Node catalog now declares an unattached Offline camera module | Media Foundation virtual-camera, shared-memory ingress and host crates | source and migration inventory are merged; camera lifecycle is not yet attached to the Android product app |
+| Camera | `codex/capyio-camera` at `9808d2c` | unified APK composes the service-owned Camera2/MediaCodec lifecycle and private AVC transport behind a narrow facade; standalone lab retained | Media Foundation virtual-camera, shared-memory ingress and host crates | shared UI and catalog attach the local Source; product discovery/pairing/Route composition and source/quality parity remain open |
 | Precision Touchpad | `codex/capyio-touchpad` at `77b6846` | unified Node owns a generation-bound five-contact shared-UI state facade; separate JNI packet Source/lab remains intact | user-mode/VHF projection boundaries and Runtime workers | local lifecycle/UI state is attached; authenticated product Route and Windows delivery remain open |
 | Touch + motion gamepad | `codex/capyio-gamepad` at `cadaef9` | unified Node owns IMU sensors plus a generation-bound, neutralizing gamepad state facade; standalone touch Controller Lab remains intact; haptics is Offline/unattached pending Manifest permission approval | shared Controller UI, DSU/VIIPER/DS4 and optional XInput projection boundaries | IMU and gamepad lifecycle/state are attached; shared touch surface, feedback and product Routes remain open |
 | IMU | audio baseline plus gamepad composition | unified Service-owned SensorManager Adapter with generation-bound start/stop; SensorServer lab remains separate | live numeric panel, recorder fixture and DSU/DS4 consumers | lifecycle attached; typed data-plane routing, transport/security and shared UI selection remain open |
@@ -86,10 +86,17 @@ keeps both directions independent, changes no Manifest declaration, and retains
 the native audio controls until shared-UI device parity is proven.
 
 A01D5 enables the shared local-capability checkboxes against the Service-owned
-Android catalog. The automatically probed, attached microphone, IMU, gamepad
-and touchpad Source capabilities may record session-local publication intent;
-speaker/haptics Sinks and the unattached camera cannot. This does not start an
+Android catalog. The automatically probed, attached microphone, IMU, gamepad,
+touchpad and, after A01E, camera Source capabilities may record session-local
+publication intent; speaker/haptics Sinks cannot. This does not start an
 Adapter, grant permission, create a Route or exchange a catalog with a peer.
+
+A01E composes the existing unexported camera foreground service into the unified
+APK, maps its lifecycle into the local catalog and adds a closed camera Quick
+Action. The shared WebView now serves the common Vue assets from a fixed
+APK-only HTTPS origin so ES modules and styles render on a physical device while
+all non-CapyIO requests fail closed. An authorized V2419A run proved UI-driven
+Camera2 connect/disconnect and complete service/resource cleanup.
 
 ## Remaining integration work
 
@@ -102,7 +109,7 @@ Adapter, grant permission, create a Route or exchange a catalog with a peer.
 3. Implement real Adapter-driven local hardware discovery and authenticated
    peer catalog exchange; schema 4 currently projects deterministic Runtime
    fixture catalogs.
-4. After explicit permission approval, attach camera lifecycle; connect
-   touchpad and camera to product Route actions rather than lab-only
-   entrypoints.
+4. Connect touchpad and camera to authenticated product Routes rather than
+   local lifecycle and lab transport boundaries; add camera source/quality
+   parity before retiring the standalone lab.
 5. Keep Display out until its branch reaches its own completion gate.

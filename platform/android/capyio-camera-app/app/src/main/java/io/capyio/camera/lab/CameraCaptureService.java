@@ -32,6 +32,7 @@ public final class CameraCaptureService extends Service {
 
     record Snapshot(
             Phase phase,
+            long generation,
             int width,
             int height,
             FrameObservation.LensFacing facing,
@@ -355,6 +356,7 @@ public final class CameraCaptureService extends Service {
                 : activeConfig.quality();
         latest = new Snapshot(
                 phase,
+                generation,
                 width,
                 height,
                 activeFacing,
@@ -394,6 +396,10 @@ public final class CameraCaptureService extends Service {
     private Notification notification(String text) {
         Intent open = new Intent(this, MainActivity.class)
                 .addFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP);
+        Intent packageLaunch = getPackageManager().getLaunchIntentForPackage(getPackageName());
+        if (packageLaunch != null) {
+            open = packageLaunch.addFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP);
+        }
         PendingIntent contentIntent = PendingIntent.getActivity(
                 this,
                 0,
@@ -450,6 +456,7 @@ public final class CameraCaptureService extends Service {
     private static Snapshot stoppedSnapshot() {
         return new Snapshot(
                 Phase.STOPPED,
+                0,
                 0,
                 0,
                 FrameObservation.LensFacing.UNKNOWN,

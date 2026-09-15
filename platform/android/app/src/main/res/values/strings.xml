@@ -7,7 +7,7 @@
     <string name="permission_ready">麦克风与通知权限已就绪</string>
     <string name="permission_required">启动麦克风需要录音与通知权限；启动扬声器需要通知权限。</string>
     <string name="permission_denied">权限未授予，能力没有启动。</string>
-    <string name="open_shared_ui">打开统一界面（只读目录）</string>
+    <string name="open_shared_ui">打开统一界面</string>
     <string name="microphone_title">麦克风 Source</string>
     <string name="microphone_description">通过统一原生 LAN 后端发送 AudioRecord PCM；不保存、不记录音频内容。</string>
     <string name="speaker_title">扬声器 Sink</string>
@@ -28,4 +28,29 @@
     <string name="notification_speaker">扬声器 Sink</string>
     <string name="notification_both">麦克风 Source 与扬声器 Sink</string>
     <string name="notification_stop_all">全部停止</string>
+    <string name="camera_stopped">Camera is stopped. Frames are not stored or uploaded.</string>
+    <string name="opening_camera">Opening Camera2…</string>
+    <string name="start_camera">Start camera</string>
+    <string name="stop_camera">Stop camera</string>
+    <string name="camera_transport_host_hint">Windows IPv4 (blank = ADB reverse; private/100.64.0.0/10 only)</string>
+    <string name="camera_transport_host_rejected">Transport address rejected. Enter one private, link-local, or 100.64.0.0/10 IPv4 literal, or leave it blank for ADB reverse.</string>
+    <string name="use_front_camera">Use front camera</string>
+    <string name="use_back_camera">Use back camera</string>
+    <string name="cycle_camera_quality">Quality: %1$s (tap to change)</string>
+    <string name="inspect_camera_capabilities">Inspect camera capabilities</string>
+    <string name="camera_inventory_permission_required">Camera inventory requires CAMERA permission.</string>
+    <string name="camera_inventory_failed">Camera inventory failed: %1$s</string>
+    <string name="camera_source_automatic">Source: facing automatic</string>
+    <string name="camera_source_cycle">Source: %1$s</string>
+    <string name="camera_source_description">Camera2 ID %1$s, %2$s; %3$s</string>
+    <string name="camera_source_zoom_automatic">vendor lens selection: automatic</string>
+    <string name="camera_source_zoom_target">vendor Zoom target %.3fx</string>
+    <string name="streaming_status">Streaming %1$d×%2$d AVC from %3$s source %4$s; quality %5$s (%6$.1f Mbit/s). Captured: %7$d; encoded: %8$d; codec queue dropped: %9$d. Export: %10$s; sent: %11$d; export dropped: %12$d. Encoder: %13$s</string>
+    <string name="camera_service_ownership_note">Camera capture is owned by the foreground service.</string>
+    <string name="camera_notification_channel">Camera sharing</string>
+    <string name="camera_notification_channel_description">Shows when CapyIO is actively sharing this device camera.</string>
+    <string name="camera_notification_starting">Starting camera sharing…</string>
+    <string name="camera_notification_streaming">Camera sharing is active</string>
+    <string name="camera_restarting">Restarting camera…</string>
+    <string name="camera_settings_selected">Camera setting selected.</string>
 </resources>

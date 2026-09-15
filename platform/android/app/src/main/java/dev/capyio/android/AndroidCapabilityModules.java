@@ -22,6 +22,7 @@ import dev.capyio.android.contract.TouchpadNodeController;
 
 import java.util.List;
 import java.util.function.BooleanSupplier;
+import java.util.function.Supplier;
 
 /** Builds the non-display module inventory owned by the Android Node service. */
 final class AndroidCapabilityModules {
@@ -44,6 +45,41 @@ final class AndroidCapabilityModules {
             HardwarePresence imuPresence,
             HardwarePresence touchSurfacePresence,
             HardwarePresence vibratorPresence) {
+        return createRegistry(
+                audioController,
+                imuController,
+                gamepadController,
+                touchpadController,
+                microphonePermissionReady,
+                notificationPermissionReady,
+                () -> new CapabilityLifecycleSnapshot(
+                        CapabilityLifecycleState.STOPPED, 0, null),
+                () -> false,
+                false,
+                microphonePresence,
+                speakerPresence,
+                cameraPresence,
+                imuPresence,
+                touchSurfacePresence,
+                vibratorPresence);
+    }
+
+    static CapabilityModuleRegistry createRegistry(
+            AudioNodeController audioController,
+            CapabilityLifecycleController imuController,
+            GamepadNodeController gamepadController,
+            TouchpadNodeController touchpadController,
+            BooleanSupplier microphonePermissionReady,
+            BooleanSupplier notificationPermissionReady,
+            Supplier<CapabilityLifecycleSnapshot> cameraLifecycle,
+            BooleanSupplier cameraPermissionReady,
+            boolean cameraAdapterAttached,
+            HardwarePresence microphonePresence,
+            HardwarePresence speakerPresence,
+            HardwarePresence cameraPresence,
+            HardwarePresence imuPresence,
+            HardwarePresence touchSurfacePresence,
+            HardwarePresence vibratorPresence) {
         CapabilityModuleRegistry registry = new CapabilityModuleRegistry();
         registry.register(new AudioModule(
                 audioController,
@@ -51,17 +87,31 @@ final class AndroidCapabilityModules {
                 notificationPermissionReady,
                 microphonePresence,
                 speakerPresence));
-        registry.register(pendingModule("android.camera-module", List.of(pendingCapability(
-                "android.camera",
-                "Phone Camera",
-                CapabilityKind.CAMERA,
-                CapabilityPermissionRequirement.USER_CONFIRMATION,
-                cameraPresence,
-                "android.camera.source",
-                "Camera Frame Source",
-                CapabilityPortDirection.SOURCE,
-                "capyio.video.frames/1",
-                "platform-negotiated-video-frame"))));
+        registry.register(new CapabilityModule() {
+            @Override
+            public String moduleKey() {
+                return "android.camera-module";
+            }
+
+            @Override
+            public List<CapabilitySnapshot> capabilities() {
+                if (!cameraAdapterAttached) {
+                    return List.of(pendingCapability(
+                            "android.camera",
+                            "Phone Camera",
+                            CapabilityKind.CAMERA,
+                            CapabilityPermissionRequirement.USER_CONFIRMATION,
+                            cameraPresence,
+                            "android.camera.source",
+                            "Camera Frame Source",
+                            CapabilityPortDirection.SOURCE,
+                            "capyio.video.frames/1",
+                            "platform-negotiated-video-frame"));
+                }
+                return List.of(cameraCapability(
+                        cameraLifecycle.get(), cameraPermissionReady.getAsBoolean(), cameraPresence));
+            }
+        });
         registry.register(controllerModule(
                 imuController,
                 gamepadController,
@@ -81,6 +131,41 @@ final class AndroidCapabilityModules {
             }
         });
         return registry;
+    }
+
+    private static CapabilitySnapshot cameraCapability(
+            CapabilityLifecycleSnapshot lifecycle,
+            boolean permissionReady,
+            HardwarePresence hardwarePresence) {
+        CapabilityAvailability availability;
+        String problemCode = lifecycle.problemCode();
+        if (hardwarePresence != HardwarePresence.PRESENT) {
+            availability = CapabilityAvailability.OFFLINE;
+            problemCode = inventoryProblem(hardwarePresence);
+        } else if (lifecycle.state() == CapabilityLifecycleState.FAILED) {
+            availability = CapabilityAvailability.OFFLINE;
+        } else if (lifecycle.state().ownsAdapterLifecycle()) {
+            availability = CapabilityAvailability.BUSY;
+        } else {
+            availability = permissionReady
+                    ? CapabilityAvailability.AVAILABLE
+                    : CapabilityAvailability.PERMISSION_REQUIRED;
+        }
+        return new CapabilitySnapshot(
+                "android.camera",
+                "Phone Camera",
+                CapabilityKind.CAMERA,
+                availability,
+                CapabilityPermissionRequirement.USER_CONFIRMATION,
+                hardwarePresence,
+                true,
+                List.of(new CapabilityPortSnapshot(
+                        "android.camera.source",
+                        "Camera Frame Source",
+                        CapabilityPortDirection.SOURCE,
+                        "capyio.video.frames/1",
+                        List.of("cavc-avc-access-unit-v1"))),
+                problemCode);
     }
 
     private static CapabilityModule controllerModule(

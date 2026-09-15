@@ -775,16 +775,14 @@ also remain valid in the Windows Tauri host. This proves one presentation source
 is packageable on both platforms; it does not yet render that presentation on
 Android or expose Binder commands to JavaScript.
 
-ANDROID-A01C2 adds that local observer without replacing the proven native audio
+ANDROID-A01C2 adds that local host without replacing the proven native audio
 controls. The Activity can reveal the packaged Vue workspace in a WebView and
-return to the native controls with Back. A single no-argument JavaScript method
-projects the service-owned schema-v1 catalog into shared `UiSnapshot` schema 4;
-it contains no start/stop, Route, sharing-selection or arbitrary command entry.
-The shared API reports `android_node`, treats the catalog as real and
-read-only, and does not fabricate a peer catalog, Routes, live panels or Quick
-Actions. Service state notifications refresh the snapshot while the Service
-continues to own every Adapter lifecycle. Replacing the transitional native
-controls requires the separately tested A01D operations.
+return to the native controls with Back. The shared API reports `android_node`,
+projects the service-owned schema-v1 catalog into shared `UiSnapshot` schema 4
+and does not fabricate a peer catalog or Routes. Later A01D/E slices add only
+closed local lifecycle, state and publication-intent methods. Service state
+notifications refresh the snapshot while platform services continue to own
+every Adapter lifecycle.
 
 ANDROID-A01D1 adds the first mutable shared-UI operations without conflating an
 Adapter lifecycle with a Route. Two schema-v2 Quick Actions have kind
@@ -830,9 +828,25 @@ ANDROID-A01D5 makes the shared local-capability checkbox mutable on Android,
 but keeps its meaning narrow: it is session-local publication intent owned by
 the Node Service. Eligibility is derived from the current hardware-backed
 catalog and requires an attached Adapter, present hardware and at least one
-Source Port. A Sink, Control-only capability, unattached camera or foreign
-Node ID cannot be selected. Selection does not start hardware, grant permission,
+Source Port. A Sink, Control-only capability or foreign Node ID cannot be
+selected. An unattached capability cannot be selected; A01E therefore makes
+camera eligible only after attaching its Adapter. Selection does not start hardware, grant permission,
 authorize a Route or claim that a peer catalog has received the advertisement.
+
+ANDROID-A01E composes the existing headless Camera2/MediaCodec service into the
+unified APK behind a narrow facade. The unexported camera foreground service,
+not the Activity or WebView, owns capture, encoding, bounded export and cleanup.
+The catalog maps that lifecycle to one `capyio.video.frames/1` Source using the
+private CAVC access-unit format. The shared action admits only lifecycle-valid
+start/stop/retry, and Start returns to the Activity for Android-owned CAMERA and
+notification consent. Capture lifecycle, publication intent and a Route remain
+three separate states.
+
+The physical Android WebView exposed a `file:`-origin CORS failure for the
+packaged ES module and stylesheet. The host now uses a fixed
+`https://appassets.androidplatform.net/capyio-ui/` origin served solely by an
+APK-asset `WebViewClient`; file/content access is disabled and every other
+scheme, host, port or path returns a denied response.
 
 ADR 0044 subsequently adds the approved network permission and a separate
 dependency-free LAN codec/socket worker boundary. ADRs 0046 and 0047 now attach

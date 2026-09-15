@@ -125,10 +125,30 @@ public final class AndroidUiSnapshotJson {
             CapabilityLifecycleSnapshot imu,
             CapabilityLifecycleSnapshot gamepad,
             CapabilityLifecycleSnapshot touchpad) {
-        if (audio == null || imu == null || gamepad == null || touchpad == null) {
+        return encodeQuickActions(
+                audio,
+                microphonePermissionReady,
+                speakerPermissionReady,
+                new CapabilityLifecycleSnapshot(CapabilityLifecycleState.STOPPED, 0, null),
+                false,
+                imu,
+                gamepad,
+                touchpad);
+    }
+
+    public static String encodeQuickActions(
+            AudioNodeSnapshot audio,
+            boolean microphonePermissionReady,
+            boolean speakerPermissionReady,
+            CapabilityLifecycleSnapshot camera,
+            boolean cameraPermissionReady,
+            CapabilityLifecycleSnapshot imu,
+            CapabilityLifecycleSnapshot gamepad,
+            CapabilityLifecycleSnapshot touchpad) {
+        if (audio == null || camera == null || imu == null || gamepad == null || touchpad == null) {
             throw new IllegalArgumentException("Audio and input snapshots are required");
         }
-        StringBuilder json = new StringBuilder(3072);
+        StringBuilder json = new StringBuilder(3584);
         json.append('[');
         appendAudioQuickAction(
                 json,
@@ -146,6 +166,8 @@ public final class AndroidUiSnapshotJson {
                 audio.speaker(),
                 speakerPermissionReady);
         json.append(',');
+        appendCameraQuickAction(json, camera, cameraPermissionReady);
+        json.append(',');
         appendQuickAction(json, "capyio.quick-action.android-imu", "IMU sensors",
                 "Start or stop the service-owned accelerometer and gyroscope Adapter.", imu);
         json.append(',');
@@ -156,6 +178,45 @@ public final class AndroidUiSnapshotJson {
                 "Start or stop the service-owned complete multi-touch state Adapter.", touchpad);
         json.append(']');
         return json.toString();
+    }
+
+    private static void appendCameraQuickAction(
+            StringBuilder json,
+            CapabilityLifecycleSnapshot camera,
+            boolean permissionReady) {
+        json.append("{\"schemaVersion\":2");
+        appendStringField(json, "id", "capyio.quick-action.android-camera");
+        appendStringField(json, "kind", "capability_control");
+        appendStringField(json, "title", "Phone camera");
+        appendStringField(json, "summary", "Capture bounded Camera2 AVC in a dedicated foreground service.");
+        appendStringField(json, "status", !permissionReady
+                && (camera.state() == CapabilityLifecycleState.STOPPED
+                || camera.state() == CapabilityLifecycleState.FAILED)
+                ? "blocked"
+                : actionStatus(camera.state()));
+        json.append(",\"simulated\":false,\"routeId\":null,\"routeState\":null")
+                .append(",\"routeEpoch\":null,\"availableOperations\":[");
+        String operation = availableOperation(camera.state());
+        if (operation != null) {
+            appendQuoted(json, operation);
+        }
+        json.append(']');
+        appendStringField(json, "evidenceLevel", "not_started");
+        appendStringField(json, "connectionHint",
+                "Camera permission and foreground capture remain Android-owned; Route transport is separate.");
+        if (!permissionReady
+                && (camera.state() == CapabilityLifecycleState.STOPPED
+                || camera.state() == CapabilityLifecycleState.FAILED)) {
+            appendStringField(json, "problemCode", "CAPY.ANDROID.PERMISSION_REQUIRED");
+            appendStringField(json, "problem", "Android camera permission is required on Start.");
+            json.append('}');
+        } else if (camera.problemCode() != null) {
+            appendStringField(json, "problemCode", camera.problemCode());
+            appendStringField(json, "problem", "Android Camera Adapter reported a bounded failure.");
+            json.append('}');
+        } else {
+            json.append(",\"problemCode\":null,\"problem\":null}");
+        }
     }
 
     public static String encodeAudioState(

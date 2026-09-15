@@ -25,6 +25,7 @@ import dev.capyio.android.contract.AudioNodeSnapshot;
 import dev.capyio.android.contract.CapabilityCatalogSnapshot;
 import dev.capyio.android.contract.CapabilityLifecycleController;
 import dev.capyio.android.contract.CapabilityLifecycleSnapshot;
+import dev.capyio.android.contract.CapabilityLifecycleState;
 import dev.capyio.android.contract.CapabilityModuleRegistry;
 import dev.capyio.android.contract.GamepadControlsSnapshot;
 import dev.capyio.android.contract.GamepadNodeController;
@@ -35,6 +36,7 @@ import dev.capyio.android.contract.TouchpadControlsSnapshot;
 import dev.capyio.android.contract.TouchpadNodeController;
 import dev.capyio.android.lan.NativeLanSpeakerSessionConfig;
 import dev.capyio.android.lan.NativeLanMicrophoneSessionConfig;
+import io.capyio.camera.lab.UnifiedCameraNodeFacade;
 
 /** Owns Android Node hardware resources independently of the Activity implementation. */
 public final class AudioNodeService extends Service {
@@ -112,6 +114,10 @@ public final class AudioNodeService extends Service {
                 () -> Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU
                         || checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS)
                                 == PackageManager.PERMISSION_GRANTED,
+                AudioNodeService::cameraLifecycleSnapshot,
+                () -> checkSelfPermission(Manifest.permission.CAMERA)
+                        == PackageManager.PERMISSION_GRANTED,
+                true,
                 inventory.microphonePresence(),
                 inventory.speakerPresence(),
                 inventory.cameraPresence(),
@@ -410,18 +416,14 @@ public final class AudioNodeService extends Service {
         }
 
         Notification notification = buildNotification(microphone, speaker);
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-            int serviceTypes = 0;
-            if (microphone && Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
-                serviceTypes |= ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE;
-            }
-            if (speaker) {
-                serviceTypes |= ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PLAYBACK;
-            }
-            startForeground(NOTIFICATION_ID, notification, serviceTypes);
-        } else {
-            startForeground(NOTIFICATION_ID, notification);
+        int serviceTypes = 0;
+        if (microphone && Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+            serviceTypes |= ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE;
         }
+        if (speaker) {
+            serviceTypes |= ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PLAYBACK;
+        }
+        startForeground(NOTIFICATION_ID, notification, serviceTypes);
         foreground = true;
     }
 
@@ -477,6 +479,18 @@ public final class AudioNodeService extends Service {
         return capabilityRegistry.snapshot(nodeId);
     }
 
+    private static CapabilityLifecycleSnapshot cameraLifecycleSnapshot() {
+        UnifiedCameraNodeFacade.Snapshot camera = UnifiedCameraNodeFacade.snapshot();
+        CapabilityLifecycleState state = switch (camera.state()) {
+            case "stopped" -> CapabilityLifecycleState.STOPPED;
+            case "starting" -> CapabilityLifecycleState.STARTING;
+            case "active" -> CapabilityLifecycleState.ACTIVE;
+            case "failed" -> CapabilityLifecycleState.FAILED;
+            default -> throw new IllegalStateException("Unknown camera lifecycle state");
+        };
+        return new CapabilityLifecycleSnapshot(state, camera.generation(), camera.problemCode());
+    }
+
     private void notifyStateListener() {
         Runnable listener = stateListener;
         if (listener != null) {
@@ -491,6 +505,10 @@ public final class AudioNodeService extends Service {
 
         public CapabilityCatalogSnapshot capabilityCatalog() {
             return AudioNodeService.this.capabilityCatalogSnapshot();
+        }
+
+        public CapabilityLifecycleSnapshot cameraLifecycle() {
+            return AudioNodeService.cameraLifecycleSnapshot();
         }
 
         public java.util.Set<String> selectedSharedCapabilityIds() {

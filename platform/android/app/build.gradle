@@ -61,10 +61,10 @@ android {
 
     defaultConfig {
         applicationId = 'dev.capyio.android'
-        minSdk = 26
+        minSdk = 29
         targetSdk = 36
-        versionCode = 11
-        versionName = '0.4.3-dev'
+        versionCode = 12
+        versionName = '0.5.0-dev'
         manifestPlaceholders = [
             capyioSpeakerLabEnabled: System.getenv('CAPYIO_ANDROID_SPEAKER_PEER_IPV4') == null
                     ? 'false' : 'true',
@@ -107,6 +107,8 @@ android {
         main.java.srcDir 'src/main/java'
         main.java.srcDir '../node-contract/src/main/java'
         main.java.srcDir '../native-lan-contract/src/main/java'
+        main.java.srcDir '../capyio-camera-app/camera-contract/src/main/java'
+        main.java.srcDir '../capyio-camera-app/app/src/main/java'
         main.assets.srcDir packagedSharedUiRoot
     }
 
@@ -136,10 +138,14 @@ tasks.register('verifyDebugEntrypoints') {
             'dev/capyio/android/AudioNodeService.class',
             'dev/capyio/android/AndroidCapabilityCommand.class',
             'dev/capyio/android/AndroidAudioCommand.class',
+            'dev/capyio/android/AndroidCameraCommand.class',
+            'dev/capyio/android/AndroidAssetWebViewClient.class',
             'dev/capyio/android/AndroidSharingSelection.class',
             'dev/capyio/android/AndroidGamepadUiCommand.class',
             'dev/capyio/android/AndroidTouchpadUiFrame.class',
             'dev/capyio/android/AndroidUiSnapshotJson.class',
+            'io/capyio/camera/lab/CameraCaptureService.class',
+            'io/capyio/camera/lab/UnifiedCameraNodeFacade.class',
         ].each { relativePath ->
             if (!new File(classesDirectory, relativePath).isFile()) {
                 throw new GradleException("Android entrypoint class is missing: ${relativePath}")
@@ -156,6 +162,7 @@ tasks.register('compileCapabilityCompositionTest', JavaCompile) {
     source file('src/main/java/dev/capyio/android/AndroidCapabilityModules.java')
     source file('src/main/java/dev/capyio/android/AndroidCapabilityCommand.java')
     source file('src/main/java/dev/capyio/android/AndroidAudioCommand.java')
+    source file('src/main/java/dev/capyio/android/AndroidCameraCommand.java')
     source file('src/main/java/dev/capyio/android/AndroidSharingSelection.java')
     source file('src/main/java/dev/capyio/android/AndroidGamepadUiCommand.java')
     source file('src/main/java/dev/capyio/android/AndroidTouchpadUiFrame.java')

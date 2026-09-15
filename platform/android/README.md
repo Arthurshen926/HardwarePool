@@ -13,9 +13,13 @@ removed.
 The Android host will provide the phone's microphone, speaker and explicitly
 shared camera while reusing the shared Rust Core, Protocol and Runtime.
 
-## Camera2 lab
+## Camera2 service and retained lab
 
-`capyio-camera-app` is now a standalone Camera2/MediaCodec lab. It declares
+The unified Node now compiles the proven `capyio-camera-app` Camera2/MediaCodec
+service sources behind a narrow facade. The service is unexported, owns capture
+independently from the Activity and is controlled from the shared UI after a
+visible system permission flow. The original standalone lab remains available
+for source/quality and end-to-end transport parity work. It declares
 only `android.permission.CAMERA` and `android.permission.INTERNET`, requests CAMERA after a visible user
 action, targets a visible preview plus an AVC encoder Surface and exposes only
 bounded frame/access-unit counters. It stops whenever its Activity is not
@@ -25,9 +29,9 @@ reverse tunnel; C23 also permits one explicit canonical private, link-local or
 100.64.0.0/10 Windows IPv4 on fixed port 38173 for a trusted-LAN lab.
 
 One explicitly authorized Android 16 device run accepted the two-Surface session
-and produced 1280x720 AVC output. This is not yet the Android Node host, an
-production encoded transport, a background service or Windows virtual-camera
-roundtrip.
+and produced 1280x720 AVC output. The unified default still uses the fixed
+ADB-reverse development endpoint; it is not production discovery, pairing,
+encryption or Route authorization.
 Every future APK install/update still requires an explicitly selected ADB target
 and the applicable human authorization.
 
@@ -89,7 +93,7 @@ contract- and controlled-device validated.
 ## Build and check
 
 The reproducible wrapper pins Gradle 9.5.0 by SHA-256, Android Gradle Plugin
-9.3.1, compile/target SDK 36, min SDK 26 and Java 17 bytecode. There are no
+9.3.1, compile/target SDK 36, min SDK 29 and Java 17 bytecode. There are no
 third-party Android runtime dependencies.
 
 From the repository root:

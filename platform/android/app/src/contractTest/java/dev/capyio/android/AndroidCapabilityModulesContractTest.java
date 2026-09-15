@@ -36,6 +36,7 @@ public final class AndroidCapabilityModulesContractTest {
         appliesAndProjectsClosedGamepadUiCommands();
         parsesAndProjectsClosedTouchpadUiFrames();
         projectsAndAdmitsClosedAudioQuickActions();
+        attachesAndAdmitsClosedCameraQuickAction();
         System.out.println("Android Capability module composition: PASS ("
                 + assertions + " assertions)");
     }
@@ -466,9 +467,10 @@ public final class AndroidCapabilityModulesContractTest {
                 lifecycle.snapshot(),
                 lifecycle.snapshot(),
                 lifecycle.snapshot());
-        check(occurrences(stopped, "\"kind\":\"capability_control\"") == 5);
+        check(occurrences(stopped, "\"kind\":\"capability_control\"") == 6);
         check(stopped.contains("capyio.quick-action.android-microphone"));
         check(stopped.contains("capyio.quick-action.android-speaker"));
+        check(stopped.contains("capyio.quick-action.android-camera"));
         check(stopped.contains("\"status\":\"blocked\""));
         check(stopped.contains("CAPY.ANDROID.PERMISSION_REQUIRED"));
         check(stopped.contains("\"availableOperations\":[\"start\"]"));
@@ -509,6 +511,66 @@ public final class AndroidCapabilityModulesContractTest {
         check(AndroidAudioCommand.parse(
                 "capyio.quick-action.android-speaker", "start;stop",
                 dev.capyio.android.contract.AudioCapabilityState.STOPPED) == null);
+    }
+
+    private static void attachesAndAdmitsClosedCameraQuickAction() {
+        CapabilityLifecycleController camera = new CapabilityLifecycleController();
+        CapabilityCatalogSnapshot catalog = AndroidCapabilityModules.createRegistry(
+                new AudioNodeController(),
+                new CapabilityLifecycleController(),
+                new GamepadNodeController(),
+                new TouchpadNodeController(),
+                () -> true,
+                () -> true,
+                camera::snapshot,
+                () -> false,
+                true,
+                HardwarePresence.PRESENT,
+                HardwarePresence.PRESENT,
+                HardwarePresence.PRESENT,
+                HardwarePresence.PRESENT,
+                HardwarePresence.PRESENT,
+                HardwarePresence.PRESENT).snapshot("test-node");
+        CapabilitySnapshot cameraCapability = capability(catalog, "android.camera");
+        check(cameraCapability.adapterAttached());
+        check(cameraCapability.availability() == CapabilityAvailability.PERMISSION_REQUIRED);
+        check(AndroidSharingSelection.isSelectable(cameraCapability));
+
+        String stopped = AndroidUiSnapshotJson.encodeQuickActions(
+                new AudioNodeController().snapshot("test-node"),
+                true,
+                true,
+                camera.snapshot(),
+                false,
+                new CapabilityLifecycleController().snapshot(),
+                new GamepadNodeController().lifecycle(),
+                new TouchpadNodeController().lifecycle());
+        check(occurrences(stopped, "\"kind\":\"capability_control\"") == 6);
+        check(stopped.contains("capyio.quick-action.android-camera"));
+        check(stopped.contains("CAPY.ANDROID.PERMISSION_REQUIRED"));
+        check(AndroidCameraCommand.parse(
+                AndroidCameraCommand.ACTION_ID,
+                "start",
+                CapabilityLifecycleState.STOPPED).operation()
+                == AndroidCameraCommand.Operation.START);
+        check(AndroidCameraCommand.parse(
+                AndroidCameraCommand.ACTION_ID,
+                "stop",
+                CapabilityLifecycleState.ACTIVE).operation()
+                == AndroidCameraCommand.Operation.STOP);
+        check(AndroidCameraCommand.parse(
+                AndroidCameraCommand.ACTION_ID,
+                "retry",
+                CapabilityLifecycleState.FAILED).operation()
+                == AndroidCameraCommand.Operation.RETRY);
+        check(AndroidCameraCommand.parse(
+                "capyio.quick-action.android-camera-extra",
+                "start",
+                CapabilityLifecycleState.STOPPED) == null);
+        check(AndroidCameraCommand.parse(
+                AndroidCameraCommand.ACTION_ID,
+                "start",
+                CapabilityLifecycleState.ACTIVE) == null);
     }
 
     private static CapabilitySnapshot capability(
