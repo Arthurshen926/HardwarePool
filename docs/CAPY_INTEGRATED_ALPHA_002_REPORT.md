@@ -30,6 +30,11 @@ Session and Core Node identities. A future authenticated control host can call
 the decoder and Runtime admission boundary without reimplementing wire
 validation.
 
+The symmetric encoder accepts a typed Session ID and validated Core Node
+catalog, assigns a fresh message ID, converts the complete public descriptor
+and enforces the common 1 MiB control-envelope limit. Platform hosts therefore
+do not need to construct CatalogSnapshot envelopes independently.
+
 `capyio-control-host` now composes both steps. A caller supplies one exact
 Session/peer binding after connection admission; the host decodes a catalog,
 checks both identities, suppresses recently applied duplicate message IDs and
@@ -46,7 +51,7 @@ authentication implementation.
 ## Evidence
 
 - `cargo test -p capyio-testkit`: 18 passed.
-- `cargo test -p capyio-protocol`: 10 passed.
+- `cargo test -p capyio-protocol`: 11 passed.
 - `cargo test -p capyio-control-host`: 6 passed.
 - `cargo test -p capyio-desktop --lib`: 55 passed, 6 intentionally ignored
   physical/installed-device tests.

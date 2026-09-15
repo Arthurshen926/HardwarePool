@@ -36,6 +36,21 @@ pub fn encode_envelope_checked(envelope: &v1::Envelope) -> Result<Vec<u8>, Proto
     Ok(bytes)
 }
 
+/// Converts one complete Core Node catalog into a bounded, Session-bound
+/// CatalogSnapshot envelope. The caller still owns Session authorization,
+/// transport authentication and delivery.
+pub fn encode_catalog_snapshot(
+    session_id: SessionId,
+    node: &NodeDescriptor,
+) -> Result<Vec<u8>, ProtocolError> {
+    let node = v1::NodeDescriptor::try_from(node)?;
+    let envelope = new_envelope(
+        Some(session_id),
+        v1::envelope::Payload::CatalogSnapshot(v1::CatalogSnapshot { node: Some(node) }),
+    );
+    encode_envelope_checked(&envelope)
+}
+
 /// Decodes one bounded control message and validates required semantic fields.
 pub fn decode_envelope(bytes: &[u8]) -> Result<v1::Envelope, ProtocolError> {
     if bytes.len() > MAX_CONTROL_ENVELOPE_BYTES {

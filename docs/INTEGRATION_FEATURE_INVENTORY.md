@@ -100,8 +100,9 @@ Camera2 connect/disconnect and complete service/resource cleanup.
 
 ## Remaining integration work
 
-The control protocol now decodes a complete CatalogSnapshot into a validated
-Core value with mandatory Session identity, and the Runtime has a
+The control protocol now encodes and decodes a complete CatalogSnapshot with
+mandatory Session identity, validated Core catalog conversion and the fixed
+control-envelope bound, and the Runtime has a
 session-bound whole-peer-catalog admission method. It rejects the wrong Node
 identity or a non-Ready Session without mutation, preserves locally observed
 online state and atomically reconciles dependent Routes. A shared control-host

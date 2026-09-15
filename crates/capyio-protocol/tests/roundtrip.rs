@@ -3,8 +3,8 @@ use capyio_core::{
     ProblemSeverity, Route,
 };
 use capyio_protocol::{
-    PROTOCOL_MAJOR, ProtocolError, decode_catalog_snapshot, decode_envelope, encode_envelope,
-    new_envelope, v1,
+    PROTOCOL_MAJOR, ProtocolError, decode_catalog_snapshot, decode_envelope,
+    encode_catalog_snapshot, encode_envelope, new_envelope, v1,
 };
 use capyio_testkit::{DemoLab, android_node};
 
@@ -106,6 +106,20 @@ fn catalog_envelope_decodes_to_session_bound_core_value() {
         lab.runtime.snapshot().peers[0].display_name,
         "Decoded Android catalog"
     );
+}
+
+#[test]
+fn catalog_encoder_produces_a_bounded_session_bound_round_trip() {
+    let lab = DemoLab::new().expect("demo lab");
+    let node = android_node();
+
+    let bytes = encode_catalog_snapshot(lab.session_id, &node).expect("catalog encode");
+    let decoded = decode_catalog_snapshot(&bytes).expect("catalog decode");
+
+    assert!(bytes.len() <= capyio_protocol::MAX_CONTROL_ENVELOPE_BYTES);
+    assert_eq!(decoded.session_id, lab.session_id);
+    assert_eq!(decoded.node, node);
+    assert!(!decoded.message_id.to_string().is_empty());
 }
 
 #[test]

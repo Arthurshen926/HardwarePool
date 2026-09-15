@@ -930,6 +930,11 @@ Node descriptor. It is ready to compose with Runtime admission after an
 authenticated host has admitted the connection; it does not itself supply
 transport trust or replay defense.
 
+The protocol boundary also exposes the symmetric publication operation: one
+typed Session ID plus a validated Core Node catalog becomes a fresh-message-ID
+CatalogSnapshot under the same 1 MiB envelope bound. Its encode/decode
+round-trip is covered without claiming delivery, authentication or discovery.
+
 `capyio-control-host` now performs the reusable decoder-to-Runtime handoff for
 one exact caller-admitted Session/peer tuple. Six deterministic tests cover
 success, wrong identity, duplicate delivery, Runtime rejection/retry and the

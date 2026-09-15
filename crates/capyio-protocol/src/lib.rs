@@ -13,8 +13,8 @@ pub mod v1 {
 
 pub use codec::{
     MAX_CONTROL_ENVELOPE_BYTES, ValidatedCatalogSnapshot, decode_catalog_snapshot, decode_envelope,
-    encode_envelope, encode_envelope_checked, new_envelope, validate_envelope,
-    validate_envelope_version,
+    encode_catalog_snapshot, encode_envelope, encode_envelope_checked, new_envelope,
+    validate_envelope, validate_envelope_version,
 };
 pub use error::ProtocolError;
 

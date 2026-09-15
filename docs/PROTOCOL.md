@@ -33,12 +33,15 @@ shape does not make IDs substitutable.
 - catalog updates may replace an Adapter-owned subset after restart;
 - both peers send catalogs; neither is structurally provider-only.
 
-The Rust protocol boundary exposes a dedicated complete-catalog decoder. It
-requires a non-empty typed Session ID, an exact `CatalogSnapshot` payload and a
-complete `NodeDescriptor`, then performs the existing wire-to-Core validation
-before returning a host value. This is structural/semantic decoding only: the
-host must first authenticate the connection, apply replay policy and then pass
-the value to the Runtime's exact-Session peer-catalog admission method.
+The Rust protocol boundary exposes symmetric complete-catalog encoding and
+decoding helpers. Encoding requires a typed Session ID and validated Core
+`NodeDescriptor`, converts it to the public wire descriptor and applies the
+1 MiB control-envelope bound. Decoding requires a non-empty typed Session ID,
+an exact `CatalogSnapshot` payload and a complete `NodeDescriptor`, then
+performs the existing wire-to-Core validation before returning a host value.
+These are structural/semantic codec operations only: the host must authenticate
+the connection, apply replay policy and pass the decoded value to the Runtime's
+exact-Session peer-catalog admission method.
 
 The shared control-host composition performs that decoder-to-Runtime handoff
 for a caller-supplied admitted Session/peer binding. Its fixed 256-message
@@ -158,6 +161,7 @@ Protobuf fields remain forward-compatible. Human messages are not parsed.
 ## Compatibility tests
 
 - Core ↔ Protobuf catalog round trip;
+- bounded Session-bound complete-catalog encode/decode round trip;
 - Envelope binary round trip and unsupported major;
 - Capability/Port/Route/Problem round trips;
 - malformed UUID and missing fields;
