@@ -298,6 +298,13 @@ existing recording/notification prompt. The read DTO contains only bounded
 lifecycle, format, frame-count, permission-ready and problem-code fields; it
 contains no PCM, endpoint secret, launch argument, path or peer authority.
 
+ANDROID-A01D5 admits sharing-selection mutations only for an exact capability
+ID in the Service's current catalog. The capability must have present hardware,
+an attached Adapter and a Source Port. Unknown/foreign IDs, overlong IDs,
+unattached camera entries and Sink capabilities are rejected. This session-local
+set is publication intent only and conveys no Session trust, Route authority,
+permission grant or transport endpoint.
+
 The synthetic-touchpad injection harness is a local controlled-lab binary, not
 an allow-listed WebView/Node Runtime command. Its default path only projects and
 encodes fixed fixtures. Native submission requires both an explicit injection

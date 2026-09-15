@@ -15,6 +15,7 @@ import dev.capyio.android.contract.TouchpadControlsSnapshot;
 
 import java.util.List;
 import java.util.Locale;
+import java.util.Set;
 
 /** Projects the bounded Android-local catalog into the shared UI schema. */
 public final class AndroidUiSnapshotJson {
@@ -26,8 +27,19 @@ public final class AndroidUiSnapshotJson {
             CapabilityCatalogSnapshot catalog,
             String platformVersion,
             String projectVersion) {
+        return encode(catalog, platformVersion, projectVersion, Set.of());
+    }
+
+    public static String encode(
+            CapabilityCatalogSnapshot catalog,
+            String platformVersion,
+            String projectVersion,
+            Set<String> selectedCapabilityIds) {
         if (catalog == null) {
             return encodeDisconnected(platformVersion, projectVersion);
+        }
+        if (selectedCapabilityIds == null) {
+            throw new IllegalArgumentException("Selected Capability IDs are required");
         }
         StringBuilder json = new StringBuilder(4096);
         json.append('{');
@@ -42,13 +54,13 @@ public final class AndroidUiSnapshotJson {
         json.append(",\"online\":true,\"local\":true,\"capabilityCount\":")
                 .append(catalog.capabilities().size()).append("}]");
         json.append(",\"capabilities\":[");
-        appendCapabilities(json, catalog.nodeId(), catalog.capabilities());
+        appendCapabilities(json, catalog.nodeId(), catalog.capabilities(), selectedCapabilityIds);
         json.append(']');
         appendEmptyCollections(json);
         json.append(",\"warnings\":[");
         appendQuoted(json, "Android shared UI controls local IMU, gamepad and touchpad lifecycles and input state.");
         json.append(',');
-        appendQuoted(json, "Sharing selection, Routes, and remote catalog exchange are not attached yet.");
+        appendQuoted(json, "Sharing selection records local publication intent; Routes and remote catalog exchange are not attached yet.");
         json.append("],\"imuFixture\":null}");
         return json.toString();
     }
@@ -425,14 +437,16 @@ public final class AndroidUiSnapshotJson {
     private static void appendCapabilities(
             StringBuilder json,
             String nodeId,
-            List<CapabilitySnapshot> capabilities) {
+            List<CapabilitySnapshot> capabilities,
+            Set<String> selectedCapabilityIds) {
         for (int capabilityIndex = 0; capabilityIndex < capabilities.size(); capabilityIndex++) {
             if (capabilityIndex > 0) {
                 json.append(',');
             }
             CapabilitySnapshot capability = capabilities.get(capabilityIndex);
+            String capabilityId = nodeId + ":" + capability.capabilityKey();
             json.append('{');
-            appendStringField(json, "id", nodeId + ":" + capability.capabilityKey());
+            appendStringField(json, "id", capabilityId);
             appendStringField(json, "nodeId", nodeId);
             appendStringField(json, "nodeName", NODE_NAME);
             appendStringField(json, "displayName", capability.displayName());
@@ -441,8 +455,11 @@ public final class AndroidUiSnapshotJson {
             appendStringField(json, "availability", lower(capability.availability()));
             appendStringField(json, "permissionRequirement", lower(capability.permissionRequirement()));
             appendStringField(json, "inventorySource", "android_node_catalog");
-            json.append(",\"simulated\":false,\"selectableForSharing\":false")
-                    .append(",\"selectedForSharing\":false,\"ports\":[");
+            json.append(",\"simulated\":false,\"selectableForSharing\":")
+                    .append(AndroidSharingSelection.isSelectable(capability))
+                    .append(",\"selectedForSharing\":")
+                    .append(selectedCapabilityIds.contains(capabilityId))
+                    .append(",\"ports\":[");
             appendPorts(json, nodeId, capability);
             json.append("]}");
         }

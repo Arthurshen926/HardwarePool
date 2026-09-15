@@ -85,10 +85,17 @@ flow and Service commands, exposes actual negotiated format and frame counts,
 keeps both directions independent, changes no Manifest declaration, and retains
 the native audio controls until shared-UI device parity is proven.
 
+A01D5 enables the shared local-capability checkboxes against the Service-owned
+Android catalog. The automatically probed, attached microphone, IMU, gamepad
+and touchpad Source capabilities may record session-local publication intent;
+speaker/haptics Sinks and the unattached camera cannot. This does not start an
+Adapter, grant permission, create a Route or exchange a catalog with a peer.
+
 ## Remaining integration work
 
 1. Route touchpad, IMU and gamepad samples through bounded typed data planes.
-   Their local lifecycles/UI state are attached, but they are not sharing or Route authorization. Haptics requires
+   Their local lifecycles/UI state and publication selection are attached, but
+   peer catalog exchange and Route authorization are not. Haptics requires
    separate approval for the Android `VIBRATE` Manifest permission.
 2. Physically verify the shared audio controls and remove the transitional
    native fallback only after equivalent permission, lifecycle and device evidence.

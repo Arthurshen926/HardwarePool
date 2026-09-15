@@ -136,6 +136,7 @@ tasks.register('verifyDebugEntrypoints') {
             'dev/capyio/android/AudioNodeService.class',
             'dev/capyio/android/AndroidCapabilityCommand.class',
             'dev/capyio/android/AndroidAudioCommand.class',
+            'dev/capyio/android/AndroidSharingSelection.class',
             'dev/capyio/android/AndroidGamepadUiCommand.class',
             'dev/capyio/android/AndroidTouchpadUiFrame.class',
             'dev/capyio/android/AndroidUiSnapshotJson.class',
@@ -155,6 +156,7 @@ tasks.register('compileCapabilityCompositionTest', JavaCompile) {
     source file('src/main/java/dev/capyio/android/AndroidCapabilityModules.java')
     source file('src/main/java/dev/capyio/android/AndroidCapabilityCommand.java')
     source file('src/main/java/dev/capyio/android/AndroidAudioCommand.java')
+    source file('src/main/java/dev/capyio/android/AndroidSharingSelection.java')
     source file('src/main/java/dev/capyio/android/AndroidGamepadUiCommand.java')
     source file('src/main/java/dev/capyio/android/AndroidTouchpadUiFrame.java')
     source file('src/main/java/dev/capyio/android/AndroidUiSnapshotJson.java')

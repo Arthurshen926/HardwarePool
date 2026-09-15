@@ -73,7 +73,7 @@ function tone(capability: UiCapability): "success" | "warning" | "danger" {
               :disabled="busyId === capability.id"
               @change="toggle(capability, $event)"
             >
-            <span>{{ capability.selectedForSharing ? "已选择共享" : "允许远端发现并使用" }}</span>
+            <span>{{ capability.selectedForSharing ? "已加入共享清单" : "加入可发布能力清单" }}</span>
           </label>
           <span v-else class="hardware-card__note">{{ capability.local ? "方向由 Sink / Control Port 决定" : "目录只读；建立 Route 时再单独授权" }}</span>
           <span v-if="capability.permissionRequirement !== 'none'" class="hardware-card__permission">{{ capability.permissionRequirement }}</span>

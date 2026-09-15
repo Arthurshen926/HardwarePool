@@ -826,6 +826,14 @@ existing system permission flow remains platform-owned; Stop uses the existing
 Service commands. This slice changes no Manifest declaration and retains the
 native audio controls as a rollback fallback pending physical UI parity.
 
+ANDROID-A01D5 makes the shared local-capability checkbox mutable on Android,
+but keeps its meaning narrow: it is session-local publication intent owned by
+the Node Service. Eligibility is derived from the current hardware-backed
+catalog and requires an attached Adapter, present hardware and at least one
+Source Port. A Sink, Control-only capability, unattached camera or foreign
+Node ID cannot be selected. Selection does not start hardware, grant permission,
+authorize a Route or claim that a peer catalog has received the advertisement.
+
 ADR 0044 subsequently adds the approved network permission and a separate
 dependency-free LAN codec/socket worker boundary. ADRs 0046 and 0047 now attach
 the speaker Sink and microphone Source respectively: `AudioTrack` consumes the

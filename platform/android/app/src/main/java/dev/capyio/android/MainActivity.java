@@ -357,7 +357,14 @@ public final class MainActivity extends Activity {
             return AndroidUiSnapshotJson.encode(
                     current.capabilityCatalog(),
                     Build.VERSION.RELEASE,
-                    BuildConfig.VERSION_NAME);
+                    BuildConfig.VERSION_NAME,
+                    current.selectedSharedCapabilityIds());
+        }
+
+        @JavascriptInterface
+        public boolean setLocalCapabilityShared(String capabilityId, boolean selected) {
+            AudioNodeService.NodeBinder current = binder;
+            return current != null && current.setLocalCapabilityShared(capabilityId, selected);
         }
 
         @JavascriptInterface

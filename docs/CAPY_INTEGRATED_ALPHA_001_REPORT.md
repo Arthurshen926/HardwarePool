@@ -103,6 +103,13 @@ and therefore preserves Android's system permission UI; Stop uses the existing
 Service actions. No permission or foreground-service declaration changed, and
 the native controls remain available until shared-UI physical parity is proven.
 
+A01D5 enables the common local-hardware sharing checkboxes for Android. The
+Service admits only exact current-catalog IDs whose hardware is present, Adapter
+is attached and Ports include a Source. Microphone, IMU, gamepad and touchpad
+therefore qualify; speaker, haptics and the unattached camera do not. The state
+is session-local publication intent and neither starts hardware nor establishes
+peer discovery, authorization, a Route or a data plane.
+
 ## Automated evidence
 
 - `cargo test --offline -p capyio-input -p capyio-dsu-adapter -p capyio-viiper-adapter -p capyio-windows-input -p capyio-desktop`: passed after the gamepad merge.
@@ -130,8 +137,9 @@ the native controls remain available until shared-UI physical parity is proven.
 - `platform/android/gradlew.bat capyioCheck --offline`: final aggregate Android
   Gate passed all contracts, composition checks, Lint, entrypoint verification
   shared-Vue asset verification and debug assembly without installing the APK.
-- the Android composition executable passed 150 assertions after A01D4, including
-  schema-4 projection, all seven capabilities, read-only flags, JSON escaping
+- the Android composition executable passed 170 assertions after A01D5, including
+  schema-4 projection, all seven capabilities, Source-only sharing eligibility,
+  selection identity/bounds/idempotence, JSON escaping
   and disconnected-service output plus closed IMU/gamepad Quick Actions and
   command rejection, complete touch-gamepad state composition and bounded
   Android gamepad-state projection plus touchpad attachment, complete-frame
@@ -147,6 +155,7 @@ the native controls remain available until shared-UI physical parity is proven.
 - no APK installation and no Android permission/foreground-service change;
 - no Windows driver install/removal, restart or boot/security-policy change;
 - no Display merge or Display worktree modification;
-- no claim that schema-4 fixture catalogs are real hardware discovery;
+- no claim that the Tauri schema-4 fixture catalog is real hardware discovery;
+- no claim that Android publication selection has reached a remote peer;
 - no claim of physical Android rendering or complete mutable-command UI parity;
   A01D4 adds shared audio operations while retaining native controls as fallback.

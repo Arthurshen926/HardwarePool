@@ -61,8 +61,12 @@ Display is excluded until its feature branch is complete.
    A01D4 adds independent microphone/speaker actions and an actual-format/frame
    status panel while retaining Android-owned permission prompts and the native
    fallback.
-   These operations do not create Routes or select sharing. Audio permission UX,
-   Route status and the remaining capabilities proceed in separate slices.
+   A01D5 adds Service-owned session-local publication selection for the four
+   attached, hardware-present Source capabilities. Sink/unattached/foreign
+   entries are rejected. Selection remains separate from permission, Adapter
+   lifecycle, Routes and peer catalog exchange.
+   These operations do not create Routes. Audio permission UX, Route status and
+   the remaining capabilities proceed in separate slices.
 5. **A01E — camera integration:** only after explicit approval, add the camera
    permission/service declarations required by the selected lifecycle and run
    denial/revoke/background tests on an authorized device.

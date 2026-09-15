@@ -11,6 +11,7 @@ declare global {
       getGamepadStateJson(): string;
       getTouchpadStateJson(): string;
       getAudioStateJson(): string;
+      setLocalCapabilityShared(capabilityId: string, selected: boolean): boolean;
       invokeQuickAction(actionId: string, operation: QuickActionOperation): boolean;
       updateGamepad(kind: string, target: string, x: number, y: number, pressed: boolean): boolean;
       updateTouchpad(encodedContacts: string): boolean;
@@ -37,7 +38,12 @@ class AndroidObserverCapyIOApi implements CapyIOApi {
   }
 
   setRoute(): Promise<UiSnapshot> { return this.readOnly(); }
-  setLocalCapabilityShared(): Promise<UiSnapshot> { return this.readOnly(); }
+  async setLocalCapabilityShared(capabilityId: string, selected: boolean): Promise<UiSnapshot> {
+    if (!window.CapyIOAndroid?.setLocalCapabilityShared(capabilityId, selected)) {
+      throw new Error("Android rejected the sharing selection");
+    }
+    return this.getSnapshot();
+  }
   resetDemo(): Promise<UiSnapshot> { return this.readOnly(); }
   getLiveImu(): Promise<UiLiveImu | null> { return Promise.resolve(null); }
   startLiveImu(): Promise<UiLiveImu> { return this.readOnly(); }

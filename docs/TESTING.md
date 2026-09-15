@@ -1589,6 +1589,14 @@ cover the bridge handoff back to the Activity permission path. Physical
 permission dialogs and audio operation remain covered only by the earlier native
 UI device evidence until the shared surface is installed and exercised.
 
+ANDROID-A01D5 raises the composition executable to 170 assertions. It verifies
+that the four attached hardware-present Android Sources (microphone, IMU,
+gamepad and touchpad) are selectable, while speaker, haptics and the unattached
+camera are not. It also covers select/unselect idempotence, exact Node and
+capability identity, unknown/null/overlong rejection, and schema-4 selected-state
+projection. These checks prove local publication-intent admission only; they do
+not prove peer discovery, Route authorization or a data-plane connection.
+
 Offline repository validation additionally pins the Gradle/AGP contract and
 checks the source manifest for the approved recording/notification/foreground
 permissions, a non-exported dual-type service, disabled backup/cleartext and no

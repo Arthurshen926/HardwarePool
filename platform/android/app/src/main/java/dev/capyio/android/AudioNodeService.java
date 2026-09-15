@@ -61,6 +61,7 @@ public final class AudioNodeService extends Service {
             new CapabilityLifecycleController();
     private final GamepadNodeController gamepadController = new GamepadNodeController();
     private final TouchpadNodeController touchpadController = new TouchpadNodeController();
+    private final AndroidSharingSelection sharingSelection = new AndroidSharingSelection();
 
     private CapabilityModuleRegistry capabilityRegistry;
     private MicrophoneSourceAdapter microphoneAdapter;
@@ -490,6 +491,19 @@ public final class AudioNodeService extends Service {
 
         public CapabilityCatalogSnapshot capabilityCatalog() {
             return AudioNodeService.this.capabilityCatalogSnapshot();
+        }
+
+        public java.util.Set<String> selectedSharedCapabilityIds() {
+            return sharingSelection.snapshot();
+        }
+
+        public boolean setLocalCapabilityShared(String capabilityId, boolean selected) {
+            boolean accepted = sharingSelection.update(
+                    AudioNodeService.this.capabilityCatalogSnapshot(), capabilityId, selected);
+            if (accepted) {
+                notifyStateListener();
+            }
+            return accepted;
         }
 
         public CapabilityLifecycleSnapshot imuLifecycle() {

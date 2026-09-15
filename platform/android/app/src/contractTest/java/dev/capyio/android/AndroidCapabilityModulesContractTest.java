@@ -31,6 +31,7 @@ public final class AndroidCapabilityModulesContractTest {
         reflectsGenerationBoundGamepadLifecycleState();
         reflectsGenerationBoundTouchpadLifecycleState();
         projectsTheCatalogIntoSharedUiSchemaFour();
+        admitsOnlyLocalAttachedSourceSharingIntent();
         projectsAndAdmitsClosedCapabilityQuickActions();
         appliesAndProjectsClosedGamepadUiCommands();
         parsesAndProjectsClosedTouchpadUiFrames();
@@ -227,7 +228,9 @@ public final class AndroidCapabilityModulesContractTest {
         check(json.contains("\"capabilityClass\":\"microphone\""));
         check(json.contains("\"direction\":\"source\""));
         check(json.contains("\"direction\":\"sink\""));
-        check(json.contains("\"selectableForSharing\":false"));
+        check(occurrences(json, "\"selectableForSharing\":true") == 4);
+        check(occurrences(json, "\"selectableForSharing\":false") == 3);
+        check(occurrences(json, "\"selectedForSharing\":false") == 7);
         check(json.endsWith("\"imuFixture\":null}"));
         check("\"a\\\"b\\\\c\\n\\ud83d\\ude00\"".equals(
                 AndroidUiSnapshotJson.encodeStringForContractTest("a\"b\\c\n\ud83d\ude00")));
@@ -235,6 +238,45 @@ public final class AndroidCapabilityModulesContractTest {
         String disconnected = AndroidUiSnapshotJson.encodeDisconnected("16", "0.4.3-dev");
         check(disconnected.contains("\"online\":false"));
         check(disconnected.contains("\"capabilities\":[]"));
+    }
+
+    private static void admitsOnlyLocalAttachedSourceSharingIntent() {
+        CapabilityCatalogSnapshot catalog = AndroidCapabilityModules.createRegistry(
+                new AudioNodeController(),
+                new CapabilityLifecycleController(),
+                new GamepadNodeController(),
+                new TouchpadNodeController(),
+                () -> false,
+                () -> true,
+                HardwarePresence.PRESENT,
+                HardwarePresence.PRESENT,
+                HardwarePresence.PRESENT,
+                HardwarePresence.PRESENT,
+                HardwarePresence.PRESENT,
+                HardwarePresence.PRESENT).snapshot("test-node");
+        AndroidSharingSelection selection = new AndroidSharingSelection();
+
+        check(selection.update(catalog, "test-node:android.microphone", true));
+        check(selection.update(catalog, "test-node:android.imu", true));
+        check(selection.update(catalog, "test-node:android.gamepad", true));
+        check(selection.update(catalog, "test-node:android.touchpad", true));
+        check(!selection.update(catalog, "test-node:android.speaker", true));
+        check(!selection.update(catalog, "test-node:android.haptics", true));
+        check(!selection.update(catalog, "test-node:android.camera", true));
+        check(!selection.update(catalog, "other-node:android.imu", true));
+        check(!selection.update(catalog, "test-node:android.unknown", true));
+        check(!selection.update(catalog, "x".repeat(257), true));
+        check(!selection.update(catalog, null, true));
+        check(selection.snapshot().size() == 4);
+
+        String selected = AndroidUiSnapshotJson.encode(
+                catalog, "16", "0.4.3-dev", selection.snapshot());
+        check(occurrences(selected, "\"selectedForSharing\":true") == 4);
+        check(selected.contains("\"id\":\"test-node:android.microphone\""));
+        check(selection.update(catalog, "test-node:android.imu", false));
+        check(selection.snapshot().size() == 3);
+        check(selection.update(catalog, "test-node:android.imu", false));
+        check(selection.snapshot().size() == 3);
     }
 
     private static int occurrences(String value, String target) {
