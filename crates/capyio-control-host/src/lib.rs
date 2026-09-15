@@ -137,6 +137,21 @@ impl PeerCatalogControlHost {
         Ok(catalog.message_id)
     }
 
+    /// Projects and encodes the local catalog on this host's already-admitted
+    /// Session. Keeping the Session ID inside the binding prevents a platform
+    /// caller from publishing on a different Session than the inbound peer.
+    pub fn encode_local_catalog(
+        &self,
+        local_node: &NodeDescriptor,
+        selected_source_capabilities: &BTreeSet<CapabilityId>,
+    ) -> Result<Vec<u8>, PublicationError> {
+        encode_publication_catalog(
+            self.binding.session_id,
+            local_node,
+            selected_source_capabilities,
+        )
+    }
+
     #[must_use]
     pub fn retained_message_count(&self) -> usize {
         self.recent_message_ids.len()
@@ -347,7 +362,7 @@ mod tests {
     #[test]
     fn encoded_publication_catalog_round_trips_with_session_binding() {
         let lab = DemoLab::new().expect("demo lab");
-        let node = android_node();
+        let node = windows_node();
         let selected_source = node
             .capabilities
             .values()
@@ -360,8 +375,10 @@ mod tests {
             .expect("Source Capability")
             .id;
         let selected = BTreeSet::from([selected_source]);
+        let host = host_for(&lab);
 
-        let bytes = encode_publication_catalog(lab.session_id, &node, &selected)
+        let bytes = host
+            .encode_local_catalog(&node, &selected)
             .expect("encode publication catalog");
         let decoded = decode_catalog_snapshot(&bytes).expect("decode publication catalog");
 

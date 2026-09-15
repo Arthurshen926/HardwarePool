@@ -47,6 +47,9 @@ Source-bearing Capabilities are removed, Sink/Control-only Capabilities remain
 visible, Adapter ownership is pruned to the retained set, and the result is
 revalidated before Session-bound encoding. Unknown, non-Source and Offline
 selections fail closed.
+The bound outbound method derives its Session ID from the same admitted
+Session/peer tuple used by inbound catalog admission; platform callers cannot
+supply a second, potentially mismatched Session ID on that path.
 
 The Windows Tauri host now consumes `DemoLab` only to create deterministic
 bootstrap state. Its long-lived `DesktopNodeState` owns the `NodeRuntime`,

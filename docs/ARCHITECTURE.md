@@ -170,6 +170,9 @@ Sink/Control-only Capabilities remain visible because the Source checkbox does
 not control them. Unknown, non-Source or Offline selections fail closed, and
 Adapter ownership is pruned and revalidated after filtering. A mixed-direction
 Capability is indivisible and is omitted as a whole when unselected.
+The final outbound encoder is a method on the same admitted peer-control object
+that processes inbound catalogs, so platform code cannot independently choose a
+different Session ID for publication.
 
 The built-in Controller view is shared presentation code for desktop and a
 future Android host. It emits closed semantic control changes; a trusted host

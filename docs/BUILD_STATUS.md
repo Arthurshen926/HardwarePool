@@ -943,6 +943,9 @@ pruned, and invalid selections fail closed. Nine deterministic tests cover the
 two directions, wrong identity, duplicate delivery, Runtime rejection/retry and
 the fixed 256-ID retention bound. No platform transport, socket or cryptographic
 identity is introduced by this slice.
+Inbound admission and outbound publication now use the same
+`PeerCatalogControlHost` Session binding, removing a platform-call seam where a
+caller could otherwise encode the local catalog for a different Session.
 
 The Windows Tauri host now consumes `DemoLab` only as deterministic startup
 input. Its UI commands and audio, microphone, IMU and gamepad workers share a

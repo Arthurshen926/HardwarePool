@@ -329,6 +329,9 @@ Unselected Source-bearing Capabilities are removed, Adapter ownership is pruned
 to the retained catalog and the result is validated again. This prevents stale
 or forged UI selection from expanding an outbound CatalogSnapshot; it does not
 authenticate the recipient or authorize a Route.
+The outbound operation obtains its Session ID from the same exact peer binding
+used for inbound admission; the platform caller supplies only the current local
+catalog and publication selection, not a second Session identifier.
 
 ANDROID-A01E accepts only the fixed camera action ID and lifecycle-valid
 start/stop/retry. Start is returned to the visible Activity so Android owns the
