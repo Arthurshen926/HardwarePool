@@ -43,7 +43,7 @@ public final class AndroidUiSnapshotJson {
         }
         StringBuilder json = new StringBuilder(4096);
         json.append('{');
-        appendStringField(json, "backendMode", "android_observer");
+        appendStringField(json, "backendMode", "android_node");
         json.append(",\"schemaVersion\":4");
         appendStringField(json, "projectVersion", requireText(projectVersion, "project version"));
         json.append(",\"nodes\":[{");
@@ -68,7 +68,7 @@ public final class AndroidUiSnapshotJson {
     public static String encodeDisconnected(String platformVersion, String projectVersion) {
         StringBuilder json = new StringBuilder(768);
         json.append('{');
-        appendStringField(json, "backendMode", "android_observer");
+        appendStringField(json, "backendMode", "android_node");
         json.append(",\"schemaVersion\":4");
         appendStringField(json, "projectVersion", requireText(projectVersion, "project version"));
         json.append(",\"nodes\":[{");

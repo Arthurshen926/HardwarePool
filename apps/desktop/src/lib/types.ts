@@ -1,4 +1,4 @@
-export type BackendMode = "android_observer" | "browser_mock" | "tauri_demo";
+export type BackendMode = "android_node" | "browser_mock" | "tauri_demo";
 
 export type RouteState =
   | "draft"

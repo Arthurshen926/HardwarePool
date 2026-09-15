@@ -53,7 +53,7 @@ const quickActionRouteIds = computed(() => new Set(quickActions.value.flatMap((a
 const ordinaryQuickRoutes = computed(() => (snapshot.value?.routes ?? []).filter((route) => !quickActionRouteIds.value.has(route.id)));
 const localCapabilities = computed(() => (snapshot.value?.capabilities ?? []).filter((capability) => capability.local));
 const peerCapabilities = computed(() => (snapshot.value?.capabilities ?? []).filter((capability) => !capability.local));
-const androidObserver = computed(() => snapshot.value?.backendMode === "android_observer");
+const androidNode = computed(() => snapshot.value?.backendMode === "android_node");
 
 async function load(): Promise<void> {
   loading.value = true;
@@ -287,12 +287,12 @@ function refreshSnapshot(): void {
       <nav class="view-switch" aria-label="Primary views">
         <button type="button" :class="{ active: view === 'quick' }" @click="view = 'quick'">Quick Actions</button>
         <button type="button" :class="{ active: view === 'workspace' }" @click="view = 'workspace'">设备与能力</button>
-        <button v-if="!androidObserver || gamepad" type="button" :class="{ active: view === 'controller' }" @click="view = 'controller'">Controller</button>
+        <button v-if="!androidNode || gamepad" type="button" :class="{ active: view === 'controller' }" @click="view = 'controller'">Controller</button>
         <button v-if="touchpad" type="button" :class="{ active: view === 'touchpad' }" @click="view = 'touchpad'">Touchpad</button>
       </nav>
       <div class="topbar__actions">
         <StatusPill v-if="snapshot" :tone="snapshot.backendMode === 'tauri_demo' ? 'success' : 'warning'" :label="snapshot.backendMode" />
-        <button v-if="!androidObserver" class="ghost-button" type="button" :disabled="loading" @click="resetDemo">Reset demo</button>
+        <button v-if="!androidNode" class="ghost-button" type="button" :disabled="loading" @click="resetDemo">Reset demo</button>
       </div>
     </header>
 
@@ -390,10 +390,10 @@ function refreshSnapshot(): void {
         </div>
         <div class="gamepad-lab__actions">
           <StatusPill :tone="gamepad.simulated ? 'warning' : 'success'" :label="gamepad.simulated ? 'simulated source' : 'android live source'" />
-          <button class="ghost-button" type="button" :disabled="gamepadBusy || (androidObserver ? gamepad.androidInput.status !== 'connected' : ['listening', 'connected'].includes(gamepad.androidInput.status))" @click="updateGamepad({ kind: 'reset' })">全部归零</button>
+          <button class="ghost-button" type="button" :disabled="gamepadBusy || (androidNode ? gamepad.androidInput.status !== 'connected' : ['listening', 'connected'].includes(gamepad.androidInput.status))" @click="updateGamepad({ kind: 'reset' })">全部归零</button>
         </div>
       </header>
-      <p v-if="androidObserver" class="gamepad-lab__note">这是 Android 本机触控输入面。请先在 Quick Actions 启动 Touch gamepad；每次交互都会在 Service 边界合成为完整有界状态，停止后立即归零并拒绝旧 generation 输入。共享与远端 Route 尚未接入。</p>
+      <p v-if="androidNode" class="gamepad-lab__note">这是 Android 本机触控输入面。请先在 Quick Actions 启动 Touch gamepad；每次交互都会在 Service 边界合成为完整有界状态，停止后立即归零并拒绝旧 generation 输入。发布选择已接入；远端目录与 Route 尚未接入。</p>
       <template v-else>
       <p class="gamepad-lab__note">桌面模拟器和 Android 真机共用完整 <code>GamepadState</code> 检查器。Android 每个 UDP 数据报携带按键、摇杆、扳机与 IMU 完整快照；序列回退会被拒绝，超过 350ms 未收到数据会强制手柄归零。</p>
       <div class="dsu-lab-bar android-lab-bar">
@@ -461,8 +461,8 @@ function refreshSnapshot(): void {
       <p class="gamepad-lab__note">默认只发布完整 DS4：其按键、摇杆与 IMU 已通过 Windows Raw HID/WGI 动态报告验证，适合 Steam 的 PlayStation 支持与 DS4-aware 应用。Direct XInput 兼容设备仅供直接调用 XInput 的旧游戏显式启用；本机验证显示虚拟 Xbox 在 WGI 中可枚举但不会更新，因此不建议为 Steam 或浏览器启用。停止会先发送安全中立态，再精确卸载本次拥有的设备；此入口不安装或卸载驱动，也不触发重启。</p>
       </template>
       <div class="gamepad-lab__grid">
-        <div><h3>{{ androidObserver ? 'Android local touch source' : gamepad.simulated ? 'Desktop virtual input source' : 'Android input mirror' }}</h3><GamepadSurface :state="gamepad" :disabled="androidObserver ? gamepad.androidInput.status !== 'connected' : !gamepad.simulated" @update="updateGamepad" /></div>
-        <div><h3>{{ androidObserver ? 'Local state inspector' : 'PC live inspector' }}</h3><GamepadTelemetry :state="gamepad" /></div>
+        <div><h3>{{ androidNode ? 'Android local touch source' : gamepad.simulated ? 'Desktop virtual input source' : 'Android input mirror' }}</h3><GamepadSurface :state="gamepad" :disabled="androidNode ? gamepad.androidInput.status !== 'connected' : !gamepad.simulated" @update="updateGamepad" /></div>
+        <div><h3>{{ androidNode ? 'Local state inspector' : 'PC live inspector' }}</h3><GamepadTelemetry :state="gamepad" /></div>
       </div>
     </section>
 

@@ -70,6 +70,11 @@ fake peer, Route or simulated panel. WebView network/content access and external
 navigation are blocked, and Back returns to the proven native controls. Physical
 rendering and mutable-operation parity are not claimed.
 
+That label describes the original A01C2 read-only surface. A01D6 changes the
+current schema-4 discriminator to `android_node` now that bounded lifecycle,
+input, audio and publication-selection mutations are attached; it does not
+imply Route or peer-catalog support.
+
 A01D1 connects the first shared UI operations: schema-v2 IMU and touch-gamepad
 Quick Actions now start, retry or stop their existing Service-owned Adapter
 lifecycles. They are explicitly `capability_control`, keep every Route field

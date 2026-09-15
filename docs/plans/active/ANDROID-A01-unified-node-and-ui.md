@@ -65,6 +65,8 @@ Display is excluded until its feature branch is complete.
    attached, hardware-present Source capabilities. Sink/unattached/foreign
    entries are rejected. Selection remains separate from permission, Adapter
    lifecycle, Routes and peer catalog exchange.
+   A01D6 renames the shared schema discriminator from the obsolete read-only
+   `android_observer` label to `android_node` without widening its authority.
    These operations do not create Routes. Audio permission UX, Route status and
    the remaining capabilities proceed in separate slices.
 5. **A01E — camera integration:** only after explicit approval, add the camera

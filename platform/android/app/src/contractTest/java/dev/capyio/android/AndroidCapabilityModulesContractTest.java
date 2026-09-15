@@ -221,7 +221,7 @@ public final class AndroidCapabilityModulesContractTest {
                 HardwarePresence.PRESENT).snapshot("test-node");
 
         String json = AndroidUiSnapshotJson.encode(catalog, "16", "0.4.3-dev");
-        check(json.startsWith("{\"backendMode\":\"android_observer\",\"schemaVersion\":4,"));
+        check(json.startsWith("{\"backendMode\":\"android_node\",\"schemaVersion\":4,"));
         check(json.contains("\"id\":\"test-node\",\"displayName\":\"CapyIO Android\""));
         check(json.contains("\"capabilityCount\":7"));
         check(occurrences(json, "\"inventorySource\":\"android_node_catalog\"") == 7);

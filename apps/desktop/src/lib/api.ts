@@ -19,13 +19,13 @@ declare global {
   }
 }
 
-class AndroidObserverCapyIOApi implements CapyIOApi {
+class AndroidNodeCapyIOApi implements CapyIOApi {
   async getSnapshot(): Promise<UiSnapshot> {
     const encoded = window.CapyIOAndroid?.getSnapshotJson();
     if (!encoded) throw new Error("Android observer bridge is unavailable");
     const snapshot = JSON.parse(encoded) as UiSnapshot;
     if (snapshot.schemaVersion !== 4
-      || snapshot.backendMode !== "android_observer"
+      || snapshot.backendMode !== "android_node"
       || !Array.isArray(snapshot.nodes)
       || !Array.isArray(snapshot.capabilities)
       || !Array.isArray(snapshot.routes)
@@ -157,7 +157,7 @@ class AndroidObserverCapyIOApi implements CapyIOApi {
   selectAudioEndpoint(): Promise<UiQuickAction> { return this.readOnly(); }
 
   private readOnly<T>(): Promise<T> {
-    return Promise.reject(new Error("Android shared UI is read-only in A01C2"));
+    return Promise.reject(new Error("This operation is unavailable on the Android Node backend"));
   }
 }
 
@@ -265,6 +265,6 @@ class TauriCapyIOApi implements CapyIOApi {
 
 export function createCapyIOApi(): CapyIOApi {
   if (window.__TAURI_INTERNALS__) return new TauriCapyIOApi();
-  if (window.CapyIOAndroid) return new AndroidObserverCapyIOApi();
+  if (window.CapyIOAndroid) return new AndroidNodeCapyIOApi();
   return new BrowserMockCapyIOApi();
 }

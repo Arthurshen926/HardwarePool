@@ -780,7 +780,7 @@ controls. The Activity can reveal the packaged Vue workspace in a WebView and
 return to the native controls with Back. A single no-argument JavaScript method
 projects the service-owned schema-v1 catalog into shared `UiSnapshot` schema 4;
 it contains no start/stop, Route, sharing-selection or arbitrary command entry.
-The shared API reports `android_observer`, treats the catalog as real and
+The shared API reports `android_node`, treats the catalog as real and
 read-only, and does not fabricate a peer catalog, Routes, live panels or Quick
 Actions. Service state notifications refresh the snapshot while the Service
 continues to own every Adapter lifecycle. Replacing the transitional native
