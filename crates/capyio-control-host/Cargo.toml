@@ -1,0 +1,16 @@
+[package]
+name = "capyio-control-host"
+description = "Bounded host composition for admitted CapyIO control messages."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[dependencies]
+capyio-core = { path = "../capyio-core" }
+capyio-protocol = { path = "../capyio-protocol" }
+capyio-runtime = { path = "../capyio-runtime" }
+thiserror.workspace = true
+
+[dev-dependencies]
+capyio-testkit = { path = "../capyio-testkit" }

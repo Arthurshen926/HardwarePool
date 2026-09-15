@@ -30,10 +30,17 @@ Session and Core Node identities. A future authenticated control host can call
 the decoder and Runtime admission boundary without reimplementing wire
 validation.
 
+`capyio-control-host` now composes both steps. A caller supplies one exact
+Session/peer binding after connection admission; the host decodes a catalog,
+checks both identities, suppresses recently applied duplicate message IDs and
+then invokes Runtime. Only successful Runtime application consumes an ID, and
+retention is fixed at 256.
+
 ## Evidence
 
 - `cargo test -p capyio-testkit`: 18 passed.
 - `cargo test -p capyio-protocol`: 10 passed.
+- `cargo test -p capyio-control-host`: 6 passed.
 - `cargo clippy -p capyio-runtime -p capyio-testkit --all-targets -- -D warnings`:
   passed.
 - Three focused regressions cover accepted replacement and Route
@@ -53,3 +60,15 @@ validation.
 - Capability publication, Route authorization, encrypted data-plane binding,
   replay defense, reconnect and pairing remain separate work.
 - No APK, driver, service, Display branch or system configuration was changed.
+
+## Internal dependency note
+
+- Purpose: keep protocol decoding and Runtime mutation composition identical
+  across Android and desktop hosts.
+- Dependencies: workspace `capyio-core`, `capyio-protocol`, `capyio-runtime`
+  and `thiserror`; no new third-party package or network stack was added.
+- License/maintenance: Apache-2.0 workspace crate maintained with the main
+  Runtime and protocol contracts.
+- Alternatives considered: duplicating admission in each platform host would
+  create divergent identity/replay behavior; placing it in Core or Runtime
+  would invert the established Protocol/Runtime dependency boundary.

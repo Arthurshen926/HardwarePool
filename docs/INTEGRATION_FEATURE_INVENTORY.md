@@ -104,9 +104,11 @@ The control protocol now decodes a complete CatalogSnapshot into a validated
 Core value with mandatory Session identity, and the Runtime has a
 session-bound whole-peer-catalog admission method. It rejects the wrong Node
 identity or a non-Ready Session without mutation, preserves locally observed
-online state and atomically reconciles dependent Routes. No transport calls
-these two boundaries yet, so this is product-composition infrastructure rather
-than a discovery or pairing claim.
+online state and atomically reconciles dependent Routes. A shared control-host
+crate now composes the decoder and Runtime admission for one caller-asserted
+Session/peer tuple with bounded recent-message deduplication. No platform
+transport constructs that binding yet, so this is product-composition
+infrastructure rather than a discovery or pairing claim.
 
 1. Route touchpad, IMU, gamepad and haptics through bounded typed data planes.
    Their local lifecycles/UI state and publication selection are attached, but
@@ -115,9 +117,8 @@ than a discovery or pairing claim.
 2. Physically verify the shared audio controls and remove the transitional
    native fallback only after equivalent permission, lifecycle and device evidence.
 3. Implement real Adapter-driven local hardware discovery and an authenticated
-   control transport that connects the new protocol decoder to the Runtime
-   admission boundary; schema 4 currently projects deterministic Runtime
-   fixture catalogs.
+   platform transport that constructs the new control-host binding; schema 4
+   currently projects deterministic Runtime fixture catalogs.
 4. Connect touchpad and camera to authenticated product Routes rather than
    local lifecycle and lab transport boundaries; add authenticated endpoint
    parity before retiring the standalone lab.

@@ -40,6 +40,11 @@ before returning a host value. This is structural/semantic decoding only: the
 host must first authenticate the connection, apply replay policy and then pass
 the value to the Runtime's exact-Session peer-catalog admission method.
 
+The shared control-host composition performs that decoder-to-Runtime handoff
+for a caller-supplied admitted Session/peer binding. Its fixed 256-message
+recent-ID set only suppresses immediate duplicate delivery; it is not the
+transport replay window and does not survive process restart.
+
 Protocol v1 appends `CAPABILITY_CLASS_TOUCHPAD = 16` without changing existing
 enum numbers. It identifies an Adapter-owned touchpad Capability in catalogs;
 continuous `capyio.input.touchpad-frames/1` data remains outside Protobuf

@@ -356,6 +356,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "capyio-control-host"
+version = "0.1.0"
+dependencies = [
+ "capyio-core",
+ "capyio-protocol",
+ "capyio-runtime",
+ "capyio-testkit",
+ "thiserror 2.0.20",
+]
+
+[[package]]
 name = "capyio-core"
 version = "0.1.0"
 dependencies = [

@@ -108,6 +108,15 @@ desktop supervision remains a development fallback.
 socket implementation and never carries high-rate frames. Core and wire types
 use explicit conversions.
 
+### Control Host Composition
+
+`capyio-control-host` is the transport-agnostic seam between an already
+admitted peer connection, `capyio-protocol` decoding and `NodeRuntime` state.
+It binds one exact Session/peer tuple, applies only complete CatalogSnapshot
+messages and retains at most 256 recent message IDs for accidental duplicate
+suppression. Platform hosts still own authentication, cryptographic replay
+protection, deadlines, framing I/O and reconnect.
+
 ### Adapter SDK and Host
 
 - manifest and control DTOs;
@@ -179,6 +188,11 @@ capyio-runtime
    +--- capyio-testkit
    +--- capyio-node
    +--- capyio-desktop Tauri host
+
+capyio-control-host
+   +--- capyio-protocol
+   +--- capyio-runtime
+   +--- no socket, crypto or platform dependency
 
 capyio-data-plane
    ^

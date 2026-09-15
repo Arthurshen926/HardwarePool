@@ -51,6 +51,15 @@ confusion inside the trusted host, but does not authenticate an envelope,
 establish a transport, issue a Capability grant or make the current lab wires
 safe on an untrusted network.
 
+`capyio-control-host` composes those two boundaries for one caller-asserted
+Session/peer binding. It rejects mismatched Session and Node identities before
+Runtime mutation and remembers at most 256 successfully applied message IDs so
+an immediate duplicate is not applied twice. Constructing the binding is not
+authentication, and bounded recent-ID suppression is not cryptographic replay
+defense: an authenticated transport must bind identities and versions, reject
+replays across reconnect/process restart and supply fresh keys before invoking
+this host.
+
 ADR 0041 now represents Session/Route/Stream/epoch and the exact selected audio
 specification as one validated media-stream binding before any transport
 backend. This prevents platform and codec code from inventing a second identity

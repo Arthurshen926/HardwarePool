@@ -930,6 +930,12 @@ Node descriptor. It is ready to compose with Runtime admission after an
 authenticated host has admitted the connection; it does not itself supply
 transport trust or replay defense.
 
+`capyio-control-host` now performs the reusable decoder-to-Runtime handoff for
+one exact caller-admitted Session/peer tuple. Six deterministic tests cover
+success, wrong identity, duplicate delivery, Runtime rejection/retry and the
+fixed 256-ID retention bound. No platform transport, socket or cryptographic
+identity is introduced by this slice.
+
 The apparent post-stop UDP restart failure was then isolated from CapyIO. With
 UU Remote running, every tested port in 45980--46030 returned Winsock 10048
 without an enumerated endpoint owner, including unused 46012. The 40000/40001/
