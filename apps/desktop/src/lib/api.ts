@@ -1,7 +1,7 @@
 import { invoke } from "@tauri-apps/api/core";
 
 import { BrowserMockCapyIOApi } from "./mock";
-import type { CapyIOApi, GamepadControlUpdate, QuickActionOperation, UiAudioEndpointCatalog, UiGamepadState, UiLiveImu, UiQuickAction, UiSnapshot, WindowsControllerKind } from "./types";
+import type { CapyIOApi, GamepadControlUpdate, QuickActionOperation, TouchpadControlUpdate, UiAudioEndpointCatalog, UiGamepadState, UiLiveImu, UiQuickAction, UiSnapshot, UiTouchpadState, WindowsControllerKind } from "./types";
 
 declare global {
   interface Window {
@@ -9,8 +9,10 @@ declare global {
       getSnapshotJson(): string;
       getQuickActionsJson(): string;
       getGamepadStateJson(): string;
+      getTouchpadStateJson(): string;
       invokeQuickAction(actionId: string, operation: QuickActionOperation): boolean;
       updateGamepad(kind: string, target: string, x: number, y: number, pressed: boolean): boolean;
+      updateTouchpad(encodedContacts: string): boolean;
     };
   }
 }
@@ -84,6 +86,32 @@ class AndroidObserverCapyIOApi implements CapyIOApi {
   stopGamepadDsu(): Promise<UiGamepadState> { return this.readOnly(); }
   startAndroidGamepad(): Promise<UiGamepadState> { return this.readOnly(); }
   stopAndroidGamepad(): Promise<UiGamepadState> { return this.readOnly(); }
+  async getTouchpadState(): Promise<UiTouchpadState | null> {
+    const encoded = window.CapyIOAndroid?.getTouchpadStateJson();
+    if (!encoded) return null;
+    const state = JSON.parse(encoded) as UiTouchpadState;
+    if (state.schemaVersion !== 1
+      || state.source !== "android_shared_ui"
+      || state.profile !== "capyio.input.touchpad-frames/1"
+      || !Array.isArray(state.contacts)) {
+      throw new Error("Android touchpad bridge returned incompatible data");
+    }
+    return state;
+  }
+  async updateTouchpadState(update: TouchpadControlUpdate): Promise<UiTouchpadState> {
+    const bridge = window.CapyIOAndroid;
+    if (!bridge) throw new Error("Android touchpad bridge is unavailable");
+    const encoded = [...update.contacts]
+      .sort((left, right) => left.contactId - right.contactId)
+      .map((contact) => `${contact.contactId},${contact.x},${contact.y},${contact.pressure}`)
+      .join(";");
+    if (!bridge.updateTouchpad(encoded)) {
+      throw new Error("Android rejected the touchpad update");
+    }
+    const state = await this.getTouchpadState();
+    if (!state) throw new Error("Android touchpad state became unavailable");
+    return state;
+  }
   async getQuickActions(): Promise<UiQuickAction[]> {
     const encoded = window.CapyIOAndroid?.getQuickActionsJson();
     if (!encoded) throw new Error("Android Quick Action bridge is unavailable");
@@ -167,6 +195,14 @@ class TauriCapyIOApi implements CapyIOApi {
 
   updateGamepadState(update: GamepadControlUpdate): Promise<UiGamepadState> {
     return invoke<UiGamepadState>("update_gamepad_state", { request: update });
+  }
+
+  getTouchpadState(): Promise<UiTouchpadState | null> {
+    return Promise.resolve(null);
+  }
+
+  updateTouchpadState(): Promise<UiTouchpadState> {
+    return Promise.reject(new Error("Touchpad surface is available in the Android shared UI"));
   }
 
   startGamepadDsu(port: number, mode: import("./types").DsuProjectionMode): Promise<UiGamepadState> {

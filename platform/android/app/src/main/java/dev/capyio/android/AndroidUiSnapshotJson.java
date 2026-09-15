@@ -6,6 +6,8 @@ import dev.capyio.android.contract.CapabilityLifecycleState;
 import dev.capyio.android.contract.CapabilityPortSnapshot;
 import dev.capyio.android.contract.CapabilitySnapshot;
 import dev.capyio.android.contract.GamepadControlsSnapshot;
+import dev.capyio.android.contract.TouchpadContactSnapshot;
+import dev.capyio.android.contract.TouchpadControlsSnapshot;
 
 import java.util.List;
 import java.util.Locale;
@@ -40,7 +42,7 @@ public final class AndroidUiSnapshotJson {
         json.append(']');
         appendEmptyCollections(json);
         json.append(",\"warnings\":[");
-        appendQuoted(json, "Android shared UI controls local IMU/gamepad lifecycles and touch-gamepad state.");
+        appendQuoted(json, "Android shared UI controls local IMU, gamepad and touchpad lifecycles and input state.");
         json.append(',');
         appendQuoted(json, "Sharing selection, Routes, and remote catalog exchange are not attached yet.");
         json.append("],\"imuFixture\":null}");
@@ -69,8 +71,9 @@ public final class AndroidUiSnapshotJson {
 
     public static String encodeQuickActions(
             CapabilityLifecycleSnapshot imu,
-            CapabilityLifecycleSnapshot gamepad) {
-        if (imu == null || gamepad == null) {
+            CapabilityLifecycleSnapshot gamepad,
+            CapabilityLifecycleSnapshot touchpad) {
+        if (imu == null || gamepad == null || touchpad == null) {
             throw new IllegalArgumentException("Capability lifecycle snapshots are required");
         }
         StringBuilder json = new StringBuilder(1536);
@@ -88,6 +91,13 @@ public final class AndroidUiSnapshotJson {
                 "Touch gamepad",
                 "Start or stop the service-owned bounded gamepad state Adapter.",
                 gamepad);
+        json.append(',');
+        appendQuickAction(
+                json,
+                "capyio.quick-action.android-touchpad",
+                "Touchpad surface",
+                "Start or stop the service-owned complete multi-touch state Adapter.",
+                touchpad);
         json.append(']');
         return json.toString();
     }
@@ -152,6 +162,34 @@ public final class AndroidUiSnapshotJson {
                 .append(",\"sourceTimestampNanos\":null")
                 .append(",\"acceleration\":[0,0,0],\"angularVelocity\":[0,0,0]}")
                 .append('}');
+        return json.toString();
+    }
+
+    public static String encodeTouchpadState(
+            CapabilityLifecycleSnapshot lifecycle,
+            TouchpadControlsSnapshot controls) {
+        if (lifecycle == null || controls == null) {
+            throw new IllegalArgumentException("Touchpad snapshots are required");
+        }
+        StringBuilder json = new StringBuilder(768);
+        json.append("{\"schemaVersion\":1")
+                .append(",\"source\":\"android_shared_ui\"")
+                .append(",\"profile\":\"capyio.input.touchpad-frames/1\"")
+                .append(",\"streamEpoch\":").append(lifecycle.generation())
+                .append(",\"sequence\":").append(controls.sequence());
+        appendStringField(json, "status", actionStatus(lifecycle.state()));
+        json.append(",\"contacts\":[");
+        for (int index = 0; index < controls.contacts().size(); index++) {
+            if (index > 0) {
+                json.append(',');
+            }
+            TouchpadContactSnapshot contact = controls.contacts().get(index);
+            json.append("{\"contactId\":").append(contact.contactId())
+                    .append(",\"x\":").append(contact.x())
+                    .append(",\"y\":").append(contact.y())
+                    .append(",\"pressure\":").append(contact.pressure()).append('}');
+        }
+        json.append("]}");
         return json.toString();
     }
 

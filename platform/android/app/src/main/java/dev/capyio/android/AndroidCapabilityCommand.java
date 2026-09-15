@@ -6,7 +6,8 @@ import dev.capyio.android.contract.CapabilityLifecycleState;
 public record AndroidCapabilityCommand(Target target, Operation operation) {
     public enum Target {
         IMU,
-        GAMEPAD
+        GAMEPAD,
+        TOUCHPAD
     }
 
     public enum Operation {
@@ -34,6 +35,8 @@ public record AndroidCapabilityCommand(Target target, Operation operation) {
             target = Target.IMU;
         } else if ("capyio.quick-action.android-gamepad".equals(actionId)) {
             target = Target.GAMEPAD;
+        } else if ("capyio.quick-action.android-touchpad".equals(actionId)) {
+            target = Target.TOUCHPAD;
         } else {
             return null;
         }

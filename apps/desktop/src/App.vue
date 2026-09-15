@@ -7,17 +7,18 @@ import GamepadSurface from "./components/GamepadSurface.vue";
 import GamepadTelemetry from "./components/GamepadTelemetry.vue";
 import QuickActionCard from "./components/QuickActionCard.vue";
 import StatusPill from "./components/StatusPill.vue";
+import TouchpadSurface from "./components/TouchpadSurface.vue";
 import { createCapyIOApi } from "./lib/api";
-import type { DsuProjectionMode, GamepadControlUpdate, QuickActionOperation, UiAudioEndpointCatalog, UiCapability, UiGamepadState, UiLiveImu, UiQuickAction, UiRoute, UiSnapshot, WindowsControllerKind } from "./lib/types";
+import type { DsuProjectionMode, GamepadControlUpdate, QuickActionOperation, TouchpadControlUpdate, UiAudioEndpointCatalog, UiCapability, UiGamepadState, UiLiveImu, UiQuickAction, UiRoute, UiSnapshot, UiTouchpadState, WindowsControllerKind } from "./lib/types";
 
 const api = createCapyIOApi();
 const snapshot = ref<UiSnapshot | null>(null);
 const busyRouteId = ref<string | null>(null);
 const loading = ref(true);
 const errorMessage = ref("");
-type PrimaryView = "quick" | "workspace" | "controller";
+type PrimaryView = "quick" | "workspace" | "controller" | "touchpad";
 const requestedView = new URLSearchParams(window.location.search).get("view");
-const initialView: PrimaryView = requestedView === "workspace" || requestedView === "controller" ? requestedView : "quick";
+const initialView: PrimaryView = requestedView === "workspace" || requestedView === "controller" || requestedView === "touchpad" ? requestedView : "quick";
 const view = ref<PrimaryView>(initialView);
 const liveImu = ref<UiLiveImu | null>(null);
 const liveImuIp = ref("");
@@ -25,6 +26,8 @@ const liveImuPort = ref(8080);
 const liveImuBusy = ref(false);
 const gamepad = ref<UiGamepadState | null>(null);
 const gamepadBusy = ref(false);
+const touchpad = ref<UiTouchpadState | null>(null);
+const touchpadBusy = ref(false);
 const gamepadDsuPort = ref(26760);
 const gamepadDsuMode = ref<DsuProjectionMode>("motion_only");
 const gamepadDsuBusy = ref(false);
@@ -55,10 +58,11 @@ async function load(): Promise<void> {
   loading.value = true;
   errorMessage.value = "";
   try {
-    const [nextSnapshot, nextLiveImu, nextGamepad, nextQuickActions, nextAudioEndpoints] = await Promise.all([api.getSnapshot(), api.getLiveImu(), api.getGamepadState(), api.getQuickActions(), api.getAudioEndpoints()]);
+    const [nextSnapshot, nextLiveImu, nextGamepad, nextTouchpad, nextQuickActions, nextAudioEndpoints] = await Promise.all([api.getSnapshot(), api.getLiveImu(), api.getGamepadState(), api.getTouchpadState(), api.getQuickActions(), api.getAudioEndpoints()]);
     snapshot.value = nextSnapshot;
     liveImu.value = nextLiveImu;
     gamepad.value = nextGamepad;
+    touchpad.value = nextTouchpad;
     quickActions.value = nextQuickActions;
     audioEndpoints.value = nextAudioEndpoints;
   }
@@ -108,6 +112,11 @@ async function refreshLiveImu(): Promise<void> {
 
 async function refreshGamepad(): Promise<void> {
   try { gamepad.value = await api.getGamepadState(); }
+  catch (error) { errorMessage.value = normalizeError(error); }
+}
+
+async function refreshTouchpad(): Promise<void> {
+  try { touchpad.value = await api.getTouchpadState(); }
   catch (error) { errorMessage.value = normalizeError(error); }
 }
 
@@ -161,6 +170,15 @@ function updateGamepad(update: GamepadControlUpdate): void {
     .then(async () => { gamepad.value = await api.updateGamepadState(update); })
     .catch((error: unknown) => { errorMessage.value = normalizeError(error); })
     .finally(() => { gamepadBusy.value = false; });
+}
+
+let touchpadUpdates = Promise.resolve();
+function updateTouchpad(update: TouchpadControlUpdate): void {
+  touchpadBusy.value = true;
+  touchpadUpdates = touchpadUpdates
+    .then(async () => { touchpad.value = await api.updateTouchpadState(update); })
+    .catch((error: unknown) => { errorMessage.value = normalizeError(error); })
+    .finally(() => { touchpadBusy.value = false; });
 }
 
 async function startGamepadDsu(): Promise<void> {
@@ -225,7 +243,7 @@ function normalizeError(error: unknown): string {
 
 onMounted(() => {
   void load();
-  livePoll = setInterval(() => { void refreshLiveImu(); void refreshGamepad(); void refreshQuickActions(); }, 500);
+  livePoll = setInterval(() => { void refreshLiveImu(); void refreshGamepad(); void refreshTouchpad(); void refreshQuickActions(); }, 500);
   window.addEventListener("capyio-native-state", refreshSnapshot);
 });
 onUnmounted(() => {
@@ -234,10 +252,11 @@ onUnmounted(() => {
 });
 
 function refreshSnapshot(): void {
-  void Promise.all([api.getSnapshot(), api.getGamepadState(), api.getQuickActions()])
-    .then(([nextSnapshot, nextGamepad, nextQuickActions]) => {
+  void Promise.all([api.getSnapshot(), api.getGamepadState(), api.getTouchpadState(), api.getQuickActions()])
+    .then(([nextSnapshot, nextGamepad, nextTouchpad, nextQuickActions]) => {
       snapshot.value = nextSnapshot;
       gamepad.value = nextGamepad;
+      touchpad.value = nextTouchpad;
       quickActions.value = nextQuickActions;
     })
     .catch((error: unknown) => { errorMessage.value = normalizeError(error); });
@@ -255,6 +274,7 @@ function refreshSnapshot(): void {
         <button type="button" :class="{ active: view === 'quick' }" @click="view = 'quick'">Quick Actions</button>
         <button type="button" :class="{ active: view === 'workspace' }" @click="view = 'workspace'">设备与能力</button>
         <button v-if="!androidObserver || gamepad" type="button" :class="{ active: view === 'controller' }" @click="view = 'controller'">Controller</button>
+        <button v-if="touchpad" type="button" :class="{ active: view === 'touchpad' }" @click="view = 'touchpad'">Touchpad</button>
       </nav>
       <div class="topbar__actions">
         <StatusPill v-if="snapshot" :tone="snapshot.backendMode === 'tauri_demo' ? 'success' : 'warning'" :label="snapshot.backendMode" />
@@ -262,7 +282,7 @@ function refreshSnapshot(): void {
       </div>
     </header>
 
-    <section v-if="view !== 'controller'" id="overview" class="hero-panel hero-panel--compact">
+    <section v-if="view !== 'controller' && view !== 'touchpad'" id="overview" class="hero-panel hero-panel--compact">
       <div class="hero-panel__copy">
         <p class="eyebrow">Integrated non-display capability labs</p>
         <h1>连接能力，不绑定设备角色。</h1>
@@ -280,7 +300,7 @@ function refreshSnapshot(): void {
       </div>
     </section>
 
-    <section v-if="view !== 'controller' && snapshot?.warnings.length" class="warning-stack" aria-label="Warnings">
+    <section v-if="view !== 'controller' && view !== 'touchpad' && snapshot?.warnings.length" class="warning-stack" aria-label="Warnings">
       <p v-for="warning in snapshot.warnings" :key="warning">{{ warning }}</p>
     </section>
     <p v-if="errorMessage" class="error-banner" role="alert">{{ errorMessage }}</p>
@@ -406,6 +426,33 @@ function refreshSnapshot(): void {
       </div>
     </section>
 
+    <section v-if="view === 'touchpad' && touchpad" class="info-panel gamepad-lab gamepad-lab--primary" aria-labelledby="touchpad-title">
+      <header class="imu-lab__header">
+        <div>
+          <p class="eyebrow">CapyIO Touchpad · Android local source</p>
+          <h1 id="touchpad-title">多点触控板</h1>
+          <p>{{ touchpad.profile }} · epoch {{ touchpad.streamEpoch }} · sequence {{ touchpad.sequence }}</p>
+        </div>
+        <div class="gamepad-lab__actions">
+          <StatusPill :tone="touchpad.status === 'active' ? 'success' : touchpad.status === 'failed' ? 'danger' : 'warning'" :label="touchpad.status" />
+          <button class="ghost-button" type="button" :disabled="touchpadBusy || touchpad.status !== 'active'" @click="updateTouchpad({ contacts: [] })">释放全部触点</button>
+        </div>
+      </header>
+      <p class="gamepad-lab__note">请先在 Quick Actions 启动 Touchpad surface。页面每帧提交最多 5 个规范化触点的完整状态；移动事件按浏览器帧合并，取消、离开页面和 Stop 都释放全部触点。当前是本机真实触摸输入边界，尚未宣称已通过 Route 到达 Windows Precision Touchpad。</p>
+      <div class="gamepad-lab__grid">
+        <div><h3>Android local touch source</h3><TouchpadSurface :state="touchpad" :disabled="touchpad.status !== 'active'" @update="updateTouchpad" /></div>
+        <div>
+          <h3>Complete state inspector</h3>
+          <dl class="imu-lab__sinks">
+            <div><dt>Lifecycle</dt><dd><StatusPill :tone="touchpad.status === 'active' ? 'success' : 'warning'" :label="touchpad.status" /><span>generation {{ touchpad.streamEpoch }}</span></dd></div>
+            <div><dt>Sequence</dt><dd><span>{{ touchpad.sequence }}</span></dd></div>
+            <div><dt>Contacts</dt><dd><span>{{ touchpad.contacts.length }} / 5 active</span></dd></div>
+            <div v-for="contact in touchpad.contacts" :key="contact.contactId"><dt>Contact {{ contact.contactId + 1 }}</dt><dd><span>x {{ contact.x }} · y {{ contact.y }} · pressure {{ contact.pressure }}</span></dd></div>
+          </dl>
+        </div>
+      </div>
+    </section>
+
     <section v-if="view === 'quick' && snapshot?.imuFixture" class="info-panel imu-lab" aria-labelledby="imu-lab-title">
       <header class="imu-lab__header">
         <div>
@@ -503,7 +550,7 @@ function refreshSnapshot(): void {
       </article>
     </template>
 
-    <section v-if="view !== 'controller'" class="lower-grid">
+    <section v-if="view !== 'controller' && view !== 'touchpad'" class="lower-grid">
       <article class="info-panel">
         <p class="eyebrow">Architecture contract</p><h2>共享语义，隔离平台实现</h2>
         <ol class="contract-list">
@@ -519,6 +566,6 @@ function refreshSnapshot(): void {
       </article>
     </section>
 
-    <footer v-if="view !== 'controller'" class="app-footer"><span>CapyIO pre-alpha</span><span>Protocol 1.0 · IMU + input + bidirectional audio labs</span><span>当前明文实验传输仅限可信网络</span></footer>
+    <footer v-if="view !== 'controller' && view !== 'touchpad'" class="app-footer"><span>CapyIO pre-alpha</span><span>Protocol 1.0 · IMU + input + bidirectional audio labs</span><span>当前明文实验传输仅限可信网络</span></footer>
   </main>
 </template>

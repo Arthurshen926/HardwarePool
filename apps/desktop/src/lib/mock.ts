@@ -14,6 +14,8 @@ import type {
   UiQuickAction,
   UiRoute,
   UiSnapshot,
+  TouchpadControlUpdate,
+  UiTouchpadState,
 } from "./types";
 
 const WINDOWS = "HP OmniBook Ultra Flip 14";
@@ -301,6 +303,14 @@ export class BrowserMockCapyIOApi implements CapyIOApi {
 
   async stopAndroidGamepad(): Promise<UiGamepadState> {
     return structuredClone(this.gamepad);
+  }
+
+  async getTouchpadState(): Promise<UiTouchpadState | null> {
+    return null;
+  }
+
+  async updateTouchpadState(_update: TouchpadControlUpdate): Promise<UiTouchpadState> {
+    throw new Error("Touchpad surface is available in the Android shared UI.");
   }
 
   async getQuickActions(): Promise<UiQuickAction[]> {

@@ -283,6 +283,14 @@ the state. The method cannot carry network coordinates, a Route, peer identity,
 permission, path or executable text. This is local input admission, not peer
 authorization or sharing consent.
 
+ANDROID-A01D3 admits only a complete touch-contact string of at most 160
+characters. It contains zero to five canonical unsigned integer tuples; contact
+IDs must be unique and coordinates/pressure remain within fixed normalized
+bounds. No endpoint, peer, Route, path, command name or executable payload is
+accepted. The Service submits frames only for the observed Active generation and
+neutralizes on Stop. Browser-frame coalescing limits ordinary MOVE pressure, but
+the future data-plane worker still owns transport rate limits and peer admission.
+
 The synthetic-touchpad injection harness is a local controlled-lab binary, not
 an allow-listed WebView/Node Runtime command. Its default path only projects and
 encodes fixed fixtures. Native submission requires both an explicit injection

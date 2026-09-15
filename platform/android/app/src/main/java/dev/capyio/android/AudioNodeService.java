@@ -30,6 +30,9 @@ import dev.capyio.android.contract.GamepadControlsSnapshot;
 import dev.capyio.android.contract.GamepadNodeController;
 import dev.capyio.android.contract.HardwarePresence;
 import dev.capyio.android.contract.TransitionToken;
+import dev.capyio.android.contract.TouchpadContactSnapshot;
+import dev.capyio.android.contract.TouchpadControlsSnapshot;
+import dev.capyio.android.contract.TouchpadNodeController;
 import dev.capyio.android.lan.NativeLanSpeakerSessionConfig;
 import dev.capyio.android.lan.NativeLanMicrophoneSessionConfig;
 
@@ -57,6 +60,7 @@ public final class AudioNodeService extends Service {
     private final CapabilityLifecycleController imuController =
             new CapabilityLifecycleController();
     private final GamepadNodeController gamepadController = new GamepadNodeController();
+    private final TouchpadNodeController touchpadController = new TouchpadNodeController();
 
     private CapabilityModuleRegistry capabilityRegistry;
     private MicrophoneSourceAdapter microphoneAdapter;
@@ -101,6 +105,7 @@ public final class AudioNodeService extends Service {
                 controller,
                 imuController,
                 gamepadController,
+                touchpadController,
                 () -> checkSelfPermission(Manifest.permission.RECORD_AUDIO)
                         == PackageManager.PERMISSION_GRANTED,
                 () -> Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU
@@ -280,6 +285,36 @@ public final class AudioNodeService extends Service {
 
     private boolean submitGamepad(long generation, GamepadControlsSnapshot controls) {
         boolean accepted = gamepadController.submit(generation, controls);
+        if (accepted) {
+            notifyStateListener();
+        }
+        return accepted;
+    }
+
+    private void startTouchpad() {
+        TransitionToken transition = touchpadController.beginStart();
+        if (transition.accepted()) {
+            if (touchSurfacePresence == HardwarePresence.PRESENT) {
+                touchpadController.completeStart(transition.generation());
+            } else {
+                touchpadController.fail(
+                        transition.generation(), "CAPY.ANDROID.TOUCHPAD_HARDWARE_MISSING");
+            }
+        }
+        notifyStateListener();
+    }
+
+    private void stopTouchpad() {
+        TransitionToken transition = touchpadController.beginStop();
+        if (transition.accepted()) {
+            touchpadController.completeStop(transition.generation());
+        }
+        notifyStateListener();
+    }
+
+    private boolean submitTouchpad(
+            long generation, java.util.List<TouchpadContactSnapshot> contacts) {
+        boolean accepted = touchpadController.submit(generation, contacts);
         if (accepted) {
             notifyStateListener();
         }
@@ -490,6 +525,30 @@ public final class AudioNodeService extends Service {
 
         public void stopGamepad() {
             mainHandler.post(AudioNodeService.this::stopGamepad);
+        }
+
+        public CapabilityLifecycleSnapshot touchpadLifecycle() {
+            return touchpadController.lifecycle();
+        }
+
+        public TouchpadControlsSnapshot touchpadControls() {
+            return touchpadController.controls();
+        }
+
+        public void startTouchpad() {
+            mainHandler.post(AudioNodeService.this::startTouchpad);
+        }
+
+        public boolean submitTouchpad(
+                long generation, java.util.List<TouchpadContactSnapshot> contacts) {
+            if (contacts == null) {
+                throw new IllegalArgumentException("touchpad contacts are required");
+            }
+            return AudioNodeService.this.submitTouchpad(generation, contacts);
+        }
+
+        public void stopTouchpad() {
+            mainHandler.post(AudioNodeService.this::stopTouchpad);
         }
 
         public int speakerUnderrunCount() {

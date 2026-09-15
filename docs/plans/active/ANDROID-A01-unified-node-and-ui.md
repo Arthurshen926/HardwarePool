@@ -55,15 +55,17 @@ Display is excluded until its feature branch is complete.
    gamepad Service lifecycles through an exact state-dependent command allow-list.
    A01D2 connects the shared Controller to the complete generation-bound local
    gamepad state and hides desktop-only receiver/projection controls on Android.
+   A01D3 attaches a separate generation-bound five-contact Touchpad lifecycle
+   and shared surface, retaining the standalone JNI/transport lab for later Route
+   composition.
    These operations do not create Routes or select sharing. Audio permission UX,
    Route status and the remaining capabilities proceed in separate slices.
 5. **A01E — camera integration:** only after explicit approval, add the camera
    permission/service declarations required by the selected lifecycle and run
    denial/revoke/background tests on an authorized device.
-6. **A01F — controller/touchpad integration:** replace the standalone launchers
-   with built-in shared UI surfaces and route their bounded native sources into
-   the Node-owned sessions. Retain exact foreground-loss and neutral/cancel
-   behavior.
+6. **A01F — input data-plane integration:** connect the attached Controller and
+   Touchpad UI states to their bounded native Sources and product Routes. Retain
+   exact foreground-loss and neutral/cancel behavior.
 7. **A01G — migration closeout:** remove redundant product launchers only after
    parity evidence, rollback instructions and the unified APK gate pass.
 

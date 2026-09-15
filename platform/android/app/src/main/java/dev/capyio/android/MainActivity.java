@@ -30,6 +30,7 @@ import dev.capyio.android.contract.AudioNodeSnapshot;
 import dev.capyio.android.contract.CapabilityLifecycleSnapshot;
 import dev.capyio.android.contract.CapabilityLifecycleState;
 import dev.capyio.android.contract.GamepadControlsSnapshot;
+import dev.capyio.android.contract.TouchpadContactSnapshot;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -367,7 +368,8 @@ public final class MainActivity extends Activity {
             }
             return AndroidUiSnapshotJson.encodeQuickActions(
                     current.imuLifecycle(),
-                    current.gamepadLifecycle());
+                    current.gamepadLifecycle(),
+                    current.touchpadLifecycle());
         }
 
         @JavascriptInterface
@@ -397,6 +399,32 @@ public final class MainActivity extends Activity {
         }
 
         @JavascriptInterface
+        public String getTouchpadStateJson() {
+            AudioNodeService.NodeBinder current = binder;
+            if (current == null) {
+                return "";
+            }
+            return AndroidUiSnapshotJson.encodeTouchpadState(
+                    current.touchpadLifecycle(), current.touchpadControls());
+        }
+
+        @JavascriptInterface
+        public synchronized boolean updateTouchpad(String encodedContacts) {
+            AudioNodeService.NodeBinder current = binder;
+            if (current == null) {
+                return false;
+            }
+            CapabilityLifecycleSnapshot lifecycle = current.touchpadLifecycle();
+            if (lifecycle.state() != CapabilityLifecycleState.ACTIVE) {
+                return false;
+            }
+            List<TouchpadContactSnapshot> contacts =
+                    AndroidTouchpadUiFrame.parse(encodedContacts);
+            return contacts != null
+                    && current.submitTouchpad(lifecycle.generation(), contacts);
+        }
+
+        @JavascriptInterface
         public boolean invokeQuickAction(String actionId, String operation) {
             AudioNodeService.NodeBinder current = binder;
             if (current == null) {
@@ -407,6 +435,8 @@ public final class MainActivity extends Activity {
                 lifecycle = current.imuLifecycle();
             } else if ("capyio.quick-action.android-gamepad".equals(actionId)) {
                 lifecycle = current.gamepadLifecycle();
+            } else if ("capyio.quick-action.android-touchpad".equals(actionId)) {
+                lifecycle = current.touchpadLifecycle();
             } else {
                 return false;
             }
@@ -430,6 +460,13 @@ public final class MainActivity extends Activity {
                         current.stopGamepad();
                     } else {
                         current.startGamepad();
+                    }
+                }
+                case TOUCHPAD -> {
+                    if (command.operation() == AndroidCapabilityCommand.Operation.STOP) {
+                        current.stopTouchpad();
+                    } else {
+                        current.startTouchpad();
                     }
                 }
             }

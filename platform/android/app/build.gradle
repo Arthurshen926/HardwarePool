@@ -136,6 +136,7 @@ tasks.register('verifyDebugEntrypoints') {
             'dev/capyio/android/AudioNodeService.class',
             'dev/capyio/android/AndroidCapabilityCommand.class',
             'dev/capyio/android/AndroidGamepadUiCommand.class',
+            'dev/capyio/android/AndroidTouchpadUiFrame.class',
             'dev/capyio/android/AndroidUiSnapshotJson.class',
         ].each { relativePath ->
             if (!new File(classesDirectory, relativePath).isFile()) {
@@ -153,6 +154,7 @@ tasks.register('compileCapabilityCompositionTest', JavaCompile) {
     source file('src/main/java/dev/capyio/android/AndroidCapabilityModules.java')
     source file('src/main/java/dev/capyio/android/AndroidCapabilityCommand.java')
     source file('src/main/java/dev/capyio/android/AndroidGamepadUiCommand.java')
+    source file('src/main/java/dev/capyio/android/AndroidTouchpadUiFrame.java')
     source file('src/main/java/dev/capyio/android/AndroidUiSnapshotJson.java')
     source fileTree('src/contractTest/java')
     classpath = files()

@@ -1571,6 +1571,15 @@ submission and packages the shared Controller code. This remains compile,
 contract and package evidence: no APK was installed and no physical touch input
 was exercised.
 
+ANDROID-A01D3 raises the composition executable to 131 assertions. New checks
+cover touchpad attachment, generation-bound Start/Stop, complete-frame sequence
+advance, Stop neutralization, stale-generation rejection, zero-to-five contact
+parsing, canonical integer syntax, coordinate/pressure bounds, duplicate IDs,
+shell-like input rejection and shared-UI state projection. `capyioCheck` also
+type-checks/packages the common Vue Touchpad surface and runs Android Lint. This
+is hardware-free compile/package evidence; no APK was installed and no physical
+multi-touch or Windows projection was exercised.
+
 Offline repository validation additionally pins the Gradle/AGP contract and
 checks the source manifest for the approved recording/notification/foreground
 permissions, a non-exported dual-type service, disabled backup/cleartext and no

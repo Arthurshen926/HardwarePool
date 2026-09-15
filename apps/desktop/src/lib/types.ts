@@ -255,6 +255,27 @@ export type GamepadControlUpdate =
   | { kind: "trigger"; trigger: "left" | "right"; value: number }
   | { kind: "reset" };
 
+export interface UiTouchpadContact {
+  contactId: number;
+  x: number;
+  y: number;
+  pressure: number;
+}
+
+export interface UiTouchpadState {
+  schemaVersion: 1;
+  source: "android_shared_ui";
+  profile: "capyio.input.touchpad-frames/1";
+  streamEpoch: number;
+  sequence: number;
+  status: "idle" | "starting" | "active" | "stopping" | "failed";
+  contacts: UiTouchpadContact[];
+}
+
+export interface TouchpadControlUpdate {
+  contacts: UiTouchpadContact[];
+}
+
 export type QuickActionOperation = "start" | "retry" | "stop";
 
 export interface UiQuickAction {
@@ -317,6 +338,8 @@ export interface CapyIOApi {
   startWindowsGamepadProjection(enableXinputCompanion: boolean): Promise<UiGamepadState>;
   stopWindowsGamepadProjection(): Promise<UiGamepadState>;
   updateGamepadState(update: GamepadControlUpdate): Promise<UiGamepadState>;
+  getTouchpadState(): Promise<UiTouchpadState | null>;
+  updateTouchpadState(update: TouchpadControlUpdate): Promise<UiTouchpadState>;
   startGamepadDsu(port: number, mode: DsuProjectionMode): Promise<UiGamepadState>;
   stopGamepadDsu(): Promise<UiGamepadState>;
   startAndroidGamepad(port: number): Promise<UiGamepadState>;

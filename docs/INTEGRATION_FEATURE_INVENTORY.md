@@ -15,7 +15,7 @@ is not modified.
 |---|---|---|---|---|
 | Bidirectional audio | `codex/capyio-native-audio-subsystem` at `50f3921` | unified audio Node service with independent microphone Source and speaker Sink | unified desktop Quick Actions plus service/host and virtual audio boundaries | physically proven vertical paths are present; production pairing/security remain open |
 | Camera | `codex/capyio-camera` at `9808d2c` | separate Camera2/MediaCodec lab and private AVC record/transport boundary; main Node catalog now declares an unattached Offline camera module | Media Foundation virtual-camera, shared-memory ingress and host crates | source and migration inventory are merged; camera lifecycle is not yet attached to the Android product app |
-| Precision Touchpad | `codex/capyio-touchpad` at `77b6846` | separate touchpad lab/JNI bridge and bounded private packet Source; main Node catalog declares it Offline/unattached | user-mode/VHF projection boundaries and Runtime workers | source is merged and catalogued; product Route/UI operation remains to be composed |
+| Precision Touchpad | `codex/capyio-touchpad` at `77b6846` | unified Node owns a generation-bound five-contact shared-UI state facade; separate JNI packet Source/lab remains intact | user-mode/VHF projection boundaries and Runtime workers | local lifecycle/UI state is attached; authenticated product Route and Windows delivery remain open |
 | Touch + motion gamepad | `codex/capyio-gamepad` at `cadaef9` | unified Node owns IMU sensors plus a generation-bound, neutralizing gamepad state facade; standalone touch Controller Lab remains intact; haptics is Offline/unattached pending Manifest permission approval | shared Controller UI, DSU/VIIPER/DS4 and optional XInput projection boundaries | IMU and gamepad lifecycle/state are attached; shared touch surface, feedback and product Routes remain open |
 | IMU | audio baseline plus gamepad composition | unified Service-owned SensorManager Adapter with generation-bound start/stop; SensorServer lab remains separate | live numeric panel, recorder fixture and DSU/DS4 consumers | lifecycle attached; typed data-plane routing, transport/security and shared UI selection remain open |
 
@@ -73,11 +73,16 @@ neutralizes the state. Windows/DSU receiver controls are hidden on Android,
 motion is marked unavailable rather than fabricated, and no sharing or Route is
 created.
 
+A01D3 attaches the shared Touchpad surface to a separate Service-owned lifecycle.
+It accepts complete normalized zero-to-five-contact frames through a closed local
+bridge, advances sequence only in the active generation, coalesces MOVE updates
+and releases all contacts on cancellation, focus loss, page exit or Stop. The
+existing JNI/Windows packet path remains a separate data-plane integration task.
+
 ## Remaining integration work
 
-1. Attach touchpad lifecycle without regressing standalone evidence, and route
-   IMU/gamepad samples through bounded typed data planes. Lifecycle Quick Actions
-   plus local touch-gamepad state are attached, but they are not sharing or Route authorization. Haptics requires
+1. Route touchpad, IMU and gamepad samples through bounded typed data planes.
+   Their local lifecycles/UI state are attached, but they are not sharing or Route authorization. Haptics requires
    separate approval for the Android `VIBRATE` Manifest permission.
 2. Replace the transitional native-control fallback only after A01D maps
    schema-versioned shared UI operations to the Service with equivalent

@@ -12,6 +12,11 @@ import dev.capyio.android.contract.HardwarePresence;
 import dev.capyio.android.contract.GamepadNodeController;
 import dev.capyio.android.contract.GamepadControlsSnapshot;
 import dev.capyio.android.contract.TransitionToken;
+import dev.capyio.android.contract.TouchpadContactSnapshot;
+import dev.capyio.android.contract.TouchpadControlsSnapshot;
+import dev.capyio.android.contract.TouchpadNodeController;
+
+import java.util.List;
 
 public final class AndroidCapabilityModulesContractTest {
     private static int assertions;
@@ -23,9 +28,11 @@ public final class AndroidCapabilityModulesContractTest {
         reflectsPermissionAndAudioLifecycleState();
         reflectsGenerationBoundImuLifecycleState();
         reflectsGenerationBoundGamepadLifecycleState();
+        reflectsGenerationBoundTouchpadLifecycleState();
         projectsTheCatalogIntoSharedUiSchemaFour();
         projectsAndAdmitsClosedCapabilityQuickActions();
         appliesAndProjectsClosedGamepadUiCommands();
+        parsesAndProjectsClosedTouchpadUiFrames();
         System.out.println("Android Capability module composition: PASS ("
                 + assertions + " assertions)");
     }
@@ -37,6 +44,7 @@ public final class AndroidCapabilityModulesContractTest {
                 controller,
                 imuController,
                 new GamepadNodeController(),
+                new TouchpadNodeController(),
                 () -> true,
                 () -> true,
                 HardwarePresence.PRESENT,
@@ -49,9 +57,9 @@ public final class AndroidCapabilityModulesContractTest {
         check(snapshot.moduleCount() == 4);
         check(snapshot.capabilities().size() == 7);
         check(snapshot.capabilities().stream().filter(CapabilitySnapshot::adapterAttached).count()
-                == 4);
+                == 5);
         check(snapshot.capabilities().stream().filter(capability -> !capability.adapterAttached()).count()
-                == 3);
+                == 2);
         check(capability(snapshot, "android.microphone").ports().get(0).direction()
                 == CapabilityPortDirection.SOURCE);
         check(capability(snapshot, "android.speaker").ports().get(0).direction()
@@ -66,8 +74,9 @@ public final class AndroidCapabilityModulesContractTest {
                 == HardwarePresence.PRESENT);
         check(capability(snapshot, "android.imu").availability()
                 == CapabilityAvailability.AVAILABLE);
-        check("CAPY.ANDROID.MODULE_NOT_ATTACHED".equals(
-                capability(snapshot, "android.touchpad").problemCode()));
+        check(capability(snapshot, "android.touchpad").availability()
+                == CapabilityAvailability.AVAILABLE);
+        check(capability(snapshot, "android.touchpad").adapterAttached());
     }
 
     private static void reflectsPermissionAndAudioLifecycleState() {
@@ -76,6 +85,7 @@ public final class AndroidCapabilityModulesContractTest {
                 controller,
                 new CapabilityLifecycleController(),
                 new GamepadNodeController(),
+                new TouchpadNodeController(),
                 () -> false,
                 () -> true,
                 HardwarePresence.PRESENT,
@@ -111,6 +121,7 @@ public final class AndroidCapabilityModulesContractTest {
                 new AudioNodeController(),
                 imuController,
                 new GamepadNodeController(),
+                new TouchpadNodeController(),
                 () -> true,
                 () -> true,
                 HardwarePresence.PRESENT,
@@ -148,6 +159,7 @@ public final class AndroidCapabilityModulesContractTest {
                 new AudioNodeController(),
                 new CapabilityLifecycleController(),
                 gamepadController,
+                new TouchpadNodeController(),
                 () -> true,
                 () -> true,
                 HardwarePresence.PRESENT,
@@ -171,11 +183,31 @@ public final class AndroidCapabilityModulesContractTest {
                 == CapabilityAvailability.AVAILABLE);
     }
 
+    private static void reflectsGenerationBoundTouchpadLifecycleState() {
+        TouchpadNodeController controller = new TouchpadNodeController();
+        check(controller.controls().contacts().isEmpty());
+        TransitionToken start = controller.beginStart();
+        check(start.accepted());
+        check(controller.completeStart(start.generation()));
+        check(controller.submit(start.generation(), List.of(
+                new TouchpadContactSnapshot(0, 1_000, 2_000, 512),
+                new TouchpadContactSnapshot(1, 9_000, 8_000, 1_024))));
+        check(controller.controls().sequence() == 1);
+        check(controller.controls().contacts().size() == 2);
+        TransitionToken stop = controller.beginStop();
+        check(stop.accepted());
+        check(controller.controls().contacts().isEmpty());
+        check(!controller.submit(start.generation(), List.of(
+                new TouchpadContactSnapshot(0, 1, 1, 1))));
+        check(controller.completeStop(stop.generation()));
+    }
+
     private static void projectsTheCatalogIntoSharedUiSchemaFour() {
         CapabilityCatalogSnapshot catalog = AndroidCapabilityModules.createRegistry(
                 new AudioNodeController(),
                 new CapabilityLifecycleController(),
                 new GamepadNodeController(),
+                new TouchpadNodeController(),
                 () -> true,
                 () -> true,
                 HardwarePresence.PRESENT,
@@ -216,22 +248,25 @@ public final class AndroidCapabilityModulesContractTest {
     private static void projectsAndAdmitsClosedCapabilityQuickActions() {
         CapabilityLifecycleController imu = new CapabilityLifecycleController();
         CapabilityLifecycleController gamepad = new CapabilityLifecycleController();
+        CapabilityLifecycleController touchpad = new CapabilityLifecycleController();
         String stopped = AndroidUiSnapshotJson.encodeQuickActions(
-                imu.snapshot(), gamepad.snapshot());
-        check(occurrences(stopped, "\"kind\":\"capability_control\"") == 2);
+                imu.snapshot(), gamepad.snapshot(), touchpad.snapshot());
+        check(occurrences(stopped, "\"kind\":\"capability_control\"") == 3);
         check(stopped.contains("capyio.quick-action.android-imu"));
         check(stopped.contains("capyio.quick-action.android-gamepad"));
-        check(occurrences(stopped, "\"availableOperations\":[\"start\"]") == 2);
+        check(stopped.contains("capyio.quick-action.android-touchpad"));
+        check(occurrences(stopped, "\"availableOperations\":[\"start\"]") == 3);
         check(!stopped.contains("\"routeId\":\""));
 
         TransitionToken imuStart = imu.beginStart();
         check(imuStart.accepted());
         String starting = AndroidUiSnapshotJson.encodeQuickActions(
-                imu.snapshot(), gamepad.snapshot());
+                imu.snapshot(), gamepad.snapshot(), touchpad.snapshot());
         check(starting.contains("\"status\":\"starting\""));
         check(starting.contains("\"availableOperations\":[\"stop\"]"));
         check(imu.completeStart(imuStart.generation()));
-        check(AndroidUiSnapshotJson.encodeQuickActions(imu.snapshot(), gamepad.snapshot())
+        check(AndroidUiSnapshotJson.encodeQuickActions(
+                imu.snapshot(), gamepad.snapshot(), touchpad.snapshot())
                 .contains("\"status\":\"active\""));
 
         check(AndroidCapabilityCommand.parse(
@@ -244,6 +279,11 @@ public final class AndroidCapabilityModulesContractTest {
                 "stop",
                 CapabilityLifecycleState.ACTIVE).target()
                 == AndroidCapabilityCommand.Target.GAMEPAD);
+        check(AndroidCapabilityCommand.parse(
+                "capyio.quick-action.android-touchpad",
+                "start",
+                CapabilityLifecycleState.STOPPED).target()
+                == AndroidCapabilityCommand.Target.TOUCHPAD);
         check(AndroidCapabilityCommand.parse(
                 "capyio.quick-action.android-imu",
                 "retry",
@@ -337,6 +377,39 @@ public final class AndroidCapabilityModulesContractTest {
         check(active.contains("\"rightTrigger\":123"));
         check(active.contains("\"endpoint\":\"local://shared-ui\""));
         check(active.endsWith("}"));
+    }
+
+    private static void parsesAndProjectsClosedTouchpadUiFrames() {
+        List<TouchpadContactSnapshot> contacts = AndroidTouchpadUiFrame.parse(
+                "0,1000,2000,512;1,9000,8000,1024");
+        check(contacts != null && contacts.size() == 2);
+        check(contacts.get(0).contactId() == 0 && contacts.get(0).x() == 1_000);
+        check(AndroidTouchpadUiFrame.parse("").isEmpty());
+        check(AndroidTouchpadUiFrame.parse("00,1,1,1") == null);
+        check(AndroidTouchpadUiFrame.parse("0,+1,1,1") == null);
+        check(AndroidTouchpadUiFrame.parse("0,1,1") == null);
+        check(AndroidTouchpadUiFrame.parse("0,10001,1,1") == null);
+        check(AndroidTouchpadUiFrame.parse("0,1,1,1025") == null);
+        check(AndroidTouchpadUiFrame.parse("0,1,1,1;0,2,2,2") == null);
+        check(AndroidTouchpadUiFrame.parse(
+                "0,1,1,1;1,1,1,1;2,1,1,1;3,1,1,1;4,1,1,1;5,1,1,1") == null);
+        check(AndroidTouchpadUiFrame.parse("0,1,1,1;start") == null);
+        check(AndroidTouchpadUiFrame.parse(null) == null);
+
+        CapabilityLifecycleController lifecycle = new CapabilityLifecycleController();
+        String stopped = AndroidUiSnapshotJson.encodeTouchpadState(
+                lifecycle.snapshot(), TouchpadControlsSnapshot.neutral(0));
+        check(stopped.contains("\"source\":\"android_shared_ui\""));
+        check(stopped.contains("\"status\":\"idle\""));
+        check(stopped.contains("\"contacts\":[]"));
+        TransitionToken start = lifecycle.beginStart();
+        check(lifecycle.completeStart(start.generation()));
+        String active = AndroidUiSnapshotJson.encodeTouchpadState(
+                lifecycle.snapshot(), new TouchpadControlsSnapshot(7, contacts));
+        check(active.contains("\"streamEpoch\":" + start.generation()));
+        check(active.contains("\"sequence\":7"));
+        check(active.contains("\"status\":\"active\""));
+        check(active.contains("{\"contactId\":0,\"x\":1000,\"y\":2000,\"pressure\":512}"));
     }
 
     private static CapabilitySnapshot capability(

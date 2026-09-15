@@ -806,6 +806,17 @@ non-Active or stale-generation input and neutralizes on Stop. Android-only UI
 hides Windows/DSU receiver controls, does not fabricate IMU motion, and does not
 claim a Route or remote transport.
 
+ANDROID-A01D3 attaches the permission-free touch surface as a third independent
+Service-owned input lifecycle. The shared Vue surface tracks at most five stable
+contact slots, normalizes coordinates and pressure to fixed integers, coalesces
+MOVE updates to one browser animation frame, and submits a complete contact set.
+A closed 160-character grammar crosses the WebView boundary; Java revalidates
+canonical integers, count, uniqueness and bounds before the Service advances its
+sequence under the active generation. Stop, cancel, blur, hidden-document and
+unmount paths release all contacts. This local input state does not claim that
+the existing JNI packet Source, authenticated Route or Windows Precision
+Touchpad Sink is connected.
+
 ADR 0044 subsequently adds the approved network permission and a separate
 dependency-free LAN codec/socket worker boundary. ADRs 0046 and 0047 now attach
 the speaker Sink and microphone Source respectively: `AudioTrack` consumes the
