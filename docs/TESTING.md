@@ -44,6 +44,8 @@ Frontend uses `corepack pnpm typecheck` and `corepack pnpm build`.
 - complete peer-catalog admission is bound to one Ready Session and exact
   remote Node identity; rejection is transactional, while accepted endpoint
   removal offlines only dependent Routes;
+- the dedicated CatalogSnapshot decoder requires a typed Session ID, exact
+  payload and complete valid Node descriptor before returning a Core value;
 - Protocol catalog/Route/Problem round trips and enum/version failures;
 - Adapter manifest validation;
 - NDJSON framing, malformed/oversized messages and correlation;

@@ -14,6 +14,9 @@ pub enum ProtocolError {
     #[error("missing required semantic field: {0}")]
     MissingField(&'static str),
 
+    #[error("unexpected control payload; expected {expected}")]
+    UnexpectedPayload { expected: &'static str },
+
     #[error("invalid enum value {value} for {field}")]
     InvalidEnum { field: &'static str, value: i32 },
 

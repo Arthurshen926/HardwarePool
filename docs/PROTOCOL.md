@@ -33,6 +33,13 @@ shape does not make IDs substitutable.
 - catalog updates may replace an Adapter-owned subset after restart;
 - both peers send catalogs; neither is structurally provider-only.
 
+The Rust protocol boundary exposes a dedicated complete-catalog decoder. It
+requires a non-empty typed Session ID, an exact `CatalogSnapshot` payload and a
+complete `NodeDescriptor`, then performs the existing wire-to-Core validation
+before returning a host value. This is structural/semantic decoding only: the
+host must first authenticate the connection, apply replay policy and then pass
+the value to the Runtime's exact-Session peer-catalog admission method.
+
 Protocol v1 appends `CAPABILITY_CLASS_TOUCHPAD = 16` without changing existing
 enum numbers. It identifies an Adapter-owned touchpad Capability in catalogs;
 continuous `capyio.input.touchpad-frames/1` data remains outside Protobuf

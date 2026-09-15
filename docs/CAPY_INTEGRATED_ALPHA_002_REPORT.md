@@ -23,9 +23,17 @@ existing structured catalog Problem and fresh epoch behavior. Unrelated and
 opposite-direction Routes remain unchanged. A bounded
 `peer_catalog_accepted` Runtime event records the successful admission.
 
+The protocol crate now supplies the preceding decode step. Its dedicated
+CatalogSnapshot decoder rejects a missing Session ID, a different control
+payload or an absent/invalid Node descriptor before returning typed message,
+Session and Core Node identities. A future authenticated control host can call
+the decoder and Runtime admission boundary without reimplementing wire
+validation.
+
 ## Evidence
 
 - `cargo test -p capyio-testkit`: 18 passed.
+- `cargo test -p capyio-protocol`: 10 passed.
 - `cargo clippy -p capyio-runtime -p capyio-testkit --all-targets -- -D warnings`:
   passed.
 - Three focused regressions cover accepted replacement and Route
@@ -37,8 +45,9 @@ opposite-direction Routes remain unchanged. A bounded
 
 ## Non-claims and remaining work
 
-- This method receives an already decoded, host-supplied Core descriptor. It
-  opens no socket and does not authenticate a peer or decode Protobuf.
+- The Runtime method receives an already decoded, host-supplied Core descriptor.
+  It opens no socket and does not authenticate a peer. The adjacent protocol
+  helper decodes Protobuf but likewise grants no trust.
 - No Android or Windows host currently invokes it from a network control
   connection.
 - Capability publication, Route authorization, encrypted data-plane binding,

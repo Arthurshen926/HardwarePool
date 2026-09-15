@@ -1,12 +1,21 @@
 use std::str::FromStr;
 
-use capyio_core::{MessageId, SessionId};
+use capyio_core::{MessageId, NodeDescriptor, SessionId};
 use prost::Message;
 
 use crate::{PROTOCOL_MAJOR, PROTOCOL_MINOR, ProtocolError, v1};
 
 /// Defensive bootstrap limit for one control-plane envelope.
 pub const MAX_CONTROL_ENVELOPE_BYTES: usize = 1024 * 1024;
+
+/// A structurally and semantically validated catalog control message. Peer
+/// authentication and replay admission remain transport/host responsibilities.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ValidatedCatalogSnapshot {
+    pub message_id: MessageId,
+    pub session_id: SessionId,
+    pub node: NodeDescriptor,
+}
 
 /// Encodes an already validated envelope.
 #[must_use]
@@ -38,6 +47,42 @@ pub fn decode_envelope(bytes: &[u8]) -> Result<v1::Envelope, ProtocolError> {
     let envelope = v1::Envelope::decode(bytes)?;
     validate_envelope(&envelope)?;
     Ok(envelope)
+}
+
+/// Decodes one complete CatalogSnapshot envelope and converts its public wire
+/// descriptor into a validated Core value ready for host-side Session admission.
+pub fn decode_catalog_snapshot(bytes: &[u8]) -> Result<ValidatedCatalogSnapshot, ProtocolError> {
+    let envelope = decode_envelope(bytes)?;
+    let message_id =
+        MessageId::from_str(&envelope.message_id).map_err(|_| ProtocolError::InvalidId {
+            field: "envelope.message_id",
+            value: envelope.message_id.clone(),
+        })?;
+    if envelope.session_id.is_empty() {
+        return Err(ProtocolError::MissingField("envelope.session_id"));
+    }
+    let session_id =
+        SessionId::from_str(&envelope.session_id).map_err(|_| ProtocolError::InvalidId {
+            field: "envelope.session_id",
+            value: envelope.session_id.clone(),
+        })?;
+    let snapshot = match envelope.payload {
+        Some(v1::envelope::Payload::CatalogSnapshot(snapshot)) => snapshot,
+        _ => {
+            return Err(ProtocolError::UnexpectedPayload {
+                expected: "catalog_snapshot",
+            });
+        }
+    };
+    let node = snapshot
+        .node
+        .ok_or(ProtocolError::MissingField("catalog_snapshot.node"))?
+        .try_into()?;
+    Ok(ValidatedCatalogSnapshot {
+        message_id,
+        session_id,
+        node,
+    })
 }
 
 /// Validates version, typed identifiers and the required payload.

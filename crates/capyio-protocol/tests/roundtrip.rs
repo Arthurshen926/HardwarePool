@@ -3,7 +3,8 @@ use capyio_core::{
     ProblemSeverity, Route,
 };
 use capyio_protocol::{
-    PROTOCOL_MAJOR, ProtocolError, decode_envelope, encode_envelope, new_envelope, v1,
+    PROTOCOL_MAJOR, ProtocolError, decode_catalog_snapshot, decode_envelope, encode_envelope,
+    new_envelope, v1,
 };
 use capyio_testkit::{DemoLab, android_node};
 
@@ -78,6 +79,71 @@ fn hello_envelope_round_trips_as_binary() {
     assert!(matches!(
         decoded.payload,
         Some(v1::envelope::Payload::Hello(_))
+    ));
+}
+
+#[test]
+fn catalog_envelope_decodes_to_session_bound_core_value() {
+    let mut node = android_node();
+    node.display_name = "Decoded Android catalog".to_owned();
+    let mut lab = DemoLab::new().expect("demo lab");
+    let envelope = new_envelope(
+        Some(lab.session_id),
+        v1::envelope::Payload::CatalogSnapshot(v1::CatalogSnapshot {
+            node: Some(v1::NodeDescriptor::try_from(&node).expect("node conversion")),
+        }),
+    );
+
+    let decoded = decode_catalog_snapshot(&encode_envelope(&envelope)).expect("catalog decode");
+
+    assert_eq!(decoded.session_id, lab.session_id);
+    assert_eq!(decoded.node, node);
+    assert_eq!(decoded.message_id.to_string(), envelope.message_id);
+    lab.runtime
+        .accept_peer_catalog(decoded.session_id, decoded.node)
+        .expect("Runtime catalog admission");
+    assert_eq!(
+        lab.runtime.snapshot().peers[0].display_name,
+        "Decoded Android catalog"
+    );
+}
+
+#[test]
+fn catalog_decoder_requires_session_payload_and_node() {
+    let node = android_node();
+    let without_session = new_envelope(
+        None,
+        v1::envelope::Payload::CatalogSnapshot(v1::CatalogSnapshot {
+            node: Some(v1::NodeDescriptor::try_from(&node).expect("node conversion")),
+        }),
+    );
+    assert!(matches!(
+        decode_catalog_snapshot(&encode_envelope(&without_session)),
+        Err(ProtocolError::MissingField("envelope.session_id"))
+    ));
+
+    let lab = DemoLab::new().expect("demo lab");
+    let wrong_payload = new_envelope(
+        Some(lab.session_id),
+        v1::envelope::Payload::Hello(v1::Hello {
+            node: Some(v1::NodeDescriptor::try_from(&node).expect("node conversion")),
+            supported_protocol_majors: vec![PROTOCOL_MAJOR],
+        }),
+    );
+    assert!(matches!(
+        decode_catalog_snapshot(&encode_envelope(&wrong_payload)),
+        Err(ProtocolError::UnexpectedPayload {
+            expected: "catalog_snapshot"
+        })
+    ));
+
+    let without_node = new_envelope(
+        Some(lab.session_id),
+        v1::envelope::Payload::CatalogSnapshot(v1::CatalogSnapshot { node: None }),
+    );
+    assert!(matches!(
+        decode_catalog_snapshot(&encode_envelope(&without_node)),
+        Err(ProtocolError::MissingField("catalog_snapshot.node"))
     ));
 }
 

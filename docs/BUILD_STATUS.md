@@ -924,6 +924,12 @@ Route remains active. This is the trusted-host admission seam for a later
 authenticated control transport, not discovery, pairing or network-security
 evidence. See `docs/CAPY_INTEGRATED_ALPHA_002_REPORT.md`.
 
+The same slice adds a dedicated protocol decoder that requires an exact
+CatalogSnapshot payload, typed Session identity and complete validated Core
+Node descriptor. It is ready to compose with Runtime admission after an
+authenticated host has admitted the connection; it does not itself supply
+transport trust or replay defense.
+
 The apparent post-stop UDP restart failure was then isolated from CapyIO. With
 UU Remote running, every tested port in 45980--46030 returned Winsock 10048
 without an enumerated endpoint owner, including unused 46012. The 40000/40001/
