@@ -30,6 +30,10 @@ pub enum RuntimeEventKind {
         session_id: SessionId,
         state: SessionState,
     },
+    PeerCatalogAccepted {
+        session_id: SessionId,
+        peer_id: NodeId,
+    },
     CatalogChanged {
         node_id: NodeId,
         adapter_id: AdapterInstanceId,

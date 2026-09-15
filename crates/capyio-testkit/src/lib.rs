@@ -591,7 +591,9 @@ where
 mod tests {
     use capyio_core::{
         CapabilityId, CoreError, Problem, ProblemCategory, ProblemId, ProblemSeverity, RouteState,
+        SessionState,
     };
+    use capyio_runtime::RuntimeEventKind;
 
     use super::*;
 
@@ -778,6 +780,100 @@ mod tests {
                 RouteState::Active
             );
         }
+    }
+
+    #[test]
+    fn session_bound_peer_catalog_replaces_atomically_and_reconciles_routes() {
+        let mut lab = DemoLab::new().expect("demo lab");
+        lab.set_microphone_active(true, 1)
+            .expect("activate microphone Route");
+        lab.set_speaker_active(true, 1)
+            .expect("activate speaker Route");
+        let unaffected = lab
+            .runtime
+            .route(lab.routes.windows_system_mix_to_phone)
+            .expect("opposite Route")
+            .clone();
+
+        let mut peer_catalog = android_node();
+        peer_catalog.display_name = "Updated Android peer".to_owned();
+        let mut capabilities = android_catalog();
+        capabilities.retain(|capability| capability.id != parse_id(PHONE_MICROPHONE_CAPABILITY_ID));
+        peer_catalog
+            .replace_adapter_catalog(parse_id(ANDROID_HARDWARE_ADAPTER_ID), capabilities)
+            .expect("valid replacement peer catalog");
+
+        lab.runtime
+            .accept_peer_catalog(lab.session_id, peer_catalog)
+            .expect("accept peer catalog");
+
+        assert_catalog_invalidated(
+            &lab,
+            lab.routes.phone_microphone_to_windows,
+            "CAPY.ROUTE.ENDPOINT_REMOVED",
+        );
+        assert_eq!(
+            lab.runtime
+                .route(lab.routes.windows_system_mix_to_phone)
+                .expect("unrelated opposite Route"),
+            &unaffected
+        );
+        let snapshot = lab.runtime.snapshot();
+        assert_eq!(snapshot.peers[0].display_name, "Updated Android peer");
+        assert!(snapshot.events.iter().any(|event| matches!(
+            event.kind,
+            RuntimeEventKind::PeerCatalogAccepted {
+                session_id,
+                peer_id,
+            } if session_id == lab.session_id && peer_id == parse_id(ANDROID_NODE_ID)
+        )));
+    }
+
+    #[test]
+    fn peer_catalog_rejects_wrong_identity_without_mutation() {
+        let mut lab = DemoLab::new().expect("demo lab");
+        let before = lab.runtime.snapshot();
+        let wrong_catalog = windows_node();
+
+        let error = lab
+            .runtime
+            .accept_peer_catalog(lab.session_id, wrong_catalog)
+            .expect_err("wrong peer catalog must be rejected");
+
+        assert!(matches!(
+            error,
+            RuntimeError::PeerCatalogNodeMismatch {
+                session_id,
+                expected_peer_id,
+                catalog_node_id,
+            } if session_id == lab.session_id
+                && expected_peer_id == parse_id(ANDROID_NODE_ID)
+                && catalog_node_id == parse_id(WINDOWS_NODE_ID)
+        ));
+        assert_eq!(lab.runtime.snapshot(), before);
+    }
+
+    #[test]
+    fn suspended_session_rejects_peer_catalog_without_mutation() {
+        let mut lab = DemoLab::new().expect("demo lab");
+        lab.runtime
+            .set_peer_online(parse_id(ANDROID_NODE_ID), false)
+            .expect("suspend peer Session");
+        let before = lab.runtime.snapshot();
+
+        let error = lab
+            .runtime
+            .accept_peer_catalog(lab.session_id, android_node())
+            .expect_err("suspended Session must reject catalog");
+
+        assert!(matches!(
+            error,
+            RuntimeError::Core(CoreError::InvalidSessionTransition {
+                from: SessionState::Suspended,
+                action: "accept_peer_catalog",
+            })
+        ));
+        assert_eq!(lab.runtime.snapshot(), before);
     }
 
     #[test]

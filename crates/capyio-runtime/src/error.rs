@@ -13,6 +13,14 @@ pub enum RuntimeError {
     UnknownSession(SessionId),
     #[error("session {0} already exists")]
     DuplicateSession(SessionId),
+    #[error(
+        "catalog Node {catalog_node_id} does not match Session {session_id} peer {expected_peer_id}"
+    )]
+    PeerCatalogNodeMismatch {
+        session_id: SessionId,
+        expected_peer_id: NodeId,
+        catalog_node_id: NodeId,
+    },
     #[error("Route {0} is unknown")]
     UnknownRoute(RouteId),
     #[error("Route {0} already exists")]

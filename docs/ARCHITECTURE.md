@@ -67,6 +67,10 @@ Protobuf, codecs, drivers or concrete network transport.
 ### Runtime
 
 - owns the local catalog and peer catalogs;
+- accepts a complete peer catalog only through a Ready Session bound to that
+  exact remote Node identity; the replacement and all dependent Route
+  reconciliation commit atomically, while transport authentication and
+  envelope decoding remain outside Runtime;
 - atomically registers Adapter instances with their initial Capability catalog;
 - reconciles catalog replacements against persisted Routes, invalidating only
   Routes whose endpoint contract is removed or changed;

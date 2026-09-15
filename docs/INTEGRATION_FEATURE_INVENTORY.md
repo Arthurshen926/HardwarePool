@@ -100,14 +100,21 @@ Camera2 connect/disconnect and complete service/resource cleanup.
 
 ## Remaining integration work
 
+The Runtime now has a session-bound whole-peer-catalog admission method. It
+rejects the wrong Node identity or a non-Ready Session without mutation,
+preserves locally observed online state and atomically reconciles dependent
+Routes. No transport calls this boundary yet, so it is product-composition
+infrastructure rather than a discovery or pairing claim.
+
 1. Route touchpad, IMU, gamepad and haptics through bounded typed data planes.
    Their local lifecycles/UI state and publication selection are attached, but
    peer catalog exchange and Route authorization are not. The Android vibrator
    Sink is attached, but Windows rumble feedback is not yet routed to it.
 2. Physically verify the shared audio controls and remove the transitional
    native fallback only after equivalent permission, lifecycle and device evidence.
-3. Implement real Adapter-driven local hardware discovery and authenticated
-   peer catalog exchange; schema 4 currently projects deterministic Runtime
+3. Implement real Adapter-driven local hardware discovery and an authenticated
+   control transport that decodes peer catalogs and calls the new Runtime
+   admission boundary; schema 4 currently projects deterministic Runtime
    fixture catalogs.
 4. Connect touchpad and camera to authenticated product Routes rather than
    local lifecycle and lab transport boundaries; add authenticated endpoint

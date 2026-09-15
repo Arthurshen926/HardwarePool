@@ -42,6 +42,15 @@ explicitly approved trusted lab. A Tailscale address can protect overlay transit
 but does not supply CapyIO Capability authorization, application identity,
 message replay protection or downgrade binding.
 
+The integrated Runtime now provides a post-authentication peer-catalog
+admission boundary. It accepts a complete catalog only for the exact remote
+Node bound to a Ready Session, preserves transport-owned online state and
+atomically reconciles dependent Routes. Wrong identities and suspended
+Sessions leave Runtime state unchanged. This prevents cross-Session catalog
+confusion inside the trusted host, but does not authenticate an envelope,
+establish a transport, issue a Capability grant or make the current lab wires
+safe on an untrusted network.
+
 ADR 0041 now represents Session/Route/Stream/epoch and the exact selected audio
 specification as one validated media-stream binding before any transport
 backend. This prevents platform and codec code from inventing a second identity

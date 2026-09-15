@@ -41,6 +41,9 @@ Frontend uses `corepack pnpm typecheck` and `corepack pnpm build`.
 - stopping one Route leaves another active;
 - Adapter failure affects owned Routes only;
 - catalog replacement after Adapter restart;
+- complete peer-catalog admission is bound to one Ready Session and exact
+  remote Node identity; rejection is transactional, while accepted endpoint
+  removal offlines only dependent Routes;
 - Protocol catalog/Route/Problem round trips and enum/version failures;
 - Adapter manifest validation;
 - NDJSON framing, malformed/oversized messages and correlation;

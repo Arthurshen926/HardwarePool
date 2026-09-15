@@ -118,6 +118,21 @@ impl NodeRuntime {
         Ok(session_id)
     }
 
+    /// Atomically accepts a complete peer catalog through one already-ready
+    /// Session. Transport authentication and envelope decoding remain caller
+    /// responsibilities; this boundary prevents a valid catalog from being
+    /// applied to a different peer or a suspended Session.
+    pub fn accept_peer_catalog(
+        &mut self,
+        session_id: SessionId,
+        descriptor: NodeDescriptor,
+    ) -> Result<(), RuntimeError> {
+        let mut candidate = self.clone();
+        candidate.accept_peer_catalog_inner(session_id, descriptor)?;
+        *self = candidate;
+        Ok(())
+    }
+
     pub fn create_route(
         &mut self,
         session_id: SessionId,
@@ -666,10 +681,103 @@ impl NodeRuntime {
             self.invalidate_route_for_catalog(
                 route_id,
                 changed_node_id,
-                changed_adapter_id,
+                Some(changed_adapter_id),
                 issue,
             )?;
         }
+        Ok(())
+    }
+
+    fn accept_peer_catalog_inner(
+        &mut self,
+        session_id: SessionId,
+        mut descriptor: NodeDescriptor,
+    ) -> Result<(), RuntimeError> {
+        descriptor.validate()?;
+        let session = self
+            .sessions
+            .get(&session_id)
+            .ok_or(RuntimeError::UnknownSession(session_id))?;
+        if session.state != SessionState::Ready {
+            return Err(CoreError::InvalidSessionTransition {
+                from: session.state,
+                action: "accept_peer_catalog",
+            }
+            .into());
+        }
+        let peer_id = session.remote_node_id;
+        if descriptor.id != peer_id {
+            return Err(RuntimeError::PeerCatalogNodeMismatch {
+                session_id,
+                expected_peer_id: peer_id,
+                catalog_node_id: descriptor.id,
+            });
+        }
+
+        let previous = self
+            .peers
+            .get(&peer_id)
+            .ok_or(RuntimeError::UnknownPeer(peer_id))?
+            .clone();
+        if previous.online_state != OnlineState::Online {
+            return Err(RuntimeError::PeerOffline(peer_id));
+        }
+
+        // Peer-reported availability cannot override transport-owned presence.
+        descriptor.online_state = previous.online_state;
+        descriptor.validate()?;
+        self.peers.insert(peer_id, descriptor);
+
+        let affected = self
+            .routes
+            .values()
+            .filter(|route| route.source.node_id == peer_id || route.sink.node_id == peer_id)
+            .map(|route| {
+                let endpoint = if route.source.node_id == peer_id {
+                    route.source
+                } else {
+                    route.sink
+                };
+                let adapter_id = previous
+                    .capabilities
+                    .get(&endpoint.capability_id)
+                    .map(|capability| capability.adapter_instance_id);
+                (route.id, adapter_id)
+            })
+            .collect::<Vec<_>>();
+        for (route_id, adapter_id) in affected {
+            let (source, sink) = {
+                let route = self.routes.get(&route_id).expect("collected Route");
+                (route.source, route.sink)
+            };
+            let endpoints = self
+                .resolve_route_endpoint(source)
+                .map_err(|_| CatalogRouteIssue::EndpointMissing(source))
+                .and_then(|(source_port, source_adapter)| {
+                    self.resolve_route_endpoint(sink)
+                        .map_err(|_| CatalogRouteIssue::EndpointMissing(sink))
+                        .map(|(sink_port, sink_adapter)| {
+                            (source_port, source_adapter, sink_port, sink_adapter)
+                        })
+                });
+            let issue = match endpoints {
+                Ok((source_port, source_adapter, sink_port, sink_adapter)) => self
+                    .routes
+                    .get_mut(&route_id)
+                    .expect("collected Route")
+                    .reconcile_endpoints(&source_port, &source_adapter, &sink_port, &sink_adapter)
+                    .err()
+                    .map(CatalogRouteIssue::Incompatible),
+                Err(issue) => Some(issue),
+            };
+            if let Some(issue) = issue {
+                self.invalidate_route_for_catalog(route_id, peer_id, adapter_id, issue)?;
+            }
+        }
+        self.emit(RuntimeEventKind::PeerCatalogAccepted {
+            session_id,
+            peer_id,
+        });
         Ok(())
     }
 
@@ -694,7 +802,7 @@ impl NodeRuntime {
         &mut self,
         route_id: RouteId,
         node_id: NodeId,
-        adapter_id: AdapterInstanceId,
+        adapter_id: Option<AdapterInstanceId>,
         issue: CatalogRouteIssue,
     ) -> Result<(), RuntimeError> {
         let state = self
@@ -836,7 +944,7 @@ impl CatalogRouteIssue {
 
 fn catalog_problem(
     node_id: NodeId,
-    adapter_id: AdapterInstanceId,
+    adapter_id: Option<AdapterInstanceId>,
     route_id: RouteId,
     issue: &CatalogRouteIssue,
 ) -> Problem {
@@ -847,7 +955,7 @@ fn catalog_problem(
         severity: ProblemSeverity::Error,
         retryable: true,
         related_node: Some(node_id),
-        related_adapter: Some(adapter_id),
+        related_adapter: adapter_id,
         related_route: Some(route_id),
         human_message: "A Route endpoint is no longer compatible with its catalog".to_owned(),
         technical_detail: Some(issue.detail()),

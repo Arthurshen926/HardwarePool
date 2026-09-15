@@ -913,6 +913,17 @@ speaker test ran concurrently. Both directions stopped cleanly after the run.
 The owner subsequently confirmed normal Android playback through UU Remote and
 no recurrence of the high-frequency squeal.
 
+## CAPY-INTEGRATED-ALPHA-002 session-bound peer catalog admission
+
+The portable Runtime now accepts a complete peer catalog only through a Ready
+Session whose remote Node ID exactly matches the catalog. Replacement and
+dependent Route reconciliation commit transactionally; wrong identity and
+Suspended-Session attempts leave the complete Runtime snapshot unchanged.
+Accepted endpoint removal offlines only its dependent Route, while the opposite
+Route remains active. This is the trusted-host admission seam for a later
+authenticated control transport, not discovery, pairing or network-security
+evidence. See `docs/CAPY_INTEGRATED_ALPHA_002_REPORT.md`.
+
 The apparent post-stop UDP restart failure was then isolated from CapyIO. With
 UU Remote running, every tested port in 45980--46030 returned Winsock 10048
 without an enumerated endpoint owner, including unused 46012. The 40000/40001/
