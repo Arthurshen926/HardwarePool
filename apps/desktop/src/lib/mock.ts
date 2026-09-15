@@ -5,6 +5,7 @@ import type {
   UiCapability,
   UiCapabilityPort,
   UiAudioEndpointCatalog,
+  UiAndroidAudioState,
   GamepadButton,
   GamepadControlUpdate,
   UiGamepadState,
@@ -330,6 +331,10 @@ export class BrowserMockCapyIOApi implements CapyIOApi {
       choices: [],
       problem: "Windows 播放端点枚举需要 Tauri 桌面后端。",
     };
+  }
+
+  async getAndroidAudioState(): Promise<UiAndroidAudioState | null> {
+    return null;
   }
 
   async selectAudioEndpoint(_actionId: string, _selectionToken: string): Promise<UiQuickAction> {

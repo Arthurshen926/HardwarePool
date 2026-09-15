@@ -9,7 +9,7 @@ import QuickActionCard from "./components/QuickActionCard.vue";
 import StatusPill from "./components/StatusPill.vue";
 import TouchpadSurface from "./components/TouchpadSurface.vue";
 import { createCapyIOApi } from "./lib/api";
-import type { DsuProjectionMode, GamepadControlUpdate, QuickActionOperation, TouchpadControlUpdate, UiAudioEndpointCatalog, UiCapability, UiGamepadState, UiLiveImu, UiQuickAction, UiRoute, UiSnapshot, UiTouchpadState, WindowsControllerKind } from "./lib/types";
+import type { DsuProjectionMode, GamepadControlUpdate, QuickActionOperation, TouchpadControlUpdate, UiAndroidAudioCapability, UiAndroidAudioState, UiAudioEndpointCatalog, UiCapability, UiGamepadState, UiLiveImu, UiQuickAction, UiRoute, UiSnapshot, UiTouchpadState, WindowsControllerKind } from "./lib/types";
 
 const api = createCapyIOApi();
 const snapshot = ref<UiSnapshot | null>(null);
@@ -28,6 +28,7 @@ const gamepad = ref<UiGamepadState | null>(null);
 const gamepadBusy = ref(false);
 const touchpad = ref<UiTouchpadState | null>(null);
 const touchpadBusy = ref(false);
+const androidAudio = ref<UiAndroidAudioState | null>(null);
 const gamepadDsuPort = ref(26760);
 const gamepadDsuMode = ref<DsuProjectionMode>("motion_only");
 const gamepadDsuBusy = ref(false);
@@ -58,11 +59,12 @@ async function load(): Promise<void> {
   loading.value = true;
   errorMessage.value = "";
   try {
-    const [nextSnapshot, nextLiveImu, nextGamepad, nextTouchpad, nextQuickActions, nextAudioEndpoints] = await Promise.all([api.getSnapshot(), api.getLiveImu(), api.getGamepadState(), api.getTouchpadState(), api.getQuickActions(), api.getAudioEndpoints()]);
+    const [nextSnapshot, nextLiveImu, nextGamepad, nextTouchpad, nextAndroidAudio, nextQuickActions, nextAudioEndpoints] = await Promise.all([api.getSnapshot(), api.getLiveImu(), api.getGamepadState(), api.getTouchpadState(), api.getAndroidAudioState(), api.getQuickActions(), api.getAudioEndpoints()]);
     snapshot.value = nextSnapshot;
     liveImu.value = nextLiveImu;
     gamepad.value = nextGamepad;
     touchpad.value = nextTouchpad;
+    androidAudio.value = nextAndroidAudio;
     quickActions.value = nextQuickActions;
     audioEndpoints.value = nextAudioEndpoints;
   }
@@ -118,6 +120,17 @@ async function refreshGamepad(): Promise<void> {
 async function refreshTouchpad(): Promise<void> {
   try { touchpad.value = await api.getTouchpadState(); }
   catch (error) { errorMessage.value = normalizeError(error); }
+}
+
+async function refreshAndroidAudio(): Promise<void> {
+  try { androidAudio.value = await api.getAndroidAudioState(); }
+  catch (error) { errorMessage.value = normalizeError(error); }
+}
+
+function describeAudio(capability: UiAndroidAudioCapability): string {
+  const format = capability.actualFormat;
+  if (!format) return "等待平台协商";
+  return `${format.sampleRateHz} Hz · ${format.channelCount} ch · ${format.encoding} · ${format.framesPerBuffer} frames/buffer`;
 }
 
 async function startLiveImu(): Promise<void> {
@@ -243,7 +256,7 @@ function normalizeError(error: unknown): string {
 
 onMounted(() => {
   void load();
-  livePoll = setInterval(() => { void refreshLiveImu(); void refreshGamepad(); void refreshTouchpad(); void refreshQuickActions(); }, 500);
+  livePoll = setInterval(() => { void refreshLiveImu(); void refreshGamepad(); void refreshTouchpad(); void refreshAndroidAudio(); void refreshQuickActions(); }, 500);
   window.addEventListener("capyio-native-state", refreshSnapshot);
 });
 onUnmounted(() => {
@@ -252,11 +265,12 @@ onUnmounted(() => {
 });
 
 function refreshSnapshot(): void {
-  void Promise.all([api.getSnapshot(), api.getGamepadState(), api.getTouchpadState(), api.getQuickActions()])
-    .then(([nextSnapshot, nextGamepad, nextTouchpad, nextQuickActions]) => {
+  void Promise.all([api.getSnapshot(), api.getGamepadState(), api.getTouchpadState(), api.getAndroidAudioState(), api.getQuickActions()])
+    .then(([nextSnapshot, nextGamepad, nextTouchpad, nextAndroidAudio, nextQuickActions]) => {
       snapshot.value = nextSnapshot;
       gamepad.value = nextGamepad;
       touchpad.value = nextTouchpad;
+      androidAudio.value = nextAndroidAudio;
       quickActions.value = nextQuickActions;
     })
     .catch((error: unknown) => { errorMessage.value = normalizeError(error); });
@@ -338,6 +352,32 @@ function refreshSnapshot(): void {
           <div><dt>Live samples</dt><dd><span>{{ liveImu.receivedSamples }} received · {{ liveImu.clockDomainId ?? "no clock yet" }}</span></dd></div>
           <div><dt>Evidence boundary</dt><dd><span>真实手机数据；明文 ws:// 仅限可信局域网实验，不代表生产安全。</span></dd></div>
         </dl>
+      </div>
+    </section>
+
+    <section v-if="view === 'quick' && androidAudio" class="info-panel imu-lab" aria-labelledby="android-audio-title">
+      <header class="imu-lab__header">
+        <div>
+          <p class="eyebrow">Android Node · platform-owned audio</p>
+          <h2 id="android-audio-title">本机音频状态</h2>
+          <p>{{ androidAudio.nodeId }} · 麦克风与扬声器生命周期相互独立</p>
+        </div>
+      </header>
+      <div class="imu-lab__grid">
+        <article>
+          <h3>Phone microphone · Source</h3>
+          <p><StatusPill :tone="androidAudio.microphone.state === 'active' ? 'success' : androidAudio.microphone.state === 'failed' ? 'danger' : 'warning'" :label="androidAudio.microphone.state" /></p>
+          <p class="imu-lab__detail">{{ describeAudio(androidAudio.microphone) }}</p>
+          <p class="imu-lab__detail">{{ androidAudio.microphone.framesProcessed }} frames · generation {{ androidAudio.microphone.generation }} · permission {{ androidAudio.microphone.permissionReady ? 'ready' : 'required on Start' }}</p>
+          <p v-if="androidAudio.microphone.problemCode" class="error-banner">{{ androidAudio.microphone.problemCode }}</p>
+        </article>
+        <article>
+          <h3>Phone speaker · Sink</h3>
+          <p><StatusPill :tone="androidAudio.speaker.state === 'active' ? 'success' : androidAudio.speaker.state === 'failed' ? 'danger' : 'warning'" :label="androidAudio.speaker.state" /></p>
+          <p class="imu-lab__detail">{{ describeAudio(androidAudio.speaker) }}</p>
+          <p class="imu-lab__detail">{{ androidAudio.speaker.framesProcessed }} frames · generation {{ androidAudio.speaker.generation }} · notification {{ androidAudio.speaker.permissionReady ? 'ready' : 'required on Start' }}</p>
+          <p v-if="androidAudio.speaker.problemCode" class="error-banner">{{ androidAudio.speaker.problemCode }}</p>
+        </article>
       </div>
     </section>
 

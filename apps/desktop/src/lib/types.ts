@@ -312,6 +312,29 @@ export interface UiAudioEndpointCatalog {
   problem: string | null;
 }
 
+export interface UiAndroidAudioFormat {
+  sampleRateHz: number;
+  channelCount: number;
+  encoding: string;
+  framesPerBuffer: number;
+}
+
+export interface UiAndroidAudioCapability {
+  state: "stopped" | "starting" | "active" | "stopping" | "failed";
+  generation: number;
+  framesProcessed: number;
+  permissionReady: boolean;
+  actualFormat: UiAndroidAudioFormat | null;
+  problemCode: string | null;
+}
+
+export interface UiAndroidAudioState {
+  schemaVersion: 1;
+  nodeId: string;
+  microphone: UiAndroidAudioCapability;
+  speaker: UiAndroidAudioCapability;
+}
+
 export interface UiSnapshot {
   backendMode: BackendMode;
   schemaVersion: 4;
@@ -347,5 +370,6 @@ export interface CapyIOApi {
   getQuickActions(): Promise<UiQuickAction[]>;
   invokeQuickAction(actionId: string, operation: QuickActionOperation): Promise<UiQuickAction>;
   getAudioEndpoints(): Promise<UiAudioEndpointCatalog | null>;
+  getAndroidAudioState(): Promise<UiAndroidAudioState | null>;
   selectAudioEndpoint(actionId: string, selectionToken: string): Promise<UiQuickAction>;
 }

@@ -1580,6 +1580,15 @@ type-checks/packages the common Vue Touchpad surface and runs Android Lint. This
 is hardware-free compile/package evidence; no APK was installed and no physical
 multi-touch or Windows projection was exercised.
 
+ANDROID-A01D4 raises the composition executable to 150 assertions. It verifies
+five independent Android Capability Quick Actions, permission-required audio
+projection, microphone/speaker target separation, lifecycle-valid operation
+admission, malformed/unknown rejection, and bounded audio state JSON including
+the actual negotiated format and processed-frame count. Lint/debug compilation
+cover the bridge handoff back to the Activity permission path. Physical
+permission dialogs and audio operation remain covered only by the earlier native
+UI device evidence until the shared surface is installed and exercised.
+
 Offline repository validation additionally pins the Gradle/AGP contract and
 checks the source manifest for the approved recording/notification/foreground
 permissions, a non-exported dual-type service, disabled backup/cleartext and no

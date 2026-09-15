@@ -95,6 +95,14 @@ integer grammar; Java revalidates every contact and the Service owns sequence an
 generation. The separate JNI packet Source and Windows Precision Touchpad Sink
 remain unconnected, so this slice claims local touch input only.
 
+A01D4 moves the existing Android microphone and speaker operations into shared
+Quick Actions and adds a common audio status panel. The DTO exposes independent
+lifecycle generation, actual negotiated format, processed frames, permission
+readiness and bounded problem codes. Start returns to the Activity main thread
+and therefore preserves Android's system permission UI; Stop uses the existing
+Service actions. No permission or foreground-service declaration changed, and
+the native controls remain available until shared-UI physical parity is proven.
+
 ## Automated evidence
 
 - `cargo test --offline -p capyio-input -p capyio-dsu-adapter -p capyio-viiper-adapter -p capyio-windows-input -p capyio-desktop`: passed after the gamepad merge.
@@ -122,12 +130,13 @@ remain unconnected, so this slice claims local touch input only.
 - `platform/android/gradlew.bat capyioCheck --offline`: final aggregate Android
   Gate passed all contracts, composition checks, Lint, entrypoint verification
   shared-Vue asset verification and debug assembly without installing the APK.
-- the Android composition executable passed 131 assertions after A01D3, including
+- the Android composition executable passed 150 assertions after A01D4, including
   schema-4 projection, all seven capabilities, read-only flags, JSON escaping
   and disconnected-service output plus closed IMU/gamepad Quick Actions and
   command rejection, complete touch-gamepad state composition and bounded
   Android gamepad-state projection plus touchpad attachment, complete-frame
-  bounds, lifecycle neutralization and bridge parsing.
+  bounds, lifecycle neutralization and bridge parsing plus independent audio
+  action admission, permission projection and actual-format/frame state.
 - `jar tf platform/android/app/build/outputs/apk/debug/app-debug.apk`: confirmed
   `assets/capyio-ui/index.html` and generated JavaScript/CSS in the assembled
   archive; the entrypoint references both assets with `./assets/...` paths.
@@ -140,4 +149,4 @@ remain unconnected, so this slice claims local touch input only.
 - no Display merge or Display worktree modification;
 - no claim that schema-4 fixture catalogs are real hardware discovery;
 - no claim of physical Android rendering or complete mutable-command UI parity;
-  A01D3 adds local Controller and Touchpad input while retaining native audio controls.
+  A01D4 adds shared audio operations while retaining native controls as fallback.

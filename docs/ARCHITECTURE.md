@@ -817,6 +817,15 @@ unmount paths release all contacts. This local input state does not claim that
 the existing JNI packet Source, authenticated Route or Windows Precision
 Touchpad Sink is connected.
 
+ANDROID-A01D4 projects the two existing Service-owned audio slots into the same
+shared UI. Microphone Source and speaker Sink remain independent closed
+`capability_control` actions; their DTO reports lifecycle generation, actual
+platform-negotiated format, processed frames, permission readiness and bounded
+problem code. Start is posted back to the Activity main thread so Android's
+existing system permission flow remains platform-owned; Stop uses the existing
+Service commands. This slice changes no Manifest declaration and retains the
+native audio controls as a rollback fallback pending physical UI parity.
+
 ADR 0044 subsequently adds the approved network permission and a separate
 dependency-free LAN codec/socket worker boundary. ADRs 0046 and 0047 now attach
 the speaker Sink and microphone Source respectively: `AudioTrack` consumes the

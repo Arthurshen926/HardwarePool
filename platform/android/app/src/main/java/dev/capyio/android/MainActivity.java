@@ -367,9 +367,24 @@ public final class MainActivity extends Activity {
                 return "[]";
             }
             return AndroidUiSnapshotJson.encodeQuickActions(
+                    current.snapshot(),
+                    requiredPermissionsGranted(AudioCapabilityKind.MICROPHONE_SOURCE),
+                    requiredPermissionsGranted(AudioCapabilityKind.SPEAKER_SINK),
                     current.imuLifecycle(),
                     current.gamepadLifecycle(),
                     current.touchpadLifecycle());
+        }
+
+        @JavascriptInterface
+        public String getAudioStateJson() {
+            AudioNodeService.NodeBinder current = binder;
+            if (current == null) {
+                return "";
+            }
+            return AndroidUiSnapshotJson.encodeAudioState(
+                    current.snapshot(),
+                    requiredPermissionsGranted(AudioCapabilityKind.MICROPHONE_SOURCE),
+                    requiredPermissionsGranted(AudioCapabilityKind.SPEAKER_SINK));
         }
 
         @JavascriptInterface
@@ -429,6 +444,34 @@ public final class MainActivity extends Activity {
             AudioNodeService.NodeBinder current = binder;
             if (current == null) {
                 return false;
+            }
+            AudioNodeSnapshot audio = current.snapshot();
+            AudioCapabilitySnapshot audioCapability;
+            if ("capyio.quick-action.android-microphone".equals(actionId)) {
+                audioCapability = audio.microphone();
+            } else if ("capyio.quick-action.android-speaker".equals(actionId)) {
+                audioCapability = audio.speaker();
+            } else {
+                audioCapability = null;
+            }
+            if (audioCapability != null) {
+                AndroidAudioCommand audioCommand = AndroidAudioCommand.parse(
+                        actionId, operation, audioCapability.state());
+                if (audioCommand == null) {
+                    return false;
+                }
+                handler.post(() -> {
+                    if (audioCommand.operation() == AndroidAudioCommand.Operation.STOP) {
+                        if (audioCommand.target() == AudioCapabilityKind.MICROPHONE_SOURCE) {
+                            AudioNodeService.stopMicrophone(MainActivity.this);
+                        } else {
+                            AudioNodeService.stopSpeaker(MainActivity.this);
+                        }
+                    } else {
+                        requestStart(audioCommand.target());
+                    }
+                });
+                return true;
             }
             CapabilityLifecycleSnapshot lifecycle;
             if ("capyio.quick-action.android-imu".equals(actionId)) {

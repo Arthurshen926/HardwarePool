@@ -1,5 +1,9 @@
 package dev.capyio.android;
 
+import dev.capyio.android.contract.ActualAudioFormat;
+import dev.capyio.android.contract.AudioCapabilitySnapshot;
+import dev.capyio.android.contract.AudioCapabilityState;
+import dev.capyio.android.contract.AudioNodeSnapshot;
 import dev.capyio.android.contract.CapabilityCatalogSnapshot;
 import dev.capyio.android.contract.CapabilityLifecycleSnapshot;
 import dev.capyio.android.contract.CapabilityLifecycleState;
@@ -100,6 +104,154 @@ public final class AndroidUiSnapshotJson {
                 touchpad);
         json.append(']');
         return json.toString();
+    }
+
+    public static String encodeQuickActions(
+            AudioNodeSnapshot audio,
+            boolean microphonePermissionReady,
+            boolean speakerPermissionReady,
+            CapabilityLifecycleSnapshot imu,
+            CapabilityLifecycleSnapshot gamepad,
+            CapabilityLifecycleSnapshot touchpad) {
+        if (audio == null || imu == null || gamepad == null || touchpad == null) {
+            throw new IllegalArgumentException("Audio and input snapshots are required");
+        }
+        StringBuilder json = new StringBuilder(3072);
+        json.append('[');
+        appendAudioQuickAction(
+                json,
+                "capyio.quick-action.android-microphone",
+                "Phone microphone",
+                "Capture microphone audio in the existing foreground Node service.",
+                audio.microphone(),
+                microphonePermissionReady);
+        json.append(',');
+        appendAudioQuickAction(
+                json,
+                "capyio.quick-action.android-speaker",
+                "Phone speaker",
+                "Play received audio through the existing foreground Node service.",
+                audio.speaker(),
+                speakerPermissionReady);
+        json.append(',');
+        appendQuickAction(json, "capyio.quick-action.android-imu", "IMU sensors",
+                "Start or stop the service-owned accelerometer and gyroscope Adapter.", imu);
+        json.append(',');
+        appendQuickAction(json, "capyio.quick-action.android-gamepad", "Touch gamepad",
+                "Start or stop the service-owned bounded gamepad state Adapter.", gamepad);
+        json.append(',');
+        appendQuickAction(json, "capyio.quick-action.android-touchpad", "Touchpad surface",
+                "Start or stop the service-owned complete multi-touch state Adapter.", touchpad);
+        json.append(']');
+        return json.toString();
+    }
+
+    public static String encodeAudioState(
+            AudioNodeSnapshot audio,
+            boolean microphonePermissionReady,
+            boolean speakerPermissionReady) {
+        if (audio == null) {
+            throw new IllegalArgumentException("Audio snapshot is required");
+        }
+        StringBuilder json = new StringBuilder(1024);
+        json.append("{\"schemaVersion\":1");
+        appendStringField(json, "nodeId", audio.nodeId());
+        json.append(",\"microphone\":");
+        appendAudioState(json, audio.microphone(), microphonePermissionReady);
+        json.append(",\"speaker\":");
+        appendAudioState(json, audio.speaker(), speakerPermissionReady);
+        json.append('}');
+        return json.toString();
+    }
+
+    private static void appendAudioState(
+            StringBuilder json,
+            AudioCapabilitySnapshot audio,
+            boolean permissionReady) {
+        json.append('{');
+        appendStringField(json, "state", lower(audio.state()));
+        json.append(",\"generation\":").append(audio.generation())
+                .append(",\"framesProcessed\":").append(audio.framesProcessed())
+                .append(",\"permissionReady\":").append(permissionReady)
+                .append(",\"actualFormat\":");
+        ActualAudioFormat format = audio.actualFormat();
+        if (format == null) {
+            json.append("null");
+        } else {
+            json.append("{\"sampleRateHz\":").append(format.sampleRateHz())
+                    .append(",\"channelCount\":").append(format.channelCount());
+            appendStringField(json, "encoding", format.encoding());
+            json.append(",\"framesPerBuffer\":").append(format.framesPerBuffer())
+                    .append('}');
+        }
+        if (audio.problemCode() == null) {
+            json.append(",\"problemCode\":null}");
+        } else {
+            appendStringField(json, "problemCode", audio.problemCode());
+            json.append('}');
+        }
+    }
+
+    private static void appendAudioQuickAction(
+            StringBuilder json,
+            String id,
+            String title,
+            String summary,
+            AudioCapabilitySnapshot audio,
+            boolean permissionReady) {
+        json.append("{\"schemaVersion\":2");
+        appendStringField(json, "id", id);
+        appendStringField(json, "kind", "capability_control");
+        appendStringField(json, "title", title);
+        appendStringField(json, "summary", summary);
+        appendStringField(json, "status", audioActionStatus(audio.state(), permissionReady));
+        json.append(",\"simulated\":false,\"routeId\":null,\"routeState\":null")
+                .append(",\"routeEpoch\":null,\"availableOperations\":[");
+        String operation = audioAvailableOperation(audio.state());
+        if (operation != null) {
+            appendQuoted(json, operation);
+        }
+        json.append(']');
+        appendStringField(json, "evidenceLevel", "not_started");
+        appendStringField(json, "connectionHint",
+                "Local Android audio lifecycle; permission and foreground state remain platform-owned.");
+        if (!permissionReady
+                && (audio.state() == AudioCapabilityState.STOPPED
+                || audio.state() == AudioCapabilityState.FAILED)) {
+            appendStringField(json, "problemCode", "CAPY.ANDROID.PERMISSION_REQUIRED");
+            appendStringField(json, "problem", "Android system permission is required on Start.");
+            json.append('}');
+        } else if (audio.problemCode() != null) {
+            appendStringField(json, "problemCode", audio.problemCode());
+            appendStringField(json, "problem", "Android audio Adapter reported a bounded failure.");
+            json.append('}');
+        } else {
+            json.append(",\"problemCode\":null,\"problem\":null}");
+        }
+    }
+
+    private static String audioActionStatus(
+            AudioCapabilityState state, boolean permissionReady) {
+        if (!permissionReady && (state == AudioCapabilityState.STOPPED
+                || state == AudioCapabilityState.FAILED)) {
+            return "blocked";
+        }
+        return switch (state) {
+            case STOPPED -> "idle";
+            case STARTING -> "starting";
+            case ACTIVE -> "active";
+            case STOPPING -> "stopping";
+            case FAILED -> "failed";
+        };
+    }
+
+    private static String audioAvailableOperation(AudioCapabilityState state) {
+        return switch (state) {
+            case STOPPED -> "start";
+            case STARTING, ACTIVE -> "stop";
+            case STOPPING -> null;
+            case FAILED -> "retry";
+        };
     }
 
     public static String encodeGamepadState(

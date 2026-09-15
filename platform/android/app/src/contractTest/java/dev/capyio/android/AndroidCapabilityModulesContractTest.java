@@ -1,6 +1,7 @@
 package dev.capyio.android;
 
 import dev.capyio.android.contract.AudioCapabilityKind;
+import dev.capyio.android.contract.ActualAudioFormat;
 import dev.capyio.android.contract.AudioNodeController;
 import dev.capyio.android.contract.CapabilityAvailability;
 import dev.capyio.android.contract.CapabilityCatalogSnapshot;
@@ -33,6 +34,7 @@ public final class AndroidCapabilityModulesContractTest {
         projectsAndAdmitsClosedCapabilityQuickActions();
         appliesAndProjectsClosedGamepadUiCommands();
         parsesAndProjectsClosedTouchpadUiFrames();
+        projectsAndAdmitsClosedAudioQuickActions();
         System.out.println("Android Capability module composition: PASS ("
                 + assertions + " assertions)");
     }
@@ -410,6 +412,61 @@ public final class AndroidCapabilityModulesContractTest {
         check(active.contains("\"sequence\":7"));
         check(active.contains("\"status\":\"active\""));
         check(active.contains("{\"contactId\":0,\"x\":1000,\"y\":2000,\"pressure\":512}"));
+    }
+
+    private static void projectsAndAdmitsClosedAudioQuickActions() {
+        AudioNodeController audio = new AudioNodeController();
+        CapabilityLifecycleController lifecycle = new CapabilityLifecycleController();
+        String stopped = AndroidUiSnapshotJson.encodeQuickActions(
+                audio.snapshot("test-node"),
+                false,
+                true,
+                lifecycle.snapshot(),
+                lifecycle.snapshot(),
+                lifecycle.snapshot());
+        check(occurrences(stopped, "\"kind\":\"capability_control\"") == 5);
+        check(stopped.contains("capyio.quick-action.android-microphone"));
+        check(stopped.contains("capyio.quick-action.android-speaker"));
+        check(stopped.contains("\"status\":\"blocked\""));
+        check(stopped.contains("CAPY.ANDROID.PERMISSION_REQUIRED"));
+        check(stopped.contains("\"availableOperations\":[\"start\"]"));
+
+        TransitionToken start = audio.beginStart(AudioCapabilityKind.MICROPHONE_SOURCE);
+        check(start.accepted());
+        check(audio.completeStart(
+                AudioCapabilityKind.MICROPHONE_SOURCE,
+                start.generation(),
+                new ActualAudioFormat(48_000, 1, "pcm_16bit", 480)));
+        audio.addFrames(AudioCapabilityKind.MICROPHONE_SOURCE, start.generation(), 960);
+        String state = AndroidUiSnapshotJson.encodeAudioState(
+                audio.snapshot("test-node"), true, true);
+        check(state.contains("\"nodeId\":\"test-node\""));
+        check(state.contains("\"state\":\"active\""));
+        check(state.contains("\"framesProcessed\":960"));
+        check(state.contains("\"sampleRateHz\":48000"));
+        check(state.contains("\"encoding\":\"pcm_16bit\""));
+
+        check(AndroidAudioCommand.parse(
+                "capyio.quick-action.android-microphone", "start",
+                dev.capyio.android.contract.AudioCapabilityState.STOPPED).target()
+                == AudioCapabilityKind.MICROPHONE_SOURCE);
+        check(AndroidAudioCommand.parse(
+                "capyio.quick-action.android-speaker", "stop",
+                dev.capyio.android.contract.AudioCapabilityState.ACTIVE).target()
+                == AudioCapabilityKind.SPEAKER_SINK);
+        check(AndroidAudioCommand.parse(
+                "capyio.quick-action.android-speaker", "retry",
+                dev.capyio.android.contract.AudioCapabilityState.FAILED).operation()
+                == AndroidAudioCommand.Operation.RETRY);
+        check(AndroidAudioCommand.parse(
+                "capyio.quick-action.android-speaker", "start",
+                dev.capyio.android.contract.AudioCapabilityState.ACTIVE) == null);
+        check(AndroidAudioCommand.parse(
+                "capyio.quick-action.android-camera", "start",
+                dev.capyio.android.contract.AudioCapabilityState.STOPPED) == null);
+        check(AndroidAudioCommand.parse(
+                "capyio.quick-action.android-speaker", "start;stop",
+                dev.capyio.android.contract.AudioCapabilityState.STOPPED) == null);
     }
 
     private static CapabilitySnapshot capability(

@@ -58,6 +58,9 @@ Display is excluded until its feature branch is complete.
    A01D3 attaches a separate generation-bound five-contact Touchpad lifecycle
    and shared surface, retaining the standalone JNI/transport lab for later Route
    composition.
+   A01D4 adds independent microphone/speaker actions and an actual-format/frame
+   status panel while retaining Android-owned permission prompts and the native
+   fallback.
    These operations do not create Routes or select sharing. Audio permission UX,
    Route status and the remaining capabilities proceed in separate slices.
 5. **A01E — camera integration:** only after explicit approval, add the camera

@@ -13,7 +13,7 @@ is not modified.
 
 | Capability | Integrated source baseline | Android boundary | Windows boundary | Current product-composition status |
 |---|---|---|---|---|
-| Bidirectional audio | `codex/capyio-native-audio-subsystem` at `50f3921` | unified audio Node service with independent microphone Source and speaker Sink | unified desktop Quick Actions plus service/host and virtual audio boundaries | physically proven vertical paths are present; production pairing/security remain open |
+| Bidirectional audio | `codex/capyio-native-audio-subsystem` at `50f3921` | unified audio Node service plus shared status/Quick Actions for independent microphone Source and speaker Sink | unified desktop Quick Actions plus service/host and virtual audio boundaries | shared operation surface and physically proven native paths are present; shared-UI device parity and production pairing/security remain open |
 | Camera | `codex/capyio-camera` at `9808d2c` | separate Camera2/MediaCodec lab and private AVC record/transport boundary; main Node catalog now declares an unattached Offline camera module | Media Foundation virtual-camera, shared-memory ingress and host crates | source and migration inventory are merged; camera lifecycle is not yet attached to the Android product app |
 | Precision Touchpad | `codex/capyio-touchpad` at `77b6846` | unified Node owns a generation-bound five-contact shared-UI state facade; separate JNI packet Source/lab remains intact | user-mode/VHF projection boundaries and Runtime workers | local lifecycle/UI state is attached; authenticated product Route and Windows delivery remain open |
 | Touch + motion gamepad | `codex/capyio-gamepad` at `cadaef9` | unified Node owns IMU sensors plus a generation-bound, neutralizing gamepad state facade; standalone touch Controller Lab remains intact; haptics is Offline/unattached pending Manifest permission approval | shared Controller UI, DSU/VIIPER/DS4 and optional XInput projection boundaries | IMU and gamepad lifecycle/state are attached; shared touch surface, feedback and product Routes remain open |
@@ -79,14 +79,19 @@ bridge, advances sequence only in the active generation, coalesces MOVE updates
 and releases all contacts on cancellation, focus loss, page exit or Stop. The
 existing JNI/Windows packet path remains a separate data-plane integration task.
 
+A01D4 adds Android microphone and speaker Quick Actions plus a shared audio state
+panel. It reuses the existing Activity-owned recording/notification permission
+flow and Service commands, exposes actual negotiated format and frame counts,
+keeps both directions independent, changes no Manifest declaration, and retains
+the native audio controls until shared-UI device parity is proven.
+
 ## Remaining integration work
 
 1. Route touchpad, IMU and gamepad samples through bounded typed data planes.
    Their local lifecycles/UI state are attached, but they are not sharing or Route authorization. Haptics requires
    separate approval for the Android `VIBRATE` Manifest permission.
-2. Replace the transitional native-control fallback only after A01D maps
-   schema-versioned shared UI operations to the Service with equivalent
-   permission, lifecycle and physical-device evidence.
+2. Physically verify the shared audio controls and remove the transitional
+   native fallback only after equivalent permission, lifecycle and device evidence.
 3. Implement real Adapter-driven local hardware discovery and authenticated
    peer catalog exchange; schema 4 currently projects deterministic Runtime
    fixture catalogs.

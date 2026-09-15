@@ -1,7 +1,7 @@
 import { invoke } from "@tauri-apps/api/core";
 
 import { BrowserMockCapyIOApi } from "./mock";
-import type { CapyIOApi, GamepadControlUpdate, QuickActionOperation, TouchpadControlUpdate, UiAudioEndpointCatalog, UiGamepadState, UiLiveImu, UiQuickAction, UiSnapshot, UiTouchpadState, WindowsControllerKind } from "./types";
+import type { CapyIOApi, GamepadControlUpdate, QuickActionOperation, TouchpadControlUpdate, UiAndroidAudioState, UiAudioEndpointCatalog, UiGamepadState, UiLiveImu, UiQuickAction, UiSnapshot, UiTouchpadState, WindowsControllerKind } from "./types";
 
 declare global {
   interface Window {
@@ -10,6 +10,7 @@ declare global {
       getQuickActionsJson(): string;
       getGamepadStateJson(): string;
       getTouchpadStateJson(): string;
+      getAudioStateJson(): string;
       invokeQuickAction(actionId: string, operation: QuickActionOperation): boolean;
       updateGamepad(kind: string, target: string, x: number, y: number, pressed: boolean): boolean;
       updateTouchpad(encodedContacts: string): boolean;
@@ -95,6 +96,16 @@ class AndroidObserverCapyIOApi implements CapyIOApi {
       || state.profile !== "capyio.input.touchpad-frames/1"
       || !Array.isArray(state.contacts)) {
       throw new Error("Android touchpad bridge returned incompatible data");
+    }
+    return state;
+  }
+  async getAndroidAudioState(): Promise<UiAndroidAudioState | null> {
+    const encoded = window.CapyIOAndroid?.getAudioStateJson();
+    if (!encoded) return null;
+    const state = JSON.parse(encoded) as UiAndroidAudioState;
+    if (state.schemaVersion !== 1 || !state.nodeId
+      || !state.microphone || !state.speaker) {
+      throw new Error("Android audio bridge returned incompatible data");
     }
     return state;
   }
@@ -233,6 +244,10 @@ class TauriCapyIOApi implements CapyIOApi {
 
   getAudioEndpoints(): Promise<UiAudioEndpointCatalog> {
     return invoke<UiAudioEndpointCatalog>("get_audio_endpoints");
+  }
+
+  getAndroidAudioState(): Promise<UiAndroidAudioState | null> {
+    return Promise.resolve(null);
   }
 
   selectAudioEndpoint(actionId: string, selectionToken: string): Promise<UiQuickAction> {
