@@ -3,15 +3,73 @@
 //! Transport-agnostic host admission for already-authenticated CapyIO control
 //! messages. This crate opens no socket and owns no cryptographic identity.
 
-use std::collections::VecDeque;
+use std::collections::{BTreeSet, VecDeque};
 
-use capyio_core::{MessageId, NodeId, SessionId};
-use capyio_protocol::{ProtocolError, decode_catalog_snapshot};
+use capyio_core::{
+    Availability, CapabilityId, CoreError, MessageId, NodeDescriptor, NodeId, PortDirection,
+    SessionId,
+};
+use capyio_protocol::{ProtocolError, decode_catalog_snapshot, encode_catalog_snapshot};
 use capyio_runtime::{NodeRuntime, RuntimeError};
 use thiserror::Error;
 
 /// Fixed duplicate-retention bound for one admitted control connection.
 pub const MAX_RECENT_CONTROL_MESSAGE_IDS: usize = 256;
+
+/// Produces the catalog visible to a peer from validated, host-owned
+/// publication intent. Sink/Control-only Capabilities remain visible because
+/// they are not controlled by the Source-sharing checkbox. Any Capability
+/// containing a Source Port is published only when its Capability ID is
+/// selected; mixed-direction Capabilities therefore fail closed as one unit.
+pub fn project_publication_catalog(
+    node: &NodeDescriptor,
+    selected_source_capabilities: &BTreeSet<CapabilityId>,
+) -> Result<NodeDescriptor, PublicationError> {
+    node.validate()?;
+    for capability_id in selected_source_capabilities {
+        let capability = node
+            .capabilities
+            .get(capability_id)
+            .ok_or(PublicationError::UnknownCapability(*capability_id))?;
+        if capability.availability == Availability::Offline {
+            return Err(PublicationError::OfflineCapability(*capability_id));
+        }
+        if !capability
+            .ports
+            .values()
+            .any(|port| port.direction == PortDirection::Source)
+        {
+            return Err(PublicationError::NotSourceCapability(*capability_id));
+        }
+    }
+
+    let mut published = node.clone();
+    published.capabilities.retain(|capability_id, capability| {
+        let has_source = capability
+            .ports
+            .values()
+            .any(|port| port.direction == PortDirection::Source);
+        !has_source || selected_source_capabilities.contains(capability_id)
+    });
+    for adapter in published.adapter_instances.values_mut() {
+        adapter
+            .owned_capabilities
+            .retain(|capability_id| published.capabilities.contains_key(capability_id));
+    }
+    published.validate()?;
+    Ok(published)
+}
+
+/// Encodes one publication-filtered local catalog for an already-authorized
+/// Session. This function performs no transport I/O or authentication.
+pub fn encode_publication_catalog(
+    session_id: SessionId,
+    node: &NodeDescriptor,
+    selected_source_capabilities: &BTreeSet<CapabilityId>,
+) -> Result<Vec<u8>, PublicationError> {
+    let published = project_publication_catalog(node, selected_source_capabilities)?;
+    Ok(encode_catalog_snapshot(session_id, &published)?)
+}
 
 /// Binding supplied by a host only after it has authenticated the connection.
 /// Constructing this value is an assertion, not an authentication operation.
@@ -102,9 +160,23 @@ pub enum ControlHostError {
     DuplicateMessage(MessageId),
 }
 
+#[derive(Debug, Error)]
+pub enum PublicationError {
+    #[error(transparent)]
+    Core(#[from] CoreError),
+    #[error(transparent)]
+    Protocol(#[from] ProtocolError),
+    #[error("publication Capability {0} is not in the local catalog")]
+    UnknownCapability(CapabilityId),
+    #[error("publication Capability {0} has no Source Port")]
+    NotSourceCapability(CapabilityId),
+    #[error("offline publication Capability {0} cannot be shared")]
+    OfflineCapability(CapabilityId),
+}
+
 #[cfg(test)]
 mod tests {
-    use capyio_protocol::{encode_envelope, new_envelope, v1};
+    use capyio_protocol::{decode_catalog_snapshot, encode_envelope, new_envelope, v1};
     use capyio_testkit::{ANDROID_NODE_ID, DemoLab, android_node, windows_node};
 
     use super::*;
@@ -223,6 +295,125 @@ mod tests {
             }),
         );
         encode_envelope(&envelope)
+    }
+
+    #[test]
+    fn publication_projection_filters_unselected_sources_and_preserves_sinks() {
+        let node = android_node();
+        let selected_source = node
+            .capabilities
+            .values()
+            .find(|capability| {
+                capability
+                    .ports
+                    .values()
+                    .any(|port| port.direction == PortDirection::Source)
+            })
+            .expect("Source Capability")
+            .id;
+        let sink_only_ids: BTreeSet<_> = node
+            .capabilities
+            .values()
+            .filter(|capability| {
+                capability
+                    .ports
+                    .values()
+                    .all(|port| port.direction != PortDirection::Source)
+            })
+            .map(|capability| capability.id)
+            .collect();
+        let selected = BTreeSet::from([selected_source]);
+
+        let published = project_publication_catalog(&node, &selected).expect("project catalog");
+
+        assert!(published.capabilities.contains_key(&selected_source));
+        assert!(
+            sink_only_ids
+                .iter()
+                .all(|id| published.capabilities.contains_key(id))
+        );
+        assert!(published.capabilities.values().all(|capability| {
+            let has_source = capability
+                .ports
+                .values()
+                .any(|port| port.direction == PortDirection::Source);
+            !has_source || capability.id == selected_source
+        }));
+        published
+            .validate()
+            .expect("published catalog remains valid");
+    }
+
+    #[test]
+    fn encoded_publication_catalog_round_trips_with_session_binding() {
+        let lab = DemoLab::new().expect("demo lab");
+        let node = android_node();
+        let selected_source = node
+            .capabilities
+            .values()
+            .find(|capability| {
+                capability
+                    .ports
+                    .values()
+                    .any(|port| port.direction == PortDirection::Source)
+            })
+            .expect("Source Capability")
+            .id;
+        let selected = BTreeSet::from([selected_source]);
+
+        let bytes = encode_publication_catalog(lab.session_id, &node, &selected)
+            .expect("encode publication catalog");
+        let decoded = decode_catalog_snapshot(&bytes).expect("decode publication catalog");
+
+        assert_eq!(decoded.session_id, lab.session_id);
+        assert_eq!(
+            decoded.node,
+            project_publication_catalog(&node, &selected).expect("project expected catalog")
+        );
+    }
+
+    #[test]
+    fn publication_selection_rejects_unknown_sink_and_offline_source() {
+        let mut node = android_node();
+        let source = node
+            .capabilities
+            .values()
+            .find(|capability| {
+                capability
+                    .ports
+                    .values()
+                    .any(|port| port.direction == PortDirection::Source)
+            })
+            .expect("Source Capability")
+            .id;
+        let sink = node
+            .capabilities
+            .values()
+            .find(|capability| {
+                capability
+                    .ports
+                    .values()
+                    .all(|port| port.direction != PortDirection::Source)
+            })
+            .expect("Sink-only Capability")
+            .id;
+
+        assert!(matches!(
+            project_publication_catalog(&node, &BTreeSet::from([CapabilityId::new()])),
+            Err(PublicationError::UnknownCapability(_))
+        ));
+        assert!(matches!(
+            project_publication_catalog(&node, &BTreeSet::from([sink])),
+            Err(PublicationError::NotSourceCapability(id)) if id == sink
+        ));
+        node.capabilities
+            .get_mut(&source)
+            .expect("Source Capability")
+            .availability = Availability::Offline;
+        assert!(matches!(
+            project_publication_catalog(&node, &BTreeSet::from([source])),
+            Err(PublicationError::OfflineCapability(id)) if id == source
+        ));
     }
 
     #[test]

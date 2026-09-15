@@ -322,6 +322,14 @@ its present Source becomes eligible without bypassing this rule. This session-lo
 set is publication intent only and conveys no Session trust, Route authority,
 permission grant or transport endpoint.
 
+The portable control-host publication projection independently revalidates a
+host-supplied Source selection against the current Core catalog. Unknown IDs,
+Sink/Control-only Capabilities and Offline Sources are rejected before encoding.
+Unselected Source-bearing Capabilities are removed, Adapter ownership is pruned
+to the retained catalog and the result is validated again. This prevents stale
+or forged UI selection from expanding an outbound CatalogSnapshot; it does not
+authenticate the recipient or authorize a Route.
+
 ANDROID-A01E accepts only the fixed camera action ID and lifecycle-valid
 start/stop/retry. Start is returned to the visible Activity so Android owns the
 CAMERA/notification prompts; the WebView cannot grant consent. The unexported

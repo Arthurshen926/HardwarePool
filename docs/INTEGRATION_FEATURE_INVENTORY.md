@@ -111,6 +111,11 @@ Session/peer tuple with bounded recent-message deduplication. No platform
 transport constructs that binding yet, so this is product-composition
 infrastructure rather than a discovery or pairing claim.
 
+The same shared host now turns validated Source publication selections into an
+outbound catalog: it omits every unselected Source-bearing Capability, retains
+Sink/Control-only inventory, prunes Adapter ownership and fails closed on stale,
+non-Source or Offline selections. Platform invocation and delivery remain open.
+
 The Windows Tauri host no longer retains `DemoLab` as its long-lived state.
 It consumes the fixture once at startup, then all desktop feature workers and
 UI commands share a process-owned `NodeRuntime`; only the bootstrap Session and

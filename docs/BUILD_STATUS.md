@@ -936,9 +936,12 @@ CatalogSnapshot under the same 1 MiB envelope bound. Its encode/decode
 round-trip is covered without claiming delivery, authentication or discovery.
 
 `capyio-control-host` now performs the reusable decoder-to-Runtime handoff for
-one exact caller-admitted Session/peer tuple. Six deterministic tests cover
-success, wrong identity, duplicate delivery, Runtime rejection/retry and the
-fixed 256-ID retention bound. No platform transport, socket or cryptographic
+one exact caller-admitted Session/peer tuple. It also projects outbound catalogs
+from Source publication intent: unselected Source-bearing Capabilities are
+removed, Sink/Control-only Capabilities remain visible, Adapter ownership is
+pruned, and invalid selections fail closed. Nine deterministic tests cover the
+two directions, wrong identity, duplicate delivery, Runtime rejection/retry and
+the fixed 256-ID retention bound. No platform transport, socket or cryptographic
 identity is introduced by this slice.
 
 The Windows Tauri host now consumes `DemoLab` only as deterministic startup

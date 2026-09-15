@@ -41,6 +41,13 @@ checks both identities, suppresses recently applied duplicate message IDs and
 then invokes Runtime. Only successful Runtime application consumes an ID, and
 retention is fixed at 256.
 
+For outbound publication, the same host boundary projects an already validated
+local catalog from a set of selected Source Capability IDs. Unselected
+Source-bearing Capabilities are removed, Sink/Control-only Capabilities remain
+visible, Adapter ownership is pruned to the retained set, and the result is
+revalidated before Session-bound encoding. Unknown, non-Source and Offline
+selections fail closed.
+
 The Windows Tauri host now consumes `DemoLab` only to create deterministic
 bootstrap state. Its long-lived `DesktopNodeState` owns the `NodeRuntime`,
 bootstrap Session ID and demo Route allow-list; every existing desktop feature
@@ -52,7 +59,7 @@ authentication implementation.
 
 - `cargo test -p capyio-testkit`: 18 passed.
 - `cargo test -p capyio-protocol`: 11 passed.
-- `cargo test -p capyio-control-host`: 6 passed.
+- `cargo test -p capyio-control-host`: 9 passed.
 - `cargo test -p capyio-desktop --lib`: 55 passed, 6 intentionally ignored
   physical/installed-device tests.
 - `cargo clippy -p capyio-runtime -p capyio-testkit --all-targets -- -D warnings`:
@@ -71,8 +78,9 @@ authentication implementation.
   helper decodes Protobuf but likewise grants no trust.
 - No Android or Windows host currently invokes it from a network control
   connection. Windows now has the necessary process-owned Runtime seam only.
-- Capability publication, Route authorization, encrypted data-plane binding,
-  replay defense, reconnect and pairing remain separate work.
+- Platform invocation/delivery of projected catalogs, Route authorization,
+  encrypted data-plane binding, replay defense, reconnect and pairing remain
+  separate work.
 - No APK, driver, service, Display branch or system configuration was changed.
 
 ## Internal dependency note

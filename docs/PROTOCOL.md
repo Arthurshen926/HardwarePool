@@ -48,6 +48,11 @@ for a caller-supplied admitted Session/peer binding. Its fixed 256-message
 recent-ID set only suppresses immediate duplicate delivery; it is not the
 transport replay window and does not survive process restart.
 
+For outbound publication, the control host projects the complete local Core
+catalog before calling the encoder. Unselected Source-bearing Capabilities are
+absent from the wire snapshot, Sink/Control-only Capabilities remain visible,
+and Adapter ownership is adjusted and revalidated. The wire schema is unchanged.
+
 Protocol v1 appends `CAPABILITY_CLASS_TOUCHPAD = 16` without changing existing
 enum numbers. It identifies an Adapter-owned touchpad Capability in catalogs;
 continuous `capyio.input.touchpad-frames/1` data remains outside Protobuf

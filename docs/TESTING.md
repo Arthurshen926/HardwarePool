@@ -49,6 +49,10 @@ Frontend uses `corepack pnpm typecheck` and `corepack pnpm build`.
 - the shared control host composes decoder and Runtime admission, rejects
   mismatched Session/peer and recent duplicate IDs before mutation, does not
   consume an ID after Runtime rejection and bounds retention to 256;
+- outbound publication keeps selected Source-bearing Capabilities plus all
+  Sink/Control-only Capabilities, prunes Adapter ownership, round-trips through
+  the bounded Session encoder and rejects unknown, non-Source or Offline
+  selections;
 - Protocol catalog/Route/Problem round trips and enum/version failures;
 - Adapter manifest validation;
 - NDJSON framing, malformed/oversized messages and correlation;
