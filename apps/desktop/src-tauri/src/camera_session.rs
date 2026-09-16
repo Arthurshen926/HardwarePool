@@ -13,6 +13,42 @@ const READY: &[u8] = b"CAPYIO_CAMERA_SESSION_READY";
 const READY_TIMEOUT: Duration = Duration::from_secs(10);
 const STOP_TIMEOUT: Duration = Duration::from_secs(3);
 
+#[cfg(windows)]
+pub(crate) fn process_is_elevated() -> Result<bool, String> {
+    use std::{ffi::c_void, mem::size_of, ptr};
+    use windows_sys::Win32::{
+        Foundation::{CloseHandle, HANDLE},
+        Security::{GetTokenInformation, TOKEN_ELEVATION, TOKEN_QUERY, TokenElevation},
+        System::Threading::{GetCurrentProcess, OpenProcessToken},
+    };
+
+    let mut token: HANDLE = ptr::null_mut();
+    if unsafe { OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY, &mut token) } == 0 {
+        return Err("无法读取 Windows 进程权限令牌".to_owned());
+    }
+    let mut elevation = TOKEN_ELEVATION::default();
+    let mut returned = 0_u32;
+    let result = unsafe {
+        GetTokenInformation(
+            token,
+            TokenElevation,
+            (&raw mut elevation).cast::<c_void>(),
+            u32::try_from(size_of::<TOKEN_ELEVATION>()).expect("TOKEN_ELEVATION size fits u32"),
+            &mut returned,
+        )
+    };
+    unsafe { CloseHandle(token) };
+    if result == 0 || returned as usize != size_of::<TOKEN_ELEVATION>() {
+        return Err("无法确定 Windows 进程是否已提升权限".to_owned());
+    }
+    Ok(elevation.TokenIsElevated != 0)
+}
+
+#[cfg(not(windows))]
+pub(crate) fn process_is_elevated() -> Result<bool, String> {
+    Ok(false)
+}
+
 pub(crate) struct CameraSession {
     child: Child,
     stderr: Arc<Mutex<Vec<u8>>>,

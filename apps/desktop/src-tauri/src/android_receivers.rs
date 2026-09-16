@@ -361,6 +361,7 @@ impl AndroidReceiverActions {
             system.connection_hint =
                 Some("系统相机会话已就绪；接收器运行中，手机画面到达需单独确认".to_owned());
         }
+        apply_system_camera_permission(&mut system, crate::camera_session::process_is_elevated());
         vec![self.touchpad.dto(), self.camera.dto(), system]
     }
 
@@ -417,6 +418,16 @@ impl AndroidReceiverActions {
         if self.camera_session.is_some() {
             return Ok(());
         }
+        match crate::camera_session::process_is_elevated() {
+            Ok(true) => {}
+            Ok(false) => {
+                return Err(
+                    "当前原型需以管理员身份运行 CapyIO Windows 客户端，才能创建系统摄像头共享通道"
+                        .to_owned(),
+                );
+            }
+            Err(error) => return Err(error),
+        }
         self.camera.poll();
         if self.camera.process.is_some() {
             return Err("请先停止仅解码接收，再启动系统摄像头".to_owned());
@@ -466,6 +477,30 @@ impl AndroidReceiverActions {
         if let Some(problem) = problem {
             let cleanup = self.stop_system_camera();
             self.system_camera.problem = Some(format!("{problem}; 清理: {cleanup:?}"));
+        }
+    }
+}
+
+fn apply_system_camera_permission(action: &mut UiQuickAction, elevated: Result<bool, String>) {
+    if action.status == "active" {
+        return;
+    }
+    match elevated {
+        Ok(true) => {}
+        Ok(false) => {
+            action.status = "blocked";
+            action.available_operations.clear();
+            action.problem_code = Some("CAPY.WINDOWS.SYSTEM_CAMERA_ELEVATION_REQUIRED".to_owned());
+            action.problem = Some(
+                "当前原型需以管理员身份运行 CapyIO Windows 客户端，才能创建系统摄像头共享通道"
+                    .to_owned(),
+            );
+        }
+        Err(error) => {
+            action.status = "blocked";
+            action.available_operations.clear();
+            action.problem_code = Some("CAPY.WINDOWS.SYSTEM_CAMERA_PREFLIGHT_FAILED".to_owned());
+            action.problem = Some(error);
         }
     }
 }
@@ -833,5 +868,17 @@ mod tests {
             "CAPY.WINDOWS.SYSTEM_CAMERA_ELEVATION_REQUIRED"
         );
         assert!(problem.contains("管理员身份"));
+    }
+
+    #[test]
+    fn system_camera_is_blocked_before_start_without_elevation() {
+        let mut action = Receiver::new(ReceiverKind::SystemCamera).dto();
+        apply_system_camera_permission(&mut action, Ok(false));
+        assert_eq!(action.status, "blocked");
+        assert!(action.available_operations.is_empty());
+        assert_eq!(
+            action.problem_code.as_deref(),
+            Some("CAPY.WINDOWS.SYSTEM_CAMERA_ELEVATION_REQUIRED")
+        );
     }
 }

@@ -17,6 +17,9 @@ Windows system camera during the fixed grace period, recovered higher-sequence
 phone frames and passed the independent consumer again. The current prototype
 requires elevation for the Global mapping; long-duration and broader app
 compatibility remain.
+Normal sessions now fail closed at a read-only token preflight before creating
+camera/ADB state, while elevated sessions retain the proven path. Whole-UI
+elevation remains a prototype limitation pending a least-privilege broker.
 See
 `CAPY_INTEGRATED_SYSTEM_CAMERA_REPORT.md` and ADR 1412. This does not claim
 completion of all integration or merge the separate Display work.

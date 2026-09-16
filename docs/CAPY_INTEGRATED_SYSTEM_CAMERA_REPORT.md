@@ -115,4 +115,15 @@ camera applications remain broader acceptance work. The current prototype also
 requires an elevated Windows process for this action; ADR 1414 records why a
 least-privilege broker is still future work.
 
+ADR 1416 moves this constraint into a read-only preflight. A normal Windows
+session now sees the action blocked with no Start operation and a stable
+elevation-required problem before any ADB mapping or helper is created. The
+same ignored gate under UAC passed the check and reached its Android-waiting
+marker. This changes failure timing and UX only; it does not claim a privilege
+broker or automatic elevation.
+
+The post-preflight shared UI/test-package build passed and generated
+`target/integrated-test/20260916-134829-1009`; its manifest records the dirty
+development revision and hashes all four shipped executables.
+
 Display development and the existing audio/driver installation are unchanged.

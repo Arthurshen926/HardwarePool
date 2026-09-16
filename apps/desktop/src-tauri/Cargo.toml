@@ -36,6 +36,13 @@ serde.workspace = true
 serde_json.workspace = true
 tauri = { version = "2.11.2", features = [] }
 
+[target.'cfg(windows)'.dependencies]
+windows-sys = { workspace = true, features = [
+    "Win32_Foundation",
+    "Win32_Security",
+    "Win32_System_Threading",
+] }
+
 [dev-dependencies]
 capyio-windows-camera-share = { path = "../../../platform/windows/capyio-camera-share" }
 tungstenite.workspace = true

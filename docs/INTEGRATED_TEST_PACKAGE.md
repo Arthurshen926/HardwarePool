@@ -45,6 +45,8 @@ recovery and cleanup passed.
 See `CAPY_INTEGRATED_SYSTEM_CAMERA_REPORT.md` for evidence, ADR 1413 for the
 exact deployment hash/rollback and ADR 1414 for the privilege boundary. This is
 not automatic package installation.
+The desktop now checks its own elevation token before Start: a normal session
+shows the system-camera action as blocked and creates no ADB reverse or helper.
 A uniquely installed VHF interface selects VHF; missing VHF
 selects synthetic input. Ambiguous interfaces, failed discovery and unsupported
 platforms now fail before reverse mapping or helper creation, as ADR 1410
