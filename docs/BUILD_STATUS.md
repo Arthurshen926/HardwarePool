@@ -1045,6 +1045,14 @@ accepts the Windows listener endpoint and per-run token. Shared UI build, APK
 composition and 242 Android contract assertions pass. The exact `0.5.4-dev` APK
 was subsequently installed under explicit authorization; one app now owns the
 audio, camera, IMU, touch-gamepad and touchpad controls.
+A01F1 hardens this unified input path: Controller and Touchpad lifecycle
+changes are serialized with UI submissions, stale generations are rejected
+before Adapter enqueue, and bounded queue rejection fails only the affected
+Capability with stable pressure diagnostics and neutral/cancel cleanup. The
+hardware-free composition gate now passes 248 assertions, and the complete
+Android application sources compile against API 36 without changing any
+permission, service declaration or wire format. The complete `capyioCheck` and
+`cargo xtask ci` gates pass.
 
 ADR 1409 removes the remaining manual Windows receiver startup from the
 controlled touchpad and camera flows. Two desktop Quick Actions now require

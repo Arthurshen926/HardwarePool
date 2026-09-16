@@ -165,20 +165,17 @@ public final class AudioNodeService extends Service {
         touchpadAdapter = new TouchpadRouteAdapter(new TouchpadRouteAdapter.Listener() {
             @Override
             public void onStarted(long generation) {
-                touchpadController.completeStart(generation);
-                postStateChanged();
+                completeTouchpadStart(generation);
             }
 
             @Override
             public void onStopped(long generation) {
-                touchpadController.completeStop(generation);
-                postStateChanged();
+                completeTouchpadStop(generation);
             }
 
             @Override
             public void onFailed(long generation, String problemCode) {
-                touchpadController.fail(generation, problemCode);
-                postStateChanged();
+                failTouchpad(generation, problemCode);
             }
         });
         createNotificationChannel();
@@ -237,7 +234,7 @@ public final class AudioNodeService extends Service {
     }
 
     @Override
-    public void onDestroy() {
+    public synchronized void onDestroy() {
         destroying = true;
         TransitionToken microphone = controller.beginStop(AudioCapabilityKind.MICROPHONE_SOURCE);
         if (microphone.accepted()) {
@@ -321,7 +318,7 @@ public final class AudioNodeService extends Service {
         notifyStateListener();
     }
 
-    private void startGamepad() {
+    private synchronized void startGamepad() {
         TransitionToken transition = gamepadController.beginStart();
         if (transition.accepted()) {
             if (touchSurfacePresence == HardwarePresence.PRESENT) {
@@ -335,7 +332,7 @@ public final class AudioNodeService extends Service {
         notifyStateListener();
     }
 
-    private void stopGamepad() {
+    private synchronized void stopGamepad() {
         TransitionToken transition = gamepadController.beginStop();
         if (transition.accepted()) {
             gamepadController.completeStop(transition.generation());
@@ -346,8 +343,16 @@ public final class AudioNodeService extends Service {
 
     private synchronized boolean submitGamepad(
             long generation, GamepadControlsSnapshot controls) {
-        boolean accepted = controllerRouteAdapter.submitControls(controls)
-                && gamepadController.submit(generation, controls);
+        boolean accepted = GenerationBoundSourceDelivery.submit(
+                () -> gamepadController.submit(generation, controls),
+                () -> controllerRouteAdapter.submitControls(controls),
+                () -> {
+                    gamepadController.fail(
+                            generation, ControllerRouteAdapter.PROBLEM_BACKPRESSURE);
+                    controllerRouteAdapter.discardControls();
+                    stopControllerRouteIfUnused();
+                    notifyStateListener();
+                });
         if (accepted) {
             notifyPresentationListener();
         }
@@ -368,7 +373,7 @@ public final class AudioNodeService extends Service {
         }
     }
 
-    private void startTouchpad() {
+    private synchronized void startTouchpad() {
         TransitionToken transition = touchpadController.beginStart();
         if (transition.accepted()) {
             if (touchSurfacePresence == HardwarePresence.PRESENT) {
@@ -381,7 +386,7 @@ public final class AudioNodeService extends Service {
         notifyStateListener();
     }
 
-    private void stopTouchpad() {
+    private synchronized void stopTouchpad() {
         TransitionToken transition = touchpadController.beginStop();
         if (transition.accepted()) {
             touchpadAdapter.stop(transition.generation());
@@ -391,12 +396,34 @@ public final class AudioNodeService extends Service {
 
     private synchronized boolean submitTouchpad(
             long generation, java.util.List<TouchpadContactSnapshot> contacts) {
-        boolean accepted = touchpadAdapter.submit(generation, contacts)
-                && touchpadController.submit(generation, contacts);
+        boolean accepted = GenerationBoundSourceDelivery.submit(
+                () -> touchpadController.submit(generation, contacts),
+                () -> touchpadAdapter.submit(generation, contacts),
+                () -> {
+                    touchpadController.fail(
+                            generation, TouchpadRouteAdapter.PROBLEM_BACKPRESSURE);
+                    touchpadAdapter.stop(generation);
+                    notifyStateListener();
+                });
         if (accepted) {
             notifyPresentationListener();
         }
         return accepted;
+    }
+
+    private synchronized void completeTouchpadStart(long generation) {
+        touchpadController.completeStart(generation);
+        postStateChanged();
+    }
+
+    private synchronized void completeTouchpadStop(long generation) {
+        touchpadController.completeStop(generation);
+        postStateChanged();
+    }
+
+    private synchronized void failTouchpad(long generation, String problemCode) {
+        touchpadController.fail(generation, problemCode);
+        postStateChanged();
     }
 
     private AudioPlatformAdapter.Listener listenerFor(AudioCapabilityKind kind) {

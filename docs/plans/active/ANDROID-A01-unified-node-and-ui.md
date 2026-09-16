@@ -78,9 +78,13 @@ Display is excluded until its feature branch is complete.
    release. A01E2 adds bounded concrete Camera2 source/vendor-Zoom and AVC
    quality selection to the shared UI and physically proves front-camera ID 1.
    Denial, revoke, process-death and long-background qualification remain.
-6. **A01F — input data-plane integration:** connect the attached Controller and
-   Touchpad UI states to their bounded native Sources and product Routes. Retain
-   exact foreground-loss and neutral/cancel behavior.
+6. **A01F — input data-plane integration (bounded lab Routes attached):** the
+   unified Service now owns the Controller/IMU UDP publisher and private
+   touchpad record sender used by the Windows receivers. A01F1 serializes
+   lifecycle mutation with UI submission, commits the observed generation
+   before Adapter delivery, rejects stale frames before enqueue and turns queue
+   pressure into an explicit Capability failure plus neutral/cancel cleanup.
+   Authenticated product transport and foreground-loss qualification remain.
 7. **A01G — migration closeout:** remove redundant product launchers only after
    parity evidence, rollback instructions and the unified APK gate pass.
 8. **A01H — haptics Sink (complete):** after explicit approval, declare the

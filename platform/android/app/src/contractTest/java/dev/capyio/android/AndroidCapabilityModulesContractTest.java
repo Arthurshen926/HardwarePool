@@ -33,6 +33,7 @@ public final class AndroidCapabilityModulesContractTest {
         reflectsGenerationBoundImuLifecycleState();
         reflectsGenerationBoundGamepadLifecycleState();
         reflectsGenerationBoundTouchpadLifecycleState();
+        rejectsStaleSourceFramesBeforeAdapterDelivery();
         projectsTheCatalogIntoSharedUiSchemaFour();
         admitsOnlyLocalAttachedSourceSharingIntent();
         projectsSelectedAndroidPublicationCatalog();
@@ -214,6 +215,40 @@ public final class AndroidCapabilityModulesContractTest {
         check(!controller.submit(start.generation(), List.of(
                 new TouchpadContactSnapshot(0, 1, 1, 1))));
         check(controller.completeStop(stop.generation()));
+    }
+
+    private static void rejectsStaleSourceFramesBeforeAdapterDelivery() {
+        StringBuilder order = new StringBuilder();
+        check(!GenerationBoundSourceDelivery.submit(
+                () -> false,
+                () -> {
+                    order.append("deliver");
+                    return true;
+                },
+                () -> order.append("reject")));
+        check(order.isEmpty());
+
+        check(GenerationBoundSourceDelivery.submit(
+                () -> {
+                    order.append("commit");
+                    return true;
+                },
+                () -> {
+                    order.append("-deliver");
+                    return true;
+                },
+                () -> order.append("-reject")));
+        check("commit-deliver".contentEquals(order));
+
+        order.setLength(0);
+        check(!GenerationBoundSourceDelivery.submit(
+                () -> {
+                    order.append("commit");
+                    return true;
+                },
+                () -> false,
+                () -> order.append("-reject")));
+        check("commit-reject".contentEquals(order));
     }
 
     private static void projectsTheCatalogIntoSharedUiSchemaFour() {

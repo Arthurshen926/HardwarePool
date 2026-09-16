@@ -236,6 +236,7 @@ tasks.register('compileCapabilityCompositionTest', JavaCompile) {
     source file('src/main/java/dev/capyio/android/AndroidTouchpadUiFrame.java')
     source file('src/main/java/dev/capyio/android/TouchpadMotionFrame.java')
     source file('src/main/java/dev/capyio/android/ControllerPacketJson.java')
+    source file('src/main/java/dev/capyio/android/GenerationBoundSourceDelivery.java')
     source file('src/main/java/dev/capyio/android/AndroidUiSnapshotJson.java')
     source file('src/main/java/dev/capyio/android/AndroidCoreCatalogJson.java')
     source fileTree('src/contractTest/java')

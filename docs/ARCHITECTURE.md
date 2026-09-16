@@ -916,6 +916,16 @@ UDP contract; the operator copies the Windows listener's per-run endpoint and
 token into the shared Android UI. Neither worker performs network I/O from a
 sensor or UI callback.
 
+ANDROID-A01F1 closes the enqueue ordering boundary in that composition. The
+Service serializes Controller/Touchpad lifecycle mutation with UI frame
+submission and commits the exact Active generation before invoking either
+Adapter queue. A stale or stopped-generation frame therefore cannot cross the
+data-plane boundary. If a bounded queue rejects an otherwise current frame,
+the affected Capability fails with a stable pressure Problem: Controller
+pending controls are discarded and neutral state becomes authoritative, while
+Touchpad interrupts its sender so the existing close path emits cancel/close.
+An unrelated active IMU Source may retain the shared UDP worker.
+
 ADR 1409 gives the Windows desktop process ownership of the two remaining
 operator-started Android receiver helpers. Typed Quick Actions create only the
 fixed touchpad or camera ADB reverse mapping and launch only the corresponding

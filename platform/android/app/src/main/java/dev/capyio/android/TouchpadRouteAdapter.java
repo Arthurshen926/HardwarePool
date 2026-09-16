@@ -20,6 +20,7 @@ import java.util.concurrent.atomic.AtomicBoolean;
 final class TouchpadRouteAdapter {
     static final String PROBLEM_CONNECT = "CAPY.ANDROID.TOUCHPAD_RECEIVER_UNAVAILABLE";
     static final String PROBLEM_TRANSPORT = "CAPY.ANDROID.TOUCHPAD_TRANSPORT_FAILED";
+    static final String PROBLEM_BACKPRESSURE = "CAPY.ANDROID.TOUCHPAD_QUEUE_FULL";
 
     private static final int LAB_PORT = 61_000;
     private static final int QUEUE_CAPACITY = 8;

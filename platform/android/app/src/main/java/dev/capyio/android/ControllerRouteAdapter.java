@@ -16,6 +16,8 @@ import java.util.function.Supplier;
 
 /** Bounded UDP publisher shared by the unified gamepad and standalone IMU Sources. */
 final class ControllerRouteAdapter {
+    static final String PROBLEM_BACKPRESSURE = "CAPY.ANDROID.CONTROLLER_QUEUE_FULL";
+
     private static final long FRAME_MILLIS = 8;
     private static final int MAX_PACKET_BYTES = 2_048;
     private static final int MAX_CONTROL_FRAMES = 64;
@@ -81,6 +83,10 @@ final class ControllerRouteAdapter {
 
     boolean submitControls(GamepadControlsSnapshot snapshot) {
         return !running.get() || controlFrames.offer(snapshot);
+    }
+
+    void discardControls() {
+        controlFrames.clear();
     }
 
     String problemCode() {
