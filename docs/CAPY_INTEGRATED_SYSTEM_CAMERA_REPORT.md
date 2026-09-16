@@ -70,12 +70,37 @@ The COM component intentionally remains installed for the next lab test;
 temporary camera sessions were closed. No driver, APK or FrameServer restart
 was performed. No captured phone pixels or recordings were retained.
 
-## Remaining gate
+## Phone live-frame and independent-consumer gate
 
-No ordinary Windows camera-client **phone live-frame** success is claimed.
-Next exercise the integrated action with the unified Android camera and a
-consumer, distinguishing live frames from generated fallback. Validate Global
-ingress permission, Stop, receiver loss, retry and session cleanup. The tests
-above do not establish Global shared-memory publication privileges.
+The composed Quick Action was then exercised against unified Android 0.5.6.
+A normal-user diagnostic run proved the actual remaining boundary: Android
+captured Camera ID 0, but the receiver exited with `CreateFileMappingW` error 5.
+This is now surfaced as
+`CAPY.WINDOWS.SYSTEM_CAMERA_ELEVATION_REQUIRED` instead of a generic receiver
+failure.
+
+Under an explicitly elevated user session, the final bounded gate passed:
+
+- Android Quick Action Start activated the Camera2 foreground service.
+- The production Global ingress delivered phone frame sequence 3 at timestamp
+  66,666,000 ns, with 1,382,400 decoded NV12 bytes and checksum 112,335,401.
+- A separate Media Foundation process enumerated the current CapyIO system
+  camera, activated it and read a 1,382,400-byte sample while the live mapping
+  existed (`external_consumer=pass`). This is distinct from the earlier
+  generated-placeholder test.
+- The composed Windows Stop succeeded. Android Stop then left
+  `Active Camera Clients: []`; `adb reverse --list` was empty; camera preflight
+  reported `existing_registration=false`.
+- No pixels or video were retained. The evidence log contains bounded metadata
+  only under ignored `target/test-results`.
+- The post-fix shared UI/test-package build passed and generated
+  `target/integrated-test/20260916-133057-3536`; its manifest marks the dirty
+  development source and hashes all four shipped executables.
+
+This closes the short phone-to-system-camera functional gate. Receiver-loss
+reconnect, long-duration operation, Windows privacy UI and several ordinary
+third-party camera applications remain broader acceptance work. The current
+prototype also requires an elevated Windows process for this action; ADR 1414
+records why a least-privilege broker is still future work.
 
 Display development and the existing audio/driver installation are unchanged.

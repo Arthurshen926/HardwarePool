@@ -295,6 +295,11 @@ fn append_stderr_tail(tail: &mut Vec<u8>, chunk: &[u8]) {
 
 fn receiver_exit_problem(kind: ReceiverKind, code: Option<i32>, stderr: &str) -> String {
     let exit = code.map_or_else(|| "无退出码".to_owned(), |value| value.to_string());
+    if kind == ReceiverKind::SystemCamera
+        && stderr.contains("CreateFileMappingW failed with error 5")
+    {
+        return "Windows 拒绝创建系统摄像头共享通道（错误 5）；当前原型需以管理员身份运行 CapyIO Windows 客户端".to_owned();
+    }
     if kind == ReceiverKind::Touchpad
         && stderr.contains("VHF touchpad session failed")
         && stderr.contains("Win32(5)")
@@ -318,7 +323,11 @@ fn receiver_exit_problem(kind: ReceiverKind, code: Option<i32>, stderr: &str) ->
 
 fn receiver_problem_code(kind: ReceiverKind, problem: &str) -> &'static str {
     if kind == ReceiverKind::SystemCamera {
-        "CAPY.WINDOWS.SYSTEM_CAMERA_FAILED"
+        if problem.contains("管理员身份") {
+            "CAPY.WINDOWS.SYSTEM_CAMERA_ELEVATION_REQUIRED"
+        } else {
+            "CAPY.WINDOWS.SYSTEM_CAMERA_FAILED"
+        }
     } else if kind == ReceiverKind::Touchpad && problem.contains("管理员权限") {
         "CAPY.WINDOWS.TOUCHPAD_ELEVATION_REQUIRED"
     } else if kind == ReceiverKind::Touchpad && problem.contains("错误 5") {
@@ -686,5 +695,86 @@ mod tests {
             .invoke(CAMERA_RECEIVER_ACTION_ID, QuickActionOperation::Stop)
             .expect("stop desktop-owned camera receiver");
         assert_eq!(stopped.status, "idle");
+    }
+
+    #[cfg(windows)]
+    #[test]
+    #[ignore = "requires the authorized Android camera and deployed Windows camera COM source"]
+    fn physical_system_camera_action_receives_a_live_phone_frame_and_cleans_up() {
+        use capyio_windows_camera_share::CameraSharedIngressConsumer;
+        use std::time::{Duration, Instant};
+
+        let wait_seconds = std::env::var("CAPYIO_LIVE_CAMERA_WAIT_SECONDS")
+            .ok()
+            .and_then(|value| value.parse::<u64>().ok())
+            .filter(|value| (5..=60).contains(value))
+            .unwrap_or(30);
+        let mut actions = AndroidReceiverActions::new();
+        let active = actions
+            .invoke(SYSTEM_CAMERA_ACTION_ID, QuickActionOperation::Start)
+            .expect("start composed system-camera action");
+        assert_eq!(active.status, "active");
+        println!("CAPYIO_SYSTEM_CAMERA_WAITING_FOR_ANDROID seconds={wait_seconds}");
+
+        let deadline = Instant::now() + Duration::from_secs(wait_seconds);
+        let mut evidence = None;
+        while Instant::now() < deadline {
+            if let Ok(mut consumer) = CameraSharedIngressConsumer::open_current()
+                && let Ok(Some(frame)) = consumer.try_read_latest()
+            {
+                evidence = Some((
+                    frame.descriptor.sequence,
+                    frame.descriptor.source_timestamp_nanos,
+                    frame.payload.len(),
+                    frame
+                        .payload
+                        .iter()
+                        .fold(0_u64, |sum, byte| sum + u64::from(*byte)),
+                ));
+                break;
+            }
+            thread::sleep(Duration::from_millis(50));
+        }
+
+        let external_consumer =
+            sibling_executable("capyio-camera-virtual-lab.exe").and_then(|executable| {
+                Command::new(executable)
+                    .arg("consumer-current-probe")
+                    .output()
+                    .map_err(|error| error.to_string())
+            });
+        let stopped = actions.invoke(SYSTEM_CAMERA_ACTION_ID, QuickActionOperation::Stop);
+        let evidence = evidence.expect("no decoded phone frame reached the shared ingress mapping");
+        let external_consumer = external_consumer.expect("launch independent camera consumer");
+        let stopped = stopped.expect("stop composed system-camera action");
+        assert_eq!(stopped.status, "idle");
+        assert_eq!(evidence.2, 1_382_400);
+        assert!(evidence.3 > 0);
+        assert!(
+            external_consumer.status.success(),
+            "independent camera consumer failed: {}",
+            String::from_utf8_lossy(&external_consumer.stderr)
+        );
+        let consumer_output = String::from_utf8_lossy(&external_consumer.stdout);
+        assert!(consumer_output.contains("consumer_current_probe=pass"));
+        assert!(consumer_output.contains("sample_bytes=1382400"));
+        println!(
+            "CAPYIO_SYSTEM_CAMERA_LIVE_FRAME sequence={} timestamp_ns={} bytes={} checksum={} external_consumer=pass",
+            evidence.0, evidence.1, evidence.2, evidence.3,
+        );
+    }
+
+    #[test]
+    fn system_camera_global_mapping_denial_has_a_stable_problem_code() {
+        let problem = receiver_exit_problem(
+            ReceiverKind::SystemCamera,
+            Some(1),
+            "CAPYIO_AVC_LAB_ERROR Windows CreateFileMappingW failed with error 5",
+        );
+        assert_eq!(
+            receiver_problem_code(ReceiverKind::SystemCamera, &problem),
+            "CAPY.WINDOWS.SYSTEM_CAMERA_ELEVATION_REQUIRED"
+        );
+        assert!(problem.contains("管理员身份"));
     }
 }

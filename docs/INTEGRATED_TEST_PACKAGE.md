@@ -37,11 +37,13 @@ NV12 receiver together, with readiness validation and normal EOF shutdown.
 The two camera actions are mutually exclusive. System-camera use requires a
 separately deployed COM source and Global mapping privileges; the test package
 does not install that component. Session readiness is not live-frame evidence,
-and phone live-frame camera-client physical acceptance remains pending. On the
-authorized lab host the current COM candidate has now been separately deployed;
-session Start/Stop and independent consumers reading generated frames passed.
-See `CAPY_INTEGRATED_SYSTEM_CAMERA_REPORT.md` for evidence and ADR 1413 for the
-exact deployment hash and rollback. This is not automatic package installation.
+and the current prototype needs an elevated Windows session to create its
+Global ingress mapping. On the authorized lab host the current COM candidate
+has now been separately deployed; live Android decoding, system-camera
+activation, an independent Media Foundation consumer and cleanup passed.
+See `CAPY_INTEGRATED_SYSTEM_CAMERA_REPORT.md` for evidence, ADR 1413 for the
+exact deployment hash/rollback and ADR 1414 for the privilege boundary. This is
+not automatic package installation.
 A uniquely installed VHF interface selects VHF; missing VHF
 selects synthetic input. Ambiguous interfaces, failed discovery and unsupported
 platforms now fail before reverse mapping or helper creation, as ADR 1410

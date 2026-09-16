@@ -409,6 +409,7 @@ dependencies = [
  "capyio-sensor-server-adapter",
  "capyio-testkit",
  "capyio-viiper-adapter",
+ "capyio-windows-camera-share",
  "capyio-windows-input",
  "capyio-windows-service",
  "serde",

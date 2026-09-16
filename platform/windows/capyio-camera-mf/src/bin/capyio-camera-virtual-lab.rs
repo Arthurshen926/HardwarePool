@@ -65,6 +65,7 @@ mod windows_lab {
             peer_ip: Ipv4Addr,
         },
         ConsumerProbe,
+        ConsumerCurrentProbe,
         Cleanup,
     }
 
@@ -79,6 +80,7 @@ mod windows_lab {
                 live_hold(LiveTransport::TrustedLan { bind_ip, peer_ip })
             }
             LabCommand::ConsumerProbe => consumer_probe(),
+            LabCommand::ConsumerCurrentProbe => consumer_current_probe(),
             LabCommand::Cleanup => cleanup(),
         }
     }
@@ -120,9 +122,10 @@ mod windows_lab {
             "gui-hold" => Ok(LabCommand::GuiHold),
             "live-hold" => Ok(LabCommand::LiveHold),
             "consumer-probe" => Ok(LabCommand::ConsumerProbe),
+            "consumer-current-probe" => Ok(LabCommand::ConsumerCurrentProbe),
             "cleanup" => Ok(LabCommand::Cleanup),
             _ => Err(lab_error(
-                "unknown command; expected preflight, roundtrip, shared-roundtrip, gui-hold, live-hold, trusted-lan-live-hold, consumer-probe, or cleanup",
+                "unknown command; expected preflight, roundtrip, shared-roundtrip, gui-hold, live-hold, trusted-lan-live-hold, consumer-probe, consumer-current-probe, or cleanup",
             )),
         }
     }
@@ -704,6 +707,72 @@ mod windows_lab {
         Ok(())
     }
 
+    fn consumer_current_probe() -> LabResult {
+        let _media_foundation = MediaFoundationRuntime::startup()?;
+        let activate = wait_for_unique_current_capyio_camera()?;
+        let source: IMFMediaSource = unsafe { activate.ActivateObject() }
+            .map_err(|error| stage_error("consumer_activate", error))?;
+        let validation = validate_frame_delivery(&source);
+        let shutdown = unsafe { activate.ShutdownObject() }
+            .map_err(|error| stage_error("consumer_shutdown", error));
+        let evidence = validation?;
+        shutdown?;
+        println!("consumer_current_probe=pass");
+        println!("sample_bytes={}", evidence.sample_bytes);
+        println!("sample_duration_100ns={}", evidence.sample_duration_100ns);
+        println!("sample_delta_100ns={}", evidence.sample_delta_100ns);
+        println!("first_luma={}", evidence.first_luma);
+        Ok(())
+    }
+
+    fn wait_for_unique_current_capyio_camera() -> LabResult<IMFActivate> {
+        let expected_name = MfVirtualCameraPlan::capyio_fixture()
+            .friendly_name()
+            .to_owned();
+        for attempt in 0..CONSUMER_ENUMERATION_ATTEMPTS {
+            let array = enumerate_video_capture_activations()?;
+            let mut matches = Vec::new();
+            for activate in array.iter() {
+                let attributes: IMFAttributes = activate.cast()?;
+                let friendly_name =
+                    read_attribute_string(&attributes, &MF_DEVSOURCE_ATTRIBUTE_FRIENDLY_NAME)?;
+                let symbolic_link = read_attribute_string(
+                    &attributes,
+                    &MF_DEVSOURCE_ATTRIBUTE_SOURCE_TYPE_VIDCAP_SYMBOLIC_LINK,
+                )?;
+                if current_camera_friendly_name_matches(&friendly_name, &expected_name)
+                    && consumer_symbolic_link_is_valid(&symbolic_link)
+                {
+                    matches.push(activate.clone());
+                }
+            }
+            match matches.len() {
+                1 => return Ok(matches.remove(0)),
+                0 if attempt + 1 < CONSUMER_ENUMERATION_ATTEMPTS => {
+                    thread::sleep(CONSUMER_ENUMERATION_RETRY_DELAY);
+                }
+                0 => break,
+                count => {
+                    return Err(stage_error(
+                        "consumer_duplicate",
+                        format!("expected one current CapyIO camera, found {count}"),
+                    ));
+                }
+            }
+        }
+        Err(stage_error(
+            "consumer_not_found",
+            "current CapyIO camera did not appear within the bounded wait",
+        ))
+    }
+
+    fn current_camera_friendly_name_matches(candidate: &str, expected: &str) -> bool {
+        candidate == expected
+            || candidate
+                .strip_prefix(expected)
+                .is_some_and(|suffix| suffix.starts_with(" (") && suffix.ends_with(')'))
+    }
+
     fn validated_consumer_symbolic_link() -> LabResult<String> {
         let symbolic_link = std::env::var(CONSUMER_SYMBOLIC_LINK_ENV).map_err(|_| {
             stage_error(
@@ -1142,8 +1211,9 @@ mod windows_lab {
     mod tests {
         use super::{
             LabCommand, LiveTransport, consumer_symbolic_link_is_valid,
-            device_symbolic_links_equal, exit_code, finish_live_hold, live_receiver_arguments,
-            mapping_is_absent, parse_command, stage_error,
+            current_camera_friendly_name_matches, device_symbolic_links_equal, exit_code,
+            finish_live_hold, live_receiver_arguments, mapping_is_absent, parse_command,
+            stage_error,
         };
         use capyio_windows_camera_share::CameraSharedIngressError;
         use std::net::Ipv4Addr;
@@ -1160,6 +1230,26 @@ mod windows_lab {
         }
 
         #[test]
+        fn current_camera_name_allows_only_the_windows_decorated_fixed_name() {
+            assert!(current_camera_friendly_name_matches(
+                "CapyIO Camera",
+                "CapyIO Camera"
+            ));
+            assert!(current_camera_friendly_name_matches(
+                "CapyIO Camera (Windows virtual camera)",
+                "CapyIO Camera"
+            ));
+            assert!(!current_camera_friendly_name_matches(
+                "CapyIO Camera clone",
+                "CapyIO Camera"
+            ));
+            assert!(!current_camera_friendly_name_matches(
+                "Other (Windows virtual camera)",
+                "CapyIO Camera"
+            ));
+        }
+
+        #[test]
         fn command_contract_is_closed_and_trusted_lan_has_exact_parameters() {
             assert_eq!(
                 parse_command(["shared-roundtrip".to_owned()].into_iter()).unwrap(),
@@ -1168,6 +1258,10 @@ mod windows_lab {
             assert_eq!(
                 parse_command(["consumer-probe".to_owned()].into_iter()).unwrap(),
                 LabCommand::ConsumerProbe
+            );
+            assert_eq!(
+                parse_command(["consumer-current-probe".to_owned()].into_iter()).unwrap(),
+                LabCommand::ConsumerCurrentProbe
             );
             assert_eq!(
                 parse_command(["gui-hold".to_owned()].into_iter()).unwrap(),

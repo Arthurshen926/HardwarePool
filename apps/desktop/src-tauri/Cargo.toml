@@ -37,4 +37,5 @@ serde_json.workspace = true
 tauri = { version = "2.11.2", features = [] }
 
 [dev-dependencies]
+capyio-windows-camera-share = { path = "../../../platform/windows/capyio-camera-share" }
 tungstenite.workspace = true
