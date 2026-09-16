@@ -41,7 +41,7 @@ impl ReceiverKind {
 
     const fn summary(self) -> &'static str {
         match self {
-            Self::Touchpad => "Android Touchpad → Windows 合成触控板 · 桌面端自动托管",
+            Self::Touchpad => "Android Touchpad → Windows 触控板 · 桌面端自动托管",
             Self::Camera => "Android Camera2 → Windows AVC 解码接收端 · 桌面端自动托管",
         }
     }
@@ -60,19 +60,16 @@ impl ReceiverKind {
         }
     }
 
-    fn arguments(self) -> Vec<&'static str> {
+    fn arguments(self) -> Result<Vec<&'static str>, String> {
         match self {
-            Self::Touchpad => touchpad_arguments(matches!(
-                probe_vhf_broker_interface(),
-                VhfBrokerInterfaceProbe::Single
-            )),
-            Self::Camera => vec![
+            Self::Touchpad => select_touchpad_arguments(probe_vhf_broker_interface()),
+            Self::Camera => Ok(vec![
                 "--max-access-units",
                 "7200",
                 "--decode-nv12",
                 "--reconnect-grace-millis",
                 "60000",
-            ],
+            ]),
         }
     }
 }
@@ -108,8 +105,10 @@ impl Receiver {
         let adb = adb_path()?;
         let serial = single_authorized_device(&adb)?;
         let executable = sibling_executable(self.kind.executable())?;
-        let arguments = self.kind.arguments();
-        let projection = if arguments.contains(&"--vhf") {
+        let arguments = self.kind.arguments()?;
+        let projection = if self.kind == ReceiverKind::Camera {
+            "AVC → NV12 decode"
+        } else if arguments.contains(&"--vhf") {
             "installed VHF"
         } else {
             "user-mode synthetic"
@@ -223,6 +222,22 @@ impl Receiver {
                 .as_ref()
                 .map(|problem| receiver_problem_code(self.kind, problem).to_owned()),
             problem: self.problem.clone(),
+        }
+    }
+}
+
+fn select_touchpad_arguments(probe: VhfBrokerInterfaceProbe) -> Result<Vec<&'static str>, String> {
+    match probe {
+        VhfBrokerInterfaceProbe::Single => Ok(touchpad_arguments(true)),
+        VhfBrokerInterfaceProbe::Absent => Ok(touchpad_arguments(false)),
+        VhfBrokerInterfaceProbe::Multiple => {
+            Err("检测到多个 VHF 接口，无法确定触控板目标".to_owned())
+        }
+        VhfBrokerInterfaceProbe::Failed(code) => {
+            Err(format!("VHF 接口检测失败（Windows 错误 {code}）"))
+        }
+        VhfBrokerInterfaceProbe::UnsupportedPlatform => {
+            Err("当前平台不支持 Windows 触控板接收".to_owned())
         }
     }
 }
@@ -463,7 +478,24 @@ mod tests {
         assert!(!touchpad_arguments(false).contains(&"--vhf"));
         assert!(touchpad_arguments(true).contains(&"--vhf"));
         assert_eq!(ReceiverKind::Camera.port(), 38_173);
-        assert!(ReceiverKind::Camera.arguments().contains(&"7200"));
+        assert!(ReceiverKind::Camera.arguments().unwrap().contains(&"7200"));
+    }
+
+    #[test]
+    fn ambiguous_or_failed_probe_never_falls_back_to_injection() {
+        assert!(select_touchpad_arguments(VhfBrokerInterfaceProbe::Multiple).is_err());
+        assert!(select_touchpad_arguments(VhfBrokerInterfaceProbe::Failed(5)).is_err());
+        assert!(select_touchpad_arguments(VhfBrokerInterfaceProbe::UnsupportedPlatform).is_err());
+        assert!(
+            !select_touchpad_arguments(VhfBrokerInterfaceProbe::Absent)
+                .unwrap()
+                .contains(&"--vhf")
+        );
+        assert!(
+            select_touchpad_arguments(VhfBrokerInterfaceProbe::Single)
+                .unwrap()
+                .contains(&"--vhf")
+        );
     }
 
     #[test]

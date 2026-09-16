@@ -1074,7 +1074,6 @@ The same APK started its microphone through the shared Quick Action and the
 existing Windows service reached `active`. A repeat ordinary-client capture on
 this host could enumerate the 48 kHz mono float32 endpoint but `IAudioClient`
 initialization returned `0x80070057` for every tested shared/exclusive format.
-An audio-service/endpoint-builder restart left the same failure unchanged.
 Earlier 0.5.4/current-service-config evidence still proves non-zero capture,
 but this run does not replace it: the host endpoint regression remains an
 explicit release-qualification follow-up.

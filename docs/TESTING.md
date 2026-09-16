@@ -1844,9 +1844,10 @@ diagnostic.
 The Android microphone action and Windows service still reached their active
 network/runtime states. The repeat ordinary WASAPI capture was not accepted:
 the endpoint enumerated as 48 kHz mono float32, but initialization returned
-`0x80070057` across the format/period matrix and remained unchanged after an
-audio-service/endpoint-builder restart. This is retained as an unresolved
-controlled-host endpoint regression; no WAV was created. A release candidate
+`0x80070057` across the format/period matrix. The attempted service restart
+reported access errors, so completed restart and a driver regression are not
+established. Execution-account differences still need investigation. No WAV
+was created. A release candidate
 must repeat a non-zero ordinary-client capture after the endpoint is repaired
 or provide bounded service-owned capture-ring metrics.
 
