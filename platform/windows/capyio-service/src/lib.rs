@@ -14,6 +14,8 @@ use capyio_native_audio_lan::{
 use serde::{Deserialize, Serialize};
 
 #[cfg(windows)]
+mod camera_control;
+#[cfg(windows)]
 mod control;
 #[cfg(windows)]
 mod local_pipe;
@@ -21,6 +23,12 @@ mod microphone;
 #[cfg(windows)]
 mod microphone_control;
 
+#[cfg(windows)]
+pub use camera_control::{
+    CAMERA_CONTROL_PIPE_NAME, CameraBrokerClient, CameraBrokerProcess, CameraBrokerRuntime,
+    CameraBrokerSnapshot, CameraBrokerState, camera_control_server_loop,
+    wake_camera_control_server,
+};
 #[cfg(windows)]
 pub use capyio_windows_capture_ring::{CaptureRingMetrics, CaptureRingOwner};
 #[cfg(windows)]

@@ -928,6 +928,14 @@ requirement instead of attempting automatic privilege escalation.
 Sidecar exit, explicit Stop and desktop shutdown are reflected through the
 typed action state and clean up the exact owned mapping.
 
+ADR 1418 fixes the control-plane boundary for moving the system-camera
+projection out of an elevated desktop. A dedicated owner-scoped named pipe
+admits only versioned Status/Start/Stop operations and cannot carry paths,
+executables, arguments, object names or network endpoints. Its independent
+runtime owns one fixed camera projection lifecycle, rolls back partial Start
+and reports unexpected exit. This foundation is not yet a Broker executable or
+desktop integration, so it does not change the current elevation requirement.
+
 ANDROID-A01E composes the existing headless Camera2/MediaCodec service into the
 unified APK behind a narrow facade. The unexported camera foreground service,
 not the Activity or WebView, owns capture, encoding, bounded export and cleanup.

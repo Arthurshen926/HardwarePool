@@ -674,6 +674,13 @@ an explicit local-lab operation against one hash-recorded DLL and must be
 removed after the session test. The recorded 001B1C host run followed that
 boundary and verified the DLL, CLSID and empty lab directories were absent
 after rollback.
+ADR 1418 gives a future dedicated camera Broker a separate fixed local pipe.
+Remote clients are rejected; its DACL admits only LocalSystem, administrators
+and the interactive object owner. The closed 4 KiB protocol contains only
+Status/Start/Stop, version and request correlation. It conveys no executable,
+path, argument, mapping name, camera identity or transport endpoint. Partial
+Start is rolled back and rollback failure is explicit. This contract grants no
+service installation, elevation, COM registration or peer/network authority.
 The 001B1D sharing check accepts no child executable, count, camera identity or
 deadline on its command line. It resolves only its current hash-recorded
 executable and sequentially spawns exactly two `consumer-probe` children

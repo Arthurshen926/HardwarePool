@@ -132,6 +132,13 @@ reports Active; failure reaps the process and ADB reverse. A physical
 decode-only Start/Stop passed and left no reverse mapping. This strengthens
 lifecycle truthfulness but remains distinct from the live-frame gates above.
 
+ADR 1418 establishes the first least-privilege Broker slice: a separate fixed,
+owner-scoped camera control pipe, closed Status/Start/Stop protocol and
+hardware-independent lifecycle runtime. Its tests include actual named-pipe
+round trip, idempotency, partial-start rollback and unexpected exit. The real
+camera session host and receiver have not moved behind it, and no service is
+installed, so the desktop elevation limitation remains.
+
 The post-readiness shared UI/test-package build passed and generated
 `target/integrated-test/20260916-141529-8853`; its manifest records the dirty
 development revision and hashes all four shipped executables.

@@ -23,8 +23,13 @@ elevation remains a prototype limitation pending a least-privilege broker.
 Desktop-managed camera and touchpad receivers additionally require exact,
 bounded process readiness before becoming Active; a physical decode-receiver
 Start/Stop confirmed readiness and reverse cleanup without starting capture.
+ADR 1418 now fixes a separate owner-scoped camera Broker control contract with
+closed Status/Start/Stop messages, idempotent lifecycle, partial-start rollback
+and hardware-independent named-pipe tests. No Broker executable or service is
+installed or wired into the desktop yet, so ordinary system-camera use still
+requires the existing whole-process elevation path.
 See
-`CAPY_INTEGRATED_SYSTEM_CAMERA_REPORT.md` and ADR 1412. This does not claim
+`CAPY_INTEGRATED_SYSTEM_CAMERA_REPORT.md` and ADRs 1412–1418. This does not claim
 completion of all integration or merge the separate Display work.
 
 ## Verified baseline
