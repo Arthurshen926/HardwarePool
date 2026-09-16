@@ -130,6 +130,10 @@ projected microphone/Speaker catalog across publication filtering and the
 Session-bound codec. Java and Rust now share the bounded versioned DTO shape;
 the remaining gap is native invocation and authenticated delivery, not the
 local handoff, Core ownership or protocol conversion.
+The Android JNI crate now owns that projected local catalog in a real
+`NodeRuntime` and exposes panic-contained create/replace/count/close handles.
+This is build-verified for ARM64 but not yet packaged or instantiated by the
+unified Service, so it still makes no connected-runtime or delivery claim.
 
 The Windows Tauri host no longer retains `DemoLab` as its long-lived state.
 It consumes the fixture once at startup, then all desktop feature workers and

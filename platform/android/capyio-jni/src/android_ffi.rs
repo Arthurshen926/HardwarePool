@@ -3,6 +3,10 @@ use std::{
     collections::BTreeMap,
     panic::{AssertUnwindSafe, catch_unwind},
     ptr,
+    sync::{
+        Mutex, OnceLock,
+        atomic::{AtomicU64, Ordering},
+    },
 };
 
 use jni::{
@@ -14,9 +18,35 @@ use jni::{
 };
 
 use crate::{
-    AndroidMotionDtoV1, AndroidTouchpadBridgeConfigV1, AndroidTouchpadPacketSessionV1,
-    AndroidTouchpadRecordSessionV1, AndroidTouchpadRouteConfigV1,
+    AndroidCatalogRuntimeV1, AndroidMotionDtoV1, AndroidTouchpadBridgeConfigV1,
+    AndroidTouchpadPacketSessionV1, AndroidTouchpadRecordSessionV1, AndroidTouchpadRouteConfigV1,
 };
+
+static NEXT_CATALOG_HANDLE: AtomicU64 = AtomicU64::new(1);
+static CATALOG_RUNTIMES: OnceLock<Mutex<BTreeMap<u64, AndroidCatalogRuntimeV1>>> = OnceLock::new();
+const MAX_CATALOG_RUNTIMES: usize = 4;
+
+fn catalog_runtimes() -> &'static Mutex<BTreeMap<u64, AndroidCatalogRuntimeV1>> {
+    CATALOG_RUNTIMES.get_or_init(|| Mutex::new(BTreeMap::new()))
+}
+
+fn catalog_handle(value: jlong) -> Result<u64, String> {
+    let handle = positive_u64(value, "catalog Runtime handle")?;
+    if handle == 0 {
+        return Err("catalog Runtime handle must be positive".to_owned());
+    }
+    Ok(handle)
+}
+
+fn allocate_catalog_handle() -> Result<u64, String> {
+    NEXT_CATALOG_HANDLE
+        .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |handle| {
+            handle
+                .checked_add(1)
+                .filter(|next| *next <= i64::MAX as u64)
+        })
+        .map_err(|_| "native catalog Runtime handle space exhausted".to_owned())
+}
 
 thread_local! {
     static NEXT_HANDLE: Cell<u64> = const { Cell::new(1) };
@@ -165,6 +195,161 @@ fn with_session_packet(
             ptr::null_mut()
         }
     }
+}
+
+#[unsafe(no_mangle)]
+pub extern "system" fn Java_dev_capyio_android_AndroidNativeCatalogRuntime_nativeCreate(
+    mut unowned_env: EnvUnowned<'_>,
+    _class: JClass<'_>,
+    catalog_json: JString<'_>,
+) -> jlong {
+    unowned_env
+        .with_env(|env| -> jni::errors::Result<_> {
+            let result = catch_unwind(AssertUnwindSafe(|| -> Result<jlong, String> {
+                let runtime = AndroidCatalogRuntimeV1::new(&string(env, catalog_json)?)
+                    .map_err(|error| error.to_string())?;
+                let handle = allocate_catalog_handle()?;
+                let mut runtimes = catalog_runtimes()
+                    .lock()
+                    .map_err(|_| "native catalog Runtime registry is poisoned".to_owned())?;
+                if runtimes.len() >= MAX_CATALOG_RUNTIMES {
+                    return Err("native catalog Runtime registry is full".to_owned());
+                }
+                runtimes.insert(handle, runtime);
+                i64::try_from(handle)
+                    .map_err(|_| "native catalog Runtime handle exceeds signed long".to_owned())
+            }));
+            Ok(match result {
+                Ok(Ok(handle)) => handle,
+                Ok(Err(error)) => {
+                    throw(env, "java/lang/IllegalArgumentException", error);
+                    0
+                }
+                Err(_) => {
+                    throw(
+                        env,
+                        "java/lang/IllegalStateException",
+                        "native catalog Runtime bridge panicked",
+                    );
+                    0
+                }
+            })
+        })
+        .resolve::<ThrowRuntimeExAndDefault>()
+}
+
+#[unsafe(no_mangle)]
+pub extern "system" fn Java_dev_capyio_android_AndroidNativeCatalogRuntime_nativeReplace(
+    mut unowned_env: EnvUnowned<'_>,
+    _class: JClass<'_>,
+    handle: jlong,
+    catalog_json: JString<'_>,
+) -> jboolean {
+    unowned_env
+        .with_env(|env| -> jni::errors::Result<_> {
+            let result = catch_unwind(AssertUnwindSafe(|| -> Result<(), String> {
+                let handle = catalog_handle(handle)?;
+                let json = string(env, catalog_json)?;
+                let mut runtimes = catalog_runtimes()
+                    .lock()
+                    .map_err(|_| "native catalog Runtime registry is poisoned".to_owned())?;
+                runtimes
+                    .get_mut(&handle)
+                    .ok_or_else(|| "unknown native catalog Runtime handle".to_owned())?
+                    .replace_disconnected_catalog(&json)
+                    .map_err(|error| error.to_string())
+            }));
+            Ok(match result {
+                Ok(Ok(())) => true,
+                Ok(Err(error)) => {
+                    throw(env, "java/lang/IllegalStateException", error);
+                    false
+                }
+                Err(_) => {
+                    throw(
+                        env,
+                        "java/lang/IllegalStateException",
+                        "native catalog Runtime bridge panicked",
+                    );
+                    false
+                }
+            })
+        })
+        .resolve::<ThrowRuntimeExAndDefault>()
+}
+
+#[unsafe(no_mangle)]
+pub extern "system" fn Java_dev_capyio_android_AndroidNativeCatalogRuntime_nativeCapabilityCount(
+    mut unowned_env: EnvUnowned<'_>,
+    _class: JClass<'_>,
+    handle: jlong,
+) -> jint {
+    unowned_env
+        .with_env(|env| -> jni::errors::Result<_> {
+            let result = catch_unwind(AssertUnwindSafe(|| -> Result<jint, String> {
+                let handle = catalog_handle(handle)?;
+                let runtimes = catalog_runtimes()
+                    .lock()
+                    .map_err(|_| "native catalog Runtime registry is poisoned".to_owned())?;
+                let count = runtimes
+                    .get(&handle)
+                    .ok_or_else(|| "unknown native catalog Runtime handle".to_owned())?
+                    .snapshot()
+                    .local_node
+                    .capabilities
+                    .len();
+                i32::try_from(count).map_err(|_| "catalog capability count exceeds jint".to_owned())
+            }));
+            Ok(match result {
+                Ok(Ok(count)) => count,
+                Ok(Err(error)) => {
+                    throw(env, "java/lang/IllegalStateException", error);
+                    0
+                }
+                Err(_) => {
+                    throw(
+                        env,
+                        "java/lang/IllegalStateException",
+                        "native catalog Runtime bridge panicked",
+                    );
+                    0
+                }
+            })
+        })
+        .resolve::<ThrowRuntimeExAndDefault>()
+}
+
+#[unsafe(no_mangle)]
+pub extern "system" fn Java_dev_capyio_android_AndroidNativeCatalogRuntime_nativeClose(
+    mut unowned_env: EnvUnowned<'_>,
+    _class: JClass<'_>,
+    handle: jlong,
+) {
+    unowned_env
+        .with_env(|env| -> jni::errors::Result<_> {
+            let result = catch_unwind(AssertUnwindSafe(|| -> Result<(), String> {
+                let handle = catalog_handle(handle)?;
+                let removed = catalog_runtimes()
+                    .lock()
+                    .map_err(|_| "native catalog Runtime registry is poisoned".to_owned())?
+                    .remove(&handle);
+                if removed.is_none() {
+                    return Err("unknown native catalog Runtime handle".to_owned());
+                }
+                Ok(())
+            }));
+            match result {
+                Ok(Ok(())) => {}
+                Ok(Err(error)) => throw(env, "java/lang/IllegalStateException", error),
+                Err(_) => throw(
+                    env,
+                    "java/lang/IllegalStateException",
+                    "native catalog Runtime bridge panicked",
+                ),
+            }
+            Ok(())
+        })
+        .resolve::<ThrowRuntimeExAndDefault>()
 }
 
 #[unsafe(no_mangle)]

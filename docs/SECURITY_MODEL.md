@@ -367,6 +367,11 @@ Capability keys: current private vertical paths may declare Adapter-managed
 interoperability, while capabilities without a remote path declare only a local
 pipeline. The Binder accepts no recipient, Session, endpoint or caller-selected
 Route backend, so producing this catalog cannot authorize or deliver it.
+The ADR 1406 JNI owner uses opaque positive process-local handles guarded by a
+mutex with at most four live owners, rejects unknown/closed handles, catches panics at every new JNI entry,
+and refuses a disconnected catalog replacement that changes Node identity.
+The exposed inspection is only a bounded capability count. No peer, Session,
+endpoint, Route or credential is accepted by this JNI surface.
 
 ANDROID-A01E accepts only the fixed camera action ID and lifecycle-valid
 start/stop/retry. Start is returned to the visible Activity so Android owns the

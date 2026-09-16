@@ -24,6 +24,10 @@ snapshot and does not imply Session trust, Route authorization or delivery.
 closed schema-v1, 64-KiB-bounded Rust handoff. It contains no recipient,
 Session, endpoint or arbitrary Route mode. The native Runtime/JNI owner that
 will consume the value and authenticated peer delivery are still pending.
+ADR 1406 adds a separately build-verified native owner that constructs a real
+Rust `NodeRuntime` from this JSON and permits same-Node replacement while
+disconnected. Its Java wrapper is compile-checked but deliberately not yet
+loaded by the Service or packaged into the unified APK.
 
 ## Camera2 service and retained lab
 

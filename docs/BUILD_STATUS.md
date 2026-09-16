@@ -985,6 +985,11 @@ Session-bound Protobuf round-trip while retaining the Sink; Java composition
 also validates conservative Route policy and byte-matches a fixture decoded by
 Rust. Android-host coverage is 17 tests.
 Native Runtime/JNI invocation and authenticated delivery remain open.
+ADR 1406 now places the same fixture in a real Rust `NodeRuntime` behind a
+panic-contained Android JNI handle. Three additional tests cover ownership,
+same-Node disconnected replacement and transactional rejection; the complete
+JNI crate has seven tests. The ARM64 release library and Java wrapper compile.
+The unified Service does not instantiate it and the APK does not package it yet.
 
 The apparent post-stop UDP restart failure was then isolated from CapyIO. With
 UU Remote running, every tested port in 45980--46030 returned Winsock 10048

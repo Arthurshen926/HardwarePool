@@ -8,8 +8,9 @@
 use std::{error::Error, fmt, str::FromStr};
 
 use capyio_android_host::{
-    AndroidMotionAction, AndroidMotionSample, AndroidPointerSample, AndroidToolType,
-    AndroidTouchSurface, AndroidTouchpadCaptureError, AndroidTouchpadCaptureSession,
+    AndroidCatalogProjectionError, AndroidMotionAction, AndroidMotionSample, AndroidPointerSample,
+    AndroidToolType, AndroidTouchSurface, AndroidTouchpadCaptureError,
+    AndroidTouchpadCaptureSession, decode_android_catalog_json,
 };
 use capyio_core::{CapabilityId, NodeId, PortId, PortRef, RouteId, SessionId, StreamId};
 use capyio_input::{
@@ -20,6 +21,7 @@ use capyio_remote_touchpad_adapter::{
     PrivateTouchpadRouteBinding, PrivateTouchpadTransportCodecV1,
     PrivateTouchpadTransportRecordError, PrivateTouchpadTransportRecordV1,
 };
+use capyio_runtime::{NodeRuntime, RuntimeError, RuntimeSnapshot};
 
 #[cfg(target_os = "android")]
 mod android_ffi;
@@ -32,6 +34,86 @@ pub const ANDROID_ACTION_CANCEL: i32 = 3;
 pub const ANDROID_ACTION_POINTER_DOWN: i32 = 5;
 pub const ANDROID_ACTION_POINTER_UP: i32 = 6;
 pub const ANDROID_TOOL_TYPE_FINGER: i32 = 1;
+
+#[derive(Debug)]
+pub enum AndroidCatalogRuntimeError {
+    Catalog(AndroidCatalogProjectionError),
+    Runtime(RuntimeError),
+    NodeIdentityChanged,
+    ConnectedState,
+}
+
+impl fmt::Display for AndroidCatalogRuntimeError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Catalog(error) => error.fmt(formatter),
+            Self::Runtime(error) => error.fmt(formatter),
+            Self::NodeIdentityChanged => {
+                formatter.write_str("replacement catalog changed the Android Node identity")
+            }
+            Self::ConnectedState => formatter.write_str(
+                "the local catalog can only be replaced before peers, Sessions or Routes exist",
+            ),
+        }
+    }
+}
+
+impl Error for AndroidCatalogRuntimeError {
+    fn source(&self) -> Option<&(dyn Error + 'static)> {
+        match self {
+            Self::Catalog(error) => Some(error),
+            Self::Runtime(error) => Some(error),
+            _ => None,
+        }
+    }
+}
+
+impl From<AndroidCatalogProjectionError> for AndroidCatalogRuntimeError {
+    fn from(value: AndroidCatalogProjectionError) -> Self {
+        Self::Catalog(value)
+    }
+}
+
+impl From<RuntimeError> for AndroidCatalogRuntimeError {
+    fn from(value: RuntimeError) -> Self {
+        Self::Runtime(value)
+    }
+}
+
+#[derive(Clone, Debug)]
+pub struct AndroidCatalogRuntimeV1 {
+    runtime: NodeRuntime,
+}
+
+impl AndroidCatalogRuntimeV1 {
+    pub fn new(json: &str) -> Result<Self, AndroidCatalogRuntimeError> {
+        let node = decode_android_catalog_json(json)?;
+        Ok(Self {
+            runtime: NodeRuntime::new(node)?,
+        })
+    }
+
+    pub fn replace_disconnected_catalog(
+        &mut self,
+        json: &str,
+    ) -> Result<(), AndroidCatalogRuntimeError> {
+        let node = decode_android_catalog_json(json)?;
+        let current = self.runtime.snapshot();
+        if node.id != current.local_node.id {
+            return Err(AndroidCatalogRuntimeError::NodeIdentityChanged);
+        }
+        if !current.peers.is_empty() || !current.sessions.is_empty() || !current.routes.is_empty() {
+            return Err(AndroidCatalogRuntimeError::ConnectedState);
+        }
+        self.runtime = NodeRuntime::new(node)?;
+        Ok(())
+    }
+
+    #[must_use]
+    pub fn snapshot(&self) -> RuntimeSnapshot {
+        self.runtime.snapshot()
+    }
+}
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct AndroidTouchpadBridgeConfigV1 {

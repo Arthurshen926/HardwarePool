@@ -1665,6 +1665,14 @@ same checked-in fixture decoded by a fourth Rust projection test; unified Androi
 verifies the Binder entrypoint. This proves the local versioned handoff
 contract, not JNI invocation, network delivery or physical hardware behavior.
 
+ADR 1406 raises `capyio-android-jni` to seven host tests. Three catalog Runtime
+tests construct the local Runtime from the exact Java fixture, prove same-Node
+disconnected replacement, reject identity drift and malformed JSON
+transactionally, and confirm there are no peers, Sessions or Routes. A separate
+offline Cargo NDK release build verifies the ARM64 JNI exports, while Android
+SDK compilation verifies the matching Java wrapper. These checks do not prove
+APK packaging, Service activation or a physical JNI call.
+
 ANDROID-A01E2 type-checks the common Vue Camera2 settings panel and compiles/
 lints its four-method Android bridge plus the reused inventory boundary. On the
 authorized V2419A, the panel enumerated seven bounded choices across directly

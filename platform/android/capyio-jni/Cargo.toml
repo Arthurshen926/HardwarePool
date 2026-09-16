@@ -13,6 +13,7 @@ crate-type = ["cdylib", "rlib"]
 capyio-android-host = { path = "../capyio-host" }
 capyio-core = { path = "../../../crates/capyio-core" }
 capyio-input = { path = "../../../crates/capyio-input" }
+capyio-runtime = { path = "../../../crates/capyio-runtime" }
 capyio-remote-touchpad-adapter = { path = "../../../adapters/remote-touchpad" }
 
 [target.'cfg(target_os = "android")'.dependencies]

@@ -147,6 +147,7 @@ tasks.register('verifyDebugEntrypoints') {
             'dev/capyio/android/AndroidTouchpadUiFrame.class',
             'dev/capyio/android/AndroidUiSnapshotJson.class',
             'dev/capyio/android/AndroidCoreCatalogJson.class',
+            'dev/capyio/android/AndroidNativeCatalogRuntime.class',
             'io/capyio/camera/lab/CameraCaptureService.class',
             'io/capyio/camera/lab/UnifiedCameraNodeFacade.class',
         ].each { relativePath ->

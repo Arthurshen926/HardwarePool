@@ -337,6 +337,7 @@ dependencies = [
  "capyio-core",
  "capyio-input",
  "capyio-remote-touchpad-adapter",
+ "capyio-runtime",
  "jni 0.22.4",
 ]
 

@@ -900,6 +900,11 @@ the Rust host rejects unknown fields, unsupported versions and payloads above
 64 KiB before Core projection. This is a local handoff contract; a future
 native Runtime owner must still invoke it and bind publication to an
 authenticated Session.
+ADR 1406 introduces that ownership seam without activating it in the Service:
+`capyio-android-jni` can create a real `NodeRuntime` from the schema-v1 catalog
+and transactionally replace the same local Node while no peers, Sessions or
+Routes exist. The Java wrapper and ARM64 JNI exports compile, but APK packaging
+and Service lifecycle construction remain deliberately separate.
 
 ANDROID-A01E composes the existing headless Camera2/MediaCodec service into the
 unified APK behind a narrow facade. The unexported camera foreground service,
