@@ -1652,13 +1652,17 @@ separation, and reject malformed or overlong platform keys. These tests prove
 stable identifier derivation only; by themselves they do not construct a
 complete Core NodeDescriptor or encode an Android CatalogSnapshot.
 
-ADR 1405 raises `capyio-android-host` to 16 tests. Three new tests construct a
+ADR 1405 raises `capyio-android-host` to 16 tests. Three tests construct a
 complete Android DTO, validate stable Adapter ownership in Core, select one
 microphone Source while retaining a speaker Sink, and round-trip the projected
 catalog through the Session-bound publication encoder/decoder. Malformed
 profiles, duplicate Capability keys and contradictory unattached/Available
-state fail before publication. The fixture is hardware-free and does not prove
-the Java/JNI handoff or network delivery.
+state fail before publication. The decoder also rejects unknown JSON fields,
+unsupported schema versions and messages above 64 KiB. The hardware-free Java
+composition suite (219 assertions) validates the matching Service encoder and
+its conservative per-Capability Route policy; unified Android Java compilation
+verifies the Binder entrypoint. This proves the local versioned handoff
+contract, not JNI invocation, network delivery or physical hardware behavior.
 
 ANDROID-A01E2 type-checks the common Vue Camera2 settings panel and compiles/
 lints its four-method Android bridge plus the reused inventory boundary. On the

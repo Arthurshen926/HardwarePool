@@ -12,10 +12,11 @@ pub use catalog_identity::{
     AndroidCatalogIdentityError, android_adapter_id, android_capability_id, android_port_id,
 };
 pub use catalog_projection::{
-    AndroidAdapterRouteModeV1, AndroidCapabilityAvailabilityV1, AndroidCapabilityClassV1,
-    AndroidCapabilityDtoV1, AndroidCatalogDtoV1, AndroidCatalogProjectionError,
-    AndroidInteroperabilityModeV1, AndroidPermissionRequirementV1, AndroidPortDirectionV1,
-    AndroidPortDtoV1, AndroidQosModeV1, project_android_catalog,
+    ANDROID_CATALOG_SCHEMA_VERSION, AndroidAdapterRouteModeV1, AndroidCapabilityAvailabilityV1,
+    AndroidCapabilityClassV1, AndroidCapabilityDtoV1, AndroidCatalogDtoV1,
+    AndroidCatalogProjectionError, AndroidInteroperabilityModeV1, AndroidPermissionRequirementV1,
+    AndroidPortDirectionV1, AndroidPortDtoV1, AndroidQosModeV1, MAX_ANDROID_CATALOG_JSON_BYTES,
+    decode_android_catalog_json, project_android_catalog,
 };
 pub use touchpad::{
     AndroidMotionAction, AndroidMotionSample, AndroidPointerSample, AndroidToolType,

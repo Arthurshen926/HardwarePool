@@ -18,6 +18,14 @@ contradictory or malformed input. Test-only composition reaches the shared
 publication filter and Session-bound codec; the crate still opens no socket and
 contains no JNI call.
 
+The unified Java Service now exposes its filtered publication catalog as the
+same schema-v1 JSON. Rust rejects unknown fields, unsupported versions and
+messages above 64 KiB before projection. Java makes conservative Route claims:
+only the existing private audio/camera/touchpad paths are Adapter-managed;
+IMU/gamepad/haptics remain local-pipeline declarations. This closes the
+versioned data contract, not the later JNI invocation or authenticated catalog
+delivery.
+
 `CAPY-PTP-002A` adds a narrow `MotionEvent` DTO mapper; it:
 
 - requires an initial `cancel_all` for each stream epoch;

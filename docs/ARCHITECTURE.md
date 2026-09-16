@@ -894,8 +894,12 @@ ADR 1405 adds the adjacent pure Android-host projection. A closed versioned DTO
 must explicitly state Adapter type/version/attachment and Route modes plus Port
 Profile, formats, QoS, clock domain and interoperability. The projector builds
 and validates complete Core ownership using ADR 1404 identities; it does not
-infer these claims in JNI and performs no transport I/O. The Java Service still
-needs a narrow DTO handoff before this becomes its live Core catalog.
+infer these claims in JNI and performs no transport I/O. The Java Service now
+encodes its filtered publication catalog into that schema-v1 JSON boundary and
+the Rust host rejects unknown fields, unsupported versions and payloads above
+64 KiB before Core projection. This is a local handoff contract; a future
+native Runtime owner must still invoke it and bind publication to an
+authenticated Session.
 
 ANDROID-A01E composes the existing headless Camera2/MediaCodec service into the
 unified APK behind a narrow facade. The unexported camera foreground service,

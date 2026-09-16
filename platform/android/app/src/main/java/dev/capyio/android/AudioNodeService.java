@@ -536,6 +536,11 @@ public final class AudioNodeService extends Service {
                     AudioNodeService.this.capabilityCatalogSnapshot());
         }
 
+        public String publicationCatalogJson() {
+            return AndroidCoreCatalogJson.encode(
+                    publicationCatalog(), Build.VERSION.RELEASE, BuildConfig.VERSION_NAME);
+        }
+
         public boolean setLocalCapabilityShared(String capabilityId, boolean selected) {
             boolean accepted = sharingSelection.update(
                     AudioNodeService.this.capabilityCatalogSnapshot(), capabilityId, selected);

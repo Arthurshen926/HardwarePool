@@ -34,6 +34,7 @@ public final class AndroidCapabilityModulesContractTest {
         projectsTheCatalogIntoSharedUiSchemaFour();
         admitsOnlyLocalAttachedSourceSharingIntent();
         projectsSelectedAndroidPublicationCatalog();
+        encodesSelectedPublicationForTheRustHost();
         permitsDeselectionAfterAnAndroidSourceGoesOffline();
         projectsAndAdmitsClosedCapabilityQuickActions();
         appliesAndProjectsClosedGamepadUiCommands();
@@ -319,6 +320,40 @@ public final class AndroidCapabilityModulesContractTest {
             rejected = true;
         }
         check(rejected);
+    }
+
+    private static void encodesSelectedPublicationForTheRustHost() {
+        CapabilityCatalogSnapshot catalog = AndroidCapabilityModules.createRegistry(
+                new AudioNodeController(),
+                new CapabilityLifecycleController(),
+                new GamepadNodeController(),
+                new TouchpadNodeController(),
+                () -> true,
+                () -> true,
+                HardwarePresence.PRESENT,
+                HardwarePresence.PRESENT,
+                HardwarePresence.PRESENT,
+                HardwarePresence.PRESENT,
+                HardwarePresence.PRESENT,
+                HardwarePresence.PRESENT).snapshot("00000000-0000-4000-8000-00000000a001");
+        AndroidSharingSelection selection = new AndroidSharingSelection();
+        check(selection.update(
+                catalog,
+                "00000000-0000-4000-8000-00000000a001:android.microphone",
+                true));
+
+        String json = AndroidCoreCatalogJson.encode(
+                selection.publicationCatalog(catalog), "16", "0.5.2-dev");
+        check(json.startsWith("{\"schema_version\":1,"));
+        check(json.contains("\"node_id\":\"00000000-0000-4000-8000-00000000a001\""));
+        check(json.contains("\"key\":\"android.microphone\""));
+        check(json.contains("\"key\":\"android.speaker\""));
+        check(json.contains("\"key\":\"android.haptics\""));
+        check(!json.contains("\"key\":\"android.imu\""));
+        check(json.contains("\"supported_route_modes\":[\"adapter_managed\"]"));
+        check(json.contains("\"supported_route_modes\":[\"local_pipeline\"]"));
+        check(json.contains("\"interoperability\":\"standard_port\""));
+        check(json.contains("\"clock_domain\":null"));
     }
 
     private static void permitsDeselectionAfterAnAndroidSourceGoesOffline() {

@@ -31,13 +31,33 @@ authenticated transport. Internal `capyio-control-host` and `capyio-protocol`
 dependencies are test-only and prove that a projected catalog can pass the
 existing publication filter and Session-bound codec.
 
+The unified Java Service now serializes its already filtered publication
+catalog into that boundary as schema-v1 JSON. The top-level and nested objects
+reject unknown fields on the Rust side, the complete UTF-8 message is limited
+to 64 KiB, and a schema version mismatch fails before Core mutation. The Java
+policy table is keyed by canonical Capability key, never display text. Existing
+private audio, camera and touchpad paths declare `adapter_managed`; IMU,
+gamepad and haptics declare only `local_pipeline` until a remote path exists.
+The Binder returns this local handoff value but still performs no delivery.
+
 ## Consequences
 
 - Android platform code must make Route/QoS/interoperability claims explicitly
   before a capability can enter the Core catalog.
 - Malformed profiles, duplicate identities, empty/unbounded collections and
   contradictory attachment/availability state fail before publication.
-- A later Java/JNI bridge can copy this narrow DTO without constructing Core or
-  Protobuf objects on the Android framework side.
-- The current Java service catalog still needs a versioned bridge that fills
-  this DTO; this ADR does not claim device-to-device catalog delivery.
+- Java does not construct Core or Protobuf objects on the Android framework
+  side; Rust alone validates and projects the narrow JSON DTO.
+- The JSON handoff is now implemented and compile-tested, but invoking it from
+  JNI/native Runtime ownership and authenticated device-to-device delivery
+  remain separate work.
+
+## Dependency note
+
+`capyio-android-host` uses the existing workspace-pinned `serde` and
+`serde_json` crates to decode the closed handoff. They are maintained broadly,
+licensed MIT/Apache-2.0, perform no I/O, and add no Android runtime component or
+network behavior. Direct JNI field-by-field construction was rejected because
+it couples Java object layouts to Rust calls; using the network Protobuf
+catalog inside Java was rejected because transport/session concerns do not
+belong in this local platform boundary.

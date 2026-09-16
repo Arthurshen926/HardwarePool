@@ -6,6 +6,7 @@ use capyio_core::{
     NodeDescriptor, NodeId, PermissionRequirement, Platform, PortDescriptor, PortDirection,
     ProfileId, ProtocolVersion, QosMode, RouteBackend,
 };
+use serde::{Deserialize, Serialize};
 
 use crate::{
     AndroidCatalogIdentityError, android_adapter_id, android_capability_id, android_port_id,
@@ -14,8 +15,11 @@ use crate::{
 const MAX_CAPABILITIES: usize = 64;
 const MAX_PORTS_PER_CAPABILITY: usize = 8;
 const MAX_FORMATS_PER_PORT: usize = 16;
+pub const MAX_ANDROID_CATALOG_JSON_BYTES: usize = 64 * 1024;
+pub const ANDROID_CATALOG_SCHEMA_VERSION: u32 = 1;
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
 pub enum AndroidCapabilityClassV1 {
     Microphone,
     Speaker,
@@ -26,7 +30,8 @@ pub enum AndroidCapabilityClassV1 {
     Touchpad,
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
 pub enum AndroidCapabilityAvailabilityV1 {
     Available,
     Busy,
@@ -34,7 +39,8 @@ pub enum AndroidCapabilityAvailabilityV1 {
     Offline,
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
 pub enum AndroidPermissionRequirementV1 {
     None,
     UserConfirmation,
@@ -42,27 +48,31 @@ pub enum AndroidPermissionRequirementV1 {
     Privileged,
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
 pub enum AndroidPortDirectionV1 {
     Source,
     Sink,
     Control,
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
 pub enum AndroidQosModeV1 {
     Basic,
     Interactive,
     Measurement,
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
 pub enum AndroidInteroperabilityModeV1 {
     StandardPort,
     AdapterManaged,
 }
 
-#[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
+#[derive(Clone, Copy, Debug, Deserialize, Eq, Ord, PartialEq, PartialOrd, Serialize)]
+#[serde(rename_all = "snake_case")]
 pub enum AndroidAdapterRouteModeV1 {
     CapyDataPlane,
     AdapterManaged,
@@ -70,7 +80,8 @@ pub enum AndroidAdapterRouteModeV1 {
     ExternalProtocol,
 }
 
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
 pub struct AndroidPortDtoV1 {
     pub key: String,
     pub display_name: String,
@@ -82,7 +93,8 @@ pub struct AndroidPortDtoV1 {
     pub interoperability: AndroidInteroperabilityModeV1,
 }
 
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
 pub struct AndroidCapabilityDtoV1 {
     pub key: String,
     pub display_name: String,
@@ -96,8 +108,10 @@ pub struct AndroidCapabilityDtoV1 {
     pub ports: Vec<AndroidPortDtoV1>,
 }
 
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
 pub struct AndroidCatalogDtoV1 {
+    pub schema_version: u32,
     pub node_id: String,
     pub display_name: String,
     pub platform_version: String,
@@ -107,6 +121,9 @@ pub struct AndroidCatalogDtoV1 {
 
 #[derive(Debug)]
 pub enum AndroidCatalogProjectionError {
+    MessageTooLarge { limit: usize, actual: usize },
+    InvalidJson(serde_json::Error),
+    UnsupportedSchemaVersion(u32),
     InvalidNodeId,
     InvalidField(&'static str),
     DuplicateCapabilityKey(String),
@@ -117,6 +134,19 @@ pub enum AndroidCatalogProjectionError {
 impl fmt::Display for AndroidCatalogProjectionError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
+            Self::MessageTooLarge { limit, actual } => {
+                write!(
+                    formatter,
+                    "Android catalog JSON is {actual} bytes; maximum is {limit}"
+                )
+            }
+            Self::InvalidJson(error) => error.fmt(formatter),
+            Self::UnsupportedSchemaVersion(version) => {
+                write!(
+                    formatter,
+                    "unsupported Android catalog schema version {version}"
+                )
+            }
             Self::InvalidNodeId => formatter.write_str("Android Node ID must be a UUID"),
             Self::InvalidField(field) => {
                 write!(formatter, "invalid Android catalog field: {field}")
@@ -133,11 +163,26 @@ impl fmt::Display for AndroidCatalogProjectionError {
 impl Error for AndroidCatalogProjectionError {
     fn source(&self) -> Option<&(dyn Error + 'static)> {
         match self {
+            Self::InvalidJson(error) => Some(error),
             Self::Identity(error) => Some(error),
             Self::Core(error) => Some(error),
             _ => None,
         }
     }
+}
+
+pub fn decode_android_catalog_json(
+    json: &str,
+) -> Result<NodeDescriptor, AndroidCatalogProjectionError> {
+    if json.len() > MAX_ANDROID_CATALOG_JSON_BYTES {
+        return Err(AndroidCatalogProjectionError::MessageTooLarge {
+            limit: MAX_ANDROID_CATALOG_JSON_BYTES,
+            actual: json.len(),
+        });
+    }
+    let dto: AndroidCatalogDtoV1 =
+        serde_json::from_str(json).map_err(AndroidCatalogProjectionError::InvalidJson)?;
+    project_android_catalog(dto)
 }
 
 impl From<AndroidCatalogIdentityError> for AndroidCatalogProjectionError {
@@ -155,6 +200,11 @@ impl From<CoreError> for AndroidCatalogProjectionError {
 pub fn project_android_catalog(
     dto: AndroidCatalogDtoV1,
 ) -> Result<NodeDescriptor, AndroidCatalogProjectionError> {
+    if dto.schema_version != ANDROID_CATALOG_SCHEMA_VERSION {
+        return Err(AndroidCatalogProjectionError::UnsupportedSchemaVersion(
+            dto.schema_version,
+        ));
+    }
     let node_id =
         NodeId::from_str(&dto.node_id).map_err(|_| AndroidCatalogProjectionError::InvalidNodeId)?;
     require_text(&dto.display_name, "node.display_name")?;

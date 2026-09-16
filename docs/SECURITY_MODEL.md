@@ -361,6 +361,12 @@ unless they are Offline and delegates final ownership/Profile/Port validation
 to Core. QoS, interoperability and supported Route modes are explicit DTO
 fields rather than values inferred from UI text. This prevents a future JNI or
 transport boundary from silently upgrading a private Adapter contract.
+The Java-to-Rust schema-v1 JSON handoff is limited to 64 KiB and denies unknown
+fields at every object level. Its Java policy is a closed switch over canonical
+Capability keys: current private vertical paths may declare Adapter-managed
+interoperability, while capabilities without a remote path declare only a local
+pipeline. The Binder accepts no recipient, Session, endpoint or caller-selected
+Route backend, so producing this catalog cannot authorize or deliver it.
 
 ANDROID-A01E accepts only the fixed camera action ID and lifecycle-valid
 start/stop/retry. Start is returned to the visible Activity so Android owns the

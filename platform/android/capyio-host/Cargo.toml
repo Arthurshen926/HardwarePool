@@ -9,6 +9,8 @@ license.workspace = true
 [dependencies]
 capyio-core = { path = "../../../crates/capyio-core" }
 capyio-input = { path = "../../../crates/capyio-input" }
+serde.workspace = true
+serde_json.workspace = true
 sha1.workspace = true
 uuid.workspace = true
 

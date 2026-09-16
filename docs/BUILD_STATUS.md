@@ -968,7 +968,7 @@ Android now performs the matching local operation without adding a transport:
 its Service-owned candidate selection is projected against the current catalog
 before commit, unselected Source-bearing Capabilities are omitted and
 Sink/Control-only Capabilities remain visible. The hardware-free Android
-composition suite passes 208 assertions, including Offline deselection and
+composition suite passes 219 assertions, including Offline deselection and
 fail-closed reselection. No APK was built or installed for this slice.
 ADR 1404 now closes the next Android-to-Core identity prerequisite. Java and
 Rust derive matching, domain-separated RFC 4122 UUIDv5 Adapter, Capability and
@@ -976,12 +976,14 @@ Port IDs from the persisted Node UUID plus canonical platform keys. The Android
 host has three new deterministic identity tests and the Java catalog contract
 passes 22 assertions. QoS, interoperability and complete NodeDescriptor mapping
 are supplied separately by ADR 1405 rather than inferred by identity code.
-ADR 1405 now supplies that complete pure Rust mapping: a closed Android DTO
-projects explicit Adapter lifecycle/Route modes and Port QoS/interoperability
-into a validated Core NodeDescriptor. A deterministic composition test then
-filters its Sources and completes a Session-bound Protobuf round-trip while
-retaining the Sink. Android-host coverage is 16 tests. The live Java-to-Rust
-handoff and authenticated delivery remain open.
+ADR 1405 now supplies that complete pure Rust mapping and its Java-side
+schema-v1 encoder: a closed, 64-KiB-bounded Android DTO projects explicit
+Adapter lifecycle/Route modes and Port QoS/interoperability into a validated
+Core NodeDescriptor. Unknown JSON fields and versions fail closed. A
+deterministic composition test filters its Sources and completes a
+Session-bound Protobuf round-trip while retaining the Sink; Java composition
+also validates conservative Route policy. Android-host coverage is 16 tests.
+Native Runtime/JNI invocation and authenticated delivery remain open.
 
 The apparent post-stop UDP restart failure was then isolated from CapyIO. With
 UU Remote running, every tested port in 45980--46030 returned Winsock 10048

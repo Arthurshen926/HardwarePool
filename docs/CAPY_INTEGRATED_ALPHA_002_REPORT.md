@@ -86,8 +86,10 @@ closed Android DTO explicitly supplies Adapter attachment/type/version and
 Route modes plus Port Profile/formats/QoS/clock/interoperability. The projector
 builds a Core-valid ownership graph; a hardware-free integration test selects
 the microphone Source, retains the speaker Sink and round-trips the result
-through the existing Session-bound Protobuf codec. The Java Service has not yet
-crossed this DTO boundary.
+through the existing Session-bound Protobuf codec. The Java Service now exposes
+the selected local publication as matching schema-v1 JSON; Rust bounds it to
+64 KiB and rejects unknown fields and versions before projection. This closes
+the local handoff contract but not native Runtime invocation or delivery.
 
 ## Evidence
 
@@ -97,7 +99,7 @@ crossed this DTO boundary.
 - `cargo test -p capyio-desktop --lib`: 56 passed, 6 intentionally ignored
   physical/installed-device tests.
 - `platform/android/gradlew.bat --offline :app:capabilityCompositionTest`:
-  passed, 208 assertions.
+  passed, 219 assertions.
 - `platform/android/gradlew.bat --offline :app:verifyDebugEntrypoints`: passed;
   the unified Android service and bridge compiled against the existing SDK.
 - `cargo test -p capyio-android-host --offline`: 16 tests passed, including
@@ -120,7 +122,7 @@ crossed this DTO boundary.
   helper decodes Protobuf but likewise grants no trust.
 - No Android or Windows host currently invokes it from a network control
   connection. Windows now has the necessary process-owned Runtime seam, and
-  Android can produce a locally filtered catalog only.
+  Android can produce a locally filtered, Core-shaped JSON catalog only.
 - Platform invocation/delivery of projected catalogs, Route authorization,
   encrypted data-plane binding, replay defense, reconnect and pairing remain
   separate work.
@@ -133,7 +135,8 @@ crossed this DTO boundary.
 - Dependencies: workspace `capyio-core`, `capyio-protocol`, `capyio-runtime`
   and `thiserror`; Windows desktop now consumes the internal control-host crate.
   ADR 1404 adds the already locked RustCrypto `sha1` 0.11 crate to the Android
-  host solely for UUIDv5 fixed-vector parity. No network stack was added.
+  host solely for UUIDv5 fixed-vector parity. ADR 1405 uses existing workspace
+  `serde`/`serde_json` for the closed local handoff. No network stack was added.
 - License/maintenance: Apache-2.0 workspace crate maintained with the main
   Runtime and protocol contracts.
 - Alternatives considered: duplicating admission in each platform host would

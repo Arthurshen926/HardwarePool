@@ -20,6 +20,10 @@ capabilities and retains Sink/Control-only inventory. Offline, detached,
 missing and non-Source selections fail closed; a previously selected Source can
 still be deselected after it goes Offline. This produces only a local catalog
 snapshot and does not imply Session trust, Route authorization or delivery.
+`NodeBinder.publicationCatalogJson()` now encodes that filtered snapshot into a
+closed schema-v1, 64-KiB-bounded Rust handoff. It contains no recipient,
+Session, endpoint or arbitrary Route mode. The native Runtime/JNI owner that
+will consume the value and authenticated peer delivery are still pending.
 
 ## Camera2 service and retained lab
 

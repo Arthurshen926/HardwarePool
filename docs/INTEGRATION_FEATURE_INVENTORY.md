@@ -118,15 +118,18 @@ non-Source or Offline selections. Platform invocation and delivery remain open.
 Android now mirrors that filtering rule in a pure local projector owned by the
 Node-side contract: its Service selection commits only after the whole candidate
 projects successfully, and stale Offline intent can be removed. The result is
-not yet encoded or delivered through a Session-bound control transport.
+now encoded into a closed schema-v1 local JSON handoff, but is not yet invoked
+by a native Runtime owner or delivered through a Session-bound control
+transport.
 The Android host and Java contract now also share stable UUIDv5 derivation for
 Adapter, Capability and Port identity under the persisted Node UUID. Complete
 Core catalog mapping receives explicit QoS/interoperability and Adapter
 lifecycle fields through the separate ADR 1405 projector.
 The pure Android Rust host now implements that explicit mapping and proves a
 projected microphone/Speaker catalog across publication filtering and the
-Session-bound codec. The remaining gap is the live versioned Java-to-Rust DTO
-handoff, not the Core ownership or protocol conversion.
+Session-bound codec. Java and Rust now share the bounded versioned DTO shape;
+the remaining gap is native invocation and authenticated delivery, not the
+local handoff, Core ownership or protocol conversion.
 
 The Windows Tauri host no longer retains `DemoLab` as its long-lived state.
 It consumes the fixture once at startup, then all desktop feature workers and

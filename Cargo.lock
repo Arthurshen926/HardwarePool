@@ -323,6 +323,8 @@ dependencies = [
  "capyio-core",
  "capyio-input",
  "capyio-protocol",
+ "serde",
+ "serde_json",
  "sha1",
  "uuid",
 ]

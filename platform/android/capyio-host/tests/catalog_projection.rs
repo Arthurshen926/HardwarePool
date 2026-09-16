@@ -4,7 +4,8 @@ use capyio_android_host::{
     AndroidAdapterRouteModeV1, AndroidCapabilityAvailabilityV1, AndroidCapabilityClassV1,
     AndroidCapabilityDtoV1, AndroidCatalogDtoV1, AndroidInteroperabilityModeV1,
     AndroidPermissionRequirementV1, AndroidPortDirectionV1, AndroidPortDtoV1, AndroidQosModeV1,
-    android_capability_id, project_android_catalog,
+    MAX_ANDROID_CATALOG_JSON_BYTES, android_capability_id, decode_android_catalog_json,
+    project_android_catalog,
 };
 use capyio_control_host::encode_publication_catalog;
 use capyio_core::{NodeId, Platform, PortDirection, SessionId};
@@ -60,10 +61,20 @@ fn malformed_android_catalogs_fail_before_core_publication() {
     let mut dto = catalog();
     dto.capabilities.push(dto.capabilities[0].clone());
     assert!(project_android_catalog(dto).is_err());
+
+    let json = serde_json::to_string(&catalog()).expect("catalog JSON");
+    assert!(decode_android_catalog_json(&json).is_ok());
+    assert!(
+        decode_android_catalog_json(&json.replace("\"schema_version\":1", "\"schema_version\":2"))
+            .is_err()
+    );
+    assert!(decode_android_catalog_json(&format!("{{\"unknown\":{},{}", 1, &json[1..])).is_err());
+    assert!(decode_android_catalog_json(&"x".repeat(MAX_ANDROID_CATALOG_JSON_BYTES + 1)).is_err());
 }
 
 fn catalog() -> AndroidCatalogDtoV1 {
     AndroidCatalogDtoV1 {
+        schema_version: 1,
         node_id: NODE_ID.to_owned(),
         display_name: "CapyIO Android".to_owned(),
         platform_version: "Android 16".to_owned(),
