@@ -157,12 +157,13 @@ automation window; the request was cancelled. A subsequent control probe found
 no Broker, and process inventory found no desktop, camera-session or AVC
 receiver residue. This is a clean blocked physical gate, not a pass.
 
-`cargo xtask ci` completed formatting, workspace check/Clippy, workspace tests,
-docs/manifests and Adapter smoke, then stopped at the final repository validator
-because its case-sensitive camera deployment assertion expects a lowercase
-`$expectedSha256` assignment while the unchanged pinned script declares the
-parameter as `$ExpectedSha256`. The camera script and validator were not changed
-by this slice; targeted docs validation and all changed-package gates pass.
+The first `cargo xtask ci` run exposed a case-sensitive repository-validator
+assertion for lowercase `$expectedSha256`, while the unchanged hash-pinned
+PowerShell parameter is `$ExpectedSha256` (PowerShell itself is
+case-insensitive). The validator now checks the actual declaration. Structural
+validation and the complete `cargo xtask ci` matrix pass, including formatting,
+workspace check/Clippy/tests, documentation, manifests, Adapter smoke and the
+shared-UI typecheck/build.
 
 The post-readiness shared UI/test-package build passed and generated
 `target/integrated-test/20260916-141529-8853`; its manifest records the dirty

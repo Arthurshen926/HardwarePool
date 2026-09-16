@@ -1307,7 +1307,7 @@ def validate_android_camera_boundary() -> None:
         encoding="utf-8"
     )
     if (
-        "$expectedSha256 = "
+        "$ExpectedSha256 = "
         "'4C236858C5223B4A1303E825496EBE6799C52E9EAE366DC6DE41C8E9A88F70F0'"
         not in camera_admin
     ):
