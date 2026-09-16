@@ -36,6 +36,7 @@ public final class AndroidCapabilityModulesContractTest {
         projectsTheCatalogIntoSharedUiSchemaFour();
         admitsOnlyLocalAttachedSourceSharingIntent();
         projectsSelectedAndroidPublicationCatalog();
+        commitsSharingIntentOnlyAfterNativeProjectionAcceptsIt();
         encodesSelectedPublicationForTheRustHost();
         permitsDeselectionAfterAnAndroidSourceGoesOffline();
         projectsAndAdmitsClosedCapabilityQuickActions();
@@ -359,6 +360,36 @@ public final class AndroidCapabilityModulesContractTest {
         String fixturePath = System.getProperty("capyio.android.catalogFixture");
         check(fixturePath != null);
         check(json.equals(Files.readString(Path.of(fixturePath)).strip()));
+    }
+
+    private static void commitsSharingIntentOnlyAfterNativeProjectionAcceptsIt() {
+        CapabilityCatalogSnapshot catalog = AndroidCapabilityModules.createRegistry(
+                new AudioNodeController(),
+                new CapabilityLifecycleController(),
+                new GamepadNodeController(),
+                new TouchpadNodeController(),
+                () -> true,
+                () -> true,
+                HardwarePresence.PRESENT,
+                HardwarePresence.PRESENT,
+                HardwarePresence.PRESENT,
+                HardwarePresence.PRESENT,
+                HardwarePresence.PRESENT,
+                HardwarePresence.PRESENT).snapshot("test-node");
+        AndroidSharingSelection selection = new AndroidSharingSelection();
+
+        check(!selection.update(
+                catalog,
+                "test-node:android.microphone",
+                true,
+                ignored -> { throw new IllegalStateException("native rejection"); }));
+        check(selection.snapshot().isEmpty());
+        check(selection.update(
+                catalog,
+                "test-node:android.microphone",
+                true,
+                publication -> check(capability(publication, "android.microphone") != null)));
+        check(selection.snapshot().contains("test-node:android.microphone"));
     }
 
     private static void permitsDeselectionAfterAnAndroidSourceGoesOffline() {

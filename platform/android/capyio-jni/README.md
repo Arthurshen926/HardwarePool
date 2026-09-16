@@ -17,5 +17,5 @@ cargo ndk -t arm64-v8a -o target/android-jni build \
   -p capyio-android-jni --release --offline
 ```
 
-The unified APK does not yet package or instantiate this library. This crate
-does not open a socket, authenticate a peer or authorize a Route.
+ADR 1407 packages and instantiates this library from the unified Service. This
+crate still does not open a socket, authenticate a peer or authorize a Route.

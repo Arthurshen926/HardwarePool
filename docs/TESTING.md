@@ -1673,6 +1673,14 @@ offline Cargo NDK release build verifies the ARM64 JNI exports, while Android
 SDK compilation verifies the matching Java wrapper. These checks do not prove
 APK packaging, Service activation or a physical JNI call.
 
+ADR 1407 adds the reproducible packaging gate. `buildRustJni` compiles the
+ARM64 release library from source before Android `preBuild`; `assembleDebug`
+then packages it with the shared Vue assets and unified Java Service.
+`verifyIntegratedDebugApk` opens the resulting archive and requires the
+manifest, DEX, UI entrypoint and exact JNI library path. The Java composition
+suite has 226 assertions, including rejection-before-selection-commit. This is
+install-ready artifact evidence, not a physical-device acceptance result.
+
 ANDROID-A01E2 type-checks the common Vue Camera2 settings panel and compiles/
 lints its four-method Android bridge plus the reused inventory boundary. On the
 authorized V2419A, the panel enumerated seven bounded choices across directly

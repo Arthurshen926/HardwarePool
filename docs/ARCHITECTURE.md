@@ -903,8 +903,10 @@ authenticated Session.
 ADR 1406 introduces that ownership seam without activating it in the Service:
 `capyio-android-jni` can create a real `NodeRuntime` from the schema-v1 catalog
 and transactionally replace the same local Node while no peers, Sessions or
-Routes exist. The Java wrapper and ARM64 JNI exports compile, but APK packaging
-and Service lifecycle construction remain deliberately separate.
+Routes exist. ADR 1407 then packages the ARM64 library and gives its handle the
+same lifetime as `AudioNodeService`; publication intent crosses the native
+projection before the Java selection commits. High-rate controller/touch data
+does not enter this catalog path, and unchanged catalog JSON is not resent.
 
 ANDROID-A01E composes the existing headless Camera2/MediaCodec service into the
 unified APK behind a narrow facade. The unexported camera foreground service,

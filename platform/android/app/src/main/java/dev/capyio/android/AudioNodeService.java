@@ -73,6 +73,8 @@ public final class AudioNodeService extends Service {
     private SpeakerSinkAdapter speakerAdapter;
     private ImuSourceAdapter imuAdapter;
     private AndroidHapticsSinkAdapter hapticsAdapter;
+    private AndroidNativeCatalogRuntime catalogRuntime;
+    private String nativeCatalogJson;
     private String nodeId;
     private HardwarePresence touchSurfacePresence;
     private boolean foreground;
@@ -170,6 +172,8 @@ public final class AudioNodeService extends Service {
         }
         speakerAdapter = new SpeakerSinkAdapter(
                 listenerFor(AudioCapabilityKind.SPEAKER_SINK), speakerConfig);
+        nativeCatalogJson = publicationCatalogJson();
+        catalogRuntime = new AndroidNativeCatalogRuntime(nativeCatalogJson);
     }
 
     @Override
@@ -230,6 +234,11 @@ public final class AudioNodeService extends Service {
             touchpadController.completeStop(touchpad.generation());
         }
         hapticsAdapter.stop();
+        if (catalogRuntime != null) {
+            catalogRuntime.close();
+            catalogRuntime = null;
+            nativeCatalogJson = null;
+        }
         stateListener = null;
         super.onDestroy();
     }
@@ -309,7 +318,7 @@ public final class AudioNodeService extends Service {
     private boolean submitGamepad(long generation, GamepadControlsSnapshot controls) {
         boolean accepted = gamepadController.submit(generation, controls);
         if (accepted) {
-            notifyStateListener();
+            notifyPresentationListener();
         }
         return accepted;
     }
@@ -339,7 +348,7 @@ public final class AudioNodeService extends Service {
             long generation, java.util.List<TouchpadContactSnapshot> contacts) {
         boolean accepted = touchpadController.submit(generation, contacts);
         if (accepted) {
-            notifyStateListener();
+            notifyPresentationListener();
         }
         return accepted;
     }
@@ -495,6 +504,29 @@ public final class AudioNodeService extends Service {
         return capabilityRegistry.snapshot(nodeId);
     }
 
+    private String publicationCatalogJson() {
+        return encodeCoreCatalog(
+                sharingSelection.publicationCatalog(capabilityCatalogSnapshot()));
+    }
+
+    private static String encodeCoreCatalog(CapabilityCatalogSnapshot publication) {
+        return AndroidCoreCatalogJson.encode(
+                publication, Build.VERSION.RELEASE, BuildConfig.VERSION_NAME);
+    }
+
+    private void refreshNativeCatalog(CapabilityCatalogSnapshot catalog) {
+        replaceNativePublication(sharingSelection.publicationCatalog(catalog));
+    }
+
+    private synchronized void replaceNativePublication(CapabilityCatalogSnapshot publication) {
+        String candidate = encodeCoreCatalog(publication);
+        if (candidate.equals(nativeCatalogJson)) {
+            return;
+        }
+        catalogRuntime.replaceDisconnectedCatalog(candidate);
+        nativeCatalogJson = candidate;
+    }
+
     private static CapabilityLifecycleSnapshot cameraLifecycleSnapshot() {
         UnifiedCameraNodeFacade.Snapshot camera = UnifiedCameraNodeFacade.snapshot();
         CapabilityLifecycleState state = switch (camera.state()) {
@@ -508,6 +540,17 @@ public final class AudioNodeService extends Service {
     }
 
     private void notifyStateListener() {
+        if (catalogRuntime != null) {
+            try {
+                refreshNativeCatalog(capabilityCatalogSnapshot());
+            } catch (RuntimeException rejected) {
+                // Keep the last Core-valid native snapshot until local intent becomes valid again.
+            }
+        }
+        notifyPresentationListener();
+    }
+
+    private void notifyPresentationListener() {
         Runnable listener = stateListener;
         if (listener != null) {
             listener.run();
@@ -520,7 +563,13 @@ public final class AudioNodeService extends Service {
         }
 
         public CapabilityCatalogSnapshot capabilityCatalog() {
-            return AudioNodeService.this.capabilityCatalogSnapshot();
+            CapabilityCatalogSnapshot catalog = AudioNodeService.this.capabilityCatalogSnapshot();
+            try {
+                refreshNativeCatalog(catalog);
+            } catch (RuntimeException rejected) {
+                // Read remains available while native state keeps its last valid snapshot.
+            }
+            return catalog;
         }
 
         public CapabilityLifecycleSnapshot cameraLifecycle() {
@@ -537,13 +586,16 @@ public final class AudioNodeService extends Service {
         }
 
         public String publicationCatalogJson() {
-            return AndroidCoreCatalogJson.encode(
-                    publicationCatalog(), Build.VERSION.RELEASE, BuildConfig.VERSION_NAME);
+            return AudioNodeService.this.publicationCatalogJson();
         }
 
         public boolean setLocalCapabilityShared(String capabilityId, boolean selected) {
+            CapabilityCatalogSnapshot catalog = AudioNodeService.this.capabilityCatalogSnapshot();
             boolean accepted = sharingSelection.update(
-                    AudioNodeService.this.capabilityCatalogSnapshot(), capabilityId, selected);
+                    catalog,
+                    capabilityId,
+                    selected,
+                    AudioNodeService.this::replaceNativePublication);
             if (accepted) {
                 notifyStateListener();
             }

@@ -26,10 +26,9 @@ replace, inspect the capability count and close a handle. JNI entrypoints catch
 Rust panics and translate failures into Java exceptions; no Core object layout
 crosses JNI.
 
-The Java wrapper is compile-checked but is not yet constructed by
-`AudioNodeService`. The ARM64 library is build-verified separately with Cargo
-NDK and is not yet part of the unified APK. Service lifecycle activation and
-native library packaging require a subsequent explicit slice.
+At this decision point the Java wrapper was compile-checked but not constructed
+by `AudioNodeService`, and the ARM64 library was build-verified separately.
+ADR 1407 subsequently packages it and connects Service lifecycle ownership.
 
 ## Consequences
 

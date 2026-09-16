@@ -9,6 +9,7 @@ import dev.capyio.android.contract.HardwarePresence;
 
 import java.util.LinkedHashSet;
 import java.util.Set;
+import java.util.function.Consumer;
 
 /** Service-owned, session-local publication intent for Android Source Ports. */
 final class AndroidSharingSelection {
@@ -20,8 +21,16 @@ final class AndroidSharingSelection {
             CapabilityCatalogSnapshot catalog,
             String capabilityId,
             boolean selected) {
+        return update(catalog, capabilityId, selected, ignored -> {});
+    }
+
+    synchronized boolean update(
+            CapabilityCatalogSnapshot catalog,
+            String capabilityId,
+            boolean selected,
+            Consumer<CapabilityCatalogSnapshot> beforeCommit) {
         if (catalog == null || capabilityId == null || capabilityId.isEmpty()
-                || capabilityId.length() > MAX_CAPABILITY_ID_LENGTH) {
+                || capabilityId.length() > MAX_CAPABILITY_ID_LENGTH || beforeCommit == null) {
             return false;
         }
         CapabilitySnapshot capability = findCapability(catalog, capabilityId);
@@ -35,8 +44,10 @@ final class AndroidSharingSelection {
             candidate.remove(capabilityId);
         }
         try {
-            CapabilityPublicationProjection.project(catalog, candidate);
-        } catch (IllegalArgumentException invalid) {
+            CapabilityCatalogSnapshot publication =
+                    CapabilityPublicationProjection.project(catalog, candidate);
+            beforeCommit.accept(publication);
+        } catch (RuntimeException invalid) {
             return false;
         }
         selectedCapabilityIds.clear();

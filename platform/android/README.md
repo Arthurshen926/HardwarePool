@@ -28,6 +28,11 @@ ADR 1406 adds a separately build-verified native owner that constructs a real
 Rust `NodeRuntime` from this JSON and permits same-Node replacement while
 disconnected. Its Java wrapper is compile-checked but deliberately not yet
 loaded by the Service or packaged into the unified APK.
+ADR 1407 closes that packaging/lifecycle gap for version `0.5.3-dev`: Gradle
+builds and packages the ARM64 Rust library, and the unified Service creates,
+refreshes and closes its native catalog Runtime. Sharing intent commits only
+after native projection accepts the candidate. This does not yet connect the
+unified IMU/gamepad/touchpad controls to Windows Routes.
 
 ## Camera2 service and retained lab
 

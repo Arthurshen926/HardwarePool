@@ -6,6 +6,30 @@ def repositoryRoot = rootProject.file('../..')
 def sharedUiProject = new File(repositoryRoot, 'apps/desktop')
 def sharedUiOutput = new File(sharedUiProject, 'dist')
 def packagedSharedUiRoot = layout.buildDirectory.dir('generated/capyio-shared-ui').get().asFile
+def packagedRustJniRoot = new File(repositoryRoot, 'target/android-jni')
+def packagedRustJniLibrary = new File(
+        packagedRustJniRoot, 'arm64-v8a/libcapyio_android_jni.so')
+
+tasks.register('buildRustJni', Exec) {
+    group = 'build'
+    description = 'Builds the ARM64 Rust JNI library packaged by the unified Android app.'
+    workingDir repositoryRoot
+    def cargoExecutable = System.getProperty('os.name').toLowerCase().contains('windows')
+            ? 'cargo.exe' : 'cargo'
+    commandLine cargoExecutable, 'ndk', '-t', 'arm64-v8a', '-o',
+            packagedRustJniRoot.absolutePath, 'build', '-p', 'capyio-android-jni',
+            '--release', '--offline'
+    inputs.files(fileTree(repositoryRoot) {
+        include 'Cargo.toml', 'Cargo.lock'
+        include 'crates/**/Cargo.toml', 'crates/**/src/**'
+        include 'adapters/remote-touchpad/Cargo.toml', 'adapters/remote-touchpad/src/**'
+        include 'platform/android/capyio-host/Cargo.toml'
+        include 'platform/android/capyio-host/src/**'
+        include 'platform/android/capyio-jni/Cargo.toml'
+        include 'platform/android/capyio-jni/src/**'
+    })
+    outputs.file packagedRustJniLibrary
+}
 
 tasks.register('buildSharedUi', Exec) {
     group = 'build'
@@ -63,8 +87,11 @@ android {
         applicationId = 'dev.capyio.android'
         minSdk = 29
         targetSdk = 36
-        versionCode = 14
-        versionName = '0.5.2-dev'
+        versionCode = 15
+        versionName = '0.5.3-dev'
+        ndk {
+            abiFilters 'arm64-v8a'
+        }
         manifestPlaceholders = [
             capyioSpeakerLabEnabled: System.getenv('CAPYIO_ANDROID_SPEAKER_PEER_IPV4') == null
                     ? 'false' : 'true',
@@ -110,6 +137,7 @@ android {
         main.java.srcDir '../capyio-camera-app/camera-contract/src/main/java'
         main.java.srcDir '../capyio-camera-app/app/src/main/java'
         main.assets.srcDir packagedSharedUiRoot
+        main.jniLibs.srcDir packagedRustJniRoot
     }
 
     lint {
@@ -123,6 +151,7 @@ android {
 
 tasks.named('preBuild') {
     dependsOn tasks.named('syncSharedUi')
+    dependsOn tasks.named('buildRustJni')
 }
 
 tasks.register('verifyDebugEntrypoints') {
@@ -154,6 +183,33 @@ tasks.register('verifyDebugEntrypoints') {
             if (!new File(classesDirectory, relativePath).isFile()) {
                 throw new GradleException("Android entrypoint class is missing: ${relativePath}")
             }
+        }
+    }
+}
+
+tasks.register('verifyIntegratedDebugApk') {
+    group = 'verification'
+    description = 'Verifies the unified debug APK packages the shared UI and ARM64 Rust Runtime.'
+    dependsOn 'assembleDebug'
+    doLast {
+        def apk = layout.buildDirectory.file('outputs/apk/debug/app-debug.apk').get().asFile
+        if (!apk.isFile()) {
+            throw new GradleException('Unified debug APK is missing')
+        }
+        def archive = new java.util.zip.ZipFile(apk)
+        try {
+            [
+                'AndroidManifest.xml',
+                'classes.dex',
+                'assets/capyio-ui/index.html',
+                'lib/arm64-v8a/libcapyio_android_jni.so',
+            ].each { entry ->
+                if (archive.getEntry(entry) == null) {
+                    throw new GradleException("Unified debug APK entry is missing: ${entry}")
+                }
+            }
+        } finally {
+            archive.close()
         }
     }
 }

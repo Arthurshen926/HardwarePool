@@ -989,7 +989,10 @@ ADR 1406 now places the same fixture in a real Rust `NodeRuntime` behind a
 panic-contained Android JNI handle. Three additional tests cover ownership,
 same-Node disconnected replacement and transactional rejection; the complete
 JNI crate has seven tests. The ARM64 release library and Java wrapper compile.
-The unified Service does not instantiate it and the APK does not package it yet.
+ADR 1407 now packages that ARM64 library in unified Android `0.5.3-dev` and the
+Service creates, refreshes and closes it. The generated debug APK composition
+check finds the manifest, DEX, shared Vue entrypoint and JNI library. Physical
+installation and the remaining unified remote Routes are still open.
 
 The apparent post-stop UDP restart failure was then isolated from CapyIO. With
 UU Remote running, every tested port in 45980--46030 returned Winsock 10048

@@ -372,6 +372,9 @@ mutex with at most four live owners, rejects unknown/closed handles, catches pan
 and refuses a disconnected catalog replacement that changes Node identity.
 The exposed inspection is only a bounded capability count. No peer, Session,
 endpoint, Route or credential is accepted by this JNI surface.
+ADR 1407 binds that handle to the unexported Service lifecycle and requires a
+candidate sharing projection to cross native validation before Java selection
+commits. Packaging the library grants no new endpoint or network authority.
 
 ANDROID-A01E accepts only the fixed camera action ID and lifecycle-valid
 start/stop/retry. Start is returned to the visible Activity so Android owns the
