@@ -1794,6 +1794,36 @@ stale phone listener produces `Offline` rather than a false success, then
 succeeds after the service is restarted. Private addresses are not retained in
 repository evidence.
 
+## Unified Android 0.5.4 physical integration
+
+The explicitly authorized Android 16 run installed the unified debug APK with
+SHA-256 `E1335AAD51CBE4DCCA76516326633A83AA0E3C4DAECD467AD5645D58E01AC2F4`.
+All controls below came from `dev.capyio.android`; legacy input applications are
+not prerequisites for these paths.
+
+- Camera: the bounded Windows receiver accepted 90 1280x720 AVC access units,
+  including three key frames and one discontinuity, and decoded all 90 into
+  124,416,000 NV12 bytes. Start/Stop removed the receiver and reverse mapping.
+- Touch-gamepad and standalone IMU: the physical gate accepted 151 controller
+  frames with zero rejects and produced 267 DSU packets. It observed a
+  non-neutral touch control and finite IMU values, then stopped cleanly.
+- Speaker: a five-second Windows tone sent 500 packets / 1,000 datagrams and
+  Android reported exactly 240,000 processed frames.
+- Microphone: a bounded six-second restart processed 291,840 Android frames
+  with no sender queue loss. The service-owned Windows helper held the exact
+  `100.66.231.100:40011` socket while the Tailscale adapter gained 636 unicast
+  packets / 650,049 bytes. The protected capture-ring DACL returned Win32 error
+  5 to a normal-user metrics observer, so final ring-write evidence remains
+  open; no audio was recorded or retained.
+- Touchpad: ADB reverse, handshake and the initial empty frame succeeded. The
+  first contact reached `InjectTouchpadAction`, which returned Win32 error 5 in
+  this token. The desktop maps the bounded helper diagnostic to
+  `CAPY.WINDOWS.TOUCHPAD_INJECTION_DENIED`. The existing VHF path was not used,
+  and no driver or system policy was changed.
+
+Physical endpoint addresses, transient PIDs and pairing material are not
+normative configuration. Normal CI remains device-free.
+
 ## Data and timing quality
 
 Signal tests measure latency, clipping, gaps, discontinuities, loss/repeat and

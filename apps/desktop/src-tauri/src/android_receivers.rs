@@ -1,7 +1,10 @@
 use std::{
     env,
+    io::Read,
     path::{Path, PathBuf},
     process::{Child, Command, Stdio},
+    sync::{Arc, Mutex},
+    thread,
 };
 
 use crate::quick_actions::{QUICK_ACTION_SCHEMA_VERSION, QuickActionOperation, UiQuickAction};
@@ -11,6 +14,7 @@ pub const CAMERA_RECEIVER_ACTION_ID: &str = "capyio.quick-action.android-camera-
 
 const TOUCHPAD_PORT: u16 = 61_000;
 const CAMERA_PORT: u16 = 38_173;
+const STDERR_TAIL_LIMIT: usize = 4_096;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum ReceiverKind {
@@ -75,6 +79,7 @@ impl ReceiverKind {
 struct ReceiverProcess {
     child: Child,
     serial: String,
+    stderr_tail: Arc<Mutex<Vec<u8>>>,
 }
 
 struct Receiver {
@@ -102,17 +107,25 @@ impl Receiver {
         let serial = single_authorized_device(&adb)?;
         let executable = sibling_executable(self.kind.executable())?;
         configure_reverse(&adb, &serial, self.kind.port())?;
-        let child = Command::new(&executable)
+        let mut child = Command::new(&executable)
             .args(self.kind.arguments())
             .stdin(Stdio::null())
             .stdout(Stdio::null())
-            .stderr(Stdio::null())
+            .stderr(Stdio::piped())
             .spawn()
             .map_err(|error| {
                 let _ = remove_reverse(&adb, &serial, self.kind.port());
                 format!("无法启动 {}: {error}", executable.display())
             })?;
-        self.process = Some(ReceiverProcess { child, serial });
+        let stderr_tail = Arc::new(Mutex::new(Vec::with_capacity(STDERR_TAIL_LIMIT)));
+        if let Some(stderr) = child.stderr.take() {
+            capture_stderr_tail(stderr, Arc::clone(&stderr_tail));
+        }
+        self.process = Some(ReceiverProcess {
+            child,
+            serial,
+            stderr_tail,
+        });
         Ok(())
     }
 
@@ -144,12 +157,12 @@ impl Receiver {
         match outcome {
             Ok(None) => return,
             Ok(Some(status)) => {
-                self.problem = Some(format!(
-                    "接收端已退出（{}）；请确认手机端功能已启动并重试",
-                    status
-                        .code()
-                        .map_or_else(|| "无退出码".to_owned(), |code| code.to_string())
-                ));
+                let detail = process
+                    .stderr_tail
+                    .lock()
+                    .map(|bytes| String::from_utf8_lossy(&bytes).trim().to_owned())
+                    .unwrap_or_default();
+                self.problem = Some(receiver_exit_problem(self.kind, status.code(), &detail));
             }
             Err(error) => {
                 self.problem = Some(format!("无法读取接收端状态: {error}"));
@@ -195,9 +208,57 @@ impl Receiver {
             problem_code: self
                 .problem
                 .as_ref()
-                .map(|_| "CAPY.WINDOWS.ANDROID_RECEIVER_EXITED".to_owned()),
+                .map(|problem| receiver_problem_code(self.kind, problem).to_owned()),
             problem: self.problem.clone(),
         }
+    }
+}
+
+fn capture_stderr_tail(mut stderr: impl Read + Send + 'static, tail: Arc<Mutex<Vec<u8>>>) {
+    thread::spawn(move || {
+        let mut chunk = [0_u8; 512];
+        while let Ok(count) = stderr.read(&mut chunk) {
+            if count == 0 {
+                break;
+            }
+            let Ok(mut bytes) = tail.lock() else {
+                break;
+            };
+            append_stderr_tail(&mut bytes, &chunk[..count]);
+        }
+    });
+}
+
+fn append_stderr_tail(tail: &mut Vec<u8>, chunk: &[u8]) {
+    tail.extend_from_slice(chunk);
+    if tail.len() > STDERR_TAIL_LIMIT {
+        let overflow = tail.len() - STDERR_TAIL_LIMIT;
+        tail.drain(..overflow);
+    }
+}
+
+fn receiver_exit_problem(kind: ReceiverKind, code: Option<i32>, stderr: &str) -> String {
+    let exit = code.map_or_else(|| "无退出码".to_owned(), |value| value.to_string());
+    if kind == ReceiverKind::Touchpad
+        && (stderr.contains("submission failed: 5")
+            || stderr.contains("batch submission failed: 5")
+            || stderr.contains("Access is denied"))
+    {
+        return "Windows 拒绝合成触控板输入（错误 5）；请使用同等权限运行桌面端，或在明确授权后改用现有 VHF 实验路径".to_owned();
+    }
+    let bounded_detail = stderr.lines().last().unwrap_or_default().trim();
+    if bounded_detail.is_empty() {
+        format!("接收端已退出（{exit}）；请确认手机端功能已启动并重试")
+    } else {
+        format!("接收端已退出（{exit}）：{bounded_detail}")
+    }
+}
+
+fn receiver_problem_code(kind: ReceiverKind, problem: &str) -> &'static str {
+    if kind == ReceiverKind::Touchpad && problem.contains("错误 5") {
+        "CAPY.WINDOWS.TOUCHPAD_INJECTION_DENIED"
+    } else {
+        "CAPY.WINDOWS.ANDROID_RECEIVER_EXITED"
     }
 }
 
@@ -372,6 +433,36 @@ mod tests {
         );
         assert_eq!(ReceiverKind::Camera.port(), 38_173);
         assert!(ReceiverKind::Camera.arguments().contains(&"7200"));
+    }
+
+    #[test]
+    fn touchpad_access_denied_has_a_stable_problem_code() {
+        let problem = receiver_exit_problem(
+            ReceiverKind::Touchpad,
+            Some(1),
+            "synthetic touchpad batch submission failed: 5",
+        );
+        assert_eq!(
+            receiver_problem_code(ReceiverKind::Touchpad, &problem),
+            "CAPY.WINDOWS.TOUCHPAD_INJECTION_DENIED"
+        );
+        assert!(problem.contains("错误 5"));
+    }
+
+    #[test]
+    fn receiver_exit_detail_is_bounded_to_the_last_line() {
+        assert_eq!(
+            receiver_exit_problem(ReceiverKind::Camera, Some(2), "first\nlast"),
+            "接收端已退出（2）：last"
+        );
+    }
+
+    #[test]
+    fn stderr_capture_retains_only_the_bounded_tail() {
+        let mut tail = vec![b'a'; STDERR_TAIL_LIMIT - 2];
+        append_stderr_tail(&mut tail, b"bcdef");
+        assert_eq!(tail.len(), STDERR_TAIL_LIMIT);
+        assert_eq!(&tail[STDERR_TAIL_LIMIT - 5..], b"bcdef");
     }
 
     #[cfg(windows)]

@@ -998,8 +998,9 @@ controlled `0.5.4-dev` integration run. The unified Service owns the JNI/private
 touchpad sender over ADR 1106 ADB reverse, plus the existing Controller Lab UDP
 sender shared by touch-gamepad and standalone IMU. The Android Controller view
 accepts the Windows listener endpoint and per-run token. Shared UI build, APK
-composition and 242 Android contract assertions pass; physical installation
-and cross-device acceptance remain deliberately unperformed.
+composition and 242 Android contract assertions pass. The exact `0.5.4-dev` APK
+was subsequently installed under explicit authorization; one app now owns the
+audio, camera, IMU, touch-gamepad and touchpad controls.
 
 ADR 1409 removes the remaining manual Windows receiver startup from the
 controlled touchpad and camera flows. Two desktop Quick Actions now require
@@ -1008,9 +1009,25 @@ only a fixed sibling helper with closed bounded arguments, surface unexpected
 exit and reap both the process and mapping on Stop/shutdown. The touchpad action
 uses only the user-mode synthetic projection; the camera action decodes at most
 7200 access units and does not register a virtual camera. Desktop unit tests,
-TypeScript production build and targeted Rust checks pass. Physical acceptance
-of these new actions still requires installing the already-built unified
-`0.5.4-dev` APK under separate authorization.
+TypeScript production build and targeted Rust checks pass. The authorized
+physical run proved desktop-owned reverse/process cleanup and a complete camera
+receive/decode path: 90 AVC access units became 90 NV12 frames. Synthetic
+touchpad transport reached the Windows submission boundary, where the
+interactive token returned Win32 error 5; the desktop now retains bounded
+helper stderr and reports `CAPY.WINDOWS.TOUCHPAD_INJECTION_DENIED` instead of a
+generic child exit. No VHF fallback or driver operation was attempted.
+
+The same run passed unified touch-gamepad plus standalone IMU through the
+Windows physical gate (`accepted=151`, `rejected=0`, `dsu_packets=267`,
+non-neutral controls and finite IMU). Android speaker playback processed
+exactly 240,000 frames from the five-second Windows tone. A six-second
+microphone run processed 291,840 frames on Android with no reported sender
+queue loss, while the service-owned Windows receiver held
+`100.66.231.100:40011`; the Tailscale adapter increased by 636 unicast packets
+and 650,049 bytes. This proves phone-to-Windows arrival and an owned receive
+socket, but not the final protected capture-ring write: its DACL correctly
+rejected the normal-user read-only probe with Win32 error 5. A service-owned
+metrics projection remains follow-up work.
 
 The apparent post-stop UDP restart failure was then isolated from CapyIO. With
 UU Remote running, every tested port in 45980--46030 returned Winsock 10048

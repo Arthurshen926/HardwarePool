@@ -199,6 +199,13 @@ Camera Service to open ID 1. Active mutation was rejected and Stop released it.
 - the installed `0.5.2-dev` APK SHA-256 is
   `E55B6305E1F1DC143C50F134A0AE9A446F6DD8795C708B6EE0768760F7E79223`;
   shared-UI Camera2 inventory/selection physically opened and released front ID 1.
+- the installed unified `0.5.4-dev` APK SHA-256 is
+  `E1335AAD51CBE4DCCA76516326633A83AA0E3C4DAECD467AD5645D58E01AC2F4`.
+  One-device automation passed camera AVC/NV12 decode, touch-gamepad plus IMU,
+  speaker playback and phone-to-Windows microphone network arrival. Touchpad
+  reached the Windows synthetic submission boundary but returned Win32 error 5;
+  the common desktop UI now exposes the stable permission-denied problem rather
+  than a generic helper exit. No VHF or driver operation was performed.
 - `jar tf platform/android/app/build/outputs/apk/debug/app-debug.apk`: confirmed
   `assets/capyio-ui/index.html` and generated JavaScript/CSS in the assembled
   archive; the entrypoint references both assets with `./assets/...` paths.
@@ -207,12 +214,14 @@ Camera Service to open ID 1. Active mutation was rejected and Stop released it.
 
 - no push, pull request, package publication or production signing;
 - no APK installation or Android permission/service change except the explicitly
-  authorized A01E/A01H unified debug APK, CAMERA, camera foreground-service and
-  normal VIBRATE slices;
+  authorized A01E/A01H/A01E2/0.5.4 unified debug APK runs and their already-
+  declared normal audio, camera, notification and VIBRATE behavior;
 - no Windows driver install/removal, restart or boot/security-policy change;
 - no Display merge or Display worktree modification;
 - no claim that the Tauri schema-4 fixture catalog is real hardware discovery;
 - no claim that Android publication selection has reached a remote peer;
-- physical Android rendering and the camera positive lifecycle are proven; no
-  claim is made for complete Route/peer parity or camera denial/revoke/background
-  qualification. Native audio controls remain as a fallback.
+- physical Android rendering, camera decode, gamepad/IMU and speaker paths are
+  proven. Microphone arrival is proven only through the Windows UDP boundary;
+  protected capture-ring write remains open. Synthetic touchpad submission is
+  blocked by the current token. No claim is made for complete Route/peer parity
+  or camera denial/revoke/background qualification.

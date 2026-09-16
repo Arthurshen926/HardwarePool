@@ -28,8 +28,8 @@ pub enum CaptureWriteOutcome {
 pub enum CaptureRingError {
     #[error("the CapyIO capture mapping already belongs to another service instance")]
     AlreadyOwned,
-    #[error("the CapyIO capture mapping is unavailable")]
-    MappingUnavailable,
+    #[error("the CapyIO capture mapping is unavailable (Windows error {code})")]
+    MappingUnavailable { code: u32 },
     #[error("the capture ring contains an invalid bounded layout")]
     InvalidLayout,
     #[error("PCM must be non-empty aligned mono S16LE within the capture-ring bound")]
@@ -61,8 +61,8 @@ mod windows {
         },
         System::{
             Memory::{
-                CreateFileMappingW, FILE_MAP_ALL_ACCESS, MEMORY_MAPPED_VIEW_ADDRESS, MapViewOfFile,
-                OpenFileMappingW, PAGE_READWRITE, UnmapViewOfFile,
+                CreateFileMappingW, FILE_MAP_ALL_ACCESS, FILE_MAP_READ, MEMORY_MAPPED_VIEW_ADDRESS,
+                MapViewOfFile, OpenFileMappingW, PAGE_READWRITE, UnmapViewOfFile,
             },
             Threading::{CreateMutexW, ReleaseMutex, WaitForSingleObject},
         },
@@ -286,6 +286,60 @@ mod windows {
         }
     }
 
+    /// Opens the service-owned mapping without changing producer or consumer state.
+    ///
+    /// This is intentionally metrics-only so physical validation can observe the
+    /// Windows microphone ingress without consuming or copying real-time audio.
+    pub struct CaptureRingObserver {
+        mapping: HANDLE,
+        view: NonNull<u8>,
+    }
+
+    impl CaptureRingObserver {
+        pub fn attach() -> Result<Self, CaptureRingError> {
+            let mapping_name = wide_null(MAPPING_NAME);
+            let mapping = unsafe { OpenFileMappingW(FILE_MAP_READ, 0, mapping_name.as_ptr()) };
+            if mapping.is_null() {
+                return Err(CaptureRingError::MappingUnavailable {
+                    code: last_error_code(),
+                });
+            }
+            let mapped = unsafe { MapViewOfFile(mapping, FILE_MAP_READ, 0, 0, TOTAL_SIZE) };
+            let Some(view) = NonNull::new(mapped.Value.cast::<u8>()) else {
+                let error = last_error("MapViewOfFile");
+                unsafe { CloseHandle(mapping) };
+                return Err(error);
+            };
+            let header = unsafe { &*view.as_ptr().cast::<Header>() };
+            if !valid_header(header) {
+                unsafe {
+                    UnmapViewOfFile(MEMORY_MAPPED_VIEW_ADDRESS {
+                        Value: view.as_ptr().cast(),
+                    });
+                    CloseHandle(mapping);
+                }
+                return Err(CaptureRingError::InvalidLayout);
+            }
+            Ok(Self { mapping, view })
+        }
+
+        #[must_use]
+        pub fn metrics(&self) -> CaptureRingMetrics {
+            metrics(unsafe { &*self.view.as_ptr().cast::<Header>() })
+        }
+    }
+
+    impl Drop for CaptureRingObserver {
+        fn drop(&mut self) {
+            unsafe {
+                UnmapViewOfFile(MEMORY_MAPPED_VIEW_ADDRESS {
+                    Value: self.view.as_ptr().cast(),
+                });
+                CloseHandle(self.mapping);
+            }
+        }
+    }
+
     /// Attaches one user-mode PCM producer to the existing service-owned ring.
     pub struct CaptureRingProducer {
         mapping: HANDLE,
@@ -299,7 +353,9 @@ mod windows {
             let mapping =
                 unsafe { OpenFileMappingW(FILE_MAP_ALL_ACCESS, 0, mapping_name.as_ptr()) };
             if mapping.is_null() {
-                return Err(CaptureRingError::MappingUnavailable);
+                return Err(CaptureRingError::MappingUnavailable {
+                    code: last_error_code(),
+                });
             }
             let mapped = unsafe { MapViewOfFile(mapping, FILE_MAP_ALL_ACCESS, 0, 0, TOTAL_SIZE) };
             let Some(view) = NonNull::new(mapped.Value.cast::<u8>()) else {
@@ -518,6 +574,16 @@ mod windows {
         }
 
         #[test]
+        fn observer_reads_metrics_without_registering_as_a_stream_endpoint() {
+            let _guard = TEST_MAPPING_LOCK.lock().unwrap();
+            let owner = CaptureRingOwner::create_baseline().unwrap();
+            let observer = CaptureRingObserver::attach().unwrap();
+            assert_eq!(observer.metrics(), owner.metrics());
+            assert_eq!(observer.metrics().producer_attaches, 0);
+            assert_eq!(observer.metrics().consumer_attaches, 0);
+        }
+
+        #[test]
         fn full_ring_drops_whole_block_and_invalid_pcm_is_rejected() {
             let _guard = TEST_MAPPING_LOCK.lock().unwrap();
             let owner = CaptureRingOwner::create_baseline().unwrap();
@@ -540,4 +606,4 @@ mod windows {
 }
 
 #[cfg(windows)]
-pub use windows::{CaptureRingOwner, CaptureRingProducer};
+pub use windows::{CaptureRingObserver, CaptureRingOwner, CaptureRingProducer};
