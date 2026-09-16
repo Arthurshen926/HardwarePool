@@ -35,7 +35,7 @@ try {
         builtAtUtc = [DateTime]::UtcNow.ToString('o')
         configuration = 'debug-local-test'
         artifacts = @($artifacts)
-        prerequisites = @('Windows WebView2', 'Android SDK adb configured through CAPYIO_ADB or ANDROID_HOME or ANDROID_SDK_ROOT', 'One authorized Android device for camera/touchpad', 'Existing CapyIO audio service and drivers for system audio', 'Administrator token for installed VHF touchpad')
+        prerequisites = @('Windows WebView2', 'Android SDK adb configured through CAPYIO_ADB or ANDROID_HOME or ANDROID_SDK_ROOT', 'One authorized Android device for camera/touchpad', 'Existing CapyIO audio service and drivers for system audio', 'Interactive UAC approval for the system-camera Broker', 'Administrator token for installed VHF touchpad')
         limitations = @('System camera requires separately deployed CapyIO COM source and Global mapping privileges', 'No drivers or Android APK included', 'Not a production installer')
     } | ConvertTo-Json -Depth 5 | Set-Content -LiteralPath (Join-Path $destination 'manifest.json') -Encoding UTF8
     Write-Output "Test package: $destination"

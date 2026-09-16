@@ -45,8 +45,13 @@ recovery and cleanup passed.
 See `CAPY_INTEGRATED_SYSTEM_CAMERA_REPORT.md` for evidence, ADR 1413 for the
 exact deployment hash/rollback and ADR 1414 for the privilege boundary. This is
 not automatic package installation.
-The desktop now checks its own elevation token before Start: a normal session
-shows the system-camera action as blocked and creates no ADB reverse or helper.
+The current package keeps the main UI at ordinary privilege. System-camera
+Start requests Windows UAC for the fixed `--camera-broker-host` entry point,
+then uses an owner-scoped Status/Start/Stop pipe; the WebView supplies no path,
+argument, mapping name or endpoint. Successful Stop cleans the projection and
+ends that Broker process. An already elevated desktop retains the prior direct
+compatibility path. The new UAC/Broker route is unit-verified but still awaits
+its physical live-frame rerun.
 A uniquely installed VHF interface selects VHF; missing VHF
 selects synthetic input. Ambiguous interfaces, failed discovery and unsupported
 platforms now fail before reverse mapping or helper creation, as ADR 1410
@@ -57,9 +62,10 @@ kind-specific bounded stdout readiness record before reporting Active. Failed
 readiness reaps the helper and removes the exact ADB reverse. Active still means
 listener/projection readiness, not phone-frame delivery.
 
-Validation on 2026-09-16: package build passed; eight receiver unit tests passed
-(one physical test ignored); desktop all-target Clippy passed with warnings
-denied. No physical acceptance is inferred from this build. The current
+Validation on 2026-09-16: package build passed; the desktop library passed 72
+tests with 10 physical tests ignored, the Windows Broker/service package passed
+24 tests, and desktop/service all-target Clippy passed with warnings denied. No
+physical acceptance is inferred from this build. The current
 microphone execution-account comparison and short nonzero ordinary-client
 capture are now recorded in `CAPY_INTEGRATED_MICROPHONE_056_REPORT.md`; the older
 restricted-account failure is not evidence of a driver regression.

@@ -936,6 +936,14 @@ runtime owns one fixed camera projection lifecycle, rolls back partial Start
 and reports unexpected exit. This foundation is not yet a Broker executable or
 desktop integration, so it does not change the current elevation requirement.
 
+ADR 1419 supplies that integration as a projection-scoped process, without
+installing a service. An ordinary desktop launches its own fixed Broker entry
+point through Windows `runas`; the entry point branches before Tauri/WebView
+initialization and rejects a non-elevated token or extra arguments. The Broker
+owns the existing fixed session host, shared-frame receiver and ADB cleanup.
+The UI observes only the ADR 1418 snapshot, may adopt an existing Broker and
+does not own its lifetime; successful explicit Stop ends the Broker lease.
+
 ANDROID-A01E composes the existing headless Camera2/MediaCodec service into the
 unified APK behind a narrow facade. The unexported camera foreground service,
 not the Activity or WebView, owns capture, encoding, bounded export and cleanup.

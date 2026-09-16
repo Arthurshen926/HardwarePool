@@ -139,6 +139,31 @@ round trip, idempotency, partial-start rollback and unexpected exit. The real
 camera session host and receiver have not moved behind it, and no service is
 installed, so the desktop elevation limitation remains.
 
+ADR 1419 then connects the unified Quick Action to a projection-scoped Broker
+mode. In an ordinary session, Start requests UAC only for the fixed Broker entry
+point; it branches before Tauri starts and owns the existing session host,
+shared receiver and cleanup. The ordinary UI maps bounded Broker state and can
+Stop it without inheriting elevation. Unit and strict-lint gates pass, but the
+interactive UAC plus live-frame path has not yet been physically rerun, so the
+older elevated-desktop gate remains the latest end-to-end evidence.
+
+The post-Broker integration package is
+`target/integrated-test/20260916-144502-0638`; its desktop SHA-256 is
+`236116EECE202BB84A30452038196AE4570B08C7C5DB78B70625E10ADB181C54`.
+Directly entering Broker-host mode from an ordinary token failed before pipe
+creation with the expected elevated-token diagnostic. The fixed `runas` launch
+was then requested, but no interactive UAC confirmation arrived within the
+automation window; the request was cancelled. A subsequent control probe found
+no Broker, and process inventory found no desktop, camera-session or AVC
+receiver residue. This is a clean blocked physical gate, not a pass.
+
+`cargo xtask ci` completed formatting, workspace check/Clippy, workspace tests,
+docs/manifests and Adapter smoke, then stopped at the final repository validator
+because its case-sensitive camera deployment assertion expects a lowercase
+`$expectedSha256` assignment while the unchanged pinned script declares the
+parameter as `$ExpectedSha256`. The camera script and validator were not changed
+by this slice; targeted docs validation and all changed-package gates pass.
+
 The post-readiness shared UI/test-package build passed and generated
 `target/integrated-test/20260916-141529-8853`; its manifest records the dirty
 development revision and hashes all four shipped executables.

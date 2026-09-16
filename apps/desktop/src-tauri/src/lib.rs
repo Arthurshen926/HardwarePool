@@ -52,6 +52,24 @@ use quick_actions::{
 };
 use windows_gamepad_host::WindowsGamepadHost;
 
+#[cfg(windows)]
+pub fn run_camera_broker_host() -> Result<(), String> {
+    use capyio_windows_service::{CameraBrokerRuntime, camera_control_server_loop_until_stopped};
+
+    if !camera_session::process_is_elevated()? {
+        return Err("camera Broker host requires an elevated process token".to_owned());
+    }
+    let runtime = Arc::new(Mutex::new(CameraBrokerRuntime::new(
+        android_receivers::LocalSystemCameraProcess::new(),
+    )));
+    camera_control_server_loop_until_stopped(runtime, Arc::new(AtomicBool::new(false)))
+}
+
+#[cfg(not(windows))]
+pub fn run_camera_broker_host() -> Result<(), String> {
+    Err("camera Broker host requires Windows".to_owned())
+}
+
 struct AppState {
     node: Arc<Mutex<DesktopNodeState>>,
     local_shared_capabilities: Mutex<BTreeSet<CapabilityId>>,

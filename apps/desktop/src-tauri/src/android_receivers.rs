@@ -9,6 +9,9 @@ use std::{
 };
 
 use capyio_windows_input::{VhfBrokerInterfaceProbe, probe_vhf_broker_interface};
+use capyio_windows_service::{
+    CameraBrokerClient, CameraBrokerProcess, CameraBrokerSnapshot, CameraBrokerState,
+};
 
 use crate::quick_actions::{QUICK_ACTION_SCHEMA_VERSION, QuickActionOperation, UiQuickAction};
 
@@ -21,6 +24,7 @@ const CAMERA_PORT: u16 = 38_173;
 const STDERR_TAIL_LIMIT: usize = 4_096;
 const READY_LINE_LIMIT: usize = 512;
 const READY_TIMEOUT: Duration = Duration::from_secs(5);
+const BROKER_READY_TIMEOUT: Duration = Duration::from_secs(60);
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum ReceiverKind {
@@ -419,12 +423,22 @@ impl AndroidReceiverActions {
 
     pub fn actions(&mut self) -> Vec<UiQuickAction> {
         self.poll_system_camera();
-        let mut system = self.system_camera.dto();
-        if self.camera_session.is_some() && self.system_camera.process.is_some() {
-            system.connection_hint =
-                Some("系统相机会话已就绪；接收器运行中，手机画面到达需单独确认".to_owned());
+        let broker = CameraBrokerClient::default().try_status().ok();
+        let broker_available = broker.is_some();
+        let mut system = broker.map(system_camera_broker_action).unwrap_or_else(|| {
+            let mut action = self.system_camera.dto();
+            if self.camera_session.is_some() && self.system_camera.process.is_some() {
+                action.connection_hint =
+                    Some("系统相机会话已就绪；接收器运行中，手机画面到达需单独确认".to_owned());
+            }
+            action
+        });
+        if !broker_available {
+            apply_system_camera_permission(
+                &mut system,
+                crate::camera_session::process_is_elevated(),
+            );
         }
-        apply_system_camera_permission(&mut system, crate::camera_session::process_is_elevated());
         vec![self.touchpad.dto(), self.camera.dto(), system]
     }
 
@@ -435,6 +449,9 @@ impl AndroidReceiverActions {
     ) -> Result<UiQuickAction, String> {
         self.poll_system_camera();
         if action_id == SYSTEM_CAMERA_ACTION_ID {
+            if let Some(action) = self.invoke_camera_broker(operation)? {
+                return Ok(action);
+            }
             let result = match operation {
                 QuickActionOperation::Start | QuickActionOperation::Retry => {
                     self.start_system_camera()
@@ -448,7 +465,10 @@ impl AndroidReceiverActions {
         }
         if action_id == CAMERA_RECEIVER_ACTION_ID
             && !matches!(operation, QuickActionOperation::Stop)
-            && self.camera_session.is_some()
+            && (self.camera_session.is_some()
+                || CameraBrokerClient::default()
+                    .try_status()
+                    .is_ok_and(|snapshot| snapshot.state == CameraBrokerState::Active))
         {
             return Err("请先停止系统摄像头，再启动仅解码接收".to_owned());
         }
@@ -508,6 +528,47 @@ impl AndroidReceiverActions {
         Ok(())
     }
 
+    fn invoke_camera_broker(
+        &mut self,
+        operation: QuickActionOperation,
+    ) -> Result<Option<UiQuickAction>, String> {
+        let client = CameraBrokerClient::default();
+        let mut status = client.try_status();
+        if status.is_err()
+            && !matches!(operation, QuickActionOperation::Stop)
+            && !crate::camera_session::process_is_elevated()?
+        {
+            launch_elevated_camera_broker()?;
+            let deadline = std::time::Instant::now() + BROKER_READY_TIMEOUT;
+            while std::time::Instant::now() < deadline {
+                status = client.try_status();
+                if status.is_ok() {
+                    break;
+                }
+                thread::sleep(Duration::from_millis(25));
+            }
+            if status.is_err() {
+                return Err("摄像头 Broker 未在授权等待时间内就绪".to_owned());
+            }
+        }
+        if status.is_err() {
+            return Ok(None);
+        }
+        let result = match operation {
+            QuickActionOperation::Start | QuickActionOperation::Retry => client.start(),
+            QuickActionOperation::Stop => client.stop(),
+        };
+        let snapshot = match result {
+            Ok(snapshot) => snapshot,
+            Err(error) => client.status().unwrap_or(CameraBrokerSnapshot {
+                state: CameraBrokerState::Failed,
+                generation: 0,
+                problem_code: Some(error),
+            }),
+        };
+        Ok(Some(system_camera_broker_action(snapshot)))
+    }
+
     fn stop_system_camera(&mut self) -> Result<(), String> {
         let camera = self
             .camera_session
@@ -551,13 +612,8 @@ fn apply_system_camera_permission(action: &mut UiQuickAction, elevated: Result<b
     match elevated {
         Ok(true) => {}
         Ok(false) => {
-            action.status = "blocked";
-            action.available_operations.clear();
-            action.problem_code = Some("CAPY.WINDOWS.SYSTEM_CAMERA_ELEVATION_REQUIRED".to_owned());
-            action.problem = Some(
-                "当前原型需以管理员身份运行 CapyIO Windows 客户端，才能创建系统摄像头共享通道"
-                    .to_owned(),
-            );
+            action.connection_hint =
+                Some("启动时将请求 Windows 管理员确认；主界面保持普通权限".to_owned());
         }
         Err(error) => {
             action.status = "blocked";
@@ -568,9 +624,109 @@ fn apply_system_camera_permission(action: &mut UiQuickAction, elevated: Result<b
     }
 }
 
+fn system_camera_broker_action(snapshot: CameraBrokerSnapshot) -> UiQuickAction {
+    let (status, operations, evidence, problem) = match snapshot.state {
+        CameraBrokerState::Stopped => ("idle", vec!["start"], "not_started", None),
+        CameraBrokerState::Active => ("active", vec!["stop"], "process_state", None),
+        CameraBrokerState::Failed => (
+            "failed",
+            vec!["retry", "stop"],
+            "process_state",
+            Some("独立摄像头 Broker 报告投影失败；可重试或停止清理".to_owned()),
+        ),
+    };
+    UiQuickAction {
+        schema_version: QUICK_ACTION_SCHEMA_VERSION,
+        id: SYSTEM_CAMERA_ACTION_ID,
+        kind: "capability_control",
+        title: ReceiverKind::SystemCamera.title(),
+        summary: ReceiverKind::SystemCamera.summary(),
+        status,
+        simulated: false,
+        route_id: None,
+        route_state: None,
+        route_epoch: None,
+        available_operations: operations,
+        evidence_level: evidence,
+        connection_hint: Some("独立摄像头 Broker".to_owned()),
+        problem_code: snapshot.problem_code,
+        problem,
+    }
+}
+
+#[cfg(windows)]
+fn launch_elevated_camera_broker() -> Result<(), String> {
+    use std::{iter, ptr};
+    use windows_sys::Win32::UI::{Shell::ShellExecuteW, WindowsAndMessaging::SW_HIDE};
+
+    fn wide(value: &std::ffi::OsStr) -> Vec<u16> {
+        use std::os::windows::ffi::OsStrExt;
+        value.encode_wide().chain(iter::once(0)).collect()
+    }
+
+    let executable =
+        env::current_exe().map_err(|error| format!("无法定位摄像头 Broker 宿主: {error}"))?;
+    let verb = wide(std::ffi::OsStr::new("runas"));
+    let executable = wide(executable.as_os_str());
+    let parameters = wide(std::ffi::OsStr::new("--camera-broker-host"));
+    // SAFETY: all strings are immutable terminated UTF-16 for the duration of
+    // the call. The executable and sole argument are fixed by this binary.
+    let result = unsafe {
+        ShellExecuteW(
+            ptr::null_mut(),
+            verb.as_ptr(),
+            executable.as_ptr(),
+            parameters.as_ptr(),
+            ptr::null(),
+            SW_HIDE,
+        )
+    };
+    if result as usize <= 32 {
+        Err(format!(
+            "Windows 未启动摄像头 Broker（ShellExecute={result:p}）"
+        ))
+    } else {
+        Ok(())
+    }
+}
+
+#[cfg(not(windows))]
+fn launch_elevated_camera_broker() -> Result<(), String> {
+    Err("摄像头 Broker 仅支持 Windows".to_owned())
+}
+
 impl Drop for AndroidReceiverActions {
     fn drop(&mut self) {
         self.shutdown();
+    }
+}
+
+/// Fixed local implementation used only inside the elevated camera Broker
+/// process. Its control protocol cannot replace these paths or arguments.
+pub(crate) struct LocalSystemCameraProcess {
+    actions: AndroidReceiverActions,
+}
+
+impl LocalSystemCameraProcess {
+    pub(crate) const fn new() -> Self {
+        Self {
+            actions: AndroidReceiverActions::new(),
+        }
+    }
+}
+
+impl CameraBrokerProcess for LocalSystemCameraProcess {
+    fn start(&mut self) -> Result<(), String> {
+        self.actions.start_system_camera()
+    }
+
+    fn running(&mut self) -> Result<bool, String> {
+        self.actions.poll_system_camera();
+        Ok(self.actions.camera_session.is_some() && self.actions.system_camera.process.is_some())
+    }
+
+    fn stop(&mut self) -> Result<(), String> {
+        self.actions.stop_system_camera()
     }
 }
 
@@ -988,14 +1144,42 @@ mod tests {
     }
 
     #[test]
-    fn system_camera_is_blocked_before_start_without_elevation() {
+    fn system_camera_offers_broker_launch_without_elevating_the_ui() {
         let mut action = Receiver::new(ReceiverKind::SystemCamera).dto();
         apply_system_camera_permission(&mut action, Ok(false));
-        assert_eq!(action.status, "blocked");
-        assert!(action.available_operations.is_empty());
+        assert_eq!(action.status, "idle");
+        assert_eq!(action.available_operations, vec!["start"]);
+        assert!(action.problem_code.is_none());
+        assert!(
+            action
+                .connection_hint
+                .unwrap()
+                .contains("主界面保持普通权限")
+        );
+    }
+
+    #[test]
+    fn broker_snapshot_maps_to_bounded_system_camera_action() {
+        let active = system_camera_broker_action(CameraBrokerSnapshot {
+            state: CameraBrokerState::Active,
+            generation: 7,
+            problem_code: None,
+        });
+        assert_eq!(active.status, "active");
+        assert_eq!(active.available_operations, vec!["stop"]);
+        assert_eq!(active.route_epoch, None);
+        assert_eq!(active.connection_hint.as_deref(), Some("独立摄像头 Broker"));
+
+        let failed = system_camera_broker_action(CameraBrokerSnapshot {
+            state: CameraBrokerState::Failed,
+            generation: 7,
+            problem_code: Some("CAPY.CAMERA_BROKER.EXITED".to_owned()),
+        });
+        assert_eq!(failed.status, "failed");
+        assert_eq!(failed.available_operations, vec!["retry", "stop"]);
         assert_eq!(
-            action.problem_code.as_deref(),
-            Some("CAPY.WINDOWS.SYSTEM_CAMERA_ELEVATION_REQUIRED")
+            failed.problem_code.as_deref(),
+            Some("CAPY.CAMERA_BROKER.EXITED")
         );
     }
 }

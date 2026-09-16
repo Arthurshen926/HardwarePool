@@ -27,7 +27,7 @@ mod microphone_control;
 pub use camera_control::{
     CAMERA_CONTROL_PIPE_NAME, CameraBrokerClient, CameraBrokerProcess, CameraBrokerRuntime,
     CameraBrokerSnapshot, CameraBrokerState, camera_control_server_loop,
-    wake_camera_control_server,
+    camera_control_server_loop_until_stopped, wake_camera_control_server,
 };
 #[cfg(windows)]
 pub use capyio_windows_capture_ring::{CaptureRingMetrics, CaptureRingOwner};

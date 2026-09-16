@@ -246,21 +246,43 @@ pub fn camera_control_server_loop<P: CameraBrokerProcess>(
     runtime: Arc<Mutex<CameraBrokerRuntime<P>>>,
     stop: Arc<AtomicBool>,
 ) -> Result<(), String> {
+    camera_control_server_loop_with_policy(runtime, stop, false)
+}
+
+/// Runs a projection-scoped Broker lease. A successful Stop response is
+/// flushed before the host exits; failed Stop remains available for retry.
+pub fn camera_control_server_loop_until_stopped<P: CameraBrokerProcess>(
+    runtime: Arc<Mutex<CameraBrokerRuntime<P>>>,
+    stop: Arc<AtomicBool>,
+) -> Result<(), String> {
+    camera_control_server_loop_with_policy(runtime, stop, true)
+}
+
+fn camera_control_server_loop_with_policy<P: CameraBrokerProcess>(
+    runtime: Arc<Mutex<CameraBrokerRuntime<P>>>,
+    stop: Arc<AtomicBool>,
+    exit_after_successful_stop: bool,
+) -> Result<(), String> {
     let pipe = NamedPipe::create(CAMERA_CONTROL_PIPE_NAME, PIPE_SDDL)?;
     while !stop.load(Ordering::Acquire) {
         if !pipe.wait_for_client(&stop)? || stop.load(Ordering::Acquire) {
             break;
         }
-        let request = match pipe.read_json() {
+        let request: ControlRequest = match pipe.read_json() {
             Ok(request) => request,
             Err(_) => {
                 pipe.disconnect();
                 continue;
             }
         };
+        let stop_host = exit_after_successful_stop && request.operation == ControlOperation::Stop;
         let response = dispatch_request(&runtime, request);
-        let _ = pipe.write_json(&response);
+        let stop_host = stop_host && response.success;
+        let wrote_response = pipe.write_json(&response).is_ok();
         pipe.disconnect();
+        if stop_host && wrote_response {
+            break;
+        }
     }
     Ok(())
 }
@@ -469,7 +491,9 @@ mod tests {
         let stop = Arc::new(AtomicBool::new(false));
         let server_runtime = Arc::clone(&runtime);
         let server_stop = Arc::clone(&stop);
-        let server = thread::spawn(move || camera_control_server_loop(server_runtime, server_stop));
+        let server = thread::spawn(move || {
+            camera_control_server_loop_until_stopped(server_runtime, server_stop)
+        });
         let client = CameraBrokerClient::default();
         let mut ready = None;
         for _ in 0..20 {
@@ -488,8 +512,6 @@ mod tests {
             client.stop().expect("stop").state,
             CameraBrokerState::Stopped
         );
-        stop.store(true, Ordering::Release);
-        wake_camera_control_server();
         server.join().expect("server thread").expect("server loop");
     }
 }

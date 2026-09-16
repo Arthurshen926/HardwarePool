@@ -7,29 +7,31 @@
 The Windows shared UI now exposes a separate system-camera action that owns
 the camera session host and shared-NV12 receiver, with bounded readiness,
 rollback and normal shutdown. The existing decode-only action is preserved.
-Desktop tests pass (68 passed, seven physical tests ignored), as does strict
+Desktop tests pass (72 passed, 10 physical tests ignored), as does strict
 desktop Clippy. The follow-up hash-pinned COM deployment passes real session
 Start/Stop and two independent consumers reading generated frames. The later
 elevated end-to-end gate also delivered a decoded Android frame through the
 production ingress to an independent Media Foundation camera consumer and
 cleaned up both platforms. A later Stop/restart physical gate retained the
 Windows system camera during the fixed grace period, recovered higher-sequence
-phone frames and passed the independent consumer again. The current prototype
-requires elevation for the Global mapping; long-duration and broader app
-compatibility remain.
-Normal sessions now fail closed at a read-only token preflight before creating
-camera/ADB state, while elevated sessions retain the proven path. Whole-UI
-elevation remains a prototype limitation pending a least-privilege broker.
+phone frames and passed the independent consumer again. The Global mapping
+still requires elevation; long-duration and broader app compatibility remain.
+The earlier normal-session preflight failed closed before creating camera/ADB
+state. That compatibility path remains for an already elevated desktop, while
+ADR 1419 now moves new ordinary-session elevation into a dedicated Broker.
 Desktop-managed camera and touchpad receivers additionally require exact,
 bounded process readiness before becoming Active; a physical decode-receiver
 Start/Stop confirmed readiness and reverse cleanup without starting capture.
 ADR 1418 now fixes a separate owner-scoped camera Broker control contract with
 closed Status/Start/Stop messages, idempotent lifecycle, partial-start rollback
-and hardware-independent named-pipe tests. No Broker executable or service is
-installed or wired into the desktop yet, so ordinary system-camera use still
-requires the existing whole-process elevation path.
+and hardware-independent named-pipe tests. ADR 1419 wires that contract into a
+projection-scoped elevated Broker mode of the desktop executable: the ordinary
+UI launches only that fixed mode through Windows UAC, adopts its bounded state,
+and leaves Tauri/WebView unprivileged. A successful Stop closes the Broker after
+flushing its response. No service is installed, and the new UAC/live route
+still needs a physical gate before retiring the old compatibility path.
 See
-`CAPY_INTEGRATED_SYSTEM_CAMERA_REPORT.md` and ADRs 1412–1418. This does not claim
+`CAPY_INTEGRATED_SYSTEM_CAMERA_REPORT.md` and ADRs 1412–1419. This does not claim
 completion of all integration or merge the separate Display work.
 
 ## Verified baseline

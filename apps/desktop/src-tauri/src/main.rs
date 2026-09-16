@@ -1,4 +1,45 @@
 fn main() {
+    let mut broker_arguments = std::env::args().skip(1);
+    let broker_command = broker_arguments.next();
+    if broker_command.as_deref() == Some("--camera-broker-host") {
+        if broker_arguments.next().is_some() {
+            eprintln!(
+                "CAPYIO_CAMERA_BROKER_FAILED: camera Broker host accepts no additional arguments"
+            );
+            std::process::exit(2);
+        }
+        if let Err(error) = capyio_desktop_lib::run_camera_broker_host() {
+            eprintln!("CAPYIO_CAMERA_BROKER_FAILED: {error}");
+            std::process::exit(2);
+        }
+        return;
+    }
+    if broker_command.as_deref() == Some("--camera-broker-control") {
+        let operation = broker_arguments.next();
+        if broker_arguments.next().is_some() {
+            eprintln!(
+                "CAPYIO_CAMERA_BROKER_CONTROL_FAILED: usage: capyio-desktop --camera-broker-control status|start|stop"
+            );
+            std::process::exit(2);
+        }
+        let client = capyio_windows_service::CameraBrokerClient::default();
+        let result = match operation.as_deref() {
+            Some("status") => client.status(),
+            Some("start") => client.start(),
+            Some("stop") => client.stop(),
+            _ => Err("usage: capyio-desktop --camera-broker-control status|start|stop".to_owned()),
+        };
+        match result.and_then(|snapshot| {
+            serde_json::to_string(&snapshot).map_err(|error| error.to_string())
+        }) {
+            Ok(snapshot) => println!("{snapshot}"),
+            Err(error) => {
+                eprintln!("CAPYIO_CAMERA_BROKER_CONTROL_FAILED: {error}");
+                std::process::exit(2);
+            }
+        }
+        return;
+    }
     #[cfg(debug_assertions)]
     {
         let mut arguments = std::env::args().skip(1);
