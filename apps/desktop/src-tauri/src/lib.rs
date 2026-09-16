@@ -34,6 +34,7 @@ use tauri::State;
 mod android_gamepad;
 mod android_receivers;
 pub mod audio_share_runtime;
+mod camera_session;
 mod diagnostics;
 mod gamepad_lab;
 mod microphone_quick_action;

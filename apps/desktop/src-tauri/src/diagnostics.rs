@@ -22,6 +22,10 @@ pub(crate) fn get_diagnostics() -> Diagnostics {
     for (label, result) in [
         ("ADB 程序", crate::android_receivers::adb_path()),
         (
+            "系统相机会话宿主",
+            crate::android_receivers::sibling_executable(crate::camera_session::EXECUTABLE),
+        ),
+        (
             "触控板接收器",
             crate::android_receivers::sibling_executable("capyio-ptp-adb-lab.exe"),
         ),

@@ -2,7 +2,7 @@
 
 Run `powershell -NoProfile -ExecutionPolicy Bypass -File
 scripts/build_integrated_test_package.ps1` from the repository. This builds the
-shared UI and the three explicit Windows binary targets offline, then creates a
+shared UI and the four explicit Windows binary targets offline, then creates a
 new timestamped directory under `target/integrated-test`. Existing test packages
 are preserved. Launch `capyio-desktop.exe` inside that directory.
 
@@ -31,8 +31,14 @@ Android `capyioCheck` passed, including 242 composition, 22 catalog, 40 lifecycl
 36 audio and 126 native-LAN assertions. This proves build/package deployment,
 not a new physical media or diagnostic-panel rendering acceptance.
 
-The camera receiver currently decodes AVC to NV12 and does not register a
-system camera. A uniquely installed VHF interface selects VHF; missing VHF
+The decode-only camera action decodes AVC to NV12 without registering a system
+camera. A separate system-camera action now owns the session host and shared
+NV12 receiver together, with readiness validation and normal EOF shutdown.
+The two camera actions are mutually exclusive. System-camera use requires a
+separately deployed COM source and Global mapping privileges; the test package
+does not install that component. Session readiness is not live-frame evidence,
+and ordinary camera-client physical acceptance remains pending.
+A uniquely installed VHF interface selects VHF; missing VHF
 selects synthetic input. Ambiguous interfaces, failed discovery and unsupported
 platforms now fail before reverse mapping or helper creation, as ADR 1410
 requires. VHF requires an elevated Windows application.
@@ -40,5 +46,6 @@ requires. VHF requires an elevated Windows application.
 Validation on 2026-09-16: package build passed; eight receiver unit tests passed
 (one physical test ignored); desktop all-target Clippy passed with warnings
 denied. No physical acceptance is inferred from this build. The current
-microphone WASAPI error still requires an execution-account comparison before
-attributing it to the driver.
+microphone execution-account comparison and short nonzero ordinary-client
+capture are now recorded in `CAPY_INTEGRATED_MICROPHONE_056_REPORT.md`; the older
+restricted-account failure is not evidence of a driver regression.

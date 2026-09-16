@@ -13,6 +13,7 @@ use crate::quick_actions::{QUICK_ACTION_SCHEMA_VERSION, QuickActionOperation, Ui
 
 pub const TOUCHPAD_RECEIVER_ACTION_ID: &str = "capyio.quick-action.android-touchpad-receiver";
 pub const CAMERA_RECEIVER_ACTION_ID: &str = "capyio.quick-action.android-camera-receiver";
+pub const SYSTEM_CAMERA_ACTION_ID: &str = "capyio.quick-action.android-system-camera";
 
 const TOUCHPAD_PORT: u16 = 61_000;
 const CAMERA_PORT: u16 = 38_173;
@@ -22,6 +23,7 @@ const STDERR_TAIL_LIMIT: usize = 4_096;
 enum ReceiverKind {
     Touchpad,
     Camera,
+    SystemCamera,
 }
 
 impl ReceiverKind {
@@ -29,6 +31,7 @@ impl ReceiverKind {
         match self {
             Self::Touchpad => TOUCHPAD_RECEIVER_ACTION_ID,
             Self::Camera => CAMERA_RECEIVER_ACTION_ID,
+            Self::SystemCamera => SYSTEM_CAMERA_ACTION_ID,
         }
     }
 
@@ -36,6 +39,7 @@ impl ReceiverKind {
         match self {
             Self::Touchpad => "接收手机触控板",
             Self::Camera => "接收手机摄像头",
+            Self::SystemCamera => "手机作为系统摄像头",
         }
     }
 
@@ -43,30 +47,37 @@ impl ReceiverKind {
         match self {
             Self::Touchpad => "Android Touchpad → Windows 触控板 · 桌面端自动托管",
             Self::Camera => "Android Camera2 → Windows AVC 解码接收端 · 桌面端自动托管",
+            Self::SystemCamera => {
+                "供 Windows 相机应用使用 · 需预先部署相机组件及共享内存权限 · 无手机画面时显示占位图"
+            }
         }
     }
 
     const fn executable(self) -> &'static str {
         match self {
             Self::Touchpad => "capyio-ptp-adb-lab.exe",
-            Self::Camera => "capyio-avc-lab-receiver.exe",
+            Self::Camera | Self::SystemCamera => "capyio-avc-lab-receiver.exe",
         }
     }
 
     const fn port(self) -> u16 {
         match self {
             Self::Touchpad => TOUCHPAD_PORT,
-            Self::Camera => CAMERA_PORT,
+            Self::Camera | Self::SystemCamera => CAMERA_PORT,
         }
     }
 
     fn arguments(self) -> Result<Vec<&'static str>, String> {
         match self {
             Self::Touchpad => select_touchpad_arguments(probe_vhf_broker_interface()),
-            Self::Camera => Ok(vec![
+            Self::Camera | Self::SystemCamera => Ok(vec![
                 "--max-access-units",
                 "7200",
-                "--decode-nv12",
+                if self == Self::SystemCamera {
+                    "--publish-shared"
+                } else {
+                    "--decode-nv12"
+                },
                 "--reconnect-grace-millis",
                 "60000",
             ]),
@@ -106,7 +117,9 @@ impl Receiver {
         let serial = single_authorized_device(&adb)?;
         let executable = sibling_executable(self.kind.executable())?;
         let arguments = self.kind.arguments()?;
-        let projection = if self.kind == ReceiverKind::Camera {
+        let projection = if self.kind == ReceiverKind::SystemCamera {
+            "NV12 shared frames → system camera"
+        } else if self.kind == ReceiverKind::Camera {
             "AVC → NV12 decode"
         } else if arguments.contains(&"--vhf") {
             "installed VHF"
@@ -254,7 +267,10 @@ fn touchpad_arguments(vhf_available: bool) -> Vec<&'static str> {
     arguments
 }
 
-fn capture_stderr_tail(mut stderr: impl Read + Send + 'static, tail: Arc<Mutex<Vec<u8>>>) {
+pub(crate) fn capture_stderr_tail(
+    mut stderr: impl Read + Send + 'static,
+    tail: Arc<Mutex<Vec<u8>>>,
+) {
     thread::spawn(move || {
         let mut chunk = [0_u8; 512];
         while let Ok(count) = stderr.read(&mut chunk) {
@@ -301,7 +317,9 @@ fn receiver_exit_problem(kind: ReceiverKind, code: Option<i32>, stderr: &str) ->
 }
 
 fn receiver_problem_code(kind: ReceiverKind, problem: &str) -> &'static str {
-    if kind == ReceiverKind::Touchpad && problem.contains("管理员权限") {
+    if kind == ReceiverKind::SystemCamera {
+        "CAPY.WINDOWS.SYSTEM_CAMERA_FAILED"
+    } else if kind == ReceiverKind::Touchpad && problem.contains("管理员权限") {
         "CAPY.WINDOWS.TOUCHPAD_ELEVATION_REQUIRED"
     } else if kind == ReceiverKind::Touchpad && problem.contains("错误 5") {
         "CAPY.WINDOWS.TOUCHPAD_INJECTION_DENIED"
@@ -313,6 +331,8 @@ fn receiver_problem_code(kind: ReceiverKind, problem: &str) -> &'static str {
 pub struct AndroidReceiverActions {
     touchpad: Receiver,
     camera: Receiver,
+    system_camera: Receiver,
+    camera_session: Option<crate::camera_session::CameraSession>,
 }
 
 impl AndroidReceiverActions {
@@ -320,11 +340,19 @@ impl AndroidReceiverActions {
         Self {
             touchpad: Receiver::new(ReceiverKind::Touchpad),
             camera: Receiver::new(ReceiverKind::Camera),
+            system_camera: Receiver::new(ReceiverKind::SystemCamera),
+            camera_session: None,
         }
     }
 
     pub fn actions(&mut self) -> Vec<UiQuickAction> {
-        vec![self.touchpad.dto(), self.camera.dto()]
+        self.poll_system_camera();
+        let mut system = self.system_camera.dto();
+        if self.camera_session.is_some() && self.system_camera.process.is_some() {
+            system.connection_hint =
+                Some("系统相机会话已就绪；接收器运行中，手机画面到达需单独确认".to_owned());
+        }
+        vec![self.touchpad.dto(), self.camera.dto(), system]
     }
 
     pub fn invoke(
@@ -332,6 +360,25 @@ impl AndroidReceiverActions {
         action_id: &str,
         operation: QuickActionOperation,
     ) -> Result<UiQuickAction, String> {
+        self.poll_system_camera();
+        if action_id == SYSTEM_CAMERA_ACTION_ID {
+            let result = match operation {
+                QuickActionOperation::Start | QuickActionOperation::Retry => {
+                    self.start_system_camera()
+                }
+                QuickActionOperation::Stop => self.stop_system_camera(),
+            };
+            if let Err(error) = result {
+                self.system_camera.problem = Some(error);
+            }
+            return Ok(self.system_camera.dto());
+        }
+        if action_id == CAMERA_RECEIVER_ACTION_ID
+            && !matches!(operation, QuickActionOperation::Stop)
+            && self.camera_session.is_some()
+        {
+            return Err("请先停止系统摄像头，再启动仅解码接收".to_owned());
+        }
         let receiver = match action_id {
             TOUCHPAD_RECEIVER_ACTION_ID => &mut self.touchpad,
             CAMERA_RECEIVER_ACTION_ID => &mut self.camera,
@@ -347,13 +394,70 @@ impl AndroidReceiverActions {
     pub fn owns(action_id: &str) -> bool {
         matches!(
             action_id,
-            TOUCHPAD_RECEIVER_ACTION_ID | CAMERA_RECEIVER_ACTION_ID
+            TOUCHPAD_RECEIVER_ACTION_ID | CAMERA_RECEIVER_ACTION_ID | SYSTEM_CAMERA_ACTION_ID
         )
     }
 
     pub fn shutdown(&mut self) {
+        let _ = self.stop_system_camera();
         let _ = self.touchpad.stop();
         let _ = self.camera.stop();
+    }
+
+    fn start_system_camera(&mut self) -> Result<(), String> {
+        if self.camera_session.is_some() {
+            return Ok(());
+        }
+        self.camera.poll();
+        if self.camera.process.is_some() {
+            return Err("请先停止仅解码接收，再启动系统摄像头".to_owned());
+        }
+        // Resolve prerequisites before creating a camera session.
+        sibling_executable(self.system_camera.kind.executable())?;
+        let adb = adb_path()?;
+        single_authorized_device(&adb)?;
+        let mut session = crate::camera_session::CameraSession::start()?;
+        if let Err(error) = self.system_camera.start() {
+            let cleanup = session.stop();
+            return Err(format!("{error}; 相机回滚: {cleanup:?}"));
+        }
+        self.camera_session = Some(session);
+        Ok(())
+    }
+
+    fn stop_system_camera(&mut self) -> Result<(), String> {
+        let camera = self
+            .camera_session
+            .take()
+            .map(|mut session| session.stop())
+            .transpose();
+        let receiver = self.system_camera.stop();
+        camera?;
+        receiver
+    }
+
+    fn poll_system_camera(&mut self) {
+        self.system_camera.poll();
+        let problem = self
+            .camera_session
+            .as_mut()
+            .and_then(|session| session.poll().err())
+            .or_else(|| {
+                if self.camera_session.is_some() && self.system_camera.process.is_none() {
+                    Some(
+                        self.system_camera
+                            .problem
+                            .clone()
+                            .unwrap_or_else(|| "画面接收器已停止".to_owned()),
+                    )
+                } else {
+                    None
+                }
+            });
+        if let Some(problem) = problem {
+            let cleanup = self.stop_system_camera();
+            self.system_camera.problem = Some(format!("{problem}; 清理: {cleanup:?}"));
+        }
     }
 }
 
@@ -479,6 +583,22 @@ mod tests {
         assert!(touchpad_arguments(true).contains(&"--vhf"));
         assert_eq!(ReceiverKind::Camera.port(), 38_173);
         assert!(ReceiverKind::Camera.arguments().unwrap().contains(&"7200"));
+        assert!(
+            ReceiverKind::SystemCamera
+                .arguments()
+                .unwrap()
+                .contains(&"--publish-shared")
+        );
+        assert!(
+            !ReceiverKind::Camera
+                .arguments()
+                .unwrap()
+                .contains(&"--publish-shared")
+        );
+        assert_eq!(
+            ReceiverKind::SystemCamera.port(),
+            ReceiverKind::Camera.port()
+        );
     }
 
     #[test]
