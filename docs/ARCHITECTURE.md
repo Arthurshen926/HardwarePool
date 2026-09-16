@@ -929,7 +929,7 @@ Sidecar exit, explicit Stop and desktop shutdown are reflected through the
 typed action state and clean up the exact owned mapping.
 
 ADR 1418 fixes the control-plane boundary for moving the system-camera
-projection out of an elevated desktop. A dedicated owner-scoped named pipe
+projection out of an elevated desktop. A dedicated requester-scoped named pipe
 admits only versioned Status/Start/Stop operations and cannot carry paths,
 executables, arguments, object names or network endpoints. Its independent
 runtime owns one fixed camera projection lifecycle, rolls back partial Start
@@ -939,7 +939,10 @@ desktop integration, so it does not change the current elevation requirement.
 ADR 1419 supplies that integration as a projection-scoped process, without
 installing a service. An ordinary desktop launches its own fixed Broker entry
 point through Windows `runas`; the entry point branches before Tauri/WebView
-initialization and rejects a non-elevated token or extra arguments. The Broker
+initialization and rejects a non-elevated token or arguments beyond the exact
+requesting-user SID. ADR 1420 requires Windows validation of that ordinary
+process token SID and grants pipe access only to it, administrators and System,
+including when UAC crosses accounts. The Broker
 owns the existing fixed session host, shared-frame receiver and ADB cleanup.
 The UI observes only the ADR 1418 snapshot, may adopt an existing Broker and
 does not own its lifetime; successful explicit Stop ends the Broker lease.

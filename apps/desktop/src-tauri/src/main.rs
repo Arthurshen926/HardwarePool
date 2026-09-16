@@ -2,13 +2,18 @@ fn main() {
     let mut broker_arguments = std::env::args().skip(1);
     let broker_command = broker_arguments.next();
     if broker_command.as_deref() == Some("--camera-broker-host") {
-        if broker_arguments.next().is_some() {
+        let requesting_user_sid = broker_arguments.next();
+        if requesting_user_sid.is_none() || broker_arguments.next().is_some() {
             eprintln!(
-                "CAPYIO_CAMERA_BROKER_FAILED: camera Broker host accepts no additional arguments"
+                "CAPYIO_CAMERA_BROKER_FAILED: camera Broker host requires exactly one requesting-user SID"
             );
             std::process::exit(2);
         }
-        if let Err(error) = capyio_desktop_lib::run_camera_broker_host() {
+        if let Err(error) = capyio_desktop_lib::run_camera_broker_host(
+            requesting_user_sid
+                .as_deref()
+                .expect("checked SID argument"),
+        ) {
             eprintln!("CAPYIO_CAMERA_BROKER_FAILED: {error}");
             std::process::exit(2);
         }

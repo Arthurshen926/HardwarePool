@@ -133,7 +133,7 @@ decode-only Start/Stop passed and left no reverse mapping. This strengthens
 lifecycle truthfulness but remains distinct from the live-frame gates above.
 
 ADR 1418 establishes the first least-privilege Broker slice: a separate fixed,
-owner-scoped camera control pipe, closed Status/Start/Stop protocol and
+requester-scoped camera control pipe, closed Status/Start/Stop protocol and
 hardware-independent lifecycle runtime. Its tests include actual named-pipe
 round trip, idempotency, partial-start rollback and unexpected exit. The real
 camera session host and receiver have not moved behind it, and no service is
@@ -156,6 +156,20 @@ was then requested, but no interactive UAC confirmation arrived within the
 automation window; the request was cancelled. A subsequent control probe found
 no Broker, and process inventory found no desktop, camera-session or AVC
 receiver residue. This is a clean blocked physical gate, not a pass.
+
+ADR 1420 fixes the cross-account UAC gap found by the next physical run. The
+ordinary desktop now obtains its own token SID before `runas`; the elevated
+entry point accepts exactly that bounded SID and Windows-validates it before
+creating a DACL for only the requester, administrators and System. On the lab
+host, an ordinary client and a differently-accounted elevated Broker completed
+Status, Start to generation 1 Active and Stop. The fixed session host, AVC
+receiver and expected ADB reverse appeared during Active and were all absent
+after Stop. The connected phone was locked, so Android capture and independent
+Media Foundation consumption were deliberately not claimed for this rerun.
+The complete `cargo xtask ci` matrix then passed and the requester-SID package
+was generated at `target/integrated-test/20260916-152232-9636`; its desktop
+SHA-256 is
+`CE8F1AC9CABB06200D37C6178B41B83DA2E7B953834D59FC255129923C8DE2B5`.
 
 The first `cargo xtask ci` run exposed a case-sensitive repository-validator
 assertion for lowercase `$expectedSha256`, while the unchanged hash-pinned

@@ -676,19 +676,23 @@ boundary and verified the DLL, CLSID and empty lab directories were absent
 after rollback.
 ADR 1418 gives a future dedicated camera Broker a separate fixed local pipe.
 Remote clients are rejected; its DACL admits only LocalSystem, administrators
-and the interactive object owner. The closed 4 KiB protocol contains only
-Status/Start/Stop, version and request correlation. It conveys no executable,
-path, argument, mapping name, camera identity or transport endpoint. Partial
+and the Windows-validated SID of the ordinary process that requested elevation.
+The closed 4 KiB protocol contains only Status/Start/Stop, version and request
+correlation. It conveys no executable, path, argument, mapping name, camera
+identity or transport endpoint. Partial
 Start is rolled back and rollback failure is explicit. This contract grants no
 service installation, elevation, COM registration or peer/network authority.
 ADR 1419 permits one fixed elevation transition: the ordinary Windows process
 may ask ShellExecute `runas` to start its current executable with exactly
-`--camera-broker-host`. That mode validates its elevated token before opening
-the ADR 1418 pipe and branches before any Tauri window or WebView exists. No UI
-value contributes to the executable, verb or argument. The host owns only the
-fixed camera session, receiver and exact ADB mapping; successful Stop closes
-the projection-scoped host. This does not weaken the shared-memory ACL, install
-a service or driver, or grant network/peer authorization.
+`--camera-broker-host` and its own process-token SID. That mode validates its
+elevated token and asks Windows to parse the bounded SID before opening the ADR
+1418 pipe, then branches before any Tauri window or WebView exists. No UI value
+contributes to the executable, verb, mode or SID. ADR 1420 rejects malformed
+and injection-shaped SID text and avoids granting all interactive users merely
+to accommodate cross-account UAC. The host owns only the fixed camera session,
+receiver and exact ADB mapping; successful Stop closes the projection-scoped
+host. This does not weaken the shared-memory ACL, install a service or driver,
+or grant network/peer authorization.
 The 001B1D sharing check accepts no child executable, count, camera identity or
 deadline on its command line. It resolves only its current hash-recorded
 executable and sequentially spawns exactly two `consumer-probe` children

@@ -1,6 +1,6 @@
 # CapyIO Build Status
 
-> Updated: 2026-09-16 for the integrated system-camera action.
+> Updated: 2026-09-16 for the requester-scoped system-camera Broker gate.
 
 ## Latest integration slice
 
@@ -22,16 +22,21 @@ ADR 1419 now moves new ordinary-session elevation into a dedicated Broker.
 Desktop-managed camera and touchpad receivers additionally require exact,
 bounded process readiness before becoming Active; a physical decode-receiver
 Start/Stop confirmed readiness and reverse cleanup without starting capture.
-ADR 1418 now fixes a separate owner-scoped camera Broker control contract with
+ADR 1418 now fixes a separate requester-scoped camera Broker control contract with
 closed Status/Start/Stop messages, idempotent lifecycle, partial-start rollback
 and hardware-independent named-pipe tests. ADR 1419 wires that contract into a
 projection-scoped elevated Broker mode of the desktop executable: the ordinary
 UI launches only that fixed mode through Windows UAC, adopts its bounded state,
-and leaves Tauri/WebView unprivileged. A successful Stop closes the Broker after
-flushing its response. No service is installed, and the new UAC/live route
-still needs a physical gate before retiring the old compatibility path.
+and leaves Tauri/WebView unprivileged. ADR 1420 binds the elevated pipe to the
+ordinary process token's Windows-validated SID so cross-account UAC does not
+broaden access to all interactive users. A physical ordinary-client gate passed
+Status/Start/Active/Stop and exact process/reverse cleanup. No service is
+installed; a fresh Broker live-frame gate still needs an unlocked phone.
+The complete repository CI passed and the resulting package is
+`target/integrated-test/20260916-152232-9636` (desktop SHA-256
+`CE8F1AC9CABB06200D37C6178B41B83DA2E7B953834D59FC255129923C8DE2B5`).
 See
-`CAPY_INTEGRATED_SYSTEM_CAMERA_REPORT.md` and ADRs 1412–1419. This does not claim
+`CAPY_INTEGRATED_SYSTEM_CAMERA_REPORT.md` and ADRs 1412–1420. This does not claim
 completion of all integration or merge the separate Display work.
 
 ## Verified baseline

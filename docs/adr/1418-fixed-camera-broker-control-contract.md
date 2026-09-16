@@ -9,7 +9,8 @@ Date: 2026-09-16
 The future elevated Windows camera Broker has a separate, fixed local control
 surface at `\\.\pipe\CapyIO.Camera.Control.v1`. It is not added to the existing
 audio Broker lifecycle. The pipe rejects remote clients and grants control only
-to LocalSystem, administrators and the interactive object owner.
+to LocalSystem, administrators and one Windows-validated requesting-user SID.
+The SID handoff needed by cross-account UAC is specified by ADR 1420.
 
 Schema version 1 is closed and admits only `status`, `start` and `stop`. Requests
 carry a monotonically allocated client request ID; responses must echo both the
@@ -33,5 +34,5 @@ separate implementation and physical gate.
 
 Windows unit tests cover closed/versioned decoding, bounded authority-free
 responses, idempotent lifecycle, partial-start rollback, unexpected exit and a
-real owner-scoped named-pipe client/server round trip. Strict Clippy passes for
-all `capyio-windows-service` targets.
+real requester-scoped named-pipe client/server round trip. Strict Clippy passes
+for all `capyio-windows-service` targets.

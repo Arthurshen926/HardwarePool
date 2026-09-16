@@ -74,3 +74,10 @@ target\release\capyio-microphone-host.exe --control stop
 Login autostart and signed installation are intentionally deferred. Until that
 deployment slice is complete, CapyIO Desktop retains its direct MicYou
 supervisor as a development fallback.
+
+The system-camera projection uses a separate fixed Broker mode rather than the
+audio service. Before UAC, the ordinary desktop obtains its own process-token
+SID. The elevated Broker validates that sole value with Windows and creates a
+remote-rejecting control pipe accessible only to the requester, administrators
+and System. The closed protocol remains limited to `status`, `start` and `stop`;
+the WebView cannot supply the SID or any launch authority.

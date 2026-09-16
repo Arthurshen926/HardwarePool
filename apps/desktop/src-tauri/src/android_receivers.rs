@@ -668,9 +668,12 @@ fn launch_elevated_camera_broker() -> Result<(), String> {
         env::current_exe().map_err(|error| format!("无法定位摄像头 Broker 宿主: {error}"))?;
     let verb = wide(std::ffi::OsStr::new("runas"));
     let executable = wide(executable.as_os_str());
-    let parameters = wide(std::ffi::OsStr::new("--camera-broker-host"));
+    let user_sid = capyio_windows_service::current_process_user_sid()?;
+    let parameters = format!("--camera-broker-host {user_sid}");
+    let parameters = wide(std::ffi::OsStr::new(&parameters));
     // SAFETY: all strings are immutable terminated UTF-16 for the duration of
-    // the call. The executable and sole argument are fixed by this binary.
+    // the call. The executable and command are fixed; the sole value is the
+    // Windows-validated SID of this ordinary process token.
     let result = unsafe {
         ShellExecuteW(
             ptr::null_mut(),

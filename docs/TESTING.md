@@ -1882,6 +1882,17 @@ test-results/<run-id>/
 `manifest.json` records Git commit, versions, OS/device, Route/Profile/backend,
 network mode, case and timestamps.
 
+The projection-scoped camera Broker tests cover its closed Status/Start/Stop
+schema, bounded request correlation, idempotent lifecycle, partial-start
+rollback and unexpected child exit. A Windows-only round trip creates the
+remote-rejecting pipe with a DACL naming the exact current user SID. Separate
+tests require Windows to parse that bounded SID and reject malformed or
+DACL-injection-shaped values. The physical cross-account UAC gate records the
+ordinary requester and elevated administrator as different accounts, then
+requires Stopped/Active/Stopped transitions, exact child presence while active,
+and empty process plus ADB-reverse inventory after Stop. A locked phone does not
+count as live-frame or Media Foundation consumer evidence.
+
 ## CI policy
 
 Required before merge: Rust format, check, Clippy warnings denied, tests,

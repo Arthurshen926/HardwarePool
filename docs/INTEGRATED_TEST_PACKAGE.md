@@ -47,11 +47,13 @@ exact deployment hash/rollback and ADR 1414 for the privilege boundary. This is
 not automatic package installation.
 The current package keeps the main UI at ordinary privilege. System-camera
 Start requests Windows UAC for the fixed `--camera-broker-host` entry point,
-then uses an owner-scoped Status/Start/Stop pipe; the WebView supplies no path,
+passing only the ordinary process token's Windows-validated user SID, then uses
+a requester-scoped Status/Start/Stop pipe; the WebView supplies no path, SID,
 argument, mapping name or endpoint. Successful Stop cleans the projection and
 ends that Broker process. An already elevated desktop retains the prior direct
-compatibility path. The new UAC/Broker route is unit-verified but still awaits
-its physical live-frame rerun.
+compatibility path. The cross-account UAC lifecycle and cleanup gate passed,
+but the Broker route still awaits its physical live-frame rerun with an unlocked
+phone.
 A uniquely installed VHF interface selects VHF; missing VHF
 selects synthetic input. Ambiguous interfaces, failed discovery and unsupported
 platforms now fail before reverse mapping or helper creation, as ADR 1410
@@ -64,8 +66,12 @@ listener/projection readiness, not phone-frame delivery.
 
 Validation on 2026-09-16: package build passed; the desktop library passed 72
 tests with 10 physical tests ignored, the Windows Broker/service package passed
-24 tests, and desktop/service all-target Clippy passed with warnings denied. No
+25 tests, and the complete `cargo xtask ci` matrix passed. No
 physical acceptance is inferred from this build. The current
 microphone execution-account comparison and short nonzero ordinary-client
 capture are now recorded in `CAPY_INTEGRATED_MICROPHONE_056_REPORT.md`; the older
 restricted-account failure is not evidence of a driver regression.
+
+The post-requester-SID package is
+`target/integrated-test/20260916-152232-9636`; its desktop SHA-256 is
+`CE8F1AC9CABB06200D37C6178B41B83DA2E7B953834D59FC255129923C8DE2B5`.

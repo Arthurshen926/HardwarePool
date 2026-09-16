@@ -4,6 +4,14 @@ use std::sync::{
 };
 
 use serde::{Deserialize, Serialize};
+use windows_sys::Win32::{
+    Foundation::{CloseHandle, LocalFree},
+    Security::{
+        Authorization::{ConvertSidToStringSidW, ConvertStringSidToSidW},
+        GetTokenInformation, TOKEN_QUERY, TOKEN_USER, TokenUser,
+    },
+    System::Threading::{GetCurrentProcess, OpenProcessToken},
+};
 
 use crate::local_pipe::{NamedPipe, invoke, try_invoke, wake};
 
@@ -12,9 +20,7 @@ pub const CAMERA_CONTROL_PIPE_NAME: &str = r"\\.\pipe\CapyIO.Camera.Control.v1";
 #[cfg(test)]
 pub const CAMERA_CONTROL_PIPE_NAME: &str = r"\\.\pipe\CapyIO.Camera.Control.v1.test";
 const CONTROL_SCHEMA_VERSION: u8 = 1;
-// Camera projection is hosted in the interactive user's session. Only that
-// object owner, LocalSystem and administrators may control its lifecycle.
-const PIPE_SDDL: &str = "D:P(A;;GA;;;SY)(A;;GA;;;BA)(A;;GA;;;OW)";
+const PIPE_SDDL_PREFIX: &str = "D:P(A;;GA;;;SY)(A;;GA;;;BA)";
 
 const START_FAILED: &str = "CAPY.CAMERA_BROKER.START_FAILED";
 const NOT_READY: &str = "CAPY.CAMERA_BROKER.NOT_READY";
@@ -246,7 +252,8 @@ pub fn camera_control_server_loop<P: CameraBrokerProcess>(
     runtime: Arc<Mutex<CameraBrokerRuntime<P>>>,
     stop: Arc<AtomicBool>,
 ) -> Result<(), String> {
-    camera_control_server_loop_with_policy(runtime, stop, false)
+    let user_sid = current_process_user_sid()?;
+    camera_control_server_loop_with_policy(runtime, stop, false, &user_sid)
 }
 
 /// Runs a projection-scoped Broker lease. A successful Stop response is
@@ -255,15 +262,29 @@ pub fn camera_control_server_loop_until_stopped<P: CameraBrokerProcess>(
     runtime: Arc<Mutex<CameraBrokerRuntime<P>>>,
     stop: Arc<AtomicBool>,
 ) -> Result<(), String> {
-    camera_control_server_loop_with_policy(runtime, stop, true)
+    let user_sid = current_process_user_sid()?;
+    camera_control_server_loop_with_policy(runtime, stop, true, &user_sid)
+}
+
+/// Runs the projection-scoped Broker for the exact ordinary user that
+/// initiated cross-account UAC. The SID is syntax-validated by Windows before
+/// it is admitted to the DACL.
+pub fn camera_control_server_loop_until_stopped_for_user<P: CameraBrokerProcess>(
+    runtime: Arc<Mutex<CameraBrokerRuntime<P>>>,
+    stop: Arc<AtomicBool>,
+    requesting_user_sid: &str,
+) -> Result<(), String> {
+    camera_control_server_loop_with_policy(runtime, stop, true, requesting_user_sid)
 }
 
 fn camera_control_server_loop_with_policy<P: CameraBrokerProcess>(
     runtime: Arc<Mutex<CameraBrokerRuntime<P>>>,
     stop: Arc<AtomicBool>,
     exit_after_successful_stop: bool,
+    requesting_user_sid: &str,
 ) -> Result<(), String> {
-    let pipe = NamedPipe::create(CAMERA_CONTROL_PIPE_NAME, PIPE_SDDL)?;
+    let pipe_sddl = camera_pipe_sddl(requesting_user_sid)?;
+    let pipe = NamedPipe::create(CAMERA_CONTROL_PIPE_NAME, &pipe_sddl)?;
     while !stop.load(Ordering::Acquire) {
         if !pipe.wait_for_client(&stop)? || stop.load(Ordering::Acquire) {
             break;
@@ -285,6 +306,80 @@ fn camera_control_server_loop_with_policy<P: CameraBrokerProcess>(
         }
     }
     Ok(())
+}
+
+pub fn current_process_user_sid() -> Result<String, String> {
+    let mut token = std::ptr::null_mut();
+    // SAFETY: token is an out parameter and is closed below after success.
+    if unsafe { OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY, &mut token) } == 0 {
+        return Err("open camera Broker process token".to_owned());
+    }
+    let result = (|| {
+        let mut byte_length = 0_u32;
+        unsafe {
+            GetTokenInformation(token, TokenUser, std::ptr::null_mut(), 0, &mut byte_length);
+        }
+        if byte_length == 0 || byte_length > 64 * 1024 {
+            return Err("invalid camera Broker token user size".to_owned());
+        }
+        let words = (byte_length as usize).div_ceil(std::mem::size_of::<usize>());
+        let mut buffer = vec![0_usize; words];
+        // SAFETY: the aligned buffer is at least byte_length bytes and token is live.
+        if unsafe {
+            GetTokenInformation(
+                token,
+                TokenUser,
+                buffer.as_mut_ptr().cast(),
+                byte_length,
+                &mut byte_length,
+            )
+        } == 0
+        {
+            return Err("read camera Broker token user".to_owned());
+        }
+        // SAFETY: successful TokenUser output starts with a valid TOKEN_USER.
+        let user = unsafe { &*buffer.as_ptr().cast::<TOKEN_USER>() };
+        let mut sid_text = std::ptr::null_mut();
+        if unsafe { ConvertSidToStringSidW(user.User.Sid, &mut sid_text) } == 0 {
+            return Err("format camera Broker token user SID".to_owned());
+        }
+        let sid = read_local_wide_string(sid_text);
+        unsafe { LocalFree(sid_text.cast()) };
+        sid
+    })();
+    unsafe { CloseHandle(token) };
+    result
+}
+
+fn camera_pipe_sddl(requesting_user_sid: &str) -> Result<String, String> {
+    if requesting_user_sid.len() > 184 || !requesting_user_sid.starts_with("S-1-") {
+        return Err("camera Broker requesting user SID is outside bounds".to_owned());
+    }
+    let sid_wide = requesting_user_sid
+        .encode_utf16()
+        .chain(std::iter::once(0))
+        .collect::<Vec<_>>();
+    let mut parsed_sid = std::ptr::null_mut();
+    // SAFETY: sid_wide is immutable terminated UTF-16; LocalFree releases the
+    // validation allocation returned by Windows.
+    if unsafe { ConvertStringSidToSidW(sid_wide.as_ptr(), &mut parsed_sid) } == 0 {
+        return Err("camera Broker requesting user SID is invalid".to_owned());
+    }
+    unsafe { LocalFree(parsed_sid) };
+    Ok(format!("{PIPE_SDDL_PREFIX}(A;;GA;;;{requesting_user_sid})"))
+}
+
+fn read_local_wide_string(value: *const u16) -> Result<String, String> {
+    let mut length = 0_usize;
+    // SAFETY: callers provide a terminated LocalAlloc string.
+    while unsafe { *value.add(length) } != 0 {
+        length += 1;
+        if length > 184 {
+            return Err("camera Broker token user SID is outside bounds".to_owned());
+        }
+    }
+    String::from_utf16(unsafe { std::slice::from_raw_parts(value, length) })
+        .map_err(|_| "camera Broker token user SID is invalid".to_owned())
 }
 
 pub fn wake_camera_control_server() {
@@ -403,6 +498,15 @@ mod tests {
     }
 
     #[test]
+    fn pipe_acl_names_only_the_validated_requesting_user() {
+        let sid = current_process_user_sid().expect("current SID");
+        let sddl = camera_pipe_sddl(&sid).expect("validated SDDL");
+        assert_eq!(sddl, format!("{PIPE_SDDL_PREFIX}(A;;GA;;;{sid})"));
+        assert!(camera_pipe_sddl("S-1-5-4)(A;;GA;;;WD").is_err());
+        assert!(camera_pipe_sddl("not-a-sid").is_err());
+    }
+
+    #[test]
     fn lifecycle_is_idempotent_bounded_and_discloses_no_launch_authority() {
         let runtime = runtime();
         for (operation, expected) in [
@@ -485,7 +589,7 @@ mod tests {
     }
 
     #[test]
-    fn owner_scoped_named_pipe_round_trip_controls_fake_runtime() {
+    fn requester_scoped_named_pipe_round_trip_controls_fake_runtime() {
         let _guard = PIPE_TEST_LOCK.lock().unwrap();
         let runtime = runtime();
         let stop = Arc::new(AtomicBool::new(false));
@@ -497,11 +601,16 @@ mod tests {
         let client = CameraBrokerClient::default();
         let mut ready = None;
         for _ in 0..20 {
-            if let Ok(snapshot) = client.status() {
+            if let Ok(snapshot) = client.try_status() {
                 ready = Some(snapshot);
                 break;
             }
             thread::sleep(Duration::from_millis(10));
+        }
+        if ready.is_none() {
+            stop.store(true, Ordering::Release);
+            wake_camera_control_server();
+            panic!("pipe ready: server={:?}", server.join());
         }
         assert_eq!(ready.expect("pipe ready").state, CameraBrokerState::Stopped);
         assert_eq!(
