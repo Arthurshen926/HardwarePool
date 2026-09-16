@@ -1049,10 +1049,14 @@ A01F1 hardens this unified input path: Controller and Touchpad lifecycle
 changes are serialized with UI submissions, stale generations are rejected
 before Adapter enqueue, and bounded queue rejection fails only the affected
 Capability with stable pressure diagnostics and neutral/cancel cleanup. The
-hardware-free composition gate now passes 248 assertions, and the complete
-Android application sources compile against API 36 without changing any
-permission, service declaration or wire format. The complete `capyioCheck` and
-`cargo xtask ci` gates pass.
+hardware-free composition gate passes 248 assertions. A01F2 additionally
+closes UI foreground loss: Activity pause rejects later WebView events and
+submits neutral gamepad/empty touchpad state through the current generation
+without stopping the Service or unrelated capabilities. The composition gate
+now passes 255 assertions, and the complete Android application sources compile
+against API 36 without changing any permission, service declaration or wire
+format. The complete `capyioCheck` gate passes; the repository CI passed after
+A01F1 and again after the final A01F2 changes.
 
 ADR 1409 removes the remaining manual Windows receiver startup from the
 controlled touchpad and camera flows. Two desktop Quick Actions now require

@@ -234,6 +234,7 @@ tasks.register('compileCapabilityCompositionTest', JavaCompile) {
     source file('src/main/java/dev/capyio/android/AndroidSharingSelection.java')
     source file('src/main/java/dev/capyio/android/AndroidGamepadUiCommand.java')
     source file('src/main/java/dev/capyio/android/AndroidTouchpadUiFrame.java')
+    source file('src/main/java/dev/capyio/android/AndroidUiInputRelease.java')
     source file('src/main/java/dev/capyio/android/TouchpadMotionFrame.java')
     source file('src/main/java/dev/capyio/android/ControllerPacketJson.java')
     source file('src/main/java/dev/capyio/android/GenerationBoundSourceDelivery.java')

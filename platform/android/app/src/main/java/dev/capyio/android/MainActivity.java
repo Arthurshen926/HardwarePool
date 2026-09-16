@@ -73,6 +73,7 @@ public final class MainActivity extends Activity {
     private AudioCapabilityKind pendingStart;
     private boolean pendingCameraStart;
     private boolean bound;
+    private volatile boolean uiInputActive;
 
     private TextView nodeIdView;
     private TextView permissionView;
@@ -188,6 +189,22 @@ public final class MainActivity extends Activity {
                 new Intent(this, AudioNodeService.class),
                 serviceConnection,
                 Context.BIND_AUTO_CREATE);
+    }
+
+    @Override
+    protected void onResume() {
+        super.onResume();
+        uiInputActive = true;
+    }
+
+    @Override
+    protected void onPause() {
+        uiInputActive = false;
+        AudioNodeService.NodeBinder current = binder;
+        if (current != null) {
+            current.releaseUiInputs();
+        }
+        super.onPause();
     }
 
     @Override
@@ -538,7 +555,7 @@ public final class MainActivity extends Activity {
         public synchronized boolean updateGamepad(
                 String kind, String target, int x, int y, boolean pressed) {
             AudioNodeService.NodeBinder current = binder;
-            if (current == null) {
+            if (current == null || !uiInputActive) {
                 return false;
             }
             CapabilityLifecycleSnapshot lifecycle = current.gamepadLifecycle();
@@ -563,7 +580,7 @@ public final class MainActivity extends Activity {
         @JavascriptInterface
         public synchronized boolean updateTouchpad(String encodedContacts) {
             AudioNodeService.NodeBinder current = binder;
-            if (current == null) {
+            if (current == null || !uiInputActive) {
                 return false;
             }
             CapabilityLifecycleSnapshot lifecycle = current.touchpadLifecycle();

@@ -6,6 +6,7 @@ import dev.capyio.android.contract.AudioNodeController;
 import dev.capyio.android.contract.CapabilityAvailability;
 import dev.capyio.android.contract.CapabilityCatalogSnapshot;
 import dev.capyio.android.contract.CapabilityLifecycleController;
+import dev.capyio.android.contract.CapabilityLifecycleSnapshot;
 import dev.capyio.android.contract.CapabilityLifecycleState;
 import dev.capyio.android.contract.CapabilityPortDirection;
 import dev.capyio.android.contract.CapabilityPublicationProjection;
@@ -34,6 +35,7 @@ public final class AndroidCapabilityModulesContractTest {
         reflectsGenerationBoundGamepadLifecycleState();
         reflectsGenerationBoundTouchpadLifecycleState();
         rejectsStaleSourceFramesBeforeAdapterDelivery();
+        releasesUiInputsOnForegroundLoss();
         projectsTheCatalogIntoSharedUiSchemaFour();
         admitsOnlyLocalAttachedSourceSharingIntent();
         projectsSelectedAndroidPublicationCatalog();
@@ -249,6 +251,28 @@ public final class AndroidCapabilityModulesContractTest {
                 () -> false,
                 () -> order.append("-reject")));
         check("commit-reject".contentEquals(order));
+    }
+
+    private static void releasesUiInputsOnForegroundLoss() {
+        CapabilityLifecycleController lifecycle = new CapabilityLifecycleController();
+        CapabilityLifecycleSnapshot stopped = lifecycle.snapshot();
+        GamepadControlsSnapshot pressed = new GamepadControlsSnapshot(
+                1, 0, 0, 0, 0, 0, 0, 0, 0);
+        TouchpadControlsSnapshot contact = new TouchpadControlsSnapshot(
+                1, List.of(new TouchpadContactSnapshot(0, 100, 200, 512)));
+        check(AndroidUiInputRelease.gamepad(stopped, pressed) == null);
+        check(AndroidUiInputRelease.touchpad(stopped, contact) == null);
+
+        TransitionToken start = lifecycle.beginStart();
+        check(lifecycle.completeStart(start.generation()));
+        CapabilityLifecycleSnapshot active = lifecycle.snapshot();
+        check(GamepadControlsSnapshot.neutral().equals(
+                AndroidUiInputRelease.gamepad(active, pressed)));
+        check(AndroidUiInputRelease.gamepad(
+                active, GamepadControlsSnapshot.neutral()) == null);
+        check(AndroidUiInputRelease.touchpad(active, contact).isEmpty());
+        check(AndroidUiInputRelease.touchpad(
+                active, TouchpadControlsSnapshot.neutral(2)) == null);
     }
 
     private static void projectsTheCatalogIntoSharedUiSchemaFour() {

@@ -411,6 +411,23 @@ public final class AudioNodeService extends Service {
         return accepted;
     }
 
+    private synchronized void releaseUiInputs() {
+        CapabilityLifecycleSnapshot gamepadLifecycle = gamepadController.lifecycle();
+        GamepadControlsSnapshot gamepadRelease = AndroidUiInputRelease.gamepad(
+                gamepadLifecycle, gamepadController.controls());
+        if (gamepadRelease != null) {
+            submitGamepad(gamepadLifecycle.generation(), gamepadRelease);
+        }
+
+        CapabilityLifecycleSnapshot touchpadLifecycle = touchpadController.lifecycle();
+        java.util.List<TouchpadContactSnapshot> touchpadRelease =
+                AndroidUiInputRelease.touchpad(
+                        touchpadLifecycle, touchpadController.controls());
+        if (touchpadRelease != null) {
+            submitTouchpad(touchpadLifecycle.generation(), touchpadRelease);
+        }
+    }
+
     private synchronized void completeTouchpadStart(long generation) {
         touchpadController.completeStart(generation);
         postStateChanged();
@@ -752,6 +769,10 @@ public final class AudioNodeService extends Service {
 
         public void stopTouchpad() {
             mainHandler.post(AudioNodeService.this::stopTouchpad);
+        }
+
+        public void releaseUiInputs() {
+            AudioNodeService.this.releaseUiInputs();
         }
 
         public CapabilityLifecycleSnapshot hapticsLifecycle() {

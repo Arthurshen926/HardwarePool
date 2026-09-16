@@ -146,6 +146,13 @@ Controller pending frames are discarded back to neutral, and Touchpad stops
 through its existing cancel/close path. Hardware-free ordering tests cover
 stale rejection, commit-before-delivery and explicit delivery rejection.
 
+A01F2 adds the corresponding UI foreground-loss boundary. Activity pause first
+closes admission for later JavaScript events, then asks the Service to submit a
+neutral gamepad state and empty touchpad contacts only when the current Active
+state needs release. It does not stop either Capability or any unrelated audio,
+camera or IMU lifecycle. Pure policy coverage verifies stopped-state rejection,
+active release and idempotence for already-neutral controls.
+
 A01E2 closes the unified camera source/quality UI gap. The common Vue panel now
 refreshes the existing bounded Camera2 inventory after consent and selects an
 exact source/vendor-Zoom token plus one of three AVC presets only while stopped.
@@ -154,8 +161,8 @@ Camera Service to open ID 1. Active mutation was rejected and Stop released it.
 
 ## Automated evidence
 
-- 2026-09-17 A01F1: `platform/android/gradlew.bat capyioCheck --offline`
-  passed compilation, Lint, shared-UI/JNI/APK composition and 248 Android
+- 2026-09-17 A01F1/A01F2: `platform/android/gradlew.bat capyioCheck --offline`
+  passed compilation, Lint, shared-UI/JNI/APK composition and 255 Android
   composition assertions; `cargo xtask ci` also passed the complete repository
   matrix. No APK or driver was installed.
 - `cargo test --offline -p capyio-input -p capyio-dsu-adapter -p capyio-viiper-adapter -p capyio-windows-input -p capyio-desktop`: passed after the gamepad merge.

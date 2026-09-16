@@ -926,6 +926,14 @@ pending controls are discarded and neutral state becomes authoritative, while
 Touchpad interrupts its sender so the existing close path emits cancel/close.
 An unrelated active IMU Source may retain the shared UDP worker.
 
+ANDROID-A01F2 separates UI-surface presence from Service/Capability lifetime.
+Before an Activity loses resumed state, it rejects later JavaScript input and
+asks the bound Service to release only non-neutral UI-owned state. An active
+gamepad receives one complete neutral snapshot; an active touchpad with contacts
+receives one empty snapshot through the same generation and Adapter path. The
+Capability, Node Service, audio, camera and IMU lifecycles are not stopped by
+window loss. Repeated pause with already-neutral state emits no extra frame.
+
 ADR 1409 gives the Windows desktop process ownership of the two remaining
 operator-started Android receiver helpers. Typed Quick Actions create only the
 fixed touchpad or camera ADB reverse mapping and launch only the corresponding

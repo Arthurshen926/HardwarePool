@@ -84,7 +84,10 @@ Display is excluded until its feature branch is complete.
    lifecycle mutation with UI submission, commits the observed generation
    before Adapter delivery, rejects stale frames before enqueue and turns queue
    pressure into an explicit Capability failure plus neutral/cancel cleanup.
-   Authenticated product transport and foreground-loss qualification remain.
+   A01F2 rejects new UI input after Activity pause and synchronously submits a
+   neutral gamepad snapshot plus empty touchpad contacts without stopping the
+   Service or unrelated capabilities. Authenticated product transport and
+   physical foreground-loss qualification remain.
 7. **A01G — migration closeout:** remove redundant product launchers only after
    parity evidence, rollback instructions and the unified APK gate pass.
 8. **A01H — haptics Sink (complete):** after explicit approval, declare the
