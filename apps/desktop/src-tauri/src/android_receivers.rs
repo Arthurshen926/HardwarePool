@@ -357,7 +357,7 @@ impl AndroidReceiverActions {
     }
 }
 
-fn adb_path() -> Result<PathBuf, String> {
+pub(crate) fn adb_path() -> Result<PathBuf, String> {
     if let Some(path) = env::var_os("CAPYIO_ADB").map(PathBuf::from)
         && path.is_file()
     {
@@ -375,7 +375,7 @@ fn adb_path() -> Result<PathBuf, String> {
     Err("未找到 Android platform-tools/adb.exe；请设置 ANDROID_HOME 或 CAPYIO_ADB".to_owned())
 }
 
-fn sibling_executable(name: &str) -> Result<PathBuf, String> {
+pub(crate) fn sibling_executable(name: &str) -> Result<PathBuf, String> {
     let directory = env::current_exe()
         .map_err(|error| format!("无法定位 CapyIO 桌面程序: {error}"))?
         .parent()

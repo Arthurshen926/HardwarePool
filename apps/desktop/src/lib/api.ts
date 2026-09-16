@@ -26,6 +26,9 @@ declare global {
 }
 
 class AndroidNodeCapyIOApi implements CapyIOApi {
+  async getDiagnostics() {
+    return { backend: "Android Node", version: "未提供", revision: "未提供", builtAt: "未提供", checks: [{ label: "检查范围", detail: "Android 构建标识尚未接入原生桥接；不会使用 Windows 版本信息。" }] };
+  }
   async getSnapshot(): Promise<UiSnapshot> {
     const encoded = window.CapyIOAndroid?.getSnapshotJson();
     if (!encoded) throw new Error("Android observer bridge is unavailable");
@@ -212,6 +215,7 @@ class AndroidNodeCapyIOApi implements CapyIOApi {
 }
 
 class TauriCapyIOApi implements CapyIOApi {
+  getDiagnostics() { return invoke<import("./types").UiDiagnostics>("get_diagnostics"); }
   getSnapshot(): Promise<UiSnapshot> {
     return invoke<UiSnapshot>("get_snapshot");
   }

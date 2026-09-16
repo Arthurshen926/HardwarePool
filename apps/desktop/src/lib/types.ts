@@ -366,7 +366,16 @@ export interface UiSnapshot {
   imuFixture: UiImuFixture | null;
 }
 
+export interface UiDiagnostics {
+  backend: string;
+  version: string;
+  revision: string;
+  builtAt: string;
+  checks: { label: string; detail: string }[];
+}
+
 export interface CapyIOApi {
+  getDiagnostics(): Promise<UiDiagnostics>;
   getSnapshot(): Promise<UiSnapshot>;
   setRoute(routeId: string, active: boolean): Promise<UiSnapshot>;
   setLocalCapabilityShared(capabilityId: string, selected: boolean): Promise<UiSnapshot>;

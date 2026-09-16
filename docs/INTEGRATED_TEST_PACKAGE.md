@@ -12,8 +12,13 @@ identified; it is not represented as an exact committed release. This first
 package contains the camera and touchpad helpers used by the desktop, not a
 complete audio/gamepad installer. Existing audio services, installed drivers,
 WebView2 and separately configured ADB remain prerequisites. Their list is
-included in the manifest; automatic runtime dependency inspection and an
-in-application build-information page remain follow-up work.
+included in the manifest. The shared UI now has a version/diagnostics panel;
+its Windows backend reports the embedded package revision (including a dirty
+suffix), build time, and presence of the exact ADB and receiver executables.
+The no-argument diagnostic command cannot select paths or launch processes.
+File presence does not prove a running service, connected phone or permission
+to access a driver. Android build identity and deeper service/device checks
+remain follow-up work; Browser Mock explicitly reports simulated state.
 
 The camera receiver currently decodes AVC to NV12 and does not register a
 system camera. A uniquely installed VHF interface selects VHF; missing VHF

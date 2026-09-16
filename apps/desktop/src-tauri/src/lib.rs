@@ -34,6 +34,7 @@ use tauri::State;
 mod android_gamepad;
 mod android_receivers;
 pub mod audio_share_runtime;
+mod diagnostics;
 mod gamepad_lab;
 mod microphone_quick_action;
 pub mod micyou_runtime;
@@ -1136,6 +1137,7 @@ pub fn run() {
             android_receivers: Mutex::new(android_receivers::AndroidReceiverActions::new()),
         })
         .invoke_handler(tauri::generate_handler![
+            diagnostics::get_diagnostics,
             get_snapshot,
             set_route,
             set_local_capability_shared,

@@ -171,6 +171,9 @@ function initialSnapshot(): UiSnapshot {
 }
 
 export class BrowserMockCapyIOApi implements CapyIOApi {
+  async getDiagnostics() {
+    return { backend: "Browser Mock（模拟）", version: "未提供", revision: "未提供", builtAt: "未提供", checks: [{ label: "模拟模式", detail: "没有读取本机硬件或 Windows 依赖。" }] };
+  }
   private snapshot = initialSnapshot();
   private nextSequence = 3;
   private gamepad = initialGamepadState();

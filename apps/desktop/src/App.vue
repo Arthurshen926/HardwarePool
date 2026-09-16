@@ -12,6 +12,13 @@ import { createCapyIOApi } from "./lib/api";
 import type { DsuProjectionMode, GamepadControlUpdate, QuickActionOperation, TouchpadControlUpdate, UiAndroidAudioCapability, UiAndroidAudioState, UiAndroidCameraSettings, UiAudioEndpointCatalog, UiCapability, UiGamepadState, UiLiveImu, UiQuickAction, UiRoute, UiSnapshot, UiTouchpadState, WindowsControllerKind } from "./lib/types";
 
 const api = createCapyIOApi();
+const diagnostics = ref<import("./lib/types").UiDiagnostics | null>(null);
+const diagnosticsError = ref("");
+async function refreshDiagnostics() {
+  diagnosticsError.value = "";
+  try { diagnostics.value = await api.getDiagnostics(); }
+  catch (error) { diagnosticsError.value = String(error); }
+}
 const snapshot = ref<UiSnapshot | null>(null);
 const busyRouteId = ref<string | null>(null);
 const loading = ref(true);
@@ -378,6 +385,16 @@ function refreshSnapshot(): void {
     <section v-if="view !== 'controller' && view !== 'touchpad' && snapshot?.warnings.length" class="warning-stack" aria-label="Warnings">
       <p v-for="warning in snapshot.warnings" :key="warning">{{ warning }}</p>
     </section>
+    <details class="info-panel">
+      <summary>版本与运行检查</summary>
+      <button class="ghost-button" type="button" @click="refreshDiagnostics">刷新检查</button>
+      <p v-if="diagnosticsError" role="alert">{{ diagnosticsError }}</p>
+      <template v-if="diagnostics">
+        <p>{{ diagnostics.backend }} · {{ diagnostics.version }}</p>
+        <p>源码：{{ diagnostics.revision }} · 构建时间：{{ diagnostics.builtAt }}</p>
+        <dl><template v-for="check in diagnostics.checks" :key="check.label"><dt>{{ check.label }}</dt><dd>{{ check.detail }}</dd></template></dl>
+      </template>
+    </details>
     <p v-if="errorMessage" class="error-banner" role="alert">{{ errorMessage }}</p>
     <section v-if="loading && !snapshot" class="loading-panel">Loading Runtime snapshot…</section>
 

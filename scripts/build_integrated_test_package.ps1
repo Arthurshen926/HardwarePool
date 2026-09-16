@@ -3,8 +3,15 @@ param()
 
 $ErrorActionPreference = 'Stop'
 $repositoryRoot = Split-Path -Parent $PSScriptRoot
+$previousRevision = $env:CAPYIO_BUILD_REVISION
+$previousBuildTime = $env:CAPYIO_BUILD_TIME
 Push-Location $repositoryRoot
 try {
+    $revision = (& git rev-parse HEAD).Trim()
+    if ($LASTEXITCODE -ne 0) { throw 'Cannot resolve source revision.' }
+    $dirty = [bool](& git diff --name-only HEAD)
+    $env:CAPYIO_BUILD_REVISION = $revision + $(if ($dirty) { '-dirty' } else { '' })
+    $env:CAPYIO_BUILD_TIME = [DateTime]::UtcNow.ToString('o')
     & pnpm --filter '@capyio/desktop' build
     if ($LASTEXITCODE -ne 0) { throw 'Shared UI build failed.' }
     & cargo build --offline -p capyio-desktop -p capyio-remote-touchpad-adapter -p capyio-vcamdroid-adapter --bin capyio-desktop --bin capyio-ptp-adb-lab --bin capyio-avc-lab-receiver
@@ -34,4 +41,8 @@ try {
     Write-Output "Test package: $destination"
     Write-Output "Launch: $(Join-Path $destination 'capyio-desktop.exe')"
 }
-finally { Pop-Location }
+finally {
+    $env:CAPYIO_BUILD_REVISION = $previousRevision
+    $env:CAPYIO_BUILD_TIME = $previousBuildTime
+    Pop-Location
+}
