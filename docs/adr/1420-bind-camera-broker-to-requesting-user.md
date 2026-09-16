@@ -43,6 +43,17 @@ expected ADB reverse existed. Stop returned Stopped and removed all three
 processes and the reverse mapping.
 
 The phone was connected at the newly supplied wireless-debug endpoint, but its
-keyguard was locked. No authentication bypass was attempted, so this gate proves
-ordinary-control-to-elevated-Broker lifecycle and cleanup, not a new live-frame
-or independent-camera-consumer pass.
+keyguard was locked during the first gate. No authentication bypass was
+attempted, so that gate proved ordinary-control-to-elevated-Broker lifecycle and
+cleanup, not live frames.
+
+After the phone was manually unlocked, the unified Android App exposed its
+shared Quick Actions home and `Phone camera` entered Active. The Broker's fixed
+ADB reverse, session host and receiver delivered a 1,382,400-byte NV12 sample to
+an independent Media Foundation consumer running as the Broker account. Android
+camera clients, the reverse and all three Windows processes were empty after
+Stop. A consumer launched directly by Codex runs as the distinct restricted
+`CodexSandboxOffline` account, while the interactive Explorer and Broker both
+run as `arthu`; its access result is therefore not acceptance evidence for the
+ordinary `arthu` desktop. The final Explorer-launched ordinary-user consumer
+gate still requires a separately confirmed interactive UAC run.

@@ -166,6 +166,17 @@ Status, Start to generation 1 Active and Stop. The fixed session host, AVC
 receiver and expected ADB reverse appeared during Active and were all absent
 after Stop. The connected phone was locked, so Android capture and independent
 Media Foundation consumption were deliberately not claimed for this rerun.
+
+The phone was subsequently unlocked without changing the installed APK. The
+unified App's shared Quick Actions page showed `Phone camera` Active, Android
+reported a real camera client, and an independent Media Foundation consumer in
+the elevated Broker account read a 1,382,400-byte NV12 sample with the expected
+333,333-tick duration and delta. Stop left `Active Camera Clients: []`, no ADB
+reverse and no desktop/session-host/receiver processes. A direct Codex probe is
+owned by the separate restricted `CodexSandboxOffline` account, not the actual
+interactive `arthu` user, so its access denial is not used as product evidence.
+The final ordinary-`arthu` consumer check remains pending because the separate
+Explorer-launched UAC request was not confirmed during this run.
 The complete `cargo xtask ci` matrix then passed and the requester-SID package
 was generated at `target/integrated-test/20260916-152232-9636`; its desktop
 SHA-256 is

@@ -31,7 +31,11 @@ and leaves Tauri/WebView unprivileged. ADR 1420 binds the elevated pipe to the
 ordinary process token's Windows-validated SID so cross-account UAC does not
 broaden access to all interactive users. A physical ordinary-client gate passed
 Status/Start/Active/Stop and exact process/reverse cleanup. No service is
-installed; a fresh Broker live-frame gate still needs an unlocked phone.
+installed. After manual phone unlock, the unified Android camera action became
+Active and an independent elevated-account Media Foundation consumer read one
+1,382,400-byte NV12 sample through the Broker route. The final consumer gate
+from the actual ordinary `arthu` Explorer context still awaits interactive UAC
+confirmation; the Codex sandbox account is not a substitute for that user.
 The complete repository CI passed and the resulting package is
 `target/integrated-test/20260916-152232-9636` (desktop SHA-256
 `CE8F1AC9CABB06200D37C6178B41B83DA2E7B953834D59FC255129923C8DE2B5`).

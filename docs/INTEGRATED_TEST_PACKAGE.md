@@ -52,8 +52,10 @@ a requester-scoped Status/Start/Stop pipe; the WebView supplies no path, SID,
 argument, mapping name or endpoint. Successful Stop cleans the projection and
 ends that Broker process. An already elevated desktop retains the prior direct
 compatibility path. The cross-account UAC lifecycle and cleanup gate passed,
-but the Broker route still awaits its physical live-frame rerun with an unlocked
-phone.
+and an unlocked-phone rerun delivered a 1,382,400-byte NV12 sample to an
+independent elevated-account Media Foundation consumer. The final ordinary
+interactive-user consumer gate remains pending; a restricted Codex sandbox
+account is not equivalent to the real desktop user.
 A uniquely installed VHF interface selects VHF; missing VHF
 selects synthetic input. Ambiguous interfaces, failed discovery and unsupported
 platforms now fail before reverse mapping or helper creation, as ADR 1410
