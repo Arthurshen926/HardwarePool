@@ -87,8 +87,12 @@ android {
         applicationId = 'dev.capyio.android'
         minSdk = 29
         targetSdk = 36
-        versionCode = 17
-        versionName = '0.5.5-dev'
+        versionCode = 18
+        versionName = '0.5.6-dev'
+        buildConfigField 'String', 'SOURCE_REVISION', groovy.json.JsonOutput.toJson(
+                System.getenv('CAPYIO_BUILD_REVISION') ?: 'unrecorded')
+        buildConfigField 'String', 'BUILT_AT', groovy.json.JsonOutput.toJson(
+                System.getenv('CAPYIO_BUILD_TIME') ?: 'unrecorded')
         ndk {
             abiFilters 'arm64-v8a'
         }

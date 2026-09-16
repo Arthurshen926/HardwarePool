@@ -17,8 +17,19 @@ its Windows backend reports the embedded package revision (including a dirty
 suffix), build time, and presence of the exact ADB and receiver executables.
 The no-argument diagnostic command cannot select paths or launch processes.
 File presence does not prove a running service, connected phone or permission
-to access a driver. Android build identity and deeper service/device checks
-remain follow-up work; Browser Mock explicitly reports simulated state.
+to access a driver. Android 0.5.6 supplies native version/code, optional build
+revision/time and Binder attachment through the same diagnostics DTO. Build
+revision/time default to `unrecorded` unless the build environment supplies
+`CAPYIO_BUILD_REVISION` and `CAPYIO_BUILD_TIME`; they are never inferred from
+Windows. Deeper service/device checks remain follow-up work; Browser Mock
+explicitly reports simulated state.
+
+The authorized phone update on 2026-09-16 installed 0.5.6-dev, version code 18.
+The installed base APK and final local build share SHA-256
+`6A9F0CAF002EB0D6B5D58CF98576503A3DA3FB30535A417892568094E7E488EC`.
+Android `capyioCheck` passed, including 242 composition, 22 catalog, 40 lifecycle,
+36 audio and 126 native-LAN assertions. This proves build/package deployment,
+not a new physical media or diagnostic-panel rendering acceptance.
 
 The camera receiver currently decodes AVC to NV12 and does not register a
 system camera. A uniquely installed VHF interface selects VHF; missing VHF

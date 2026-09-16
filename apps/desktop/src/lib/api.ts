@@ -7,6 +7,7 @@ declare global {
   interface Window {
     CapyIOAndroid?: {
       openNativeDiagnostics(): boolean;
+      getDiagnosticsJson?(): string;
       getSnapshotJson(): string;
       getQuickActionsJson(): string;
       getGamepadStateJson(): string;
@@ -27,7 +28,17 @@ declare global {
 
 class AndroidNodeCapyIOApi implements CapyIOApi {
   async getDiagnostics() {
-    return { backend: "Android Node", version: "未提供", revision: "未提供", builtAt: "未提供", checks: [{ label: "检查范围", detail: "Android 构建标识尚未接入原生桥接；不会使用 Windows 版本信息。" }] };
+    const encoded = window.CapyIOAndroid?.getDiagnosticsJson?.();
+    if (!encoded) return { backend: "Android Node", version: "旧版 APK", revision: "未提供", builtAt: "未提供", checks: [{ label: "版本检查", detail: "请更新 APK 以读取原生构建标识。" }] };
+    if (encoded.length > 16384) throw new Error("Android diagnostics response exceeds the size limit");
+    const value = JSON.parse(encoded) as import("./types").UiDiagnostics;
+    if (value.backend !== "Android Node" || typeof value.version !== "string"
+      || typeof value.revision !== "string" || typeof value.builtAt !== "string"
+      || !Array.isArray(value.checks) || value.checks.length > 16
+      || !value.checks.every(check => check && typeof check.label === "string" && typeof check.detail === "string")) {
+      throw new Error("Android diagnostics returned an incompatible response");
+    }
+    return value;
   }
   async getSnapshot(): Promise<UiSnapshot> {
     const encoded = window.CapyIOAndroid?.getSnapshotJson();

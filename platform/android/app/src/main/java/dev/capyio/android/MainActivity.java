@@ -403,6 +403,28 @@ public final class MainActivity extends Activity {
 
     private final class ObserverBridge {
         @JavascriptInterface
+        public String getDiagnosticsJson() {
+            try {
+                org.json.JSONObject result = new org.json.JSONObject();
+                result.put("backend", "Android Node");
+                result.put("version", BuildConfig.VERSION_NAME + " (" + BuildConfig.VERSION_CODE + ")");
+                result.put("revision", BuildConfig.SOURCE_REVISION);
+                result.put("builtAt", BuildConfig.BUILT_AT);
+                org.json.JSONArray checks = new org.json.JSONArray();
+                checks.put(new org.json.JSONObject()
+                        .put("label", "Node 服务")
+                        .put("detail", binder == null ? "界面尚未绑定服务" : "界面已绑定；不代表远端连接或数据传输成功"));
+                checks.put(new org.json.JSONObject()
+                        .put("label", "Android 系统")
+                        .put("detail", "Android " + Build.VERSION.RELEASE));
+                result.put("checks", checks);
+                return result.toString();
+            } catch (org.json.JSONException error) {
+                return "{}";
+            }
+        }
+
+        @JavascriptInterface
         public boolean openNativeDiagnostics() {
             handler.post(MainActivity.this::hideSharedUi);
             return true;
