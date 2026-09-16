@@ -1826,6 +1826,13 @@ normative configuration. Normal CI remains device-free.
 
 ## Unified Android 0.5.5 entry and installed-VHF acceptance
 
+The later `CAPY_INTEGRATED_MICROPHONE_056_REPORT.md` closes the short microphone
+capture gate with APK 0.5.6. It also supersedes attributing `0x80070057` to the
+virtual endpoint: a physical USB control fails identically in the restricted
+account and both endpoints work in the actual user's session. Retain account
+identity in all physical audio evidence. Fifty nonzero capture windows and a
+zero-signal post-Stop capture prove this short path without recording audio.
+
 The explicitly authorized update installed version code 17 with SHA-256
 `728992717F6615EACE082B2FFB40D2D147846C45D6D18A90E1470C0635284FED`.
 Cold launch opened the shared Quick Actions URL directly and respected status

@@ -1047,6 +1047,13 @@ the previous squeal, so the controlled-host 21.85 acceptance is complete.
 
 ## Unified Android 0.5.5 and installed-VHF integration
 
+Update 2026-09-16: the later unified 0.5.6 microphone acceptance supersedes the
+unresolved endpoint-regression interpretation below. The same probe fails on
+both USB and CapyIO under the restricted account, but opens both under the
+actual interactive user. Android Start produces nonzero Windows capture in
+all 50 measured windows; Stop restores exact silence. See
+`CAPY_INTEGRATED_MICROPHONE_056_REPORT.md`. No driver repair was required.
+
 ADR 1410 closes the installed touchpad-projection selection gap. The desktop
 now probes without opening the device and adds the fixed `--vhf` argument only
 when exactly one CapyIO VHF broker interface is already installed. Its unit
