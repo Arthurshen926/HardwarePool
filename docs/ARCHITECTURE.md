@@ -890,6 +890,12 @@ UUIDv5 namespace; typed `adapter/`, `capability/` and `port/` paths over bounded
 platform keys are shared by Java and Rust fixed vectors. This defines identity
 only and does not infer Adapter readiness, QoS, interoperability or Route
 support.
+ADR 1405 adds the adjacent pure Android-host projection. A closed versioned DTO
+must explicitly state Adapter type/version/attachment and Route modes plus Port
+Profile, formats, QoS, clock domain and interoperability. The projector builds
+and validates complete Core ownership using ADR 1404 identities; it does not
+infer these claims in JNI and performs no transport I/O. The Java Service still
+needs a narrow DTO handoff before this becomes its live Core catalog.
 
 ANDROID-A01E composes the existing headless Camera2/MediaCodec service into the
 unified APK behind a narrow facade. The unexported camera foreground service,

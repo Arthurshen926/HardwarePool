@@ -11,3 +11,7 @@ capyio-core = { path = "../../../crates/capyio-core" }
 capyio-input = { path = "../../../crates/capyio-input" }
 sha1.workspace = true
 uuid.workspace = true
+
+[dev-dependencies]
+capyio-control-host = { path = "../../../crates/capyio-control-host" }
+capyio-protocol = { path = "../../../crates/capyio-protocol" }

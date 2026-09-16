@@ -319,8 +319,10 @@ dependencies = [
 name = "capyio-android-host"
 version = "0.1.0"
 dependencies = [
+ "capyio-control-host",
  "capyio-core",
  "capyio-input",
+ "capyio-protocol",
  "sha1",
  "uuid",
 ]

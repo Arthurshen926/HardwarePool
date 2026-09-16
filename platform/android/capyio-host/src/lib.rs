@@ -4,11 +4,18 @@
 //! service, or APK exists.
 
 mod catalog_identity;
+mod catalog_projection;
 mod touchpad;
 mod touchpad_capture;
 
 pub use catalog_identity::{
     AndroidCatalogIdentityError, android_adapter_id, android_capability_id, android_port_id,
+};
+pub use catalog_projection::{
+    AndroidAdapterRouteModeV1, AndroidCapabilityAvailabilityV1, AndroidCapabilityClassV1,
+    AndroidCapabilityDtoV1, AndroidCatalogDtoV1, AndroidCatalogProjectionError,
+    AndroidInteroperabilityModeV1, AndroidPermissionRequirementV1, AndroidPortDirectionV1,
+    AndroidPortDtoV1, AndroidQosModeV1, project_android_catalog,
 };
 pub use touchpad::{
     AndroidMotionAction, AndroidMotionSample, AndroidPointerSample, AndroidToolType,

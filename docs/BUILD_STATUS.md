@@ -975,7 +975,13 @@ Rust derive matching, domain-separated RFC 4122 UUIDv5 Adapter, Capability and
 Port IDs from the persisted Node UUID plus canonical platform keys. The Android
 host has three new deterministic identity tests and the Java catalog contract
 passes 22 assertions. QoS, interoperability and complete NodeDescriptor mapping
-remain deliberately separate.
+are supplied separately by ADR 1405 rather than inferred by identity code.
+ADR 1405 now supplies that complete pure Rust mapping: a closed Android DTO
+projects explicit Adapter lifecycle/Route modes and Port QoS/interoperability
+into a validated Core NodeDescriptor. A deterministic composition test then
+filters its Sources and completes a Session-bound Protobuf round-trip while
+retaining the Sink. Android-host coverage is 16 tests. The live Java-to-Rust
+handoff and authenticated delivery remain open.
 
 The apparent post-stop UDP restart failure was then isolated from CapyIO. With
 UU Remote running, every tested port in 45980--46030 returned Winsock 10048

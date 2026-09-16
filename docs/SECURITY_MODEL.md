@@ -355,6 +355,12 @@ Capability and Port identities. Platform keys are locally authored, canonical
 and bounded before hashing. UUIDv5's SHA-1 digest is not used for secrecy,
 signing or peer authentication; every derived ID remains public and still
 requires Session and Route authorization.
+The Android-to-Core catalog projector accepts only closed enums, bounded
+collections and canonical platform keys. It rejects unattached Capabilities
+unless they are Offline and delegates final ownership/Profile/Port validation
+to Core. QoS, interoperability and supported Route modes are explicit DTO
+fields rather than values inferred from UI text. This prevents a future JNI or
+transport boundary from silently upgrading a private Adapter contract.
 
 ANDROID-A01E accepts only the fixed camera action ID and lifecycle-valid
 start/stop/retry. Start is returned to the visible Activity so Android owns the

@@ -1649,8 +1649,16 @@ ADR 1404 adds three `capyio-android-host` identity tests and raises the Android
 Capability catalog contract to 22 assertions. Java and Rust match the same
 Adapter/Capability/Port UUIDv5 vectors, prove Node and identity-domain
 separation, and reject malformed or overlong platform keys. These tests prove
-stable identifier derivation only; they do not yet construct a complete Core
-NodeDescriptor or encode an Android CatalogSnapshot.
+stable identifier derivation only; by themselves they do not construct a
+complete Core NodeDescriptor or encode an Android CatalogSnapshot.
+
+ADR 1405 raises `capyio-android-host` to 16 tests. Three new tests construct a
+complete Android DTO, validate stable Adapter ownership in Core, select one
+microphone Source while retaining a speaker Sink, and round-trip the projected
+catalog through the Session-bound publication encoder/decoder. Malformed
+profiles, duplicate Capability keys and contradictory unattached/Available
+state fail before publication. The fixture is hardware-free and does not prove
+the Java/JNI handoff or network delivery.
 
 ANDROID-A01E2 type-checks the common Vue Camera2 settings panel and compiles/
 lints its four-method Android bridge plus the reused inventory boundary. On the

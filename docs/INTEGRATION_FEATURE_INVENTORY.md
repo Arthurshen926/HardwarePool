@@ -121,8 +121,12 @@ projects successfully, and stale Offline intent can be removed. The result is
 not yet encoded or delivered through a Session-bound control transport.
 The Android host and Java contract now also share stable UUIDv5 derivation for
 Adapter, Capability and Port identity under the persisted Node UUID. Complete
-Core catalog mapping still needs explicit QoS/interoperability and Adapter
-lifecycle fields before protocol encoding.
+Core catalog mapping receives explicit QoS/interoperability and Adapter
+lifecycle fields through the separate ADR 1405 projector.
+The pure Android Rust host now implements that explicit mapping and proves a
+projected microphone/Speaker catalog across publication filtering and the
+Session-bound codec. The remaining gap is the live versioned Java-to-Rust DTO
+handoff, not the Core ownership or protocol conversion.
 
 The Windows Tauri host no longer retains `DemoLab` as its long-lived state.
 It consumes the fixture once at startup, then all desktop feature workers and

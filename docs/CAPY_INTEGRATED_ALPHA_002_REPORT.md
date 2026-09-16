@@ -78,8 +78,16 @@ authenticated encoder invocation; it does not send the catalog.
 ADR 1404 supplies the stable identity layer needed by the next Android Core
 projection. Both Java and Rust derive Adapter, Capability and Port UUIDv5 values
 from the persisted Node UUID and typed canonical-key paths, with shared fixed
-vectors. The mapping does not yet fill Core Adapter, QoS or interoperability
-fields and therefore does not claim a complete Android wire catalog.
+vectors. That identity layer does not itself fill Core Adapter, QoS or
+interoperability fields; ADR 1405 supplies the separate projection.
+
+ADR 1405 adds the complete pure host projection behind that identity layer. A
+closed Android DTO explicitly supplies Adapter attachment/type/version and
+Route modes plus Port Profile/formats/QoS/clock/interoperability. The projector
+builds a Core-valid ownership graph; a hardware-free integration test selects
+the microphone Source, retains the speaker Sink and round-trips the result
+through the existing Session-bound Protobuf codec. The Java Service has not yet
+crossed this DTO boundary.
 
 ## Evidence
 
@@ -92,8 +100,8 @@ fields and therefore does not claim a complete Android wire catalog.
   passed, 208 assertions.
 - `platform/android/gradlew.bat --offline :app:verifyDebugEntrypoints`: passed;
   the unified Android service and bridge compiled against the existing SDK.
-- `cargo test -p capyio-android-host --offline`: 13 tests passed, including
-  three cross-language identity-contract tests.
+- `cargo test -p capyio-android-host --offline`: 16 tests passed, including
+  three cross-language identity tests and three Core publication tests.
 - `platform/android/gradlew.bat --offline
   :node-contract:capabilityCatalogContractTest`: passed, 22 assertions.
 - `cargo clippy -p capyio-runtime -p capyio-testkit --all-targets -- -D warnings`:

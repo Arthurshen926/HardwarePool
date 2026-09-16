@@ -10,6 +10,14 @@ vectors, and canonical Android keys remain bounded to 96 bytes. These public
 identifiers do not supply Adapter lifecycle, QoS, interoperability, Session
 trust or Route authorization.
 
+ADR 1405 adds a closed versioned Android catalog DTO and pure Core projection.
+Adapter attachment, type/version and supported Route modes are explicit, as are
+Port Profile, formats, QoS, clock domain and interoperability. The projector
+builds a validated `NodeDescriptor` with stable ADR 1404 ownership and fails on
+contradictory or malformed input. Test-only composition reaches the shared
+publication filter and Session-bound codec; the crate still opens no socket and
+contains no JNI call.
+
 `CAPY-PTP-002A` adds a narrow `MotionEvent` DTO mapper; it:
 
 - requires an initial `cancel_all` for each stream epoch;
