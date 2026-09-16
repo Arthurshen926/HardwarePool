@@ -99,11 +99,12 @@ the local handoff contract but not native Runtime invocation or delivery.
 - `cargo test -p capyio-desktop --lib`: 56 passed, 6 intentionally ignored
   physical/installed-device tests.
 - `platform/android/gradlew.bat --offline :app:capabilityCompositionTest`:
-  passed, 219 assertions.
+  passed, 221 assertions.
 - `platform/android/gradlew.bat --offline :app:verifyDebugEntrypoints`: passed;
   the unified Android service and bridge compiled against the existing SDK.
-- `cargo test -p capyio-android-host --offline`: 16 tests passed, including
-  three cross-language identity tests and three Core publication tests.
+- `cargo test -p capyio-android-host --offline`: 17 tests passed, including
+  three cross-language identity tests, three Core publication tests and the
+  exact Java Service catalog fixture.
 - `platform/android/gradlew.bat --offline
   :node-contract:capabilityCatalogContractTest`: passed, 22 assertions.
 - `cargo clippy -p capyio-runtime -p capyio-testkit --all-targets -- -D warnings`:

@@ -39,6 +39,9 @@ policy table is keyed by canonical Capability key, never display text. Existing
 private audio, camera and touchpad paths declare `adapter_managed`; IMU,
 gamepad and haptics declare only `local_pipeline` until a remote path exists.
 The Binder returns this local handoff value but still performs no delivery.
+One checked-in schema-v1 fixture must byte-match Java Service output and decode
+through the Rust projector, preventing the two implementations from drifting
+while their builds remain separate.
 
 ## Consequences
 

@@ -18,6 +18,8 @@ import dev.capyio.android.contract.TouchpadContactSnapshot;
 import dev.capyio.android.contract.TouchpadControlsSnapshot;
 import dev.capyio.android.contract.TouchpadNodeController;
 
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.util.List;
 
 public final class AndroidCapabilityModulesContractTest {
@@ -25,7 +27,7 @@ public final class AndroidCapabilityModulesContractTest {
 
     private AndroidCapabilityModulesContractTest() {}
 
-    public static void main(String[] args) {
+    public static void main(String[] args) throws Exception {
         exposesTheCompleteNonDisplayMigrationInventory();
         reflectsPermissionAndAudioLifecycleState();
         reflectsGenerationBoundImuLifecycleState();
@@ -322,7 +324,7 @@ public final class AndroidCapabilityModulesContractTest {
         check(rejected);
     }
 
-    private static void encodesSelectedPublicationForTheRustHost() {
+    private static void encodesSelectedPublicationForTheRustHost() throws Exception {
         CapabilityCatalogSnapshot catalog = AndroidCapabilityModules.createRegistry(
                 new AudioNodeController(),
                 new CapabilityLifecycleController(),
@@ -354,6 +356,9 @@ public final class AndroidCapabilityModulesContractTest {
         check(json.contains("\"supported_route_modes\":[\"local_pipeline\"]"));
         check(json.contains("\"interoperability\":\"standard_port\""));
         check(json.contains("\"clock_domain\":null"));
+        String fixturePath = System.getProperty("capyio.android.catalogFixture");
+        check(fixturePath != null);
+        check(json.equals(Files.readString(Path.of(fixturePath)).strip()));
     }
 
     private static void permitsDeselectionAfterAnAndroidSourceGoesOffline() {

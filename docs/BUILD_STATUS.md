@@ -968,7 +968,7 @@ Android now performs the matching local operation without adding a transport:
 its Service-owned candidate selection is projected against the current catalog
 before commit, unselected Source-bearing Capabilities are omitted and
 Sink/Control-only Capabilities remain visible. The hardware-free Android
-composition suite passes 219 assertions, including Offline deselection and
+composition suite passes 221 assertions, including Offline deselection and
 fail-closed reselection. No APK was built or installed for this slice.
 ADR 1404 now closes the next Android-to-Core identity prerequisite. Java and
 Rust derive matching, domain-separated RFC 4122 UUIDv5 Adapter, Capability and
@@ -982,7 +982,8 @@ Adapter lifecycle/Route modes and Port QoS/interoperability into a validated
 Core NodeDescriptor. Unknown JSON fields and versions fail closed. A
 deterministic composition test filters its Sources and completes a
 Session-bound Protobuf round-trip while retaining the Sink; Java composition
-also validates conservative Route policy. Android-host coverage is 16 tests.
+also validates conservative Route policy and byte-matches a fixture decoded by
+Rust. Android-host coverage is 17 tests.
 Native Runtime/JNI invocation and authenticated delivery remain open.
 
 The apparent post-stop UDP restart failure was then isolated from CapyIO. With

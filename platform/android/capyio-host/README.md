@@ -24,7 +24,8 @@ messages above 64 KiB before projection. Java makes conservative Route claims:
 only the existing private audio/camera/touchpad paths are Adapter-managed;
 IMU/gamepad/haptics remain local-pipeline declarations. This closes the
 versioned data contract, not the later JNI invocation or authenticated catalog
-delivery.
+delivery. A shared checked-in fixture is produced byte-for-byte by Java and
+decoded by Rust in their respective hardware-free suites.
 
 `CAPY-PTP-002A` adds a narrow `MotionEvent` DTO mapper; it:
 

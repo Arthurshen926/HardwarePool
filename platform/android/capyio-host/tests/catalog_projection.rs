@@ -72,6 +72,17 @@ fn malformed_android_catalogs_fail_before_core_publication() {
     assert!(decode_android_catalog_json(&"x".repeat(MAX_ANDROID_CATALOG_JSON_BYTES + 1)).is_err());
 }
 
+#[test]
+fn decodes_the_exact_java_service_catalog_fixture() {
+    let fixture = include_str!("../../fixtures/android-core-catalog-v1.json");
+    let node = decode_android_catalog_json(fixture).expect("Java catalog fixture");
+
+    assert_eq!(node.capabilities.len(), 3);
+    assert_eq!(node.adapter_instances.len(), 3);
+    node.validate()
+        .expect("projected fixture must remain valid");
+}
+
 fn catalog() -> AndroidCatalogDtoV1 {
     AndroidCatalogDtoV1 {
         schema_version: 1,

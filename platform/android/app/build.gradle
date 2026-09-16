@@ -186,5 +186,7 @@ tasks.register('capabilityCompositionTest', JavaExec) {
     dependsOn tasks.named('compileCapabilityCompositionTest')
     classpath = files(capabilityCompositionOutput)
     mainClass = 'dev.capyio.android.AndroidCapabilityModulesContractTest'
+    systemProperty 'capyio.android.catalogFixture',
+            rootProject.file('fixtures/android-core-catalog-v1.json').absolutePath
     enableAssertions = true
 }
