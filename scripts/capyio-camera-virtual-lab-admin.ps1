@@ -1,16 +1,16 @@
-#Requires -RunAsAdministrator
-
 [CmdletBinding()]
 param(
     [Parameter(Mandatory = $true)]
-    [ValidateSet('Deploy', 'Remove', 'RemoveWithFrameServerRestart')]
-    [string]$Action
+    [ValidateSet('Preflight', 'Deploy', 'Remove', 'RemoveWithFrameServerRestart')]
+    [string]$Action,
+
+    [ValidatePattern('^[A-Fa-f0-9]{64}$')]
+    [string]$ExpectedSha256 = '4C236858C5223B4A1303E825496EBE6799C52E9EAE366DC6DE41C8E9A88F70F0'
 )
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 
-$expectedSha256 = '4C236858C5223B4A1303E825496EBE6799C52E9EAE366DC6DE41C8E9A88F70F0'
 $sourceDll = Join-Path $PSScriptRoot '..\target\release\capyio_windows_camera_mf.dll'
 $capyioRoot = 'C:\ProgramData\CapyIO'
 $labRoot = Join-Path $capyioRoot 'Lab'
@@ -19,6 +19,56 @@ $deployDll = Join-Path $deployDirectory 'capyio_windows_camera_mf.dll'
 $clsid = '{35754be3-54b6-4133-a1c7-1716395c6f1c}'
 $clsidKey = "Registry::HKEY_LOCAL_MACHINE\SOFTWARE\Classes\CLSID\$clsid"
 $serverKey = Join-Path $clsidKey 'InprocServer32'
+
+if (-not [Environment]::Is64BitProcess) {
+    throw 'Use 64-bit PowerShell for the fixed 64-bit COM registration.'
+}
+
+# Reject redirected filesystem targets before any deployment or cleanup.
+foreach ($path in @($capyioRoot, $labRoot, $deployDirectory, $deployDll)) {
+    if ((Test-Path -LiteralPath $path) -and
+        ((Get-Item -LiteralPath $path -Force).Attributes -band [IO.FileAttributes]::ReparsePoint)) {
+        throw "Refusing reparse-point deployment target: $path"
+    }
+}
+
+function Assert-OwnedRegistration {
+    if (Test-Path -LiteralPath $clsidKey) {
+        if (-not (Test-Path -LiteralPath $serverKey)) {
+            throw 'Refusing cleanup of an unrecognized COM registration.'
+        }
+        $registeredPath = (Get-Item -LiteralPath $serverKey).GetValue('')
+        if ($registeredPath -ne $deployDll) {
+            throw 'Refusing cleanup: COM source path differs from the fixed lab target.'
+        }
+    }
+    if (Test-Path -LiteralPath $deployDll) {
+        if ((Get-FileHash -Algorithm SHA256 -LiteralPath $deployDll).Hash -ne $ExpectedSha256) {
+            throw 'Refusing cleanup: deployed DLL does not match the approved hash.'
+        }
+    }
+}
+
+if ($Action -eq 'Preflight') {
+    if (-not (Test-Path -LiteralPath $sourceDll -PathType Leaf)) {
+        throw "Release DLL does not exist: $sourceDll"
+    }
+    if ((Get-FileHash -Algorithm SHA256 -LiteralPath $sourceDll).Hash -ne $ExpectedSha256) {
+        throw 'Release DLL SHA-256 mismatch.'
+    }
+    Assert-OwnedRegistration
+    Write-Output 'candidate_preflight=pass'
+    Write-Output "sha256=$ExpectedSha256"
+    Write-Output "deployed=$([bool](Test-Path -LiteralPath $deployDll))"
+    Write-Output "registered=$([bool](Test-Path -LiteralPath $serverKey))"
+    exit 0
+}
+
+$identity = [Security.Principal.WindowsIdentity]::GetCurrent()
+$principal = New-Object Security.Principal.WindowsPrincipal($identity)
+if (-not $principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)) {
+    throw 'Deployment/removal requires an explicitly approved administrator session.'
+}
 
 function Remove-EmptyDirectory {
     param([Parameter(Mandatory = $true)][string]$Path)
@@ -42,12 +92,14 @@ function Remove-LabRegistration {
 }
 
 if ($Action -eq 'Remove') {
+    Assert-OwnedRegistration
     Remove-LabRegistration
     Write-Output 'admin_cleanup=pass'
     exit 0
 }
 
 if ($Action -eq 'RemoveWithFrameServerRestart') {
+    Assert-OwnedRegistration
     $frameServer = Get-Service -Name 'FrameServer'
     $restartFrameServer = $frameServer.Status -eq [System.ServiceProcess.ServiceControllerStatus]::Running
     try {

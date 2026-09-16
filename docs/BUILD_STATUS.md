@@ -8,8 +8,9 @@ The Windows shared UI now exposes a separate system-camera action that owns
 the camera session host and shared-NV12 receiver, with bounded readiness,
 rollback and normal shutdown. The existing decode-only action is preserved.
 Desktop tests pass (68 passed, seven physical tests ignored), as does strict
-desktop Clippy. The expected deployed COM source is absent on the queried
-host, so ordinary camera-client physical acceptance is still pending. See
+desktop Clippy. The follow-up hash-pinned COM deployment now passes real
+session Start/Stop and two independent consumers reading generated frames.
+Phone live-frame system-camera acceptance is still pending. See
 `CAPY_INTEGRATED_SYSTEM_CAMERA_REPORT.md` and ADR 1412. This does not claim
 completion of all integration or merge the separate Display work.
 

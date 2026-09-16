@@ -135,6 +135,15 @@ fn read_ready(reader: &mut impl Read) -> Result<(), String> {
 mod tests {
     use super::*;
 
+    #[cfg(windows)]
+    #[test]
+    #[ignore = "requires explicitly approved deployed camera COM source on the local lab host"]
+    fn physical_deployed_session_starts_and_stops_via_control_pipe() {
+        let mut session = CameraSession::start().expect("deployed camera ready");
+        session.poll().expect("camera host alive");
+        session.stop().expect("normal camera Stop/Shutdown");
+    }
+
     #[test]
     fn readiness_requires_exact_bounded_record() {
         assert!(read_ready(&mut &b"CAPYIO_CAMERA_SESSION_READY\n"[..]).is_ok());
