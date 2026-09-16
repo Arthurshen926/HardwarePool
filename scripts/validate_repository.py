@@ -34,6 +34,7 @@ REQUIRED_FILES = [
     "docs/REQUIREMENTS_TRACEABILITY.md",
     "docs/plans/TEMPLATE.md",
     "docs/adr/0046-connect-native-speaker-lab-path.md",
+    "docs/adr/1410-select-installed-vhf-touchpad-fallback.md",
     "crates/capyio-core/src/lib.rs",
     "crates/capyio-data-plane/src/lib.rs",
     "adapters/sensor-server/src/lib.rs",
@@ -296,6 +297,15 @@ def validate_android_audio_shell() -> None:
             fail(f"Android audio UI lacks bounded diagnostics/refresh behavior: {token}")
     if "MainActivity.this::renderLatest" in activity:
         fail("Android audio UI must coalesce worker-driven state notifications")
+    for token in [
+        '"/capyio-ui/index.html?view=quick"',
+        "renderPermissionState(null);\n        showSharedUi();",
+        "public boolean openNativeDiagnostics()",
+        "WindowInsets.Type.systemBars() | WindowInsets.Type.displayCutout()",
+        "getInsetsIgnoringVisibility",
+    ]:
+        if token not in activity:
+            fail(f"Android unified UI is not the default with a native diagnostic fallback: {token}")
 
 
 def validate_native_audio_lan_backend() -> None:

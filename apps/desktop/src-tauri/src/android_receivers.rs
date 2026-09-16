@@ -7,6 +7,8 @@ use std::{
     thread,
 };
 
+use capyio_windows_input::{VhfBrokerInterfaceProbe, probe_vhf_broker_interface};
+
 use crate::quick_actions::{QUICK_ACTION_SCHEMA_VERSION, QuickActionOperation, UiQuickAction};
 
 pub const TOUCHPAD_RECEIVER_ACTION_ID: &str = "capyio.quick-action.android-touchpad-receiver";
@@ -58,14 +60,13 @@ impl ReceiverKind {
         }
     }
 
-    fn arguments(self) -> &'static [&'static str] {
+    fn arguments(self) -> Vec<&'static str> {
         match self {
-            Self::Touchpad => &[
-                "--inject",
-                "--acknowledge-desktop-input",
-                "--manual-session",
-            ],
-            Self::Camera => &[
+            Self::Touchpad => touchpad_arguments(matches!(
+                probe_vhf_broker_interface(),
+                VhfBrokerInterfaceProbe::Single
+            )),
+            Self::Camera => vec![
                 "--max-access-units",
                 "7200",
                 "--decode-nv12",
@@ -79,6 +80,7 @@ impl ReceiverKind {
 struct ReceiverProcess {
     child: Child,
     serial: String,
+    projection: &'static str,
     stderr_tail: Arc<Mutex<Vec<u8>>>,
 }
 
@@ -106,9 +108,15 @@ impl Receiver {
         let adb = adb_path()?;
         let serial = single_authorized_device(&adb)?;
         let executable = sibling_executable(self.kind.executable())?;
+        let arguments = self.kind.arguments();
+        let projection = if arguments.contains(&"--vhf") {
+            "installed VHF"
+        } else {
+            "user-mode synthetic"
+        };
         configure_reverse(&adb, &serial, self.kind.port())?;
         let mut child = Command::new(&executable)
-            .args(self.kind.arguments())
+            .args(arguments)
             .stdin(Stdio::null())
             .stdout(Stdio::null())
             .stderr(Stdio::piped())
@@ -124,6 +132,7 @@ impl Receiver {
         self.process = Some(ReceiverProcess {
             child,
             serial,
+            projection,
             stderr_tail,
         });
         Ok(())
@@ -201,10 +210,14 @@ impl Receiver {
             } else {
                 "not_started"
             },
-            connection_hint: self
-                .process
-                .as_ref()
-                .map(|process| format!("ADB {} · 127.0.0.1:{}", process.serial, self.kind.port())),
+            connection_hint: self.process.as_ref().map(|process| {
+                format!(
+                    "ADB {} · 127.0.0.1:{} · {}",
+                    process.serial,
+                    self.kind.port(),
+                    process.projection
+                )
+            }),
             problem_code: self
                 .problem
                 .as_ref()
@@ -212,6 +225,18 @@ impl Receiver {
             problem: self.problem.clone(),
         }
     }
+}
+
+fn touchpad_arguments(vhf_available: bool) -> Vec<&'static str> {
+    let mut arguments = vec![
+        "--inject",
+        "--acknowledge-desktop-input",
+        "--manual-session",
+    ];
+    if vhf_available {
+        arguments.push("--vhf");
+    }
+    arguments
 }
 
 fn capture_stderr_tail(mut stderr: impl Read + Send + 'static, tail: Arc<Mutex<Vec<u8>>>) {
@@ -240,6 +265,12 @@ fn append_stderr_tail(tail: &mut Vec<u8>, chunk: &[u8]) {
 fn receiver_exit_problem(kind: ReceiverKind, code: Option<i32>, stderr: &str) -> String {
     let exit = code.map_or_else(|| "无退出码".to_owned(), |value| value.to_string());
     if kind == ReceiverKind::Touchpad
+        && stderr.contains("VHF touchpad session failed")
+        && stderr.contains("Win32(5)")
+    {
+        return "已安装的 VHF 触控板接口需要管理员权限；请以管理员身份运行 CapyIO Windows 客户端后重试".to_owned();
+    }
+    if kind == ReceiverKind::Touchpad
         && (stderr.contains("submission failed: 5")
             || stderr.contains("batch submission failed: 5")
             || stderr.contains("Access is denied"))
@@ -255,7 +286,9 @@ fn receiver_exit_problem(kind: ReceiverKind, code: Option<i32>, stderr: &str) ->
 }
 
 fn receiver_problem_code(kind: ReceiverKind, problem: &str) -> &'static str {
-    if kind == ReceiverKind::Touchpad && problem.contains("错误 5") {
+    if kind == ReceiverKind::Touchpad && problem.contains("管理员权限") {
+        "CAPY.WINDOWS.TOUCHPAD_ELEVATION_REQUIRED"
+    } else if kind == ReceiverKind::Touchpad && problem.contains("错误 5") {
         "CAPY.WINDOWS.TOUCHPAD_INJECTION_DENIED"
     } else {
         "CAPY.WINDOWS.ANDROID_RECEIVER_EXITED"
@@ -426,11 +459,9 @@ mod tests {
     #[test]
     fn receiver_arguments_are_fixed_and_bounded() {
         assert_eq!(ReceiverKind::Touchpad.port(), 61_000);
-        assert!(
-            ReceiverKind::Touchpad
-                .arguments()
-                .contains(&"--manual-session")
-        );
+        assert!(touchpad_arguments(false).contains(&"--manual-session"));
+        assert!(!touchpad_arguments(false).contains(&"--vhf"));
+        assert!(touchpad_arguments(true).contains(&"--vhf"));
         assert_eq!(ReceiverKind::Camera.port(), 38_173);
         assert!(ReceiverKind::Camera.arguments().contains(&"7200"));
     }
@@ -447,6 +478,20 @@ mod tests {
             "CAPY.WINDOWS.TOUCHPAD_INJECTION_DENIED"
         );
         assert!(problem.contains("错误 5"));
+    }
+
+    #[test]
+    fn vhf_access_denied_requests_elevated_desktop_without_driver_mutation() {
+        let problem = receiver_exit_problem(
+            ReceiverKind::Touchpad,
+            Some(1),
+            "VHF touchpad session failed: Client(Transport(Win32(5)))",
+        );
+        assert_eq!(
+            receiver_problem_code(ReceiverKind::Touchpad, &problem),
+            "CAPY.WINDOWS.TOUCHPAD_ELEVATION_REQUIRED"
+        );
+        assert!(problem.contains("管理员权限"));
     }
 
     #[test]

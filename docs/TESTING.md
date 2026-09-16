@@ -1824,6 +1824,32 @@ not prerequisites for these paths.
 Physical endpoint addresses, transient PIDs and pairing material are not
 normative configuration. Normal CI remains device-free.
 
+## Unified Android 0.5.5 entry and installed-VHF acceptance
+
+The explicitly authorized update installed version code 17 with SHA-256
+`728992717F6615EACE082B2FFB40D2D147846C45D6D18A90E1470C0635284FED`.
+Cold launch opened the shared Quick Actions URL directly and respected status
+bar/display-cutout insets. The shared `原生诊断` action opened the retained
+native diagnostics page, and its `返回统一界面` action restored Quick Actions.
+
+The installed-device touchpad test used a hash-pinned receiver through
+`scripts/run_windows_touchpad_integrated_vhf.ps1`. After the unified Android
+touchpad action connected, five injected contact updates plus handshake/close
+produced seven processed/submitted VHF frames and transitions `0->1->2->0`;
+the helper exited with `lab_status=complete` and `device_cleanup=closed`.
+The test did not install or modify the already present driver. Unit coverage
+also requires no-interface synthetic arguments and the stable VHF elevation
+diagnostic.
+
+The Android microphone action and Windows service still reached their active
+network/runtime states. The repeat ordinary WASAPI capture was not accepted:
+the endpoint enumerated as 48 kHz mono float32, but initialization returned
+`0x80070057` across the format/period matrix and remained unchanged after an
+audio-service/endpoint-builder restart. This is retained as an unresolved
+controlled-host endpoint regression; no WAV was created. A release candidate
+must repeat a non-zero ordinary-client capture after the endpoint is repaired
+or provide bounded service-owned capture-ring metrics.
+
 ## Data and timing quality
 
 Signal tests measure latency, clipping, gaps, discontinuities, loss/repeat and

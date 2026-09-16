@@ -919,9 +919,12 @@ sensor or UI callback.
 ADR 1409 gives the Windows desktop process ownership of the two remaining
 operator-started Android receiver helpers. Typed Quick Actions create only the
 fixed touchpad or camera ADB reverse mapping and launch only the corresponding
-sibling binary with closed arguments. The default touchpad projection remains
-the user-mode synthetic path, while camera reception is bounded to AVC decode;
-this lifecycle does not install a VHF device or register a virtual camera.
+sibling binary with closed arguments. ADR 1410 supersedes only the touchpad
+projection choice: a read-only probe selects `--vhf` when exactly one installed
+CapyIO VHF interface exists, otherwise the user-mode synthetic path remains the
+default. The lifecycle never installs or mutates a VHF device and never
+registers a virtual camera. The protected VHF path reports a typed elevation
+requirement instead of attempting automatic privilege escalation.
 Sidecar exit, explicit Stop and desktop shutdown are reflected through the
 typed action state and clean up the exact owned mapping.
 

@@ -6,6 +6,7 @@ import type { CapyIOApi, GamepadControlUpdate, QuickActionOperation, TouchpadCon
 declare global {
   interface Window {
     CapyIOAndroid?: {
+      openNativeDiagnostics(): boolean;
       getSnapshotJson(): string;
       getQuickActionsJson(): string;
       getGamepadStateJson(): string;

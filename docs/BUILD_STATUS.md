@@ -1044,3 +1044,37 @@ source/format/reassembly/queue errors. The interactive Windows microphone probe
 again measured non-zero RMS/peak in every shown 100 ms window without saving
 audio. The owner's final UU listening confirmed normal phone playback without
 the previous squeal, so the controlled-host 21.85 acceptance is complete.
+
+## Unified Android 0.5.5 and installed-VHF integration
+
+ADR 1410 closes the installed touchpad-projection selection gap. The desktop
+now probes without opening the device and adds the fixed `--vhf` argument only
+when exactly one CapyIO VHF broker interface is already installed. Its unit
+tests cover the VHF and synthetic argument sets plus the stable
+`CAPY.WINDOWS.TOUCHPAD_ELEVATION_REQUIRED` diagnostic. An authorized elevated
+physical run of the desktop-owned helper accepted seven complete frames,
+observed contact transitions `0->1->2->0`, submitted all seven frames to VHF
+and closed the device normally. No driver, boot or security-policy mutation was
+performed; the single Windows application must currently be started as
+Administrator for this protected path.
+
+Unified Android `0.5.5-dev` (version code 17, debug APK SHA-256
+`728992717F6615EACE082B2FFB40D2D147846C45D6D18A90E1470C0635284FED`) now cold
+starts directly into the shared Quick Actions view. The former microphone and
+speaker Activity is explicitly labelled native diagnostics and is reachable
+only through a shared-UI action; its return action restores the same shared
+view. System-bar and display-cutout insets prevent the WebView heading from
+being obscured. The authorized Android 16 run verified cold launch, both
+directions of that navigation and the packaged URL
+`index.html?view=quick`. The full Android `capyioCheck` passed 242 composition,
+22 catalog, 40 lifecycle, 36 audio-contract and 126 native-LAN assertions plus
+Lint, assembly and entrypoint checks.
+
+The same APK started its microphone through the shared Quick Action and the
+existing Windows service reached `active`. A repeat ordinary-client capture on
+this host could enumerate the 48 kHz mono float32 endpoint but `IAudioClient`
+initialization returned `0x80070057` for every tested shared/exclusive format.
+An audio-service/endpoint-builder restart left the same failure unchanged.
+Earlier 0.5.4/current-service-config evidence still proves non-zero capture,
+but this run does not replace it: the host endpoint regression remains an
+explicit release-qualification follow-up.

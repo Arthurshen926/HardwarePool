@@ -1,6 +1,7 @@
 # ADR 1409: Desktop owns bounded Android receiver sidecars
 
-Status: accepted
+Status: superseded by ADR 1410 for touchpad projection selection; camera and
+sidecar-lifecycle decisions remain accepted
 
 Date: 2026-09-16
 
@@ -48,4 +49,3 @@ Vue client receives only typed lifecycle DTOs.
   `capyio-desktop.exe`. Installer/bundle work remains open.
 - Automatic authenticated discovery, long-running reconnect, virtual-camera
   registration and production touchpad authorization remain separate work.
-

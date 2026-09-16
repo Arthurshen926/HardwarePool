@@ -59,6 +59,12 @@ const localCapabilities = computed(() => (snapshot.value?.capabilities ?? []).fi
 const peerCapabilities = computed(() => (snapshot.value?.capabilities ?? []).filter((capability) => !capability.local));
 const androidNode = computed(() => snapshot.value?.backendMode === "android_node");
 
+function openAndroidNativeDiagnostics(): void {
+  if (!window.CapyIOAndroid?.openNativeDiagnostics()) {
+    errorMessage.value = "Android 原生诊断界面不可用";
+  }
+}
+
 async function load(): Promise<void> {
   loading.value = true;
   errorMessage.value = "";
@@ -346,6 +352,7 @@ function refreshSnapshot(): void {
       </nav>
       <div class="topbar__actions">
         <StatusPill v-if="snapshot" :tone="snapshot.backendMode === 'tauri_demo' ? 'success' : 'warning'" :label="snapshot.backendMode" />
+        <button v-if="androidNode" class="ghost-button" type="button" @click="openAndroidNativeDiagnostics">原生诊断</button>
         <button v-if="!androidNode" class="ghost-button" type="button" :disabled="loading" @click="resetDemo">Reset demo</button>
       </div>
     </header>

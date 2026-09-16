@@ -15,8 +15,8 @@ import android.os.IBinder;
 import android.os.Looper;
 import android.webkit.JavascriptInterface;
 import android.webkit.WebView;
-import android.view.KeyEvent;
 import android.view.View;
+import android.view.WindowInsets;
 import android.widget.Button;
 import android.widget.TextView;
 
@@ -40,7 +40,7 @@ public final class MainActivity extends Activity {
     private static final int REQUEST_CAMERA_PERMISSIONS = 8102;
     private static final long REFRESH_INTERVAL_MILLIS = 250;
     private static final String SHARED_UI_URL = AndroidAssetWebViewClient.ORIGIN
-            + "/capyio-ui/index.html?view=workspace";
+            + "/capyio-ui/index.html?view=quick";
 
     private final Handler handler = new Handler(Looper.getMainLooper());
     private final AtomicBoolean refreshQueued = new AtomicBoolean();
@@ -88,6 +88,7 @@ public final class MainActivity extends Activity {
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
         setContentView(R.layout.activity_main);
+        configureSystemBarInsets();
         nativeControls = findViewById(R.id.native_controls);
         sharedUi = findViewById(R.id.shared_ui);
         configureSharedUi();
@@ -119,6 +120,33 @@ public final class MainActivity extends Activity {
         speakerViews.stop.setOnClickListener(view -> AudioNodeService.stopSpeaker(this));
         findViewById(R.id.open_shared_ui).setOnClickListener(view -> showSharedUi());
         renderPermissionState(null);
+        showSharedUi();
+    }
+
+    @SuppressWarnings("deprecation")
+    private void configureSystemBarInsets() {
+        View root = findViewById(R.id.activity_root);
+        root.setOnApplyWindowInsetsListener((view, windowInsets) -> {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+                android.graphics.Insets bars = windowInsets.getInsets(
+                        WindowInsets.Type.systemBars() | WindowInsets.Type.displayCutout());
+                android.graphics.Insets stableTop = windowInsets.getInsetsIgnoringVisibility(
+                        WindowInsets.Type.statusBars() | WindowInsets.Type.displayCutout());
+                view.setPadding(
+                        bars.left,
+                        Math.max(bars.top, stableTop.top),
+                        bars.right,
+                        bars.bottom);
+            } else {
+                view.setPadding(
+                        windowInsets.getSystemWindowInsetLeft(),
+                        windowInsets.getStableInsetTop(),
+                        windowInsets.getSystemWindowInsetRight(),
+                        windowInsets.getSystemWindowInsetBottom());
+            }
+            return windowInsets;
+        });
+        root.requestApplyInsets();
     }
 
     @SuppressLint("SetJavaScriptEnabled")
@@ -151,15 +179,6 @@ public final class MainActivity extends Activity {
     private void hideSharedUi() {
         sharedUi.setVisibility(View.GONE);
         nativeControls.setVisibility(View.VISIBLE);
-    }
-
-    @Override
-    public boolean onKeyDown(int keyCode, KeyEvent event) {
-        if (keyCode == KeyEvent.KEYCODE_BACK && sharedUi.getVisibility() == View.VISIBLE) {
-            hideSharedUi();
-            return true;
-        }
-        return super.onKeyDown(keyCode, event);
     }
 
     @Override
@@ -383,6 +402,12 @@ public final class MainActivity extends Activity {
     }
 
     private final class ObserverBridge {
+        @JavascriptInterface
+        public boolean openNativeDiagnostics() {
+            handler.post(MainActivity.this::hideSharedUi);
+            return true;
+        }
+
         @JavascriptInterface
         public String getSnapshotJson() {
             AudioNodeService.NodeBinder current = binder;

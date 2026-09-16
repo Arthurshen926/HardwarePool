@@ -209,19 +209,34 @@ Camera Service to open ID 1. Active mutation was rejected and Stop released it.
 - `jar tf platform/android/app/build/outputs/apk/debug/app-debug.apk`: confirmed
   `assets/capyio-ui/index.html` and generated JavaScript/CSS in the assembled
   archive; the entrypoint references both assets with `./assets/...` paths.
+- the installed unified `0.5.5-dev` APK (version code 17, SHA-256
+  `728992717F6615EACE082B2FFB40D2D147846C45D6D18A90E1470C0635284FED`) cold
+  launched directly into shared Quick Actions with correct system-bar insets.
+  Shared UI opened the retained native diagnostics page and returned to the
+  same unified view without exposing it as the default product screen.
+- the already installed VHF interface was selected by read-only probe. The
+  elevated, hash-pinned desktop-owned touchpad receiver processed and submitted
+  seven frames, observed `0->1->2->0` contacts and closed normally. No driver
+  mutation occurred. Desktop tests cover installed/synthetic selection and the
+  stable elevation-required problem code.
+- the 0.5.5 microphone action and Windows service reached active, but the
+  repeat ordinary WASAPI client failed endpoint initialization with
+  `0x80070057` after successful enumeration. Earlier non-zero capture evidence
+  is not invalidated, but this host regression remains open and this run does
+  not claim a fresh capture-ring pass.
 
 ## Explicit exclusions
 
 - no push, pull request, package publication or production signing;
 - no APK installation or Android permission/service change except the explicitly
-  authorized A01E/A01H/A01E2/0.5.4 unified debug APK runs and their already-
+  authorized A01E/A01H/A01E2/0.5.4/0.5.5 unified debug APK runs and their already-
   declared normal audio, camera, notification and VIBRATE behavior;
 - no Windows driver install/removal, restart or boot/security-policy change;
 - no Display merge or Display worktree modification;
 - no claim that the Tauri schema-4 fixture catalog is real hardware discovery;
 - no claim that Android publication selection has reached a remote peer;
-- physical Android rendering, camera decode, gamepad/IMU and speaker paths are
-  proven. Microphone arrival is proven only through the Windows UDP boundary;
-  protected capture-ring write remains open. Synthetic touchpad submission is
-  blocked by the current token. No claim is made for complete Route/peer parity
-  or camera denial/revoke/background qualification.
+- physical Android rendering, camera decode, gamepad/IMU, speaker and installed-
+  VHF touchpad paths are proven. Microphone arrival and an earlier ordinary-
+  client capture are proven, but the current host's repeat WASAPI initialization
+  regression remains open. No claim is made for complete Route/peer parity or
+  camera denial/revoke/background qualification.

@@ -1273,7 +1273,9 @@ button:disabled {
   }
 
   .hero-panel h1 {
-    font-size: 42px;
+    font-size: 36px;
+    line-height: 1.04;
+    letter-spacing: -0.045em;
   }
 
   .hero-panel__summary,
