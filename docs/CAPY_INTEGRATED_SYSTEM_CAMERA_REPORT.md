@@ -126,4 +126,14 @@ The post-preflight shared UI/test-package build passed and generated
 `target/integrated-test/20260916-134829-1009`; its manifest records the dirty
 development revision and hashes all four shipped executables.
 
+ADR 1417 removes the earlier process-spawn-only status. Camera receiver Start
+now waits for its exact bounded listener readiness before the unified desktop
+reports Active; failure reaps the process and ADB reverse. A physical
+decode-only Start/Stop passed and left no reverse mapping. This strengthens
+lifecycle truthfulness but remains distinct from the live-frame gates above.
+
+The post-readiness shared UI/test-package build passed and generated
+`target/integrated-test/20260916-141529-8853`; its manifest records the dirty
+development revision and hashes all four shipped executables.
+
 Display development and the existing audio/driver installation are unchanged.

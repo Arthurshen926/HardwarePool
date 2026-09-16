@@ -1,10 +1,11 @@
 use std::{
     env,
-    io::Read,
+    io::{self, Read},
     path::{Path, PathBuf},
     process::{Child, Command, Stdio},
-    sync::{Arc, Mutex},
+    sync::{Arc, Mutex, mpsc},
     thread,
+    time::Duration,
 };
 
 use capyio_windows_input::{VhfBrokerInterfaceProbe, probe_vhf_broker_interface};
@@ -18,6 +19,8 @@ pub const SYSTEM_CAMERA_ACTION_ID: &str = "capyio.quick-action.android-system-ca
 const TOUCHPAD_PORT: u16 = 61_000;
 const CAMERA_PORT: u16 = 38_173;
 const STDERR_TAIL_LIMIT: usize = 4_096;
+const READY_LINE_LIMIT: usize = 512;
+const READY_TIMEOUT: Duration = Duration::from_secs(5);
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum ReceiverKind {
@@ -130,7 +133,7 @@ impl Receiver {
         let mut child = Command::new(&executable)
             .args(arguments)
             .stdin(Stdio::null())
-            .stdout(Stdio::null())
+            .stdout(Stdio::piped())
             .stderr(Stdio::piped())
             .spawn()
             .map_err(|error| {
@@ -140,6 +143,39 @@ impl Receiver {
         let stderr_tail = Arc::new(Mutex::new(Vec::with_capacity(STDERR_TAIL_LIMIT)));
         if let Some(stderr) = child.stderr.take() {
             capture_stderr_tail(stderr, Arc::clone(&stderr_tail));
+        }
+        let Some(stdout) = child.stdout.take() else {
+            let _ = child.kill();
+            let _ = child.wait();
+            let _ = remove_reverse(&adb, &serial, self.kind.port());
+            return Err("接收端就绪通道不可用".to_owned());
+        };
+        let (ready_sender, ready_receiver) = mpsc::sync_channel(1);
+        let kind = self.kind;
+        thread::spawn(move || {
+            let mut stdout = stdout;
+            let result = read_receiver_ready(kind, &mut stdout);
+            let _ = ready_sender.send(result);
+            let _ = io::copy(&mut stdout, &mut io::sink());
+        });
+        let ready = match ready_receiver.recv_timeout(READY_TIMEOUT) {
+            Ok(result) => result,
+            Err(mpsc::RecvTimeoutError::Timeout) => Err("接收端就绪等待超时".to_owned()),
+            Err(mpsc::RecvTimeoutError::Disconnected) => Err("接收端就绪通道提前关闭".to_owned()),
+        };
+        if let Err(error) = ready {
+            let _ = child.kill();
+            let _ = child.wait();
+            let _ = remove_reverse(&adb, &serial, self.kind.port());
+            let detail = stderr_tail
+                .lock()
+                .map(|bytes| String::from_utf8_lossy(&bytes).trim().to_owned())
+                .unwrap_or_default();
+            return if detail.is_empty() {
+                Err(error)
+            } else {
+                Err(format!("{error}: {detail}"))
+            };
         }
         self.process = Some(ReceiverProcess {
             child,
@@ -237,6 +273,33 @@ impl Receiver {
             problem: self.problem.clone(),
         }
     }
+}
+
+fn read_receiver_ready(kind: ReceiverKind, reader: &mut impl Read) -> Result<(), String> {
+    let mut line = Vec::with_capacity(128);
+    for _ in 0..READY_LINE_LIMIT {
+        let mut byte = [0_u8];
+        if reader.read(&mut byte).map_err(|error| error.to_string())? == 0 {
+            return Err("接收端在就绪前关闭输出".to_owned());
+        }
+        if byte[0] == b'\n' {
+            if line.last() == Some(&b'\r') {
+                line.pop();
+            }
+            let line = std::str::from_utf8(&line).map_err(|_| "接收端就绪记录不是 UTF-8")?;
+            let matches = match kind {
+                ReceiverKind::Touchpad => line == "lab_status=listening",
+                ReceiverKind::Camera | ReceiverKind::SystemCamera => {
+                    line.starts_with("CAPYIO_AVC_LAB_READY ")
+                }
+            };
+            return matches
+                .then_some(())
+                .ok_or_else(|| "接收端就绪记录不匹配".to_owned());
+        }
+        line.push(byte[0]);
+    }
+    Err("接收端就绪记录超出长度限制".to_owned())
 }
 
 fn select_touchpad_arguments(probe: VhfBrokerInterfaceProbe) -> Result<Vec<&'static str>, String> {
@@ -652,6 +715,45 @@ mod tests {
     }
 
     #[test]
+    fn receiver_readiness_is_exact_bounded_and_kind_specific() {
+        assert!(
+            read_receiver_ready(
+                ReceiverKind::Touchpad,
+                &mut &b"lab_status=listening\r\n"[..]
+            )
+            .is_ok()
+        );
+        assert!(
+            read_receiver_ready(
+                ReceiverKind::Camera,
+                &mut &b"CAPYIO_AVC_LAB_READY transport=adb-reverse-lab\n"[..]
+            )
+            .is_ok()
+        );
+        assert!(
+            read_receiver_ready(
+                ReceiverKind::SystemCamera,
+                &mut &b"CAPYIO_AVC_LAB_READY transport=adb-reverse-lab\n"[..]
+            )
+            .is_ok()
+        );
+        assert!(
+            read_receiver_ready(
+                ReceiverKind::Touchpad,
+                &mut &b"CAPYIO_AVC_LAB_READY x\n"[..]
+            )
+            .is_err()
+        );
+        assert!(
+            read_receiver_ready(ReceiverKind::Camera, &mut &b"lab_status=listening\n"[..]).is_err()
+        );
+        assert!(
+            read_receiver_ready(ReceiverKind::Camera, &mut &[b'x'; READY_LINE_LIMIT + 1][..])
+                .is_err()
+        );
+    }
+
+    #[test]
     fn ambiguous_or_failed_probe_never_falls_back_to_injection() {
         assert!(select_touchpad_arguments(VhfBrokerInterfaceProbe::Multiple).is_err());
         assert!(select_touchpad_arguments(VhfBrokerInterfaceProbe::Failed(5)).is_err());
@@ -710,6 +812,21 @@ mod tests {
         append_stderr_tail(&mut tail, b"bcdef");
         assert_eq!(tail.len(), STDERR_TAIL_LIMIT);
         assert_eq!(&tail[STDERR_TAIL_LIMIT - 5..], b"bcdef");
+    }
+
+    #[cfg(windows)]
+    #[test]
+    #[ignore = "requires one explicitly authorized physical Android debugging device"]
+    fn physical_camera_receiver_requires_readiness_and_cleans_mapping() {
+        let mut actions = AndroidReceiverActions::new();
+        let camera = actions
+            .invoke(CAMERA_RECEIVER_ACTION_ID, QuickActionOperation::Start)
+            .expect("start readiness-confirmed camera receiver");
+        assert_eq!(camera.status, "active");
+        let stopped = actions
+            .invoke(CAMERA_RECEIVER_ACTION_ID, QuickActionOperation::Stop)
+            .expect("stop readiness-confirmed camera receiver");
+        assert_eq!(stopped.status, "idle");
     }
 
     #[cfg(windows)]

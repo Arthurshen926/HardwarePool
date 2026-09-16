@@ -52,6 +52,11 @@ selects synthetic input. Ambiguous interfaces, failed discovery and unsupported
 platforms now fail before reverse mapping or helper creation, as ADR 1410
 requires. VHF requires an elevated Windows application.
 
+Camera and touchpad receiver actions now wait up to five seconds for their
+kind-specific bounded stdout readiness record before reporting Active. Failed
+readiness reaps the helper and removes the exact ADB reverse. Active still means
+listener/projection readiness, not phone-frame delivery.
+
 Validation on 2026-09-16: package build passed; eight receiver unit tests passed
 (one physical test ignored); desktop all-target Clippy passed with warnings
 denied. No physical acceptance is inferred from this build. The current

@@ -20,6 +20,9 @@ compatibility remain.
 Normal sessions now fail closed at a read-only token preflight before creating
 camera/ADB state, while elevated sessions retain the proven path. Whole-UI
 elevation remains a prototype limitation pending a least-privilege broker.
+Desktop-managed camera and touchpad receivers additionally require exact,
+bounded process readiness before becoming Active; a physical decode-receiver
+Start/Stop confirmed readiness and reverse cleanup without starting capture.
 See
 `CAPY_INTEGRATED_SYSTEM_CAMERA_REPORT.md` and ADR 1412. This does not claim
 completion of all integration or merge the separate Display work.
