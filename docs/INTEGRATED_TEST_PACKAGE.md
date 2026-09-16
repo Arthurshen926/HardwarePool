@@ -53,9 +53,12 @@ argument, mapping name or endpoint. Successful Stop cleans the projection and
 ends that Broker process. An already elevated desktop retains the prior direct
 compatibility path. The cross-account UAC lifecycle and cleanup gate passed,
 and an unlocked-phone rerun delivered a 1,382,400-byte NV12 sample to an
-independent elevated-account Media Foundation consumer. The final ordinary
-interactive-user consumer gate remains pending; a restricted Codex sandbox
-account is not equivalent to the real desktop user.
+independent elevated-account Media Foundation consumer. A final rerun from the
+actual ordinary `arthu` Explorer context controlled that Broker and read a
+1,382,400-byte NV12 sample with the expected 333,333-tick duration and delta.
+Stop left no Android camera client, ADB reverse or Broker-owned process. A
+restricted Codex sandbox account is not equivalent to the real desktop user
+and is not used as acceptance evidence.
 A uniquely installed VHF interface selects VHF; missing VHF
 selects synthetic input. Ambiguous interfaces, failed discovery and unsupported
 platforms now fail before reverse mapping or helper creation, as ADR 1410

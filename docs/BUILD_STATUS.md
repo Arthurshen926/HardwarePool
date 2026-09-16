@@ -1,6 +1,6 @@
 # CapyIO Build Status
 
-> Updated: 2026-09-16 for the requester-scoped system-camera Broker gate.
+> Updated: 2026-09-17 for the ordinary-user system-camera live-frame gate.
 
 ## Latest integration slice
 
@@ -33,9 +33,12 @@ broaden access to all interactive users. A physical ordinary-client gate passed
 Status/Start/Active/Stop and exact process/reverse cleanup. No service is
 installed. After manual phone unlock, the unified Android camera action became
 Active and an independent elevated-account Media Foundation consumer read one
-1,382,400-byte NV12 sample through the Broker route. The final consumer gate
-from the actual ordinary `arthu` Explorer context still awaits interactive UAC
-confirmation; the Codex sandbox account is not a substitute for that user.
+1,382,400-byte NV12 sample through the Broker route. The final rerun then used
+the actual ordinary `arthu` Explorer context for both Broker control and an
+independent Media Foundation consumer. It read a 1,382,400-byte NV12 sample
+with 333,333-tick duration and delta; Stop removed the Android camera client,
+ADB reverse and all Broker-owned processes. The Codex sandbox account remains
+distinct and is not used as acceptance evidence.
 The complete repository CI passed and the resulting package is
 `target/integrated-test/20260916-152232-9636` (desktop SHA-256
 `CE8F1AC9CABB06200D37C6178B41B83DA2E7B953834D59FC255129923C8DE2B5`).

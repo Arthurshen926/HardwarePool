@@ -55,5 +55,15 @@ camera clients, the reverse and all three Windows processes were empty after
 Stop. A consumer launched directly by Codex runs as the distinct restricted
 `CodexSandboxOffline` account, while the interactive Explorer and Broker both
 run as `arthu`; its access result is therefore not acceptance evidence for the
-ordinary `arthu` desktop. The final Explorer-launched ordinary-user consumer
-gate still requires a separately confirmed interactive UAC run.
+ordinary `arthu` desktop. At that stage the final Explorer-launched
+ordinary-user consumer gate still required a separately confirmed interactive
+UAC run.
+
+That final gate passed on 2026-09-17. The Broker was launched for the actual
+interactive `arthu` SID; an ordinary Explorer-launched controller observed
+generation 1 Active while the unified Android App held Camera ID 0 and the
+fixed `tcp:38173` reverse. An independent Media Foundation consumer launched
+from the same ordinary Explorer context read one 1,382,400-byte NV12 sample
+with 333,333-tick duration and delta (`first_luma=235`). Ordinary-user Stop
+returned Stopped, and cleanup left no Android camera client, ADB reverse,
+desktop Broker, session host or AVC receiver. No captured payload was retained.

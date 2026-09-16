@@ -175,12 +175,26 @@ the elevated Broker account read a 1,382,400-byte NV12 sample with the expected
 reverse and no desktop/session-host/receiver processes. A direct Codex probe is
 owned by the separate restricted `CodexSandboxOffline` account, not the actual
 interactive `arthu` user, so its access denial is not used as product evidence.
-The final ordinary-`arthu` consumer check remains pending because the separate
-Explorer-launched UAC request was not confirmed during this run.
+At that stage, the final ordinary-`arthu` consumer check remained pending
+because the separate Explorer-launched UAC request was not confirmed.
 The complete `cargo xtask ci` matrix then passed and the requester-SID package
 was generated at `target/integrated-test/20260916-152232-9636`; its desktop
 SHA-256 is
 `CE8F1AC9CABB06200D37C6178B41B83DA2E7B953834D59FC255129923C8DE2B5`.
+
+On 2026-09-17 the remaining ordinary-user gate passed without changing the
+package. The elevated Broker was launched for the actual interactive `arthu`
+SID, and an Explorer-launched ordinary `arthu` controller observed Active at
+generation 1. The unified Android `Phone camera` action opened Camera ID 0 and
+retained the fixed `tcp:38173` reverse. A second Explorer-launched ordinary
+`arthu` Media Foundation process then reported
+`consumer_current_probe=pass`, `sample_bytes=1382400`,
+`sample_duration_100ns=333333`, `sample_delta_100ns=333333` and
+`first_luma=235`. This closes the previously pending user-context distinction:
+the consumer was neither the elevated Broker account nor the restricted Codex
+sandbox account. Android Stop and ordinary-user Broker Stop left no active
+camera client, ADB reverse, desktop Broker, camera-session host or AVC receiver.
+No image or video payload was retained.
 
 The first `cargo xtask ci` run exposed a case-sensitive repository-validator
 assertion for lowercase `$expectedSha256`, while the unchanged hash-pinned
