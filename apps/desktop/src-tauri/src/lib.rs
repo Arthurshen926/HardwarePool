@@ -32,6 +32,7 @@ use serde::{Deserialize, Serialize};
 use tauri::State;
 
 mod android_gamepad;
+mod android_receivers;
 pub mod audio_share_runtime;
 mod gamepad_lab;
 mod microphone_quick_action;
@@ -61,6 +62,7 @@ struct AppState {
     audio_share: Arc<Mutex<AudioShareQuickAction>>,
     microphone: Arc<Mutex<MicrophoneQuickAction>>,
     audio_worker: AudioQuickActionWorker,
+    android_receivers: Mutex<android_receivers::AndroidReceiverActions>,
 }
 
 /// Process-owned Node state. `DemoLab` is only a deterministic bootstrap source;
@@ -143,6 +145,9 @@ impl Drop for AppState {
             && let Ok(mut node) = self.node.lock()
         {
             microphone.shutdown(&mut node.runtime);
+        }
+        if let Ok(receivers) = self.android_receivers.get_mut() {
+            receivers.shutdown();
         }
     }
 }
@@ -524,7 +529,15 @@ fn get_quick_actions(state: State<'_, AppState>) -> Result<Vec<UiQuickAction>, S
         let node = state.node.lock().map_err(|_| "Node state lock poisoned")?;
         microphone.dto(&node.runtime)?
     };
-    Ok(vec![speaker, microphone])
+    let mut actions = vec![speaker, microphone];
+    actions.extend(
+        state
+            .android_receivers
+            .lock()
+            .map_err(|_| "Android receiver state lock poisoned")?
+            .actions(),
+    );
+    Ok(actions)
 }
 
 #[tauri::command]
@@ -532,6 +545,13 @@ fn invoke_quick_action(
     request: InvokeQuickActionRequest,
     state: State<'_, AppState>,
 ) -> Result<UiQuickAction, String> {
+    if android_receivers::AndroidReceiverActions::owns(&request.action_id) {
+        return state
+            .android_receivers
+            .lock()
+            .map_err(|_| "Android receiver state lock poisoned".to_owned())?
+            .invoke(&request.action_id, request.operation);
+    }
     if request.action_id == MICYOU_ACTION_ID {
         let mut microphone = state
             .microphone
@@ -1113,6 +1133,7 @@ pub fn run() {
                 stop: audio_stop,
                 worker: Some(audio_worker),
             },
+            android_receivers: Mutex::new(android_receivers::AndroidReceiverActions::new()),
         })
         .invoke_handler(tauri::generate_handler![
             get_snapshot,

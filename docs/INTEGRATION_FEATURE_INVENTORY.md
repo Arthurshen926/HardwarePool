@@ -1,6 +1,6 @@
 # Non-display integration inventory
 
-Date: 2026-09-04
+Date: 2026-09-16
 
 Integration branch: `codex/capyio-integrated-alpha`
 
@@ -14,8 +14,8 @@ is not modified.
 | Capability | Integrated source baseline | Android boundary | Windows boundary | Current product-composition status |
 |---|---|---|---|---|
 | Bidirectional audio | `codex/capyio-native-audio-subsystem` at `50f3921` | unified audio Node service plus shared status/Quick Actions for independent microphone Source and speaker Sink | unified desktop Quick Actions plus service/host and virtual audio boundaries | shared operation surface and physically proven native paths are present; shared-UI device parity and production pairing/security remain open |
-| Camera | `codex/capyio-camera` at `9808d2c` | unified APK composes the service-owned Camera2/MediaCodec lifecycle, concrete source/vendor-Zoom selection, AVC quality and private transport behind a narrow facade; standalone lab retained | Media Foundation virtual-camera, shared-memory ingress and host crates | shared UI and catalog attach/configure the local Source; product discovery/pairing/Route composition and endpoint parity remain open |
-| Precision Touchpad | `codex/capyio-touchpad` at `77b6846` | unified Node owns a generation-bound five-contact shared-UI state facade; separate JNI packet Source/lab remains intact | user-mode/VHF projection boundaries and Runtime workers | local lifecycle/UI state is attached; authenticated product Route and Windows delivery remain open |
+| Camera | `codex/capyio-camera` at `9808d2c` | unified APK composes the service-owned Camera2/MediaCodec lifecycle, concrete source/vendor-Zoom selection, AVC quality and private transport behind a narrow facade; standalone lab retained | desktop Quick Action owns the fixed ADB mapping and bounded AVC/NV12 receiver; Media Foundation virtual-camera, shared-memory ingress and host crates remain available | one user-facing app owns each side of the controlled transport; product discovery/pairing/Route composition, virtual-camera registration and endpoint parity remain open |
+| Precision Touchpad | `codex/capyio-touchpad` at `77b6846` | unified Node owns the five-contact shared-UI state and JNI/private-record sender | desktop Quick Action owns the fixed ADB mapping and user-mode synthetic receiver; VHF remains separate and untouched | one user-facing app owns each side of the controlled transport; authenticated product Route and long-running reconnect remain open |
 | Touch + motion gamepad | `codex/capyio-gamepad` at `cadaef9` | unified Node owns IMU, generation-bound gamepad state and a bounded service-owned vibrator Sink; standalone touch Controller Lab remains intact | shared Controller UI, DSU/VIIPER/DS4 and optional XInput projection boundaries | local lifecycle/state and haptics command projection are attached; authenticated gamepad/feedback Routes remain open |
 | IMU | audio baseline plus gamepad composition | unified Service-owned SensorManager Adapter with generation-bound start/stop; SensorServer lab remains separate | live numeric panel, recorder fixture and DSU/DS4 consumers | lifecycle attached; typed data-plane routing, transport/security and shared UI selection remain open |
 
@@ -156,7 +156,8 @@ stale selections can be removed after a Source becomes Offline.
    platform transport that constructs the new control-host binding and updates
    the now process-owned desktop Runtime; schema 4 currently projects
    deterministic bootstrap catalogs.
-4. Connect touchpad and camera to authenticated product Routes rather than
-   local lifecycle and lab transport boundaries; add authenticated endpoint
-   parity before retiring the standalone lab.
+4. Replace the desktop-owned bounded touchpad/camera lab transports with
+   authenticated product Routes; package their fixed receiver components with
+   the desktop bundle, add endpoint parity and long-running reconnect before
+   retiring the standalone binaries.
 5. Keep Display out until its branch reaches its own completion gate.

@@ -1,0 +1,402 @@
+use std::{
+    env,
+    path::{Path, PathBuf},
+    process::{Child, Command, Stdio},
+};
+
+use crate::quick_actions::{QUICK_ACTION_SCHEMA_VERSION, QuickActionOperation, UiQuickAction};
+
+pub const TOUCHPAD_RECEIVER_ACTION_ID: &str = "capyio.quick-action.android-touchpad-receiver";
+pub const CAMERA_RECEIVER_ACTION_ID: &str = "capyio.quick-action.android-camera-receiver";
+
+const TOUCHPAD_PORT: u16 = 61_000;
+const CAMERA_PORT: u16 = 38_173;
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum ReceiverKind {
+    Touchpad,
+    Camera,
+}
+
+impl ReceiverKind {
+    const fn action_id(self) -> &'static str {
+        match self {
+            Self::Touchpad => TOUCHPAD_RECEIVER_ACTION_ID,
+            Self::Camera => CAMERA_RECEIVER_ACTION_ID,
+        }
+    }
+
+    const fn title(self) -> &'static str {
+        match self {
+            Self::Touchpad => "接收手机触控板",
+            Self::Camera => "接收手机摄像头",
+        }
+    }
+
+    const fn summary(self) -> &'static str {
+        match self {
+            Self::Touchpad => "Android Touchpad → Windows 合成触控板 · 桌面端自动托管",
+            Self::Camera => "Android Camera2 → Windows AVC 解码接收端 · 桌面端自动托管",
+        }
+    }
+
+    const fn executable(self) -> &'static str {
+        match self {
+            Self::Touchpad => "capyio-ptp-adb-lab.exe",
+            Self::Camera => "capyio-avc-lab-receiver.exe",
+        }
+    }
+
+    const fn port(self) -> u16 {
+        match self {
+            Self::Touchpad => TOUCHPAD_PORT,
+            Self::Camera => CAMERA_PORT,
+        }
+    }
+
+    fn arguments(self) -> &'static [&'static str] {
+        match self {
+            Self::Touchpad => &[
+                "--inject",
+                "--acknowledge-desktop-input",
+                "--manual-session",
+            ],
+            Self::Camera => &[
+                "--max-access-units",
+                "7200",
+                "--decode-nv12",
+                "--reconnect-grace-millis",
+                "60000",
+            ],
+        }
+    }
+}
+
+struct ReceiverProcess {
+    child: Child,
+    serial: String,
+}
+
+struct Receiver {
+    kind: ReceiverKind,
+    process: Option<ReceiverProcess>,
+    problem: Option<String>,
+}
+
+impl Receiver {
+    const fn new(kind: ReceiverKind) -> Self {
+        Self {
+            kind,
+            process: None,
+            problem: None,
+        }
+    }
+
+    fn start(&mut self) -> Result<(), String> {
+        self.poll();
+        if self.process.is_some() {
+            return Ok(());
+        }
+        self.problem = None;
+        let adb = adb_path()?;
+        let serial = single_authorized_device(&adb)?;
+        let executable = sibling_executable(self.kind.executable())?;
+        configure_reverse(&adb, &serial, self.kind.port())?;
+        let child = Command::new(&executable)
+            .args(self.kind.arguments())
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn()
+            .map_err(|error| {
+                let _ = remove_reverse(&adb, &serial, self.kind.port());
+                format!("无法启动 {}: {error}", executable.display())
+            })?;
+        self.process = Some(ReceiverProcess { child, serial });
+        Ok(())
+    }
+
+    fn stop(&mut self) -> Result<(), String> {
+        let adb = adb_path();
+        if let Some(mut process) = self.process.take() {
+            if process
+                .child
+                .try_wait()
+                .map_err(|error| error.to_string())?
+                .is_none()
+            {
+                process.child.kill().map_err(|error| error.to_string())?;
+                process.child.wait().map_err(|error| error.to_string())?;
+            }
+            if let Ok(adb) = adb {
+                remove_reverse(&adb, &process.serial, self.kind.port())?;
+            }
+        }
+        self.problem = None;
+        Ok(())
+    }
+
+    fn poll(&mut self) {
+        let Some(process) = self.process.as_mut() else {
+            return;
+        };
+        let outcome = process.child.try_wait();
+        match outcome {
+            Ok(None) => return,
+            Ok(Some(status)) => {
+                self.problem = Some(format!(
+                    "接收端已退出（{}）；请确认手机端功能已启动并重试",
+                    status
+                        .code()
+                        .map_or_else(|| "无退出码".to_owned(), |code| code.to_string())
+                ));
+            }
+            Err(error) => {
+                self.problem = Some(format!("无法读取接收端状态: {error}"));
+            }
+        }
+        if let Some(process) = self.process.take()
+            && let Ok(adb) = adb_path()
+        {
+            let _ = remove_reverse(&adb, &process.serial, self.kind.port());
+        }
+    }
+
+    fn dto(&mut self) -> UiQuickAction {
+        self.poll();
+        let running = self.process.is_some();
+        UiQuickAction {
+            schema_version: QUICK_ACTION_SCHEMA_VERSION,
+            id: self.kind.action_id(),
+            kind: "capability_control",
+            title: self.kind.title(),
+            summary: self.kind.summary(),
+            status: if running {
+                "active"
+            } else if self.problem.is_some() {
+                "failed"
+            } else {
+                "idle"
+            },
+            simulated: false,
+            route_id: None,
+            route_state: None,
+            route_epoch: None,
+            available_operations: if running { vec!["stop"] } else { vec!["start"] },
+            evidence_level: if running {
+                "process_and_route_state"
+            } else {
+                "not_started"
+            },
+            connection_hint: self
+                .process
+                .as_ref()
+                .map(|process| format!("ADB {} · 127.0.0.1:{}", process.serial, self.kind.port())),
+            problem_code: self
+                .problem
+                .as_ref()
+                .map(|_| "CAPY.WINDOWS.ANDROID_RECEIVER_EXITED".to_owned()),
+            problem: self.problem.clone(),
+        }
+    }
+}
+
+pub struct AndroidReceiverActions {
+    touchpad: Receiver,
+    camera: Receiver,
+}
+
+impl AndroidReceiverActions {
+    pub const fn new() -> Self {
+        Self {
+            touchpad: Receiver::new(ReceiverKind::Touchpad),
+            camera: Receiver::new(ReceiverKind::Camera),
+        }
+    }
+
+    pub fn actions(&mut self) -> Vec<UiQuickAction> {
+        vec![self.touchpad.dto(), self.camera.dto()]
+    }
+
+    pub fn invoke(
+        &mut self,
+        action_id: &str,
+        operation: QuickActionOperation,
+    ) -> Result<UiQuickAction, String> {
+        let receiver = match action_id {
+            TOUCHPAD_RECEIVER_ACTION_ID => &mut self.touchpad,
+            CAMERA_RECEIVER_ACTION_ID => &mut self.camera,
+            _ => return Err("unknown Android receiver Quick Action".to_owned()),
+        };
+        match operation {
+            QuickActionOperation::Start | QuickActionOperation::Retry => receiver.start()?,
+            QuickActionOperation::Stop => receiver.stop()?,
+        }
+        Ok(receiver.dto())
+    }
+
+    pub fn owns(action_id: &str) -> bool {
+        matches!(
+            action_id,
+            TOUCHPAD_RECEIVER_ACTION_ID | CAMERA_RECEIVER_ACTION_ID
+        )
+    }
+
+    pub fn shutdown(&mut self) {
+        let _ = self.touchpad.stop();
+        let _ = self.camera.stop();
+    }
+}
+
+fn adb_path() -> Result<PathBuf, String> {
+    if let Some(path) = env::var_os("CAPYIO_ADB").map(PathBuf::from)
+        && path.is_file()
+    {
+        return Ok(path);
+    }
+    for root in [env::var_os("ANDROID_HOME"), env::var_os("ANDROID_SDK_ROOT")]
+        .into_iter()
+        .flatten()
+    {
+        let candidate = PathBuf::from(root).join("platform-tools").join("adb.exe");
+        if candidate.is_file() {
+            return Ok(candidate);
+        }
+    }
+    Err("未找到 Android platform-tools/adb.exe；请设置 ANDROID_HOME 或 CAPYIO_ADB".to_owned())
+}
+
+fn sibling_executable(name: &str) -> Result<PathBuf, String> {
+    let directory = env::current_exe()
+        .map_err(|error| format!("无法定位 CapyIO 桌面程序: {error}"))?
+        .parent()
+        .map(Path::to_path_buf)
+        .ok_or_else(|| "CapyIO 桌面程序没有父目录".to_owned())?;
+    let path = directory.join(name);
+    if path.is_file() {
+        return Ok(path);
+    }
+    #[cfg(test)]
+    if let Some(target_profile) = directory.parent() {
+        let test_path = target_profile.join(name);
+        if test_path.is_file() {
+            return Ok(test_path);
+        }
+    }
+    Err(format!("缺少桌面托管组件: {}", path.display()))
+}
+
+fn single_authorized_device(adb: &Path) -> Result<String, String> {
+    let output = Command::new(adb)
+        .arg("devices")
+        .output()
+        .map_err(|error| format!("无法执行 adb devices: {error}"))?;
+    if !output.status.success() {
+        return Err("adb devices 执行失败".to_owned());
+    }
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    parse_single_authorized_device(&stdout)
+}
+
+fn parse_single_authorized_device(output: &str) -> Result<String, String> {
+    let devices = output
+        .lines()
+        .filter_map(|line| line.split_once('\t'))
+        .filter_map(|(serial, state)| (state.trim() == "device").then_some(serial.trim()))
+        .filter(|serial| !serial.is_empty())
+        .collect::<Vec<_>>();
+    match devices.as_slice() {
+        [serial] => Ok((*serial).to_owned()),
+        [] => Err("未发现已授权的 Android 调试设备".to_owned()),
+        _ => Err("发现多个 Android 调试设备；请只保留一个已授权设备".to_owned()),
+    }
+}
+
+fn configure_reverse(adb: &Path, serial: &str, port: u16) -> Result<(), String> {
+    let mapping = format!("tcp:{port}");
+    let status = Command::new(adb)
+        .args(["-s", serial, "reverse", &mapping, &mapping])
+        .status()
+        .map_err(|error| format!("无法创建 ADB reverse 映射: {error}"))?;
+    if status.success() {
+        Ok(())
+    } else {
+        Err(format!("ADB reverse 映射失败: {status}"))
+    }
+}
+
+fn remove_reverse(adb: &Path, serial: &str, port: u16) -> Result<(), String> {
+    let mapping = format!("tcp:{port}");
+    let status = Command::new(adb)
+        .args(["-s", serial, "reverse", "--remove", &mapping])
+        .status()
+        .map_err(|error| format!("无法移除 ADB reverse 映射: {error}"))?;
+    if status.success() {
+        Ok(())
+    } else {
+        Err(format!("移除 ADB reverse 映射失败: {status}"))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parses_exactly_one_authorized_device() {
+        let output = "List of devices attached\n100.66.157.119:44187\tdevice\n";
+        assert_eq!(
+            parse_single_authorized_device(output).unwrap(),
+            "100.66.157.119:44187"
+        );
+    }
+
+    #[test]
+    fn rejects_zero_or_multiple_authorized_devices() {
+        assert!(parse_single_authorized_device("List of devices attached\n").is_err());
+        assert!(
+            parse_single_authorized_device(
+                "List of devices attached\na\tdevice\nb\tdevice\nc\tunauthorized\n"
+            )
+            .is_err()
+        );
+    }
+
+    #[test]
+    fn receiver_arguments_are_fixed_and_bounded() {
+        assert_eq!(ReceiverKind::Touchpad.port(), 61_000);
+        assert!(
+            ReceiverKind::Touchpad
+                .arguments()
+                .contains(&"--manual-session")
+        );
+        assert_eq!(ReceiverKind::Camera.port(), 38_173);
+        assert!(ReceiverKind::Camera.arguments().contains(&"7200"));
+    }
+
+    #[cfg(windows)]
+    #[test]
+    #[ignore = "requires one explicitly authorized physical Android debugging device"]
+    fn physical_device_mapping_and_both_receiver_lifecycles_are_owned() {
+        let mut actions = AndroidReceiverActions::new();
+        let touchpad = actions
+            .invoke(TOUCHPAD_RECEIVER_ACTION_ID, QuickActionOperation::Start)
+            .expect("start desktop-owned touchpad receiver");
+        assert_eq!(touchpad.status, "active");
+        assert!(touchpad.connection_hint.is_some());
+        let stopped = actions
+            .invoke(TOUCHPAD_RECEIVER_ACTION_ID, QuickActionOperation::Stop)
+            .expect("stop desktop-owned touchpad receiver");
+        assert_eq!(stopped.status, "idle");
+
+        let camera = actions
+            .invoke(CAMERA_RECEIVER_ACTION_ID, QuickActionOperation::Start)
+            .expect("start desktop-owned camera receiver");
+        assert_eq!(camera.status, "active");
+        assert!(camera.connection_hint.is_some());
+        let stopped = actions
+            .invoke(CAMERA_RECEIVER_ACTION_ID, QuickActionOperation::Stop)
+            .expect("stop desktop-owned camera receiver");
+        assert_eq!(stopped.status, "idle");
+    }
+}

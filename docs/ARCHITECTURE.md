@@ -916,6 +916,15 @@ UDP contract; the operator copies the Windows listener's per-run endpoint and
 token into the shared Android UI. Neither worker performs network I/O from a
 sensor or UI callback.
 
+ADR 1409 gives the Windows desktop process ownership of the two remaining
+operator-started Android receiver helpers. Typed Quick Actions create only the
+fixed touchpad or camera ADB reverse mapping and launch only the corresponding
+sibling binary with closed arguments. The default touchpad projection remains
+the user-mode synthetic path, while camera reception is bounded to AVC decode;
+this lifecycle does not install a VHF device or register a virtual camera.
+Sidecar exit, explicit Stop and desktop shutdown are reflected through the
+typed action state and clean up the exact owned mapping.
+
 ANDROID-A01E composes the existing headless Camera2/MediaCodec service into the
 unified APK behind a narrow facade. The unexported camera foreground service,
 not the Activity or WebView, owns capture, encoding, bounded export and cleanup.

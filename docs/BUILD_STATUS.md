@@ -1001,6 +1001,17 @@ accepts the Windows listener endpoint and per-run token. Shared UI build, APK
 composition and 242 Android contract assertions pass; physical installation
 and cross-device acceptance remain deliberately unperformed.
 
+ADR 1409 removes the remaining manual Windows receiver startup from the
+controlled touchpad and camera flows. Two desktop Quick Actions now require
+exactly one authorized ADB device, own only their fixed reverse mapping, launch
+only a fixed sibling helper with closed bounded arguments, surface unexpected
+exit and reap both the process and mapping on Stop/shutdown. The touchpad action
+uses only the user-mode synthetic projection; the camera action decodes at most
+7200 access units and does not register a virtual camera. Desktop unit tests,
+TypeScript production build and targeted Rust checks pass. Physical acceptance
+of these new actions still requires installing the already-built unified
+`0.5.4-dev` APK under separate authorization.
+
 The apparent post-stop UDP restart failure was then isolated from CapyIO. With
 UU Remote running, every tested port in 45980--46030 returned Winsock 10048
 without an enumerated endpoint owner, including unused 46012. The 40000/40001/
