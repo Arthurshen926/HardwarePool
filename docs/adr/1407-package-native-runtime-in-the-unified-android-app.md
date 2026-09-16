@@ -34,8 +34,9 @@ Vue entrypoint and ARM64 JNI library. It does not install or start the APK.
   service and Rust catalog Runtime.
 - Catalog/native ownership follows Service lifetime rather than Activity
   lifetime.
-- The current native owner remains disconnected; catalog transport and the
-  missing unified IMU/gamepad/touchpad remote Routes remain later slices.
+- The current native owner remains disconnected; authenticated catalog
+  transport remains a later slice. ADR 1408 subsequently composes the existing
+  controlled-lab IMU/gamepad/touchpad data paths into this APK.
 - x86/x86_64 emulators are not supported by this development APK.
 
 ## Build dependency note

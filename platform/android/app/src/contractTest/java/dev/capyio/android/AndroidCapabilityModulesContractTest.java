@@ -42,6 +42,8 @@ public final class AndroidCapabilityModulesContractTest {
         projectsAndAdmitsClosedCapabilityQuickActions();
         appliesAndProjectsClosedGamepadUiCommands();
         parsesAndProjectsClosedTouchpadUiFrames();
+        reconstructsTouchpadPointerLifecycle();
+        encodesControllerLabDatagram();
         projectsAndAdmitsClosedAudioQuickActions();
         attachesAndAdmitsClosedCameraQuickAction();
         attachesAndAdmitsHapticsSink();
@@ -560,7 +562,7 @@ public final class AndroidCapabilityModulesContractTest {
         check(active.contains("\"pressedButtons\":[\"guide\"]"));
         check(active.contains("\"leftStick\":{\"x\":-32767,\"y\":32767}"));
         check(active.contains("\"rightTrigger\":123"));
-        check(active.contains("\"endpoint\":\"local://shared-ui\""));
+        check(active.contains("\"endpoint\":null"));
         check(active.endsWith("}"));
     }
 
@@ -772,6 +774,53 @@ public final class AndroidCapabilityModulesContractTest {
             rejected = true;
         }
         check(rejected);
+    }
+
+    private static void reconstructsTouchpadPointerLifecycle() {
+        TouchpadContactSnapshot first = new TouchpadContactSnapshot(0, 100, 200, 512);
+        TouchpadContactSnapshot second = new TouchpadContactSnapshot(1, 300, 400, 1024);
+
+        TouchpadMotionFrame down = TouchpadMotionFrame.between(List.of(), List.of(first));
+        check(down.action == TouchpadMotionFrame.ACTION_DOWN);
+        check(down.actionIndex == 0 && down.ids.length == 1 && down.ids[0] == 0);
+        check(down.pressure[0] == 0.5f);
+
+        TouchpadMotionFrame pointerDown =
+                TouchpadMotionFrame.between(List.of(first), List.of(first, second));
+        check(pointerDown.action == TouchpadMotionFrame.ACTION_POINTER_DOWN);
+        check(pointerDown.actionIndex == 1 && pointerDown.ids.length == 2);
+
+        TouchpadMotionFrame move = TouchpadMotionFrame.between(
+                List.of(first, second),
+                List.of(new TouchpadContactSnapshot(0, 101, 202, 512), second));
+        check(move.action == TouchpadMotionFrame.ACTION_MOVE);
+
+        TouchpadMotionFrame pointerUp =
+                TouchpadMotionFrame.between(List.of(first, second), List.of(second));
+        check(pointerUp.action == TouchpadMotionFrame.ACTION_POINTER_UP);
+        check(pointerUp.actionIndex == 0 && pointerUp.ids.length == 2);
+
+        TouchpadMotionFrame up = TouchpadMotionFrame.between(List.of(second), List.of());
+        check(up.action == TouchpadMotionFrame.ACTION_UP && up.ids.length == 1);
+
+        TouchpadMotionFrame cancel =
+                TouchpadMotionFrame.between(List.of(first, second), List.of());
+        check(cancel.action == TouchpadMotionFrame.ACTION_CANCEL && cancel.ids.length == 0);
+    }
+
+    private static void encodesControllerLabDatagram() {
+        GamepadControlsSnapshot controls = new GamepadControlsSnapshot(
+                1, -1, 1, -12000, 9000, 0, 32767, 123, 456);
+        String packet = ControllerPacketJson.encode(
+                "c0decafe", "session-1", 7, 99, controls,
+                90, 0.0f, 1.0f, 9.7f,
+                95, 0.1f, 0.2f, 0.3f);
+        check(packet.startsWith("{\"version\":1,\"token\":\"c0decafe\""));
+        check(packet.contains("\"sequence\":7,\"timestampNanos\":99"));
+        check(packet.contains("\"buttons\":1,\"dpadX\":-1,\"dpadY\":1"));
+        check(packet.contains("\"leftX\":-12000,\"leftY\":9000"));
+        check(packet.contains("\"acceleration\":[0.0,1.0,9.7]"));
+        check(packet.endsWith("\"angularVelocityTimestampNanos\":95}"));
     }
 
     private static CapabilitySnapshot capability(

@@ -336,6 +336,15 @@ public final class AndroidUiSnapshotJson {
     public static String encodeGamepadState(
             CapabilityLifecycleSnapshot lifecycle,
             GamepadControlsSnapshot controls) {
+        return encodeGamepadState(lifecycle, controls, null, false, null);
+    }
+
+    public static String encodeGamepadState(
+            CapabilityLifecycleSnapshot lifecycle,
+            GamepadControlsSnapshot controls,
+            String controllerEndpoint,
+            boolean controllerRouteRunning,
+            String controllerProblemCode) {
         if (lifecycle == null || controls == null) {
             throw new IllegalArgumentException("Gamepad snapshots are required");
         }
@@ -377,9 +386,11 @@ public final class AndroidUiSnapshotJson {
                 .append(",\"lastEvent\":\"not_attached\",\"problemCode\":null")
                 .append(",\"problem\":null}")
                 .append(",\"androidInput\":{\"supported\":true");
-        appendStringField(json, "status", gamepadStatus(lifecycle.state()));
-        if (lifecycle.state() == CapabilityLifecycleState.ACTIVE) {
-            appendStringField(json, "endpoint", "local://shared-ui");
+        appendStringField(json, "status", controllerRouteRunning
+                ? "connected"
+                : controllerProblemCode != null ? "failed" : gamepadStatus(lifecycle.state()));
+        if (controllerEndpoint != null) {
+            appendStringField(json, "endpoint", "udp://" + controllerEndpoint);
         } else {
             json.append(",\"endpoint\":null");
         }
@@ -388,7 +399,11 @@ public final class AndroidUiSnapshotJson {
                 .append(",\"rejectedPackets\":0,\"replayedPackets\":0")
                 .append(",\"peerTimeouts\":0,\"projectionQueueFull\":0")
                 .append(",\"packetAgeMillis\":null,\"remoteSequence\":null");
-        appendStringField(json, "lastEvent", "android.lifecycle." + lower(lifecycle.state()));
+        appendStringField(json, "lastEvent", controllerRouteRunning
+                ? "android.controller.streaming"
+                : controllerProblemCode != null
+                        ? controllerProblemCode
+                        : "android.lifecycle." + lower(lifecycle.state()));
         json.append("},\"motion\":{\"source\":\"unavailable\"")
                 .append(",\"sourceTimestampNanos\":null")
                 .append(",\"acceleration\":[0,0,0],\"angularVelocity\":[0,0,0]}")

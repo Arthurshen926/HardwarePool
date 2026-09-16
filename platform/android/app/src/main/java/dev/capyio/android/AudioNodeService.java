@@ -72,6 +72,8 @@ public final class AudioNodeService extends Service {
     private MicrophoneSourceAdapter microphoneAdapter;
     private SpeakerSinkAdapter speakerAdapter;
     private ImuSourceAdapter imuAdapter;
+    private ControllerRouteAdapter controllerRouteAdapter;
+    private TouchpadRouteAdapter touchpadAdapter;
     private AndroidHapticsSinkAdapter hapticsAdapter;
     private AndroidNativeCatalogRuntime catalogRuntime;
     private String nativeCatalogJson;
@@ -138,23 +140,47 @@ public final class AudioNodeService extends Service {
                     @Override
                     public void onStarted(long generation) {
                         imuController.completeStart(generation);
+                        startControllerRouteIfNeeded();
                         notifyStateListener();
                     }
 
                     @Override
                     public void onStopped(long generation) {
                         imuController.completeStop(generation);
+                        stopControllerRouteIfUnused();
                         notifyStateListener();
                     }
 
                     @Override
                     public void onFailed(long generation, String problemCode) {
                         imuController.fail(generation, problemCode);
+                        stopControllerRouteIfUnused();
                         notifyStateListener();
                     }
                 });
+        controllerRouteAdapter = new ControllerRouteAdapter(
+                gamepadController::controls, imuAdapter::latestSample);
         hapticsAdapter = new AndroidHapticsSinkAdapter(
                 getSystemService(Vibrator.class), hapticsController, this::notifyStateListener);
+        touchpadAdapter = new TouchpadRouteAdapter(new TouchpadRouteAdapter.Listener() {
+            @Override
+            public void onStarted(long generation) {
+                touchpadController.completeStart(generation);
+                postStateChanged();
+            }
+
+            @Override
+            public void onStopped(long generation) {
+                touchpadController.completeStop(generation);
+                postStateChanged();
+            }
+
+            @Override
+            public void onFailed(long generation, String problemCode) {
+                touchpadController.fail(generation, problemCode);
+                postStateChanged();
+            }
+        });
         createNotificationChannel();
         NativeLanMicrophoneSessionConfig microphoneConfig;
         try {
@@ -231,9 +257,10 @@ public final class AudioNodeService extends Service {
         }
         TransitionToken touchpad = touchpadController.beginStop();
         if (touchpad.accepted()) {
-            touchpadController.completeStop(touchpad.generation());
+            touchpadAdapter.stop(touchpad.generation());
         }
         hapticsAdapter.stop();
+        controllerRouteAdapter.stop();
         if (catalogRuntime != null) {
             catalogRuntime.close();
             catalogRuntime = null;
@@ -299,6 +326,7 @@ public final class AudioNodeService extends Service {
         if (transition.accepted()) {
             if (touchSurfacePresence == HardwarePresence.PRESENT) {
                 gamepadController.completeStart(transition.generation());
+                startControllerRouteIfNeeded();
             } else {
                 gamepadController.fail(
                         transition.generation(), "CAPY.ANDROID.GAMEPAD_HARDWARE_MISSING");
@@ -311,23 +339,40 @@ public final class AudioNodeService extends Service {
         TransitionToken transition = gamepadController.beginStop();
         if (transition.accepted()) {
             gamepadController.completeStop(transition.generation());
+            stopControllerRouteIfUnused();
         }
         notifyStateListener();
     }
 
-    private boolean submitGamepad(long generation, GamepadControlsSnapshot controls) {
-        boolean accepted = gamepadController.submit(generation, controls);
+    private synchronized boolean submitGamepad(
+            long generation, GamepadControlsSnapshot controls) {
+        boolean accepted = controllerRouteAdapter.submitControls(controls)
+                && gamepadController.submit(generation, controls);
         if (accepted) {
             notifyPresentationListener();
         }
         return accepted;
     }
 
+    private void startControllerRouteIfNeeded() {
+        if (imuController.snapshot().state() == CapabilityLifecycleState.ACTIVE
+                || gamepadController.lifecycle().state() == CapabilityLifecycleState.ACTIVE) {
+            controllerRouteAdapter.start();
+        }
+    }
+
+    private void stopControllerRouteIfUnused() {
+        if (imuController.snapshot().state() != CapabilityLifecycleState.ACTIVE
+                && gamepadController.lifecycle().state() != CapabilityLifecycleState.ACTIVE) {
+            controllerRouteAdapter.stop();
+        }
+    }
+
     private void startTouchpad() {
         TransitionToken transition = touchpadController.beginStart();
         if (transition.accepted()) {
             if (touchSurfacePresence == HardwarePresence.PRESENT) {
-                touchpadController.completeStart(transition.generation());
+                touchpadAdapter.start(transition.generation());
             } else {
                 touchpadController.fail(
                         transition.generation(), "CAPY.ANDROID.TOUCHPAD_HARDWARE_MISSING");
@@ -339,14 +384,15 @@ public final class AudioNodeService extends Service {
     private void stopTouchpad() {
         TransitionToken transition = touchpadController.beginStop();
         if (transition.accepted()) {
-            touchpadController.completeStop(transition.generation());
+            touchpadAdapter.stop(transition.generation());
         }
         notifyStateListener();
     }
 
-    private boolean submitTouchpad(
+    private synchronized boolean submitTouchpad(
             long generation, java.util.List<TouchpadContactSnapshot> contacts) {
-        boolean accepted = touchpadController.submit(generation, contacts);
+        boolean accepted = touchpadAdapter.submit(generation, contacts)
+                && touchpadController.submit(generation, contacts);
         if (accepted) {
             notifyPresentationListener();
         }
@@ -624,6 +670,26 @@ public final class AudioNodeService extends Service {
 
         public void startGamepad() {
             mainHandler.post(AudioNodeService.this::startGamepad);
+        }
+
+        public boolean configureControllerRoute(String host, int port, String token) {
+            boolean accepted = controllerRouteAdapter.configure(host, port, token);
+            if (accepted) {
+                startControllerRouteIfNeeded();
+            }
+            return accepted;
+        }
+
+        public String controllerRouteEndpoint() {
+            return controllerRouteAdapter.endpointLabel();
+        }
+
+        public boolean controllerRouteRunning() {
+            return controllerRouteAdapter.isRunning();
+        }
+
+        public String controllerRouteProblemCode() {
+            return controllerRouteAdapter.problemCode();
         }
 
         public boolean submitGamepad(long generation, GamepadControlsSnapshot controls) {

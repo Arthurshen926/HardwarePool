@@ -35,6 +35,8 @@ const gamepadDsuPort = ref(26760);
 const gamepadDsuMode = ref<DsuProjectionMode>("motion_only");
 const gamepadDsuBusy = ref(false);
 const gamepadAndroidPort = ref(31580);
+const gamepadAndroidHost = ref("");
+const gamepadAndroidToken = ref("");
 const gamepadAndroidBusy = ref(false);
 const gamepadWindowsBusy = ref(false);
 const gamepadWindowsKind = ref<WindowsControllerKind>("dualshock4");
@@ -263,6 +265,20 @@ async function stopAndroidGamepad(): Promise<void> {
   finally { gamepadAndroidBusy.value = false; }
 }
 
+async function configureAndroidController(): Promise<void> {
+  gamepadAndroidBusy.value = true;
+  errorMessage.value = "";
+  try {
+    gamepad.value = await api.configureAndroidController(
+      gamepadAndroidHost.value.trim(),
+      gamepadAndroidPort.value,
+      gamepadAndroidToken.value.trim(),
+    );
+  }
+  catch (error) { errorMessage.value = normalizeError(error); }
+  finally { gamepadAndroidBusy.value = false; }
+}
+
 async function refreshWindowsGamepadPreflight(): Promise<void> {
   gamepadWindowsBusy.value = true;
   errorMessage.value = "";
@@ -460,7 +476,17 @@ function refreshSnapshot(): void {
           <button class="ghost-button" type="button" :disabled="gamepadBusy || (androidNode ? gamepad.androidInput.status !== 'connected' : ['listening', 'connected'].includes(gamepad.androidInput.status))" @click="updateGamepad({ kind: 'reset' })">全部归零</button>
         </div>
       </header>
-      <p v-if="androidNode" class="gamepad-lab__note">这是 Android 本机触控输入面。请先在 Quick Actions 启动 Touch gamepad；每次交互都会在 Service 边界合成为完整有界状态，停止后立即归零并拒绝旧 generation 输入。发布选择已接入；远端目录与 Route 尚未接入。</p>
+      <template v-if="androidNode">
+      <p class="gamepad-lab__note">先在 Windows 的同一界面启动“监听手机”，再把显示的 IPv4、UDP 端口和 token 填到这里。配置完成后，从 Quick Actions 启动 Touch gamepad、IMU 或两者；统一 Service 会把完整控制状态与独立传感器采样送到 Windows。</p>
+      <form class="dsu-lab-bar android-lab-bar" @submit.prevent="configureAndroidController">
+        <label>Windows IPv4<input v-model="gamepadAndroidHost" type="text" inputmode="decimal" placeholder="100.66.231.100" :disabled="gamepadAndroidBusy || gamepad.androidInput.status === 'connected'" /></label>
+        <label>UDP 端口<input v-model.number="gamepadAndroidPort" type="number" min="1" max="65535" :disabled="gamepadAndroidBusy || gamepad.androidInput.status === 'connected'" /></label>
+        <label>桌面 token<input v-model="gamepadAndroidToken" type="text" autocomplete="off" placeholder="8–64 位十六进制" :disabled="gamepadAndroidBusy || gamepad.androidInput.status === 'connected'" /></label>
+        <button class="primary-button" type="submit" :disabled="gamepadAndroidBusy || gamepad.androidInput.status === 'connected'">保存发送目标</button>
+        <StatusPill :tone="gamepad.androidInput.status === 'connected' ? 'success' : gamepad.androidInput.status === 'failed' ? 'danger' : 'warning'" :label="gamepad.androidInput.status" />
+      </form>
+      <p class="gamepad-lab__note">当前目标：{{ gamepad.androidInput.endpoint ?? '尚未配置' }}</p>
+      </template>
       <template v-else>
       <p class="gamepad-lab__note">桌面模拟器和 Android 真机共用完整 <code>GamepadState</code> 检查器。Android 每个 UDP 数据报携带按键、摇杆、扳机与 IMU 完整快照；序列回退会被拒绝，超过 350ms 未收到数据会强制手柄归零。</p>
       <div class="dsu-lab-bar android-lab-bar">

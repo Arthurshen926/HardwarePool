@@ -15,6 +15,7 @@ declare global {
       setLocalCapabilityShared(capabilityId: string, selected: boolean): boolean;
       invokeQuickAction(actionId: string, operation: QuickActionOperation): boolean;
       updateGamepad(kind: string, target: string, x: number, y: number, pressed: boolean): boolean;
+      configureControllerRoute(host: string, port: number, token: string): boolean;
       updateTouchpad(encodedContacts: string): boolean;
       refreshCameraSources(): boolean;
       selectCameraSource(sourceKey: string): boolean;
@@ -97,6 +98,16 @@ class AndroidNodeCapyIOApi implements CapyIOApi {
   stopGamepadDsu(): Promise<UiGamepadState> { return this.readOnly(); }
   startAndroidGamepad(): Promise<UiGamepadState> { return this.readOnly(); }
   stopAndroidGamepad(): Promise<UiGamepadState> { return this.readOnly(); }
+  async configureAndroidController(
+    host: string, port: number, token: string,
+  ): Promise<UiGamepadState> {
+    if (!window.CapyIOAndroid?.configureControllerRoute(host, port, token)) {
+      throw new Error("Android rejected the controller endpoint or token");
+    }
+    const state = await this.getGamepadState();
+    if (!state) throw new Error("Android gamepad state became unavailable");
+    return state;
+  }
   async getTouchpadState(): Promise<UiTouchpadState | null> {
     const encoded = window.CapyIOAndroid?.getTouchpadStateJson();
     if (!encoded) return null;
@@ -274,6 +285,10 @@ class TauriCapyIOApi implements CapyIOApi {
 
   stopAndroidGamepad(): Promise<UiGamepadState> {
     return invoke<UiGamepadState>("stop_android_gamepad");
+  }
+
+  configureAndroidController(): Promise<UiGamepadState> {
+    return Promise.reject(new Error("Controller sender configuration requires the Android backend"));
   }
 
   getQuickActions(): Promise<UiQuickAction[]> {

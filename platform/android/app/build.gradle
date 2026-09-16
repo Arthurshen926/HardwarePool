@@ -87,8 +87,8 @@ android {
         applicationId = 'dev.capyio.android'
         minSdk = 29
         targetSdk = 36
-        versionCode = 15
-        versionName = '0.5.3-dev'
+        versionCode = 16
+        versionName = '0.5.4-dev'
         ndk {
             abiFilters 'arm64-v8a'
         }
@@ -96,8 +96,8 @@ android {
             capyioSpeakerLabEnabled: System.getenv('CAPYIO_ANDROID_SPEAKER_PEER_IPV4') == null
                     ? 'false' : 'true',
             capyioSpeakerPeerIpv4: System.getenv('CAPYIO_ANDROID_SPEAKER_PEER_IPV4') ?: '127.0.0.1',
-            capyioSpeakerLocalPort: System.getenv('CAPYIO_ANDROID_SPEAKER_LOCAL_PORT') ?: '46000',
-            capyioSpeakerPeerPort: System.getenv('CAPYIO_ANDROID_SPEAKER_PEER_PORT') ?: '46001',
+            capyioSpeakerLocalPort: System.getenv('CAPYIO_ANDROID_SPEAKER_LOCAL_PORT') ?: '40000',
+            capyioSpeakerPeerPort: System.getenv('CAPYIO_ANDROID_SPEAKER_PEER_PORT') ?: '40001',
             capyioSpeakerSessionId: 'a1000000-0000-4000-8000-000000000001',
             capyioSpeakerRouteId: 'a1000000-0000-4000-8000-000000000002',
             capyioSpeakerStreamId: 'a1000000-0000-4000-8000-000000000003',
@@ -105,8 +105,8 @@ android {
             capyioMicrophoneLabEnabled: System.getenv('CAPYIO_ANDROID_MICROPHONE_PEER_IPV4') == null
                     ? 'false' : 'true',
             capyioMicrophonePeerIpv4: System.getenv('CAPYIO_ANDROID_MICROPHONE_PEER_IPV4') ?: '127.0.0.1',
-            capyioMicrophoneLocalPort: System.getenv('CAPYIO_ANDROID_MICROPHONE_LOCAL_PORT') ?: '46010',
-            capyioMicrophonePeerPort: System.getenv('CAPYIO_ANDROID_MICROPHONE_PEER_PORT') ?: '46011',
+            capyioMicrophoneLocalPort: System.getenv('CAPYIO_ANDROID_MICROPHONE_LOCAL_PORT') ?: '40010',
+            capyioMicrophonePeerPort: System.getenv('CAPYIO_ANDROID_MICROPHONE_PEER_PORT') ?: '40011',
             capyioMicrophoneSessionId: 'a2000000-0000-4000-8000-000000000001',
             capyioMicrophoneRouteId: 'a2000000-0000-4000-8000-000000000002',
             capyioMicrophoneStreamId: 'a2000000-0000-4000-8000-000000000003',
@@ -177,6 +177,9 @@ tasks.register('verifyDebugEntrypoints') {
             'dev/capyio/android/AndroidUiSnapshotJson.class',
             'dev/capyio/android/AndroidCoreCatalogJson.class',
             'dev/capyio/android/AndroidNativeCatalogRuntime.class',
+            'dev/capyio/android/TouchpadRouteAdapter.class',
+            'dev/capyio/android/ControllerRouteAdapter.class',
+            'dev/capyio/touchpad/NativeTouchpadRecordBridge.class',
             'io/capyio/camera/lab/CameraCaptureService.class',
             'io/capyio/camera/lab/UnifiedCameraNodeFacade.class',
         ].each { relativePath ->
@@ -227,6 +230,8 @@ tasks.register('compileCapabilityCompositionTest', JavaCompile) {
     source file('src/main/java/dev/capyio/android/AndroidSharingSelection.java')
     source file('src/main/java/dev/capyio/android/AndroidGamepadUiCommand.java')
     source file('src/main/java/dev/capyio/android/AndroidTouchpadUiFrame.java')
+    source file('src/main/java/dev/capyio/android/TouchpadMotionFrame.java')
+    source file('src/main/java/dev/capyio/android/ControllerPacketJson.java')
     source file('src/main/java/dev/capyio/android/AndroidUiSnapshotJson.java')
     source file('src/main/java/dev/capyio/android/AndroidCoreCatalogJson.java')
     source fileTree('src/contractTest/java')

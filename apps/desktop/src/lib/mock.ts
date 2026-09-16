@@ -307,6 +307,10 @@ export class BrowserMockCapyIOApi implements CapyIOApi {
     return structuredClone(this.gamepad);
   }
 
+  configureAndroidController(): Promise<UiGamepadState> {
+    return Promise.reject(new Error("Controller sender configuration requires the Android backend"));
+  }
+
   async getTouchpadState(): Promise<UiTouchpadState | null> {
     return null;
   }

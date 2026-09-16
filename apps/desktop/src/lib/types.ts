@@ -385,6 +385,7 @@ export interface CapyIOApi {
   stopGamepadDsu(): Promise<UiGamepadState>;
   startAndroidGamepad(port: number): Promise<UiGamepadState>;
   stopAndroidGamepad(): Promise<UiGamepadState>;
+  configureAndroidController(host: string, port: number, token: string): Promise<UiGamepadState>;
   getQuickActions(): Promise<UiQuickAction[]>;
   invokeQuickAction(actionId: string, operation: QuickActionOperation): Promise<UiQuickAction>;
   getAudioEndpoints(): Promise<UiAudioEndpointCatalog | null>;

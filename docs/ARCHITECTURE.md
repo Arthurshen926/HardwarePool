@@ -908,6 +908,14 @@ same lifetime as `AudioNodeService`; publication intent crosses the native
 projection before the Java selection commits. High-rate controller/touch data
 does not enter this catalog path, and unchanged catalog JSON is not resent.
 
+ADR 1408 moves the previously separate Android input labs under the unified
+Service lifecycle. Touchpad frames retain the ADR 1106 loopback-only ADB
+reverse boundary and private JNI Hello/Data/Ack/Close contract. Gamepad
+controls and standalone IMU samples share the existing bounded Controller Lab
+UDP contract; the operator copies the Windows listener's per-run endpoint and
+token into the shared Android UI. Neither worker performs network I/O from a
+sensor or UI callback.
+
 ANDROID-A01E composes the existing headless Camera2/MediaCodec service into the
 unified APK behind a narrow facade. The unexported camera foreground service,
 not the Activity or WebView, owns capture, encoding, bounded export and cleanup.

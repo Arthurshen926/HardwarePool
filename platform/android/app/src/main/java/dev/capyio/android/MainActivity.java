@@ -474,7 +474,17 @@ public final class MainActivity extends Activity {
                 return "";
             }
             return AndroidUiSnapshotJson.encodeGamepadState(
-                    current.gamepadLifecycle(), current.gamepadControls());
+                    current.gamepadLifecycle(),
+                    current.gamepadControls(),
+                    current.controllerRouteEndpoint(),
+                    current.controllerRouteRunning(),
+                    current.controllerRouteProblemCode());
+        }
+
+        @JavascriptInterface
+        public boolean configureControllerRoute(String host, int port, String token) {
+            AudioNodeService.NodeBinder current = binder;
+            return current != null && current.configureControllerRoute(host, port, token);
         }
 
         @JavascriptInterface

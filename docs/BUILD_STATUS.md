@@ -993,6 +993,13 @@ ADR 1407 now packages that ARM64 library in unified Android `0.5.3-dev` and the
 Service creates, refreshes and closes it. The generated debug APK composition
 check finds the manifest, DEX, shared Vue entrypoint and JNI library. Physical
 installation and the remaining unified remote Routes are still open.
+ADR 1408 now removes the separate Android input APK requirement for the
+controlled `0.5.4-dev` integration run. The unified Service owns the JNI/private-record
+touchpad sender over ADR 1106 ADB reverse, plus the existing Controller Lab UDP
+sender shared by touch-gamepad and standalone IMU. The Android Controller view
+accepts the Windows listener endpoint and per-run token. Shared UI build, APK
+composition and 242 Android contract assertions pass; physical installation
+and cross-device acceptance remain deliberately unperformed.
 
 The apparent post-stop UDP restart failure was then isolated from CapyIO. With
 UU Remote running, every tested port in 45980--46030 returned Winsock 10048
