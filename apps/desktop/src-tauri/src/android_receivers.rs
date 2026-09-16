@@ -470,6 +470,12 @@ impl AndroidReceiverActions {
     }
 }
 
+impl Drop for AndroidReceiverActions {
+    fn drop(&mut self) {
+        self.shutdown();
+    }
+}
+
 pub(crate) fn adb_path() -> Result<PathBuf, String> {
     if let Some(path) = env::var_os("CAPYIO_ADB").map(PathBuf::from)
         && path.is_file()
@@ -702,6 +708,7 @@ mod tests {
     #[ignore = "requires the authorized Android camera and deployed Windows camera COM source"]
     fn physical_system_camera_action_receives_a_live_phone_frame_and_cleans_up() {
         use capyio_windows_camera_share::CameraSharedIngressConsumer;
+        use std::io::Write;
         use std::time::{Duration, Instant};
 
         let wait_seconds = std::env::var("CAPYIO_LIVE_CAMERA_WAIT_SECONDS")
@@ -715,12 +722,17 @@ mod tests {
             .expect("start composed system-camera action");
         assert_eq!(active.status, "active");
         println!("CAPYIO_SYSTEM_CAMERA_WAITING_FOR_ANDROID seconds={wait_seconds}");
+        std::io::stdout().flush().expect("flush start marker");
 
         let deadline = Instant::now() + Duration::from_secs(wait_seconds);
         let mut evidence = None;
+        let mut consumer = None;
         while Instant::now() < deadline {
-            if let Ok(mut consumer) = CameraSharedIngressConsumer::open_current()
-                && let Ok(Some(frame)) = consumer.try_read_latest()
+            if consumer.is_none() {
+                consumer = CameraSharedIngressConsumer::open_current().ok();
+            }
+            if let Some(active_consumer) = consumer.as_mut()
+                && let Ok(Some(frame)) = active_consumer.try_read_latest()
             {
                 evidence = Some((
                     frame.descriptor.sequence,
@@ -734,6 +746,51 @@ mod tests {
                 break;
             }
             thread::sleep(Duration::from_millis(50));
+        }
+
+        let reconnect = std::env::var("CAPYIO_LIVE_CAMERA_RECONNECT").as_deref() == Ok("1");
+        if reconnect && let Some(first) = evidence.as_ref() {
+            println!("CAPYIO_SYSTEM_CAMERA_FIRST_FRAME sequence={}", first.0);
+            std::io::stdout().flush().expect("flush first-frame marker");
+            let gap_deadline = Instant::now() + Duration::from_secs(wait_seconds);
+            let mut last_frame = Instant::now();
+            while Instant::now() < gap_deadline {
+                if let Some(active_consumer) = consumer.as_mut()
+                    && let Ok(Some(_)) = active_consumer.try_read_latest()
+                {
+                    last_frame = Instant::now();
+                }
+                if last_frame.elapsed() >= Duration::from_millis(1_500) {
+                    break;
+                }
+                thread::sleep(Duration::from_millis(50));
+            }
+            if last_frame.elapsed() >= Duration::from_millis(1_500) {
+                println!("CAPYIO_SYSTEM_CAMERA_WAITING_FOR_RESTART");
+                std::io::stdout().flush().expect("flush restart marker");
+                let reconnect_deadline = Instant::now() + Duration::from_secs(wait_seconds);
+                let first_sequence = first.0;
+                while Instant::now() < reconnect_deadline {
+                    if let Some(active_consumer) = consumer.as_mut()
+                        && let Ok(Some(frame)) = active_consumer.try_read_latest()
+                        && frame.descriptor.sequence > first_sequence
+                    {
+                        evidence = Some((
+                            frame.descriptor.sequence,
+                            frame.descriptor.source_timestamp_nanos,
+                            frame.payload.len(),
+                            frame
+                                .payload
+                                .iter()
+                                .fold(0_u64, |sum, byte| sum + u64::from(*byte)),
+                        ));
+                        break;
+                    }
+                    thread::sleep(Duration::from_millis(50));
+                }
+            } else {
+                evidence = None;
+            }
         }
 
         let external_consumer =
@@ -759,7 +816,7 @@ mod tests {
         assert!(consumer_output.contains("consumer_current_probe=pass"));
         assert!(consumer_output.contains("sample_bytes=1382400"));
         println!(
-            "CAPYIO_SYSTEM_CAMERA_LIVE_FRAME sequence={} timestamp_ns={} bytes={} checksum={} external_consumer=pass",
+            "CAPYIO_SYSTEM_CAMERA_LIVE_FRAME sequence={} timestamp_ns={} bytes={} checksum={} external_consumer=pass reconnect={reconnect}",
             evidence.0, evidence.1, evidence.2, evidence.3,
         );
     }

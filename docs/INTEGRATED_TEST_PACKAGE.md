@@ -40,7 +40,8 @@ does not install that component. Session readiness is not live-frame evidence,
 and the current prototype needs an elevated Windows session to create its
 Global ingress mapping. On the authorized lab host the current COM candidate
 has now been separately deployed; live Android decoding, system-camera
-activation, an independent Media Foundation consumer and cleanup passed.
+activation, an independent Media Foundation consumer, phone Stop/restart
+recovery and cleanup passed.
 See `CAPY_INTEGRATED_SYSTEM_CAMERA_REPORT.md` for evidence, ADR 1413 for the
 exact deployment hash/rollback and ADR 1414 for the privilege boundary. This is
 not automatic package installation.

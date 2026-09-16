@@ -12,8 +12,11 @@ desktop Clippy. The follow-up hash-pinned COM deployment passes real session
 Start/Stop and two independent consumers reading generated frames. The later
 elevated end-to-end gate also delivered a decoded Android frame through the
 production ingress to an independent Media Foundation camera consumer and
-cleaned up both platforms. The current prototype requires elevation for the
-Global mapping; receiver loss/reconnect and broader app compatibility remain.
+cleaned up both platforms. A later Stop/restart physical gate retained the
+Windows system camera during the fixed grace period, recovered higher-sequence
+phone frames and passed the independent consumer again. The current prototype
+requires elevation for the Global mapping; long-duration and broader app
+compatibility remain.
 See
 `CAPY_INTEGRATED_SYSTEM_CAMERA_REPORT.md` and ADR 1412. This does not claim
 completion of all integration or merge the separate Display work.

@@ -98,9 +98,21 @@ Under an explicitly elevated user session, the final bounded gate passed:
   development source and hashes all four shipped executables.
 
 This closes the short phone-to-system-camera functional gate. Receiver-loss
-reconnect, long-duration operation, Windows privacy UI and several ordinary
-third-party camera applications remain broader acceptance work. The current
-prototype also requires an elevated Windows process for this action; ADR 1414
-records why a least-privilege broker is still future work.
+reconnect was then exercised without restarting the Windows action. The first
+phone stream reached publication sequence 1, Android Stop produced a confirmed
+quiet interval, and Android Start recovered delivery at sequence 1027,
+timestamp 34,199,658,000 ns, 1,382,400 bytes and checksum 112,599,881. The
+independent Media Foundation consumer passed after recovery. Final cleanup again
+left no phone camera client, ADB reverse or temporary camera registration. ADR
+1415 records this gate and the added drop-time child cleanup.
+
+The post-reconnect shared UI/test-package build passed and generated
+`target/integrated-test/20260916-134207-6490`; the manifest records its dirty
+development revision and hashes the four shipped executables.
+
+Long-duration operation, Windows privacy UI and several ordinary third-party
+camera applications remain broader acceptance work. The current prototype also
+requires an elevated Windows process for this action; ADR 1414 records why a
+least-privilege broker is still future work.
 
 Display development and the existing audio/driver installation are unchanged.
