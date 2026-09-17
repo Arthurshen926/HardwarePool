@@ -9,6 +9,7 @@
     "build": "vue-tsc --noEmit && vite build",
     "build:web": "vue-tsc --noEmit && vite build",
     "typecheck": "vue-tsc --noEmit",
+    "test:display-control": "node --test ../../scripts/display_control_ui.test.mjs",
     "lint": "vue-tsc --noEmit",
     "preview": "vite preview",
     "tauri": "tauri"

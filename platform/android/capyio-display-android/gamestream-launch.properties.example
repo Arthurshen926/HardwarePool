@@ -1,0 +1,17 @@
+host=capyio-host.example
+host_ipv4=100.64.0.1
+launch_port=7543
+timeout_millis=5000
+adapter_instance_id=00000000-0000-4000-8000-000000000010
+display_capability_id=00000000-0000-4000-8000-000000000004
+session_id=00000000-0000-4000-8000-000000000001
+route_id=00000000-0000-4000-8000-000000000002
+stream_id=00000000-0000-4000-8000-000000000003
+stream_epoch=1
+port_base=50000
+width=1980
+height=912
+refresh_millihertz=60000
+codec=2
+dynamic_range=1
+bitrate_kbps=45000

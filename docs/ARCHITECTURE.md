@@ -934,6 +934,14 @@ receives one empty snapshot through the same generation and Adapter path. The
 Capability, Node Service, audio, camera and IMU lifecycles are not stopped by
 window loss. Repeated pause with already-neutral state emits no extra frame.
 
+ADR 1421 closes the remaining Android ownership gap. IMU, touch gamepad,
+touchpad and haptics enter the non-exported Node service through closed start/
+stop actions and contribute the Android `connectedDevice` foreground type while
+their Adapter lifecycle is Starting, Active or Stopping. The service removes
+that type only after the last such capability stops; Activity unbinding merely
+removes an observer. Foreground promotion failure fails closed, releases the
+affected Adapter and never leaves an invisible background worker.
+
 ADR 1409 gives the Windows desktop process ownership of the two remaining
 operator-started Android receiver helpers. Typed Quick Actions create only the
 fixed touchpad or camera ADB reverse mapping and launch only the corresponding
@@ -1202,6 +1210,20 @@ lab remains the lifecycle owner until a later slice attaches its façade to the
 service and passes equivalent foreground-loss and neutral-state checks.
 
 ## 13. Failure isolation
+
+ADR 1426 composes an optional single-display host with the Windows service
+using its own cancellation flag and thread-affine resource owner. A failed
+display host does not stop audio or the service control listener. Nonblocking
+polling exposes host execution status, not media readiness; final shutdown
+joins the cooperative owner and retains failure. The existing audio control
+pipe remains audio-only until a separate display control boundary is integrated.
+
+ADR 1427 provides that boundary as an opt-in requester-scoped local pipe. The
+service owns its display worker and independent polling; Tauri sends only
+Status/Start/Stop through CapyIOApi. Stop acknowledges Stopping without joining
+native cleanup on a UI/control request. The shared display section distinguishes
+Windows host execution from Android receiver prerequisites and from actual
+media presentation. Closing the view removes only its observer timer.
 
 - bounded parser sizes and queues at every process/network boundary;
 - first terminal operation completion wins cancellation races;

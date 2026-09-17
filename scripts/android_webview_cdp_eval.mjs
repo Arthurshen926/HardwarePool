@@ -1,11 +1,23 @@
-const [url, expression] = process.argv.slice(2);
+import { selectCapyioTarget, validateDiscoveryUrl } from "./android_webview_target.mjs";
+import { evaluationValue } from "./android_webview_result.mjs";
+
+let [url, expression] = process.argv.slice(2);
 
 if (!url || !expression) {
-  console.error("usage: node scripts/android_webview_cdp_eval.mjs <websocket-url> <expression>");
+  console.error("usage: node scripts/android_webview_cdp_eval.mjs <websocket-url|loopback-json-list-url> <expression>");
   process.exit(64);
 }
 
+if (url.startsWith("http:")) {
+  // Validate the discovery location before making any request.
+  validateDiscoveryUrl(url);
+  const response = await fetch(url, { signal: AbortSignal.timeout(5000), redirect: "error" });
+  if (!response.ok) throw new Error("WebView discovery failed");
+  url = selectCapyioTarget(await response.json(), url);
+}
+
 const socket = new WebSocket(url);
+let completed = false;
 const timeout = setTimeout(() => {
   console.error("CDP evaluation timed out");
   socket.close();
@@ -25,16 +37,35 @@ socket.addEventListener("open", () => {
 });
 
 socket.addEventListener("message", (event) => {
-  const message = JSON.parse(String(event.data));
-  if (message.id !== 1) return;
-  clearTimeout(timeout);
-  if (message.result?.exceptionDetails) {
-    console.error(JSON.stringify(message.result.exceptionDetails));
+  let message;
+  try {
+    message = JSON.parse(String(event.data));
+  } catch {
+    clearTimeout(timeout);
+    console.error("Invalid CDP JSON reply");
     process.exitCode = 1;
-  } else {
-    console.log(JSON.stringify(message.result?.result?.value ?? null));
+    socket.close();
+    return;
+  }
+  if (!message || typeof message !== "object") return;
+  if (message.id !== 1) return;
+  completed = true;
+  clearTimeout(timeout);
+  try {
+    console.log(JSON.stringify(evaluationValue(message)));
+  } catch (error) {
+    console.error(error.message);
+    process.exitCode = 1;
   }
   socket.close();
+});
+
+socket.addEventListener("close", () => {
+  clearTimeout(timeout);
+  if (!completed) {
+    console.error("CDP connection closed before evaluation completed");
+    process.exitCode = 1;
+  }
 });
 
 socket.addEventListener("error", (event) => {

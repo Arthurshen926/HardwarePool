@@ -1,0 +1,151 @@
+plugins {
+    id "com.android.application"
+}
+
+def capyioGameStreamJniDir = providers.gradleProperty("capyioGameStreamJniDir").orNull
+
+android {
+    namespace "dev.capyio.display.app"
+    compileSdk 36
+
+    defaultConfig {
+        applicationId "dev.capyio.display.app"
+        minSdk 29
+        targetSdk 36
+        versionCode 1
+        versionName "0.1.0-prealpha"
+
+    }
+
+    buildFeatures {
+        buildConfig false
+    }
+
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_17
+        targetCompatibility JavaVersion.VERSION_17
+    }
+
+    if (capyioGameStreamJniDir != null) {
+        def nativeRoot = file(capyioGameStreamJniDir)
+        sourceSets {
+            main {
+                jniLibs.srcDirs(nativeRoot)
+            }
+        }
+    }
+}
+
+tasks.register("verifyGameStreamJni") {
+    doLast {
+        if (capyioGameStreamJniDir == null) {
+            throw new GradleException("capyioGameStreamJniDir is required for a GameStream-capable APK")
+        }
+        def libraries = fileTree(capyioGameStreamJniDir) {
+            include "*/libcapyio-gamestream-client.so"
+        }.files
+        if (libraries.isEmpty()) {
+            throw new GradleException("no ABI contains libcapyio-gamestream-client.so under ${capyioGameStreamJniDir}")
+        }
+    }
+}
+
+dependencies {
+    implementation project(":display-sink")
+}
+
+def aspectRatioHarnessClasses = layout.buildDirectory.dir("aspect-ratio-harness/classes")
+
+tasks.register("compileAspectRatioFitHarness", JavaCompile) {
+    source(
+        "src/main/java/dev/capyio/display/app/AspectRatioFit.java",
+        "src/testHarness/java/dev/capyio/display/app/AspectRatioFitHarness.java"
+    )
+    classpath = files()
+    destinationDirectory = aspectRatioHarnessClasses
+    options.release = 17
+    options.encoding = "UTF-8"
+}
+
+tasks.register("aspectRatioFitHarness", JavaExec) {
+    dependsOn("compileAspectRatioFitHarness")
+    classpath = files(aspectRatioHarnessClasses)
+    mainClass = "dev.capyio.display.app.AspectRatioFitHarness"
+}
+
+def reconnectPolicyHarnessClasses = layout.buildDirectory.dir("reconnect-policy-harness/classes")
+
+tasks.register("compileDisplayReconnectPolicyHarness", JavaCompile) {
+    source(
+        "src/main/java/dev/capyio/display/app/DisplayReconnectPolicy.java",
+        "src/testHarness/java/dev/capyio/display/app/DisplayReconnectPolicyHarness.java"
+    )
+    classpath = files()
+    destinationDirectory = reconnectPolicyHarnessClasses
+    options.release = 17
+    options.encoding = "UTF-8"
+}
+
+tasks.register("displayReconnectPolicyHarness", JavaExec) {
+    dependsOn("compileDisplayReconnectPolicyHarness")
+    classpath = files(reconnectPolicyHarnessClasses)
+    mainClass = "dev.capyio.display.app.DisplayReconnectPolicyHarness"
+}
+
+def tlsOuterFrameHarnessClasses = layout.buildDirectory.dir("tls-outer-frame-harness/classes")
+
+tasks.register("compileDisplayTlsOuterFrameHarness", JavaCompile) {
+    source(
+        "src/main/java/dev/capyio/display/app/DisplayTlsOuterFrame.java",
+        "src/testHarness/java/dev/capyio/display/app/DisplayTlsOuterFrameHarness.java"
+    )
+    classpath = files()
+    destinationDirectory = tlsOuterFrameHarnessClasses
+    options.release = 17
+    options.encoding = "UTF-8"
+}
+
+tasks.register("displayTlsOuterFrameHarness", JavaExec) {
+    dependsOn("compileDisplayTlsOuterFrameHarness")
+    classpath = files(tlsOuterFrameHarnessClasses)
+    mainClass = "dev.capyio.display.app.DisplayTlsOuterFrameHarness"
+}
+
+def gameStreamLaunchHarnessClasses = layout.buildDirectory.dir("gamestream-launch-harness/classes")
+
+tasks.register("compileGameStreamLaunchRecordHarness", JavaCompile) {
+    source(
+        "src/main/java/dev/capyio/display/app/GameStreamLaunchRecord.java",
+        "src/main/java/dev/capyio/display/app/GameStreamLaunchExchange.java",
+        "src/testHarness/java/dev/capyio/display/app/GameStreamLaunchRecordHarness.java"
+    )
+    classpath = files()
+    destinationDirectory = gameStreamLaunchHarnessClasses
+    options.release = 17
+    options.encoding = "UTF-8"
+}
+
+tasks.register("gameStreamLaunchRecordHarness", JavaExec) {
+    dependsOn("compileGameStreamLaunchRecordHarness")
+    classpath = files(gameStreamLaunchHarnessClasses)
+    mainClass = "dev.capyio.display.app.GameStreamLaunchRecordHarness"
+}
+
+def transportModeHarnessClasses = layout.buildDirectory.dir("transport-mode-harness/classes")
+
+tasks.register("compileDisplayTransportModeHarness", JavaCompile) {
+    source(
+        "src/main/java/dev/capyio/display/app/DisplayTransportMode.java",
+        "src/testHarness/java/dev/capyio/display/app/DisplayTransportModeHarness.java"
+    )
+    classpath = files()
+    destinationDirectory = transportModeHarnessClasses
+    options.release = 17
+    options.encoding = "UTF-8"
+}
+
+tasks.register("displayTransportModeHarness", JavaExec) {
+    dependsOn("compileDisplayTransportModeHarness")
+    classpath = files(transportModeHarnessClasses)
+    mainClass = "dev.capyio.display.app.DisplayTransportModeHarness"
+}

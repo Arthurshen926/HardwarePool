@@ -2,6 +2,8 @@
 import { computed, onMounted, onUnmounted, ref } from "vue";
 
 import RouteCard from "./components/RouteCard.vue";
+import AndroidAudioConnection from "./components/AndroidAudioConnection.vue";
+import DisplayReceiverPanel from "./components/DisplayReceiverPanel.vue";
 import CapabilityCatalog from "./components/CapabilityCatalog.vue";
 import GamepadSurface from "./components/GamepadSurface.vue";
 import GamepadTelemetry from "./components/GamepadTelemetry.vue";
@@ -487,6 +489,9 @@ function refreshSnapshot(): void {
       <p v-if="!androidCamera.permissionReady" class="gamepad-lab__note">首次在 Quick Actions 启动 Camera 后由 Android 请求权限；停止后即可刷新并选择具体 Camera2 ID/厂商 Zoom 目标。</p>
       <p v-if="androidCamera.problemCode" class="error-banner" role="status">{{ androidCamera.problemCode }}</p>
     </section>
+
+    <AndroidAudioConnection v-if="view === 'quick' && androidAudio" :api="api" :state="androidAudio" />
+    <DisplayReceiverPanel v-if="view === 'quick'" :api="api" />
 
     <section v-if="view === 'controller' && gamepad" class="info-panel gamepad-lab gamepad-lab--primary" aria-labelledby="gamepad-lab-title">
       <header class="imu-lab__header">

@@ -374,7 +374,30 @@ export interface UiDiagnostics {
   checks: { label: string; detail: string }[];
 }
 
+export interface UiDisplayReceiverState {
+  schemaVersion: 1;
+  transport: "unconfigured" | "cpd1" | "gamestream";
+  configurationPresent: boolean;
+  nativeClientAvailable: boolean;
+  canOpen: boolean;
+  problemCode: string;
+}
+
+export interface UiDisplaySenderState {
+  schemaVersion: 1;
+  available: boolean;
+  state: "unavailable" | "stopped" | "starting" | "running" | "stopping" | "failed";
+  generation: number;
+  problemCode: string | null;
+}
+
 export interface CapyIOApi {
+  getDisplaySenderState(): Promise<UiDisplaySenderState | null>;
+  startDisplaySender(): Promise<UiDisplaySenderState | null>;
+  stopDisplaySender(): Promise<UiDisplaySenderState | null>;
+  getDisplayReceiverState(): Promise<UiDisplayReceiverState | null>;
+  importDisplayProvisioning(): Promise<void>;
+  openDisplayReceiver(): Promise<void>;
   getDiagnostics(): Promise<UiDiagnostics>;
   getSnapshot(): Promise<UiSnapshot>;
   setRoute(routeId: string, active: boolean): Promise<UiSnapshot>;
@@ -399,6 +422,7 @@ export interface CapyIOApi {
   invokeQuickAction(actionId: string, operation: QuickActionOperation): Promise<UiQuickAction>;
   getAudioEndpoints(): Promise<UiAudioEndpointCatalog | null>;
   getAndroidAudioState(): Promise<UiAndroidAudioState | null>;
+  configureAndroidAudioPeer(direction: "microphone" | "speaker", host: string, localPort: number, peerPort: number, trustedLabConfirmed: boolean): Promise<void>;
   getAndroidCameraSettings(): Promise<UiAndroidCameraSettings | null>;
   refreshAndroidCameraSources(): Promise<UiAndroidCameraSettings>;
   selectAndroidCameraSource(sourceKey: string): Promise<UiAndroidCameraSettings>;

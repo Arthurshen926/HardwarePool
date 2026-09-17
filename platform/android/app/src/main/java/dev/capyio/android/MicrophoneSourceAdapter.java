@@ -36,7 +36,7 @@ final class MicrophoneSourceAdapter implements AudioPlatformAdapter {
     private static final int SOCKET_TIMEOUT_MILLIS = 50;
 
     private final Listener listener;
-    private final NativeLanMicrophoneSessionConfig config;
+    private NativeLanMicrophoneSessionConfig config;
     private final AtomicBoolean running = new AtomicBoolean();
     private final AtomicLong completionGeneration = new AtomicLong();
 
@@ -72,6 +72,13 @@ final class MicrophoneSourceAdapter implements AudioPlatformAdapter {
         nextWorker.setDaemon(true);
         worker = nextWorker;
         nextWorker.start();
+    }
+
+    synchronized boolean configure(NativeLanMicrophoneSessionConfig next, Runnable persist) {
+        if (worker != null || running.get()) return false;
+        persist.run();
+        config = next;
+        return true;
     }
 
     @Override

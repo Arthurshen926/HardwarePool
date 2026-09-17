@@ -24,6 +24,49 @@ mod microphone;
 mod microphone_control;
 
 #[cfg(windows)]
+mod display_control;
+#[cfg(windows)]
+mod display_host;
+#[cfg(windows)]
+mod display_runtime;
+#[cfg(windows)]
+pub use display_control::{
+    ControlledDisplayRuntime, DisplayControlOperation, DisplayControlSnapshot, DisplayServiceClient,
+};
+#[cfg(windows)]
+pub use display_host::android_gamestream_properties_from_single_display_config;
+#[cfg(windows)]
+pub use display_runtime::{DisplayExecutionSnapshot, DisplayExecutionState, DisplayServiceRuntime};
+#[cfg(windows)]
+mod display_route;
+#[cfg(windows)]
+mod display_session;
+#[cfg(windows)]
+mod display_worker;
+
+#[cfg(windows)]
+pub use display_host::{
+    DisplayServiceHost, LoadedDisplayServiceConfig, LoadedSingleDisplayServiceConfig,
+    SingleDisplayServiceHost, SingleDisplaySnapshot, SingleDisplayState, SingleDisplayStatusHandle,
+    load_display_service_config, load_single_display_service_config,
+};
+#[cfg(windows)]
+pub use display_route::{
+    DisplayProjectionControl, DisplayRouteProjectionError, DisplayRouteProjectionRuntime,
+    DisplayRouteProjectionSnapshot, DisplayRouteProjectionSpec,
+};
+#[cfg(windows)]
+pub use display_session::{AuthenticatedDisplayProjectionWorker, DisplaySessionWorkerError};
+#[cfg(windows)]
+pub use display_worker::{
+    AuthorizedDisplayWorkerPipe, BoundDisplayWorkerChannel, BoundDisplayWorkerPeer,
+    DisplayWorkerChannelError, DisplayWorkerLaunchError, DisplayWorkerPeerError,
+    DisplayWorkerPipeError, ExpectedDisplayWorkerProcessId, SpawnedDisplayWorker,
+    VerifiedDisplayWorkerExecutable, launch_display_worker_in_session,
+    verify_local_system_service_context,
+};
+
+#[cfg(windows)]
 pub use camera_control::{
     CAMERA_CONTROL_PIPE_NAME, CameraBrokerClient, CameraBrokerProcess, CameraBrokerRuntime,
     CameraBrokerSnapshot, CameraBrokerState, camera_control_server_loop,
@@ -72,6 +115,8 @@ pub struct ServiceConfig {
     pub peer_port: Option<u16>,
     pub native_microphone: Option<NativeMicrophoneServiceConfig>,
     pub console_run_for: Option<Duration>,
+    pub single_display_config: Option<PathBuf>,
+    pub display_control_user_sid: Option<String>,
 }
 
 impl ServiceConfig {
@@ -95,9 +140,32 @@ impl ServiceConfig {
         let mut microphone_peer_port: Option<u16> = None;
         let mut console = false;
         let mut console_run_for = None;
+        let mut single_display_config = None;
+        let mut display_control_user_sid = None;
 
         while let Some(argument) = arguments.next() {
             match argument.as_str() {
+                "--display-control-user-sid" => {
+                    let sid = next_value(&mut arguments, "--display-control-user-sid")?;
+                    if display_control_user_sid.is_some()
+                        || sid.len() > 184
+                        || !sid.starts_with("S-1-")
+                        || !sid
+                            .bytes()
+                            .all(|b| b == b'S' || b == b'-' || b.is_ascii_digit())
+                    {
+                        return Err(ConfigError::InvalidDisplayConfig);
+                    }
+                    display_control_user_sid = Some(sid);
+                }
+                "--single-display-config" => {
+                    let path =
+                        PathBuf::from(next_value(&mut arguments, "--single-display-config")?);
+                    if single_display_config.is_some() || !path.is_absolute() {
+                        return Err(ConfigError::InvalidDisplayConfig);
+                    }
+                    single_display_config = Some(path);
+                }
                 "--console" => console = true,
                 "--mode" => {
                     mode = match next_value(&mut arguments, "--mode")?.as_str() {
@@ -175,6 +243,9 @@ impl ServiceConfig {
 
         if console != console_run_for.is_some() {
             return Err(ConfigError::ConsoleRunPairRequired);
+        }
+        if display_control_user_sid.is_some() && single_display_config.is_none() {
+            return Err(ConfigError::InvalidDisplayConfig);
         }
         let broker_executable = broker_executable.ok_or(ConfigError::MissingBroker)?;
         if broker_executable.as_os_str().is_empty() {
@@ -265,6 +336,8 @@ impl ServiceConfig {
             peer_port,
             native_microphone,
             console_run_for,
+            single_display_config,
+            display_control_user_sid,
         })
     }
 
@@ -324,6 +397,7 @@ where
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum ConfigError {
+    InvalidDisplayConfig,
     MissingValue(&'static str),
     UnknownArgument(String),
     InvalidMode,
@@ -351,6 +425,9 @@ pub enum ConfigError {
 impl std::fmt::Display for ConfigError {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
+            Self::InvalidDisplayConfig => formatter.write_str(
+                "--single-display-config requires one absolute trusted-host path",
+            ),
             Self::MissingValue(option) => write!(formatter, "missing value for {option}"),
             Self::UnknownArgument(_) => formatter.write_str("unknown service argument"),
             Self::InvalidMode => formatter.write_str("--mode is unsupported"),
@@ -906,6 +983,7 @@ mod tests {
         assert_eq!(parsed.bind_ip, Ipv4Addr::new(100, 64, 0, 1));
         assert_eq!(parsed.port, 65530);
         assert_eq!(parsed.mode, ServiceBrokerMode::AudioShareCompatibility);
+        assert_eq!(parsed.single_display_config, None);
         assert!(
             ServiceConfig::parse([
                 "service",

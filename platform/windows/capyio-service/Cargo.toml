@@ -14,14 +14,26 @@ capyio-micyou-host-config = { path = "../micyou-host-config" }
 capyio-native-audio-lan = { path = "../../../adapters/native-audio-lan" }
 serde.workspace = true
 serde_json.workspace = true
+sha2.workspace = true
 
 [target.'cfg(windows)'.dependencies]
+capyio-display-stream-adapter = { path = "../../../adapters/sunshine-moonlight" }
+capyio-display-engine-host = { path = "../capyio-display-engine-host" }
+capyio-core = { path = "../../../crates/capyio-core" }
+capyio-display = { path = "../../../crates/capyio-display" }
+capyio-display-tls = { path = "../../../crates/capyio-display-tls" }
+capyio-display-transport = { path = "../../../crates/capyio-display-transport" }
+capyio-video = { path = "../../../crates/capyio-video" }
+capyio-windows-display = { path = "../capyio-display" }
 capyio-windows-capture-ring = { path = "../capture-ring" }
 windows-service.workspace = true
 windows-sys = { workspace = true, features = [
     "Win32_Foundation",
     "Win32_Security",
     "Win32_Security_Authorization",
+    "Win32_Security_Cryptography",
+    "Win32_System_Environment",
+    "Win32_System_RemoteDesktop",
     "Win32_Storage_FileSystem",
     "Win32_System_Memory",
     "Win32_System_IO",

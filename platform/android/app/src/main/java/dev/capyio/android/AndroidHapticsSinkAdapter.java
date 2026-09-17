@@ -70,6 +70,21 @@ final class AndroidHapticsSinkAdapter {
         stateChanged.run();
     }
 
+    void failForeground(String problemCode) {
+        CapabilityLifecycleSnapshot lifecycle = controller.snapshot();
+        if (!lifecycle.state().ownsAdapterLifecycle()) {
+            return;
+        }
+        try {
+            if (vibrator != null) {
+                vibrator.cancel();
+            }
+        } catch (RuntimeException ignored) {
+            // The lifecycle failure remains authoritative if cancellation is denied.
+        }
+        controller.fail(lifecycle.generation(), problemCode);
+    }
+
     boolean submit(AndroidHapticsCommand command) {
         if (command == null) {
             throw new IllegalArgumentException("Haptics command is required");

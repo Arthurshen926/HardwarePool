@@ -86,8 +86,10 @@ Display is excluded until its feature branch is complete.
    pressure into an explicit Capability failure plus neutral/cancel cleanup.
    A01F2 rejects new UI input after Activity pause and synchronously submits a
    neutral gamepad snapshot plus empty touchpad contacts without stopping the
-   Service or unrelated capabilities. Authenticated product transport and
-   physical foreground-loss qualification remain.
+   Service or unrelated capabilities. A01F3 adds an explicitly started
+   `connectedDevice` foreground lifecycle for IMU, gamepad, touchpad and
+   haptics, so Activity unbinding no longer owns them. Authenticated product
+   transport and physical A01F3 foreground-loss qualification remain.
 7. **A01G — migration closeout:** remove redundant product launchers only after
    parity evidence, rollback instructions and the unified APK gate pass.
 8. **A01H — haptics Sink (complete):** after explicit approval, declare the
@@ -112,6 +114,8 @@ Display is excluded until its feature branch is complete.
 ## Approval boundaries
 
 The A01E CAMERA/foreground-service declarations and one designated debug APK
-installation were separately authorized on 2026-09-16. This plan does not
-authorize any other permission, driver operation, device reset, production
-signing or remote publication.
+installation were separately authorized on 2026-09-16. The owner authorized
+the A01F3 connected-device foreground declarations on 2026-09-17. The current
+wireless-debug endpoint still requires an exact APK installation approval; no
+driver operation, device reset, production signing or remote publication is
+authorized.

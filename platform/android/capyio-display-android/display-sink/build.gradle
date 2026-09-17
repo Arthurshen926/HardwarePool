@@ -1,0 +1,51 @@
+plugins {
+    id "com.android.library"
+}
+
+android {
+    namespace "dev.capyio.display"
+    compileSdk 36
+
+    defaultConfig {
+        minSdk 29
+        consumerProguardFiles "consumer-rules.pro"
+    }
+
+    buildFeatures {
+        androidResources false
+        buildConfig false
+    }
+
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_17
+        targetCompatibility JavaVersion.VERSION_17
+    }
+}
+
+def contractHarnessClasses = layout.buildDirectory.dir("contract-harness/classes")
+
+tasks.register("compileDisplayContractHarness", JavaCompile) {
+    source(
+        "src/main/java/dev/capyio/display/AvcDecoderConfiguration.java",
+        "src/main/java/dev/capyio/display/EncodedAccessUnit.java",
+        "src/main/java/dev/capyio/display/PrivateDisplayRecordDecoder.java",
+        "src/main/java/dev/capyio/display/DecoderInputGate.java",
+        "src/testHarness/java/dev/capyio/display/DisplayContractHarness.java"
+    )
+    classpath = files()
+    destinationDirectory = contractHarnessClasses
+    options.release = 17
+    options.encoding = "UTF-8"
+}
+
+tasks.register("displayContractHarness", JavaExec) {
+    dependsOn("compileDisplayContractHarness")
+    classpath = files(contractHarnessClasses)
+    mainClass = "dev.capyio.display.DisplayContractHarness"
+    args(
+        rootProject.file("../../../fixtures/display/private_v1_decoder_config.hex").absolutePath,
+        rootProject.file("../../../fixtures/display/private_v1_key_access_unit.hex").absolutePath,
+        rootProject.file("../../../fixtures/display/real_v1_decoder_config.hex").absolutePath,
+        rootProject.file("../../../fixtures/display/real_v1_key_access_unit.hex").absolutePath
+    )
+}

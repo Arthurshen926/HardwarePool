@@ -1,8 +1,35 @@
 # CapyIO Build Status
 
-> Updated: 2026-09-17 for the ordinary-user system-camera live-frame gate.
+> Updated: 2026-09-17 for unified Android/Windows Display E2E.
+
+Version 0.5.11-dev (23) imports a closed, bounded Display connection bundle
+through the shared UI. The bundle was imported on TB323FU, the unified Windows
+service was switched to the same schema-3 binding, and the unified APK rendered
+the owned Windows virtual display at 2640x1216, 120 Hz, HEVC. Android logged
+`GameStream video connected; frames presented: 8`; a later evidence screenshot
+showed 456 frames. The session stopped cleanly and the service remains Running
+with Display Stopped. This closes the unified Display vertical E2E, not release
+pairing/onboarding, long soak, HDR, multi-display, or broad hardware acceptance.
+
+The Windows service now derives Android's 17-field GameStream expectation file
+from its own strict schema-3 configuration without reading server credentials.
+The wrapper produced and imported a five-entry experimental Y700 bundle from
+the validated service configuration; its public Download copy was deleted after
+installation into app-private mode-0600 files. Windows service tests pass (78
+passed, 2 subprocess fixtures ignored) and strict Clippy passes. The credential
+set remains laboratory-only and is not a production enrollment design.
 
 ## Latest integration slice
+
+ANDROID-A01F3 corrects a device-observed lifecycle defect in the unified
+Android host: an input-only session released UI state but lost its bound-only
+Node service when the Activity went to the background. ADR 1421 now gives IMU,
+gamepad, touchpad and haptics closed started-service actions and the typed
+Android `connectedDevice` foreground lifecycle. The permission-changing 0.5.7
+debug APK passes compilation, warnings-as-errors Lint, packaging and 262
+composition assertions. Installation on the current wireless-debug endpoint
+was blocked before execution pending exact approval, so physical background/
+reopen/Stop qualification is not yet claimed.
 
 The Windows shared UI now exposes a separate system-camera action that owns
 the camera session host and shared-NV12 receiver, with bounded readiness,

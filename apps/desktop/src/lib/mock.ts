@@ -171,6 +171,9 @@ function initialSnapshot(): UiSnapshot {
 }
 
 export class BrowserMockCapyIOApi implements CapyIOApi {
+  async getDisplaySenderState(): Promise<import("./types").UiDisplaySenderState | null> { return null; }
+  async startDisplaySender(): Promise<import("./types").UiDisplaySenderState | null> { throw new Error("模拟界面不启动真实显示共享。"); }
+  async stopDisplaySender(): Promise<import("./types").UiDisplaySenderState | null> { throw new Error("模拟界面不控制真实显示共享。"); }
   async getDiagnostics() {
     return { backend: "Browser Mock（模拟）", version: "未提供", revision: "未提供", builtAt: "未提供", checks: [{ label: "模拟模式", detail: "没有读取本机硬件或 Windows 依赖。" }] };
   }
@@ -343,6 +346,12 @@ export class BrowserMockCapyIOApi implements CapyIOApi {
 
   async getAndroidAudioState(): Promise<UiAndroidAudioState | null> {
     return null;
+  }
+  async getDisplayReceiverState(): Promise<import("./types").UiDisplayReceiverState | null> { return null; }
+  async importDisplayProvisioning(): Promise<void> { throw new Error("模拟界面不导入真实显示连接包。"); }
+  async openDisplayReceiver(): Promise<void> { throw new Error("模拟界面不启动真实显示接收。"); }
+  async configureAndroidAudioPeer(): Promise<void> {
+    throw new Error("浏览器模拟不配置真实 Android 音频连接。");
   }
 
   async getAndroidCameraSettings(): Promise<UiAndroidCameraSettings | null> { return null; }

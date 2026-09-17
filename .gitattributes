@@ -6,3 +6,4 @@
 *.ico binary
 *.wav binary
 *.jar binary
+third_party/patches/moonlight-common-c-874ac954/0001-capyio-video-only-client.patch -whitespace

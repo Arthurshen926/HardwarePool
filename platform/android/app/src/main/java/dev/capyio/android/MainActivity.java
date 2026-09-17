@@ -19,6 +19,7 @@ import android.view.View;
 import android.view.WindowInsets;
 import android.widget.Button;
 import android.widget.TextView;
+import android.widget.Toast;
 
 import dev.capyio.android.contract.ActualAudioFormat;
 import dev.capyio.android.contract.AudioCapabilityKind;
@@ -38,6 +39,8 @@ import java.util.concurrent.atomic.AtomicBoolean;
 public final class MainActivity extends Activity {
     private static final int REQUEST_AUDIO_PERMISSIONS = 8101;
     private static final int REQUEST_CAMERA_PERMISSIONS = 8102;
+    private static final int REQUEST_CONNECTED_DEVICE_NOTIFICATION = 8103;
+    private static final int REQUEST_DISPLAY_PROVISIONING = 8104;
     private static final long REFRESH_INTERVAL_MILLIS = 250;
     private static final String SHARED_UI_URL = AndroidAssetWebViewClient.ORIGIN
             + "/capyio-ui/index.html?view=quick";
@@ -72,6 +75,7 @@ public final class MainActivity extends Activity {
     private volatile AudioNodeService.NodeBinder binder;
     private AudioCapabilityKind pendingStart;
     private boolean pendingCameraStart;
+    private AndroidCapabilityCommand.Target pendingConnectedDeviceStart;
     private boolean bound;
     private volatile boolean uiInputActive;
 
@@ -247,6 +251,18 @@ public final class MainActivity extends Activity {
             dispatchSharedUiState();
             return;
         }
+        if (requestCode == REQUEST_CONNECTED_DEVICE_NOTIFICATION) {
+            AndroidCapabilityCommand.Target requested = pendingConnectedDeviceStart;
+            pendingConnectedDeviceStart = null;
+            if (requested != null && notificationPermissionGranted()) {
+                startConnectedDeviceCapability(requested);
+                renderPermissionState(null);
+            } else {
+                renderPermissionState(getString(R.string.permission_denied));
+            }
+            dispatchSharedUiState();
+            return;
+        }
         if (requestCode != REQUEST_AUDIO_PERMISSIONS) {
             return;
         }
@@ -258,6 +274,24 @@ public final class MainActivity extends Activity {
         } else {
             renderPermissionState(getString(R.string.permission_denied));
         }
+    }
+
+    @Override
+    protected void onActivityResult(int requestCode, int resultCode, Intent data) {
+        super.onActivityResult(requestCode, resultCode, data);
+        if (requestCode != REQUEST_DISPLAY_PROVISIONING) return;
+        if (resultCode != RESULT_OK || data == null || data.getData() == null) {
+            Toast.makeText(this, "未导入显示连接包", Toast.LENGTH_SHORT).show();
+            return;
+        }
+        try (java.io.InputStream input = getContentResolver().openInputStream(data.getData())) {
+            String mode = dev.capyio.display.app.DisplayProvisioningBundleInstaller.install(
+                    getFilesDir(), input);
+            Toast.makeText(this, "显示连接包已导入：" + mode, Toast.LENGTH_LONG).show();
+        } catch (java.io.IOException | RuntimeException invalid) {
+            Toast.makeText(this, "显示连接包导入失败，请刷新确认当前配置", Toast.LENGTH_LONG).show();
+        }
+        dispatchSharedUiState();
     }
 
     private void requestStart(AudioCapabilityKind kind) {
@@ -315,6 +349,32 @@ public final class MainActivity extends Activity {
                 || checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS)
                         == PackageManager.PERMISSION_GRANTED;
         return cameraGranted && notificationGranted;
+    }
+
+    private boolean notificationPermissionGranted() {
+        return Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU
+                || checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS)
+                        == PackageManager.PERMISSION_GRANTED;
+    }
+
+    private void requestStartConnectedDevice(AndroidCapabilityCommand.Target target) {
+        if (!notificationPermissionGranted()) {
+            pendingConnectedDeviceStart = target;
+            requestPermissions(
+                    new String[] {Manifest.permission.POST_NOTIFICATIONS},
+                    REQUEST_CONNECTED_DEVICE_NOTIFICATION);
+            return;
+        }
+        startConnectedDeviceCapability(target);
+    }
+
+    private void startConnectedDeviceCapability(AndroidCapabilityCommand.Target target) {
+        switch (target) {
+            case IMU -> AudioNodeService.startImu(this);
+            case GAMEPAD -> AudioNodeService.startGamepad(this);
+            case TOUCHPAD -> AudioNodeService.startTouchpad(this);
+            case HAPTICS -> AudioNodeService.startHaptics(this);
+        }
     }
 
     private void startCapability(AudioCapabilityKind kind) {
@@ -411,6 +471,14 @@ public final class MainActivity extends Activity {
     }
 
     private void dispatchSharedUiState() {
+        // JavascriptInterface callbacks execute on JavaBridge, not the UI Looper.
+        if (Looper.myLooper() != handler.getLooper()) {
+            handler.post(this::dispatchSharedUiState);
+            return;
+        }
+        if (isDestroyed() || isFinishing()) {
+            return;
+        }
         if (sharedUiLoaded) {
             sharedUi.evaluateJavascript(
                     "window.dispatchEvent(new Event('capyio-native-state'))",
@@ -419,6 +487,38 @@ public final class MainActivity extends Activity {
     }
 
     private final class ObserverBridge {
+        @JavascriptInterface
+        public String getDisplayStateJson() {
+            return dev.capyio.display.app.DisplayNodeFacade.stateJson(MainActivity.this);
+        }
+
+        @JavascriptInterface
+        public boolean openDisplayReceiver() {
+            if (!dev.capyio.display.app.DisplayNodeFacade.inspect(MainActivity.this).canOpen()) return false;
+            handler.post(() -> {
+                if (!isDestroyed() && !isFinishing()) {
+                    dev.capyio.display.app.DisplayNodeFacade.open(MainActivity.this);
+                }
+            });
+            return true;
+        }
+
+        @JavascriptInterface
+        public boolean importDisplayProvisioning() {
+            handler.post(() -> {
+                if (isDestroyed() || isFinishing()) return;
+                Intent picker = new Intent(Intent.ACTION_OPEN_DOCUMENT)
+                        .addCategory(Intent.CATEGORY_OPENABLE)
+                        .setType("application/zip");
+                try {
+                    startActivityForResult(picker, REQUEST_DISPLAY_PROVISIONING);
+                } catch (RuntimeException unavailable) {
+                    Toast.makeText(MainActivity.this, "系统文件选择器不可用", Toast.LENGTH_LONG).show();
+                }
+            });
+            return true;
+        }
+
         @JavascriptInterface
         public String getDiagnosticsJson() {
             try {
@@ -496,6 +596,14 @@ public final class MainActivity extends Activity {
                     current.snapshot(),
                     requiredPermissionsGranted(AudioCapabilityKind.MICROPHONE_SOURCE),
                     requiredPermissionsGranted(AudioCapabilityKind.SPEAKER_SINK));
+        }
+
+        @JavascriptInterface
+        public boolean configureAudioPeer(String direction, String host, int localPort, int peerPort,
+                boolean trustedLabConfirmed) {
+            AudioNodeService.NodeBinder current = binder;
+            return current != null && current.configureAudioPeer(
+                    direction, host, localPort, peerPort, trustedLabConfirmed);
         }
 
         @JavascriptInterface
@@ -666,28 +774,28 @@ public final class MainActivity extends Activity {
                     if (command.operation() == AndroidCapabilityCommand.Operation.STOP) {
                         current.stopImu();
                     } else {
-                        current.startImu();
+                        handler.post(() -> requestStartConnectedDevice(command.target()));
                     }
                 }
                 case GAMEPAD -> {
                     if (command.operation() == AndroidCapabilityCommand.Operation.STOP) {
                         current.stopGamepad();
                     } else {
-                        current.startGamepad();
+                        handler.post(() -> requestStartConnectedDevice(command.target()));
                     }
                 }
                 case TOUCHPAD -> {
                     if (command.operation() == AndroidCapabilityCommand.Operation.STOP) {
                         current.stopTouchpad();
                     } else {
-                        current.startTouchpad();
+                        handler.post(() -> requestStartConnectedDevice(command.target()));
                     }
                 }
                 case HAPTICS -> {
                     if (command.operation() == AndroidCapabilityCommand.Operation.STOP) {
                         current.stopHaptics();
                     } else {
-                        current.startHaptics();
+                        handler.post(() -> requestStartConnectedDevice(command.target()));
                     }
                 }
             }

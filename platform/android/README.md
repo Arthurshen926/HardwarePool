@@ -72,7 +72,7 @@ but remains plaintext and is not production pairing or encryption.
 ## Native responsibilities
 
 - runtime permission requests;
-- foreground-service ownership of active microphone/render sessions;
+- foreground-service ownership of active audio and connected-device sessions;
 - persistent privacy notification;
 - audio focus and route change handling;
 - microphone capture and speaker render Adapter;
@@ -189,6 +189,14 @@ The unified `0.5.1-dev` host also declares the explicitly approved normal
 0..1000 dual-rumble command, maps the stronger channel to the phone's single
 actuator and caps each effect at 10 seconds. Starting the local shared-UI action
 emits a short confirmation pulse; it does not claim remote feedback routing.
+
+The unified `0.5.7-dev` host additionally declares
+`FOREGROUND_SERVICE_CONNECTED_DEVICE` and the normal `CHANGE_NETWORK_STATE`
+prerequisite under ADR 1421. IMU, gamepad, touchpad and haptics now enter the
+non-exported Node service through closed started-service actions and keep a
+visible foreground notification independently of Activity binding. The build
+and hardware-free lifecycle policy pass; background/reopen/Stop behavior still
+requires the separately approved physical gate on the current APK.
 
 ## Touchpad bridge slice
 

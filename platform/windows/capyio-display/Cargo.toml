@@ -1,0 +1,52 @@
+[package]
+name = "capyio-windows-display"
+description = "Windows virtual-monitor handoff and capture fallback for CapyIO."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish = false
+
+[dependencies]
+capyio-core = { path = "../../../crates/capyio-core" }
+capyio-display = { path = "../../../crates/capyio-display" }
+capyio-display-transport = { path = "../../../crates/capyio-display-transport" }
+capyio-display-tls = { path = "../../../crates/capyio-display-tls" }
+capyio-video = { path = "../../../crates/capyio-video" }
+thiserror.workspace = true
+uuid.workspace = true
+
+[target.'cfg(windows)'.dependencies]
+windows = { workspace = true, features = [
+    "Foundation",
+    "Graphics",
+    "Graphics_Capture",
+    "Graphics_DirectX",
+    "Graphics_DirectX_Direct3D11",
+    "Win32_Foundation",
+    "Win32_Devices_Display",
+    "Win32_Graphics_Direct3D",
+    "Win32_Graphics_Direct3D11",
+    "Win32_Graphics_Dxgi",
+    "Win32_Graphics_Dxgi_Common",
+    "Win32_Graphics_Gdi",
+    "Win32_Media_MediaFoundation",
+    "Win32_System_Com",
+    "Win32_System_Ole",
+    "Win32_System_Variant",
+    "Win32_System_WinRT",
+    "Win32_System_WinRT_Direct3D11",
+    "Win32_UI_HiDpi",
+    "Win32_UI_Shell",
+] }
+windows-future.workspace = true
+windows-sys = { workspace = true, features = [
+    "Win32_Devices_DeviceAndDriverInstallation",
+    "Win32_Foundation",
+    "Win32_Security",
+    "Win32_Security_Authorization",
+    "Win32_Storage_FileSystem",
+    "Win32_System_IO",
+    "Win32_System_Memory",
+    "Win32_System_RemoteDesktop",
+] }

@@ -1,0 +1,20 @@
+plugins {
+    id "com.android.library" version "9.3.1" apply false
+    id "com.android.application" version "9.3.1" apply false
+}
+
+tasks.register("verify") {
+    dependsOn(":display-sink:assembleDebug")
+    dependsOn(":display-sink:displayContractHarness")
+    dependsOn(":display-app:assembleDebug")
+    dependsOn(":display-app:aspectRatioFitHarness")
+    dependsOn(":display-app:displayReconnectPolicyHarness")
+    dependsOn(":display-app:displayTlsOuterFrameHarness")
+    dependsOn(":display-app:gameStreamLaunchRecordHarness")
+    dependsOn(":display-app:displayTransportModeHarness")
+}
+
+tasks.named("wrapper", Wrapper) {
+    gradleVersion = "9.5.0"
+    distributionType = Wrapper.DistributionType.ALL
+}

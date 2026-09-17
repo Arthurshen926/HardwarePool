@@ -20,7 +20,9 @@ use windows_sys::Win32::{
         Authorization::{ConvertStringSecurityDescriptorToSecurityDescriptorW, SDDL_REVISION_1},
         PSECURITY_DESCRIPTOR, SECURITY_ATTRIBUTES,
     },
-    Storage::FileSystem::{FlushFileBuffers, PIPE_ACCESS_DUPLEX, ReadFile, WriteFile},
+    Storage::FileSystem::{
+        FILE_FLAG_FIRST_PIPE_INSTANCE, FlushFileBuffers, PIPE_ACCESS_DUPLEX, ReadFile, WriteFile,
+    },
     System::Pipes::{
         ConnectNamedPipe, CreateNamedPipeW, DisconnectNamedPipe, PIPE_NOWAIT, PIPE_READMODE_BYTE,
         PIPE_REJECT_REMOTE_CLIENTS, PIPE_TYPE_BYTE,
@@ -151,6 +153,14 @@ pub(crate) struct NamedPipe {
 
 impl NamedPipe {
     pub(crate) fn create(pipe_name: &str, pipe_sddl: &str) -> Result<Self, String> {
+        Self::create_with_flags(pipe_name, pipe_sddl, 0)
+    }
+
+    pub(crate) fn create_exclusive(pipe_name: &str, pipe_sddl: &str) -> Result<Self, String> {
+        Self::create_with_flags(pipe_name, pipe_sddl, FILE_FLAG_FIRST_PIPE_INSTANCE)
+    }
+
+    fn create_with_flags(pipe_name: &str, pipe_sddl: &str, flags: u32) -> Result<Self, String> {
         let mut descriptor = SecurityDescriptor::new(pipe_sddl)?;
         let attributes = SECURITY_ATTRIBUTES {
             nLength: u32::try_from(mem::size_of::<SECURITY_ATTRIBUTES>())
@@ -166,7 +176,7 @@ impl NamedPipe {
             let handle = unsafe {
                 CreateNamedPipeW(
                     name.as_ptr(),
-                    PIPE_ACCESS_DUPLEX,
+                    PIPE_ACCESS_DUPLEX | flags,
                     PIPE_TYPE_BYTE | PIPE_READMODE_BYTE | PIPE_NOWAIT | PIPE_REJECT_REMOTE_CLIENTS,
                     1,
                     MAX_CONTROL_BYTES as u32 + 4,

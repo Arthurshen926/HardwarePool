@@ -1,0 +1,251 @@
+diff --git a/src/Connection.c b/src/Connection.c
+index bac9a6e..c72ceca 100644
+--- a/src/Connection.c
++++ b/src/Connection.c
+@@ -6,6 +6,15 @@ static bool alreadyTerminated;
+ static PLT_THREAD terminationCallbackThread;
+ static int terminationCallbackErrorCode;
+ 
++#ifdef CAPYIO_VIDEO_ONLY_CLIENT
++static void secureZero(void* data, size_t length) {
++    volatile unsigned char* bytes = (volatile unsigned char*)data;
++    while (length-- != 0) {
++        *bytes++ = 0;
++    }
++}
++#endif
++
+ // Common globals
+ char* RemoteAddrString;
+ struct sockaddr_storage RemoteAddr;
+@@ -74,16 +83,20 @@ void LiStopConnection(void) {
+     LiInterruptConnection();
+ 
+     if (stage == STAGE_INPUT_STREAM_START) {
++#ifndef CAPYIO_VIDEO_ONLY_CLIENT
+         Limelog("Stopping input stream...");
+         stopInputStream();
+-        stage--;
+         Limelog("done\n");
++#endif
++        stage--;
+     }
+     if (stage == STAGE_AUDIO_STREAM_START) {
++#ifndef CAPYIO_VIDEO_ONLY_CLIENT
+         Limelog("Stopping audio stream...");
+         stopAudioStream();
+-        stage--;
+         Limelog("done\n");
++#endif
++        stage--;
+     }
+     if (stage == STAGE_VIDEO_STREAM_START) {
+         Limelog("Stopping video stream...");
+@@ -98,10 +111,12 @@ void LiStopConnection(void) {
+         Limelog("done\n");
+     }
+     if (stage == STAGE_INPUT_STREAM_INIT) {
++#ifndef CAPYIO_VIDEO_ONLY_CLIENT
+         Limelog("Cleaning up input stream...");
+         destroyInputStream();
+-        stage--;
+         Limelog("done\n");
++#endif
++        stage--;
+     }
+     if (stage == STAGE_VIDEO_STREAM_INIT) {
+         Limelog("Cleaning up video stream...");
+@@ -120,10 +135,12 @@ void LiStopConnection(void) {
+         stage--;
+     }
+     if (stage == STAGE_AUDIO_STREAM_INIT) {
++#ifndef CAPYIO_VIDEO_ONLY_CLIENT
+         Limelog("Cleaning up audio stream...");
+         destroyAudioStream();
+-        stage--;
+         Limelog("done\n");
++#endif
++        stage--;
+     }
+     if (stage == STAGE_NAME_RESOLUTION) {
+         // Nothing to do
+@@ -141,6 +158,10 @@ void LiStopConnection(void) {
+         free(RemoteAddrString);
+         RemoteAddrString = NULL;
+     }
++#ifdef CAPYIO_VIDEO_ONLY_CLIENT
++    secureZero(StreamConfig.remoteInputAesKey, sizeof(StreamConfig.remoteInputAesKey));
++    secureZero(StreamConfig.remoteInputAesIv, sizeof(StreamConfig.remoteInputAesIv));
++#endif
+ }
+ 
+ static void terminationCallbackThreadFunc(void* context)
+@@ -426,12 +447,14 @@ int LiStartConnection(PSERVER_INFORMATION serverInfo, PSTREAM_CONFIGURATION stre
+ 
+     Limelog("Initializing audio stream...");
+     ListenerCallbacks.stageStarting(STAGE_AUDIO_STREAM_INIT);
++#ifndef CAPYIO_VIDEO_ONLY_CLIENT
+     err = initializeAudioStream();
+     if (err != 0) {
+         Limelog("failed: %d\n", err);
+         ListenerCallbacks.stageFailed(STAGE_AUDIO_STREAM_INIT, err);
+         goto Cleanup;
+     }
++#endif
+     stage++;
+     LC_ASSERT(stage == STAGE_AUDIO_STREAM_INIT);
+     ListenerCallbacks.stageComplete(STAGE_AUDIO_STREAM_INIT);
+@@ -473,7 +496,9 @@ int LiStartConnection(PSERVER_INFORMATION serverInfo, PSTREAM_CONFIGURATION stre
+ 
+     Limelog("Initializing input stream...");
+     ListenerCallbacks.stageStarting(STAGE_INPUT_STREAM_INIT);
++#ifndef CAPYIO_VIDEO_ONLY_CLIENT
+     initializeInputStream();
++#endif
+     stage++;
+     LC_ASSERT(stage == STAGE_INPUT_STREAM_INIT);
+     ListenerCallbacks.stageComplete(STAGE_INPUT_STREAM_INIT);
+@@ -507,12 +532,14 @@ int LiStartConnection(PSERVER_INFORMATION serverInfo, PSTREAM_CONFIGURATION stre
+ 
+     Limelog("Starting audio stream...");
+     ListenerCallbacks.stageStarting(STAGE_AUDIO_STREAM_START);
++#ifndef CAPYIO_VIDEO_ONLY_CLIENT
+     err = startAudioStream(audioContext, arFlags);
+     if (err != 0) {
+         Limelog("Audio stream start failed: %d\n", err);
+         ListenerCallbacks.stageFailed(STAGE_AUDIO_STREAM_START, err);
+         goto Cleanup;
+     }
++#endif
+     stage++;
+     LC_ASSERT(stage == STAGE_AUDIO_STREAM_START);
+     ListenerCallbacks.stageComplete(STAGE_AUDIO_STREAM_START);
+@@ -520,22 +547,26 @@ int LiStartConnection(PSERVER_INFORMATION serverInfo, PSTREAM_CONFIGURATION stre
+ 
+     Limelog("Starting input stream...");
+     ListenerCallbacks.stageStarting(STAGE_INPUT_STREAM_START);
++#ifndef CAPYIO_VIDEO_ONLY_CLIENT
+     err = startInputStream();
+     if (err != 0) {
+         Limelog("Input stream start failed: %d\n", err);
+         ListenerCallbacks.stageFailed(STAGE_INPUT_STREAM_START, err);
+         goto Cleanup;
+     }
++#endif
+     stage++;
+     LC_ASSERT(stage == STAGE_INPUT_STREAM_START);
+     ListenerCallbacks.stageComplete(STAGE_INPUT_STREAM_START);
+     Limelog("done\n");
+     
++#ifndef CAPYIO_VIDEO_ONLY_CLIENT
+     // Wiggle the mouse a bit to wake the display up
+     LiSendMouseMoveEvent(1, 1);
+     PltSleepMs(10);
+     LiSendMouseMoveEvent(-1, -1);
+     PltSleepMs(10);
++#endif
+ 
+     ListenerCallbacks.connectionStarted();
+ 
+diff --git a/src/RtspConnection.c b/src/RtspConnection.c
+index e958101..81e4a3d 100644
+--- a/src/RtspConnection.c
++++ b/src/RtspConnection.c
+@@ -675,6 +675,7 @@ static bool sendVideoAnnounce(PRTSP_MESSAGE response, int* error) {
+     return ret;
+ }
+ 
++#ifndef CAPYIO_VIDEO_ONLY_CLIENT
+ static int parseOpusConfigFromParamString(char* paramStr, int channelCount, POPUS_MULTISTREAM_CONFIGURATION opusConfig) {
+     int i;
+ 
+@@ -713,6 +714,7 @@ static int parseOpusConfigFromParamString(char* paramStr, int channelCount, POPU
+ 
+     return 0;
+ }
++#endif
+ 
+ // Parse the server port from the Transport header
+ // Example: unicast;server_port=48000-48001;source=192.168.35.177
+@@ -744,6 +746,7 @@ static bool parseServerPortFromTransport(PRTSP_MESSAGE response, uint16_t* port)
+     return true;
+ }
+ 
++#ifndef CAPYIO_VIDEO_ONLY_CLIENT
+ // Parses the Opus configuration from an RTSP DESCRIBE response
+ static int parseOpusConfigurations(PRTSP_MESSAGE response) {
+     HighQualitySurroundSupported = false;
+@@ -846,6 +849,7 @@ static int parseOpusConfigurations(PRTSP_MESSAGE response) {
+ 
+     return 0;
+ }
++#endif
+ 
+ static bool parseUrlAddrFromRtspUrlString(const char* rtspUrlString, char* destination, size_t destinationLength) {
+     char* rtspUrlScratchBuffer;
+@@ -1155,15 +1159,18 @@ int performRtspHandshake(PSERVER_INFORMATION serverInfo) {
+         }
+         EncryptionFeaturesEnabled = 0;
+ 
++#ifndef CAPYIO_VIDEO_ONLY_CLIENT
+         // Parse the Opus surround parameters out of the RTSP DESCRIBE response.
+         ret = parseOpusConfigurations(&response);
+         if (ret != 0) {
+             goto Exit;
+         }
++#endif
+ 
+         freeMessage(&response);
+     }
+ 
++#ifndef CAPYIO_VIDEO_ONLY_CLIENT
+     {
+         RTSP_MESSAGE response;
+         char* sessionId;
+@@ -1243,11 +1250,17 @@ int performRtspHandshake(PSERVER_INFORMATION serverInfo) {
+ 
+         freeMessage(&response);
+     }
++#endif
+ 
+     {
+         RTSP_MESSAGE response;
+         int error = -1;
+         char* pingPayload;
++#ifdef CAPYIO_VIDEO_ONLY_CLIENT
++        char* sessionId;
++        char* sessionToken;
++        char* strtokCtx = NULL;
++#endif
+ 
+         if (!setupStream(&response,
+                          AppVersionQuad[0] >= 5 ? "streamid=video/0/0" : "streamid=video",
+@@ -1283,6 +1296,28 @@ int performRtspHandshake(PSERVER_INFORMATION serverInfo) {
+             Limelog("Video port: %u\n", VideoPortNumber);
+         }
+ 
++#ifdef CAPYIO_VIDEO_ONLY_CLIENT
++        sessionId = getOptionContent(response.options, "Session");
++        if (sessionId == NULL) {
++            Limelog("RTSP SETUP streamid=video is missing session attribute\n");
++            ret = -1;
++            goto Exit;
++        }
++        sessionToken = strtok_r(sessionId, ";", &strtokCtx);
++        if (sessionToken == NULL || sessionToken[0] == '\0') {
++            Limelog("RTSP SETUP streamid=video has malformed session attribute\n");
++            ret = -1;
++            goto Exit;
++        }
++        sessionIdString = strdup(sessionToken);
++        if (sessionIdString == NULL) {
++            Limelog("Failed to duplicate session ID string\n");
++            ret = -1;
++            goto Exit;
++        }
++        hasSessionId = true;
++#endif
++
+         freeMessage(&response);
+     }
+ 

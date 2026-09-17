@@ -185,6 +185,11 @@ impl ProfileId {
     }
 
     #[must_use]
+    pub fn display_frames_v1() -> Self {
+        Self::new("capyio.display.frames", 1)
+    }
+
+    #[must_use]
     pub fn key_events_v1() -> Self {
         Self::new("capyio.input.key-events", 1)
     }

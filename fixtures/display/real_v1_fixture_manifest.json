@@ -1,0 +1,14 @@
+{
+  "decoded_yuv420p_bytes": 1382400,
+  "decoded_yuv420p_sha256": "f2bcd6434d4992a994910d7439d89167e195be04b7806a3871536896435acc8d",
+  "decoder_config_record_sha256": "9aeb9a6e844fdae39612e3e7baa0b390f2f6a184c7e86fd25498a756512980fc",
+  "encoded_source_sha256": "f442c2eb2d156dffe7defde71f02a6011f7937720a3a0677e28c92885f8aacfc",
+  "encoder": "libx264 Main Level 3.1, veryslow, zerolatency, threads=1, IDR-only",
+  "ffmpeg_version": "ffmpeg version 9.0.1-essentials_build-www.gyan.dev Copyright (c) 2000-2026 the FFmpeg developers",
+  "idr_bytes": 32447,
+  "key_access_unit_record_sha256": "2eddcd6d075a1d1067d8bec898fa9c86d8bbe30d9d234abe7f4e553bc657ba4b",
+  "pps_bytes": 9,
+  "schema": "capyio.display.real-avc-fixture/v1",
+  "source": "lavfi testsrc2 1280x720 yuv420p frame 0",
+  "sps_bytes": 28
+}

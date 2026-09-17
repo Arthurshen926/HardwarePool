@@ -21,12 +21,12 @@
     <string name="microphone_transport_format">网络：生成 %1$d 包 / 发送 %2$d 包 / %3$d 数据报 / 队列丢包 %4$d / 暂存 %5$d 字节</string>
     <string name="speaker_transport_format">网络：接收 %1$d 数据报 / 错误来源 %2$d / 格式错误 %3$d / 完整包 %4$d / 重组淘汰 %5$d / 队列丢包 %6$d</string>
     <string name="problem_format">问题：%1$s</string>
-    <string name="notification_channel_name">CapyIO 音频共享</string>
-    <string name="notification_channel_description">显示正在使用的 CapyIO 麦克风或扬声器能力</string>
-    <string name="notification_title">CapyIO 音频节点正在运行</string>
+    <string name="notification_channel_name">CapyIO 硬件共享</string>
+    <string name="notification_channel_description">显示正在运行的 CapyIO 硬件共享能力</string>
+    <string name="notification_title">CapyIO 节点正在运行</string>
     <string name="notification_microphone">麦克风 Source</string>
     <string name="notification_speaker">扬声器 Sink</string>
-    <string name="notification_both">麦克风 Source 与扬声器 Sink</string>
+    <string name="notification_connected_device">远端设备交互</string>
     <string name="notification_stop_all">全部停止</string>
     <string name="camera_stopped">Camera is stopped. Frames are not stored or uploaded.</string>
     <string name="opening_camera">Opening Camera2…</string>

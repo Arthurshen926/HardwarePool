@@ -1505,6 +1505,14 @@ still not implied.
 
 ## Sidecar smoke test
 
+The ADR 1426 display execution tests require no device, socket or installed
+driver. Fake hosts cover independent active audio state after display failure,
+duplicate start/restart generations, open failure, unexpected clean exit,
+panic, cancellation during open, startup timeout, thread-affine ownership and
+Drop join. Configuration tests reject absent values, relative paths and
+duplicate display options. These do not establish SCM deployment, physical
+topology restoration or a hard deadline for a hung native host.
+
 Adapter Host launches repository-built mock binaries, performs initialize,
 probe, health, catalog, Route prepare/start/status/stop/status and shutdown, then
 verifies exit and stderr/stdout separation. Separate cases simulate abnormal
@@ -1526,6 +1534,13 @@ contract, data plane or performance test.
   independent Routes, disconnect/reconnect and clock epochs.
 
 ## Android audio node shell Gate
+
+The integrated display prerequisite executable also runs ADR 1428's 13 strict
+property-structure cases and five unconnected-socket ownership cases. Duplicate
+escaped keys, unknown/missing fields, blank/overlong/control-character values
+and input bounds fail closed. Socket tests distinguish successful ownership
+transfer from exception/security/error cleanup and preserve primary failure
+when close also fails. These are not certificate or real TLS handshake tests.
 
 `cargo xtask android-check` is the explicit hardware-free 001C Gate. It runs a
 dependency-free Java contract executable, Android Lint with warnings denied and
@@ -1695,6 +1710,15 @@ permissions, non-exported platform services, disabled backup/cleartext and the
 approved Internet permission. It also requires real `AudioRecord`/`AudioTrack` builders,
 `START_NOT_STICKY` and foreground notification ownership. This static check is
 not an APK or hardware result.
+
+ANDROID-A01F3 additionally requires the unified manifest to declare the
+`connectedDevice` foreground type, `FOREGROUND_SERVICE_CONNECTED_DEVICE` and
+its normal `CHANGE_NETWORK_STATE` prerequisite. The hardware-free policy gate
+proves that Starting, Active and Stopping IMU/gamepad/touchpad/haptics states
+retain service ownership, while Stopped and Failed states do not. Physical
+acceptance requires a capability-only run to retain the same service/PID and
+typed notification after Home, show neutral UI-owned controls after reopening,
+and remove the service after the last explicit Stop.
 
 The local debug APK build and merged-manifest inspection do not themselves
 prove device behavior. A separately authorized one-device run now proves the
@@ -1866,6 +1890,27 @@ ratio rather than inferring drift from acoustic latency. Sensor tests preserve
 clock domain, sequence, units, coordinate frame, accuracy and calibration.
 
 ## Evidence format
+
+Android WebView automation distinguishes CDP transport replies from successful
+evaluation. Protocol errors, JavaScript exceptions, missing/by-reference-only
+results and premature socket closure fail the helper. JSON false/zero remain
+false/zero; automation must separately assert application success. Run
+`node --test scripts/android_webview_target.test.mjs scripts/android_webview_result.test.mjs`
+for target isolation and result-parser regressions. These hardware-free checks
+do not establish Android media or Windows projection behavior.
+
+Display connection-bundle tests use synthetic bytes only. They cover exact ZIP
+entry names/counts, per-entry and aggregate bounds, selected properties schema,
+managed-directory replacement and preservation after rejection. They do not
+claim valid X.509/PKCS#8 material, mTLS authentication or rendered frames. A
+physical file-picker pass proves only that the shared UI reaches Android's
+system document picker and returns safely after cancellation.
+
+The Windows-to-Android display provisioning converter is tested against the
+same typed schema-3 parser used by service startup. Tests assert all 17 emitted
+fields and an invalid-codec rejection. Bundle inspection records entry names,
+sizes and whole-archive digest only; private-key or certificate contents must
+not be included in logs or evidence.
 
 ```text
 test-results/<run-id>/

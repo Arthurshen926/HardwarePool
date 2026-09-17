@@ -1,0 +1,45 @@
+[package]
+name = "capyio-display-engine-host"
+description = "Hash-pinned Windows native display-engine loader for CapyIO."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish = false
+
+[features]
+fixture-probe = []
+
+[[bin]]
+name = "capyio-display-engine-loader-probe"
+path = "src/bin/capyio-display-engine-loader-probe.rs"
+required-features = ["fixture-probe"]
+
+[[bin]]
+name = "capyio-gamestream-launch-fixture"
+path = "src/bin/capyio-gamestream-launch-fixture.rs"
+required-features = ["fixture-probe"]
+
+[[bin]]
+name = "capyio-gamestream-current-session-fixture"
+path = "src/bin/capyio-gamestream-current-session-fixture.rs"
+required-features = ["fixture-probe"]
+
+[[bin]]
+name = "capyio-display-engine-capability-probe"
+path = "src/bin/capyio-display-engine-capability-probe.rs"
+
+[dependencies]
+capyio-display-stream-adapter = { path = "../../../adapters/sunshine-moonlight" }
+capyio-display-tls = { path = "../../../crates/capyio-display-tls" }
+sha2.workspace = true
+
+[target.'cfg(windows)'.dependencies]
+capyio-windows-display = { path = "../capyio-display" }
+windows-sys = { workspace = true, features = [
+    "Win32_Foundation",
+    "Win32_Storage_FileSystem",
+    "Win32_System_IO",
+    "Win32_System_LibraryLoader",
+    "Win32_System_Pipes",
+] }

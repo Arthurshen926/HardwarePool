@@ -11,7 +11,7 @@ mod windows_host {
     };
 
     use capyio_windows_service::{
-        BrokerServiceRuntime, CaptureRingOwner, DEFAULT_POLL_INTERVAL,
+        BrokerServiceRuntime, CaptureRingOwner, ControlledDisplayRuntime, DEFAULT_POLL_INTERVAL,
         DEFAULT_STABLE_RECEIVER_POLLS, SERVICE_NAME, ServiceConfig, control_server_loop,
         wake_control_server,
     };
@@ -117,38 +117,47 @@ mod windows_host {
                 Duration::ZERO,
             ))
             .map_err(|error| error.to_string())?;
+        let mut display = start_display_host(&config);
         while !stop.load(Ordering::Acquire) {
+            poll_display_host(&mut display);
             if let Ok(mut runtime) = runtime.lock() {
                 runtime.poll();
             }
             thread::sleep(DEFAULT_POLL_INTERVAL);
         }
-        status_handle
+        let stop_status_result = status_handle
             .set_service_status(service_status(
                 ServiceState::StopPending,
                 false,
                 1,
-                Duration::from_secs(10),
+                Duration::from_secs(60),
             ))
-            .map_err(|error| error.to_string())?;
+            .map_err(|error| error.to_string());
+        if let Some(display) = &mut display {
+            display.request_stop();
+        }
         wake_control_server();
         let control_result = control
             .join()
-            .map_err(|_| "CapyIO service control thread panicked".to_owned())?;
+            .map_err(|_| "CapyIO service control thread panicked".to_owned())
+            .and_then(|result| result);
         let result = runtime
             .lock()
-            .map_err(|_| "CapyIO service state lock poisoned".to_owned())?
-            .ensure_stopped()
-            .map(|_| ());
+            .map_err(|_| "CapyIO service state lock poisoned".to_owned())
+            .and_then(|mut runtime| runtime.ensure_stopped().map(|_| ()));
+        let display_result = stop_display_host(&mut display);
+        let result = stop_status_result
+            .and(control_result)
+            .and(result)
+            .and(display_result);
+        let mut stopped_status = service_status(ServiceState::Stopped, false, 0, Duration::ZERO);
+        if result.is_err() {
+            stopped_status.exit_code = ServiceExitCode::ServiceSpecific(1);
+        }
         status_handle
-            .set_service_status(service_status(
-                ServiceState::Stopped,
-                false,
-                0,
-                Duration::ZERO,
-            ))
+            .set_service_status(stopped_status)
             .map_err(|error| error.to_string())?;
-        control_result.and(result)
+        result
     }
 
     fn run_broker(
@@ -164,6 +173,7 @@ mod windows_host {
         let supervisor = config.supervisor()?;
         let mut runtime = BrokerServiceRuntime::new(supervisor, DEFAULT_STABLE_RECEIVER_POLLS)?;
         runtime.start()?;
+        let mut display = start_display_host(&config);
         loop {
             if stop.load(Ordering::Acquire)
                 || deadline.is_some_and(|deadline| Instant::now() >= deadline)
@@ -171,14 +181,59 @@ mod windows_host {
                 break;
             }
             runtime.poll();
+            poll_display_host(&mut display);
             thread::sleep(DEFAULT_POLL_INTERVAL);
         }
-        let snapshot = runtime.stop()?;
+        // Attempt both cleanups even if audio stop fails.
+        if let Some(display) = &mut display {
+            display.request_stop();
+        }
+        let audio_result = runtime.stop();
+        let display_result = stop_display_host(&mut display);
+        let snapshot = audio_result?;
         if emit_console_snapshot {
             println!(
                 "{}",
                 serde_json::to_string(&snapshot).map_err(|error| error.to_string())?
             );
+        }
+        display_result
+    }
+
+    fn start_display_host(config: &ServiceConfig) -> Option<ControlledDisplayRuntime> {
+        let path = config.single_display_config.clone()?;
+        match ControlledDisplayRuntime::open(path, config.display_control_user_sid.as_deref()) {
+            Ok(display) => Some(display),
+            Err(problem) => {
+                eprintln!("{problem}");
+                None
+            }
+        }
+    }
+
+    fn poll_display_host(display: &mut Option<ControlledDisplayRuntime>) {
+        if let Some(display) = display {
+            let before = display.snapshot();
+            display.poll();
+            let after = display.snapshot();
+            if before != after {
+                // Sanitized host lifecycle only, never credentials or config paths.
+                if let Ok(json) = serde_json::to_string(&after) {
+                    eprintln!("display_execution={json}");
+                }
+            }
+        }
+    }
+
+    fn stop_display_host(display: &mut Option<ControlledDisplayRuntime>) -> Result<(), String> {
+        if let Some(display) = display {
+            let snapshot = display.shutdown();
+            if let Ok(json) = serde_json::to_string(&snapshot) {
+                eprintln!("display_execution={json}");
+            }
+            if let Some(problem) = snapshot.problem_code {
+                return Err(problem.to_owned());
+            }
         }
         Ok(())
     }

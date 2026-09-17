@@ -662,8 +662,53 @@ planned_integrations:
     integration_mode: planned_composite_sidecar
     source_imported: false
   - id: sunshine-moonlight
-    upstream_repository: null
-    pinned_revision: null
-    license: pending_verification
-    integration_mode: planned_composite_sidecar
+    upstream_repository: https://github.com/Nonary/Vibepollo
+    pinned_revision: e1dd3091d4009bffb6715f3b6d260adaaeb87080
+    license: GPL-3.0-only
+    integration_mode: optional_display_only_external_engine
     source_imported: false
+    binary_imported: false
+    imported_paths: []
+    distribution_note: >-
+      CapyIO-owned ABI and lifecycle sources are integrated under
+      adapters/sunshine-moonlight. The upstream native engine is not included
+      in the unified package. docs/VIBEPOLLO_DISTRIBUTION_PLAN.md records the
+      corresponding-source, pinned build and distribution gates.
+  - id: moonlight-common-c-android-display-receiver
+    upstream_repository: https://github.com/moonlight-stream/moonlight-common-c
+    pinned_revision: 874ac9548f1bd6f095ef2b435c42cdde460e7821
+    license: GPL-3.0-only
+    integration_mode: optional_video_only_jni
+    source_imported: false
+    binary_imported: false
+    imported_paths: []
+    distribution_note: >-
+      Only CapyIO-owned Java and JNI integration boundaries are composed into
+      the tracked source tree. ADR 1425 permits an optional locally rebuilt
+      debug APK to package the hash-verified native library and GPL/MIT notices;
+      default builds omit it and Release is blocked when the option is set.
+      See docs/MOONLIGHT_ANDROID_DISTRIBUTION_PLAN.md. No upstream binary is
+      committed; full public corresponding-source distribution remains open.
+    local_modifications:
+      - path: third_party/patches/moonlight-common-c-874ac954/0001-capyio-video-only-client.patch
+        sha256: 07badc78a5e6e0ec58627271b1fe4b55ef6dac7de1f41c39642e7a6e48191ff2
+        purpose: fixed-source video-only lifecycle and launch integration
+  - id: microsoft-windows-driver-samples-idd
+    upstream_repository: https://github.com/microsoft/Windows-driver-samples
+    pinned_revision: 717778a20ba4dd2440fe609f69153a1f8a64f597
+    upstream_path: video/IndirectDisplay/IddSampleDriver
+    license: MS-PL
+    integration_mode: frozen_driver_derivative_reference
+    source_imported: true
+    binary_imported: false
+    imported_paths:
+      - drivers/windows-display/idd
+    local_modifications:
+      - CapyIO identity, explicit monitor modes and bounded monitor lifecycle
+      - fixed local control ABI and bounded BGRA frame handoff
+      - exact capability-bound monitor identity and restricted device access
+    distribution_note: >-
+      Imported from the preserved display worktree as frozen source reference,
+      not the active production projection or a deployed driver package.
+      LICENSES/MS-PL.txt retains the complete license. No installation or
+      signing operation is authorized by this record.

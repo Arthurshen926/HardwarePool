@@ -32,7 +32,7 @@ final class SpeakerSinkAdapter implements AudioPlatformAdapter {
     private static final int SOCKET_TIMEOUT_MILLIS = 50;
 
     private final Listener listener;
-    private final NativeLanSpeakerSessionConfig config;
+    private NativeLanSpeakerSessionConfig config;
 
     private volatile AudioTrack track;
     private NativeLanReceiverWorker receiverWorker;
@@ -159,6 +159,13 @@ final class SpeakerSinkAdapter implements AudioPlatformAdapter {
             releaseAfterFailedStart(candidate);
             listener.onFailed(generation, PROBLEM_START);
         }
+    }
+
+    synchronized boolean configure(NativeLanSpeakerSessionConfig next, Runnable persist) {
+        if (track != null || receiverWorker != null || sinkWorker != null) return false;
+        persist.run();
+        config = next;
+        return true;
     }
 
     @Override

@@ -153,6 +153,16 @@ state needs release. It does not stop either Capability or any unrelated audio,
 camera or IMU lifecycle. Pure policy coverage verifies stopped-state rejection,
 active release and idempotence for already-neutral controls.
 
+A01F3 corrects the service-ownership defect found during the first A01F2 device
+probe. A gamepad-only session safely released its pressed state on Home, but the
+bound-only Node service was then destroyed. IMU, gamepad, touchpad and haptics
+now use closed started-service actions and retain the Android
+`connectedDevice` foreground type while their Adapter lifecycle owns work.
+`FOREGROUND_SERVICE_CONNECTED_DEVICE` plus the normal `CHANGE_NETWORK_STATE`
+prerequisite are declared under ADR 1421. The new APK passes the Android gate;
+installation and physical background/reopen/Stop evidence remain pending exact
+approval for the current wireless-debug endpoint.
+
 A01E2 closes the unified camera source/quality UI gap. The common Vue panel now
 refreshes the existing bounded Camera2 inventory after consent and selects an
 exact source/vendor-Zoom token plus one of three AVC presets only while stopped.
@@ -165,6 +175,10 @@ Camera Service to open ID 1. Active mutation was rejected and Stop released it.
   passed compilation, Lint, shared-UI/JNI/APK composition and 255 Android
   composition assertions; `cargo xtask ci` also passed the complete repository
   matrix. No APK or driver was installed.
+- 2026-09-17 A01F3: the Android gate passed with 262 composition assertions,
+  warnings-as-errors Lint and integrated debug APK packaging. The attempted
+  install on the new endpoint was blocked before execution, so no
+  permission-changing APK was installed and no physical result is claimed.
 - `cargo test --offline -p capyio-input -p capyio-dsu-adapter -p capyio-viiper-adapter -p capyio-windows-input -p capyio-desktop`: passed after the gamepad merge.
 - `cargo test --offline -p capyio-testkit -p capyio-desktop`: passed after schema 4 (15 testkit tests; 54 desktop tests passed and 6 physical tests remained ignored).
 - `npm run build` in `apps/desktop`: TypeScript and Vite production build passed.

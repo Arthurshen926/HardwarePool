@@ -1,6 +1,7 @@
 import { invoke } from "@tauri-apps/api/core";
 
 import { BrowserMockCapyIOApi } from "./mock";
+import { parseDisplaySenderState } from "./display-control";
 import type { CapyIOApi, GamepadControlUpdate, QuickActionOperation, TouchpadControlUpdate, UiAndroidAudioState, UiAndroidCameraSettings, UiAudioEndpointCatalog, UiGamepadState, UiLiveImu, UiQuickAction, UiSnapshot, UiTouchpadState, WindowsControllerKind } from "./types";
 
 declare global {
@@ -13,6 +14,10 @@ declare global {
       getGamepadStateJson(): string;
       getTouchpadStateJson(): string;
       getAudioStateJson(): string;
+      getDisplayStateJson?(): string;
+      importDisplayProvisioning?(): boolean;
+      openDisplayReceiver?(): boolean;
+      configureAudioPeer?(direction: string, host: string, localPort: number, peerPort: number, trustedLabConfirmed: boolean): boolean;
       getCameraSettingsJson(): string;
       setLocalCapabilityShared(capabilityId: string, selected: boolean): boolean;
       invokeQuickAction(actionId: string, operation: QuickActionOperation): boolean;
@@ -27,6 +32,29 @@ declare global {
 }
 
 class AndroidNodeCapyIOApi implements CapyIOApi {
+  async getDisplaySenderState(): Promise<import("./types").UiDisplaySenderState | null> { return null; }
+  async startDisplaySender(): Promise<import("./types").UiDisplaySenderState | null> { throw new Error("本机不提供 Windows 显示发送控制。"); }
+  async stopDisplaySender(): Promise<import("./types").UiDisplaySenderState | null> { throw new Error("本机不提供 Windows 显示发送控制。"); }
+  async getDisplayReceiverState(): Promise<import("./types").UiDisplayReceiverState | null> {
+    const encoded = window.CapyIOAndroid?.getDisplayStateJson?.();
+    if (!encoded) return null;
+    if (encoded.length > 2048) throw new Error("Display status exceeds its bound");
+    const state = JSON.parse(encoded) as import("./types").UiDisplayReceiverState;
+    if (state.schemaVersion !== 1 || !["unconfigured", "cpd1", "gamestream"].includes(state.transport)
+        || typeof state.configurationPresent !== "boolean" || typeof state.nativeClientAvailable !== "boolean"
+        || typeof state.canOpen !== "boolean" || typeof state.problemCode !== "string") {
+      throw new Error("Invalid display receiver status");
+    }
+    return state;
+  }
+  async openDisplayReceiver(): Promise<void> {
+    if (!window.CapyIOAndroid?.openDisplayReceiver?.()) throw new Error("显示接收配置或原生组件尚未就绪，请刷新检查。");
+  }
+  async importDisplayProvisioning(): Promise<void> {
+    if (!window.CapyIOAndroid?.importDisplayProvisioning?.()) {
+      throw new Error("当前 APK 不支持从系统文件选择器导入显示连接包。");
+    }
+  }
   async getDiagnostics() {
     const encoded = window.CapyIOAndroid?.getDiagnosticsJson?.();
     if (!encoded) return { backend: "Android Node", version: "旧版 APK", revision: "未提供", builtAt: "未提供", checks: [{ label: "版本检查", detail: "请更新 APK 以读取原生构建标识。" }] };
@@ -145,6 +173,11 @@ class AndroidNodeCapyIOApi implements CapyIOApi {
     }
     return state;
   }
+  async configureAndroidAudioPeer(direction: "microphone" | "speaker", host: string, localPort: number, peerPort: number, trustedLabConfirmed: boolean): Promise<void> {
+    if (!window.CapyIOAndroid?.configureAudioPeer?.(direction, host, localPort, peerPort, trustedLabConfirmed)) {
+      throw new Error("保存失败：请停止该音频功能，检查私有 IPv4 与端口，并确认可信网络限制。旧版 APK 需要更新。");
+    }
+  }
   async getAndroidCameraSettings(): Promise<UiAndroidCameraSettings | null> {
     const encoded = window.CapyIOAndroid?.getCameraSettingsJson();
     if (!encoded) return null;
@@ -226,6 +259,9 @@ class AndroidNodeCapyIOApi implements CapyIOApi {
 }
 
 class TauriCapyIOApi implements CapyIOApi {
+  async getDisplaySenderState(): Promise<import("./types").UiDisplaySenderState | null> { return parseDisplaySenderState(await invoke("get_display_sender_state")); }
+  async startDisplaySender(): Promise<import("./types").UiDisplaySenderState | null> { return parseDisplaySenderState(await invoke("start_display_sender")); }
+  async stopDisplaySender(): Promise<import("./types").UiDisplaySenderState | null> { return parseDisplaySenderState(await invoke("stop_display_sender")); }
   getDiagnostics() { return invoke<import("./types").UiDiagnostics>("get_diagnostics"); }
   getSnapshot(): Promise<UiSnapshot> {
     return invoke<UiSnapshot>("get_snapshot");
@@ -323,6 +359,12 @@ class TauriCapyIOApi implements CapyIOApi {
 
   getAndroidAudioState(): Promise<UiAndroidAudioState | null> {
     return Promise.resolve(null);
+  }
+  getDisplayReceiverState(): Promise<import("./types").UiDisplayReceiverState | null> { return Promise.resolve(null); }
+  importDisplayProvisioning(): Promise<void> { return Promise.reject(new Error("请在 Android 设备上导入显示连接包。")); }
+  openDisplayReceiver(): Promise<void> { return Promise.reject(new Error("当前平台没有 Android 显示接收页。")); }
+  configureAndroidAudioPeer(): Promise<void> {
+    return Promise.reject(new Error("请在 Android 设备上配置本机音频连接。"));
   }
 
   getAndroidCameraSettings(): Promise<UiAndroidCameraSettings | null> { return Promise.resolve(null); }

@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="display_waiting_surface">正在等待显示画面</string>
+    <string name="display_cpd1_selected">已选择 CPD1 备用传输</string>
+    <string name="display_gamestream_selected">已选择 GameStream 传输</string>
+    <string name="display_provisioning_unavailable">显示连接配置不可用：%1$s</string>
+    <string name="display_gamestream_unavailable">GameStream 接收组件不可用：%1$s</string>
+    <string name="display_client_unavailable">显示接收组件不可用：%1$s</string>
+</resources>

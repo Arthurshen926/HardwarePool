@@ -1,5 +1,37 @@
 # CapyIO Security Model
 
+Android display credentials are imported only through the system document
+picker into a native, fixed-schema bundle parser. The WebView receives no URI,
+path or credential bytes. Archives are bounded by entry count, exact root names,
+per-entry sizes and total uncompressed size; paths, symbolic links, duplicates,
+unknown content and schema/transport mismatches fail closed. Installation uses
+only fixed app-private managed directories and preserves the prior configuration
+until staging completes. Import does not establish trust: certificate/key
+parsing, peer authentication and Route binding remain later gates.
+
+Android GameStream expectation properties are derived by the Windows service's
+strict schema-3 parser rather than duplicated by hand. The metadata-only
+converter substitutes a fixed placeholder for credential reads and emits no
+server key or certificate bytes. The bundle writer subsequently receives an
+explicit client credential set; its ZIP output contains a private key and must
+be transferred and deleted according to credential-handling policy. Public
+device storage is not an approved implicit transfer channel.
+
+The display receiver bridge (ADR 1424) exposes only a bounded prerequisite DTO
+and one fixed unexported Activity. It accepts no paths, credentials or launch
+arguments from web content. File presence and library load are not trust or
+media-readiness evidence; full validation and mutual authentication stay at the
+receiver transport boundary. Missing GameStream code cannot silently fall back
+to a different transport.
+
+Runtime audio lab settings (ADR 1423) accept only canonical private/overlay
+IPv4 literals and explicit per-direction UDP ports after visible lab-risk
+acknowledgement. Settings are app-private and immutable while the selected
+Adapter has an active worker. They retain existing fixed lab stream bindings;
+they are not pairing, authentication, encryption or replay-safe production
+authority. Neither saving a setting nor successful media reception establishes
+trusted peer identity. Public-network audio remains outside this lab contract.
+
 > Status: pre-alpha threat model. Production pairing/cryptography are absent.
 
 ## Protected assets
@@ -227,6 +259,23 @@ rejected. Closed schema-v1 frames are limited to 4 KiB and have fixed I/O
 deadlines. No request can change executable paths, bind addresses, ports or
 endpoint identity. Any interactive user can currently control the machine-wide
 Route, so multi-user authorization remains unresolved release work.
+
+ADR 1426 adds an opt-in display configuration path only to trusted service
+launch arguments, not to that interactive-user pipe. The existing bounded,
+closed display configuration loader and hash-verified worker boundary remain
+mandatory. Display startup runs on its own thread, has a fixed cancellation
+deadline and cannot signal audio/service shutdown. Default service launches
+do not enable it. This source integration neither deploys the configuration
+nor grants driver installation, peer enrollment or UI-supplied launch authority.
+
+ADR 1427 optionally enables a separate display pipe for a Windows-validated SID
+supplied through administrator-controlled launch configuration. Its ACL includes
+that principal, administrators and System; it does not reuse audio's all-
+interactive-user grant. First-instance ownership and remote-client rejection
+are mandatory. Closed 4 KiB requests contain only version, correlation and
+Status/Start/Stop, and cannot replace the trusted display configuration.
+Tauri commands accept no arguments and run IPC outside the UI thread. No
+automatic elevation, service installation or display enrollment occurs.
 
 ADR 0040 does not put MicYou in that LocalSystem service. The privileged
 service owns the fixed global capture mapping, while an ordinary-user headless
@@ -950,6 +999,15 @@ uses the microphone/media-playback foreground types, a persistent notification
 with Stop action and `START_NOT_STICKY`; Activity closure is not implicit
 authorization to restart capture.
 
+ADR 1421 adds the normal `CHANGE_NETWORK_STATE` permission and
+`FOREGROUND_SERVICE_CONNECTED_DEVICE` to the unified APK. They are used only by
+the non-exported Node service while an explicitly user-started IMU, gamepad,
+touchpad or haptics capability owns a network-device interaction lifecycle.
+They do not authorize arbitrary peer discovery, change Wi-Fi configuration,
+weaken Route admission, or bypass the existing camera/microphone consent rules.
+On Android 13+, connected-device capability Start fails closed until the user
+grants notification consent, preserving the visible-lifecycle policy.
+
 The 001C APK declares no Internet permission, disables cleartext traffic and
 backup, never stores or logs microphone bytes and exposes only an app-private
 Node UUID. Captured bytes are counted then discarded. This is a local privacy
@@ -967,3 +1025,11 @@ release claims.
 6. Release: signing, SBOM, vulnerability and update process.
 
 No build before milestone 4 is described as safe for untrusted networks.
+
+ADR 1428 rejects ambiguous Android display properties before the receiver can
+open: complete field sets, duplicate decoded keys, unknown fields and bounded
+values are checked independently of TLS identity. Failed TLS socket setup now
+closes the created socket before propagating failure; only successful setup
+transfers ownership. CPD1 temporary caller-owned key bytes are wiped after
+configuration copying, and GameStream binding validation precedes key loading.
+Neither preflight nor these lifecycle fixes issue credentials or grant peer trust.

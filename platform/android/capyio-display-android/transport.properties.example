@@ -1,0 +1,3 @@
+# Explicitly choose exactly one Android display receiver path.
+# Supported values: cpd1, gamestream
+mode=gamestream

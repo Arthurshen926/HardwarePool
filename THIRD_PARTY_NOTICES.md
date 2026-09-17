@@ -1,6 +1,26 @@
 # Third-party notices
 
-This bootstrap repository contains source declarations for third-party dependencies but does not vendor their source code.
+This repository contains dependency declarations and the explicitly recorded
+source derivatives listed below. Imported paths and modifications are tracked
+in `third_party/THIRD_PARTY.yml`.
+
+## Microsoft Windows Driver Samples — frozen Indirect Display reference
+
+`drivers/windows-display/idd` contains a modified IndirectDisplay/IddSampleDriver
+subset from the same Microsoft revision `717778a20ba4dd2440fe609f69153a1f8a64f597`,
+under the Microsoft Public License (`LICENSES/MS-PL.txt`). CapyIO-specific
+identity, bounded monitor control and local frame-handoff changes are local
+modifications. This frozen reference is not an installed or release driver.
+
+## Optional display native engines
+
+The unified source includes CapyIO-owned integration boundaries for the pinned
+Vibepollo and Moonlight Common C engines. Default builds omit their native
+binaries; ADR 1425 permits locally rebuilt Moonlight-derived code in an opt-in
+debug APK with included GPL/MIT notices. No upstream binary is committed.
+Their GPL-3.0-only corresponding-source and public-distribution
+requirements remain open gates documented in `docs/VIBEPOLLO_DISTRIBUTION_PLAN.md`
+and `docs/MOONLIGHT_ANDROID_DISTRIBUTION_PLAN.md`.
 
 ## Microsoft Windows Driver Samples — SysVAD
 

@@ -16,6 +16,8 @@
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MICROPHONE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_CAMERA" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_CONNECTED_DEVICE" />
+    <uses-permission android:name="android.permission.CHANGE_NETWORK_STATE" />
     <uses-permission android:name="android.permission.INTERNET" />
 
     <application
@@ -86,10 +88,14 @@
             </intent-filter>
         </activity>
 
+        <activity
+            android:name="dev.capyio.display.app.DisplayActivity"
+            android:exported="false" />
+
         <service
             android:name=".AudioNodeService"
             android:exported="false"
-            android:foregroundServiceType="microphone|mediaPlayback"
+            android:foregroundServiceType="microphone|mediaPlayback|connectedDevice"
             android:stopWithTask="false" />
         <service
             android:name="io.capyio.camera.lab.CameraCaptureService"

@@ -1,0 +1,17 @@
+[package]
+name = "capyio-display-tls"
+description = "Mutually authenticated TLS 1.3 transport for bound CapyIO display records."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish = false
+
+[dependencies]
+capyio-core = { path = "../capyio-core" }
+capyio-display-transport = { path = "../capyio-display-transport" }
+rustls.workspace = true
+thiserror.workspace = true
+
+[dev-dependencies]
+rcgen = { version = "=0.14.5", default-features = false, features = ["ring"] }

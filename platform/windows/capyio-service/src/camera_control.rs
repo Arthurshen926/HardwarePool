@@ -351,7 +351,7 @@ pub fn current_process_user_sid() -> Result<String, String> {
     result
 }
 
-fn camera_pipe_sddl(requesting_user_sid: &str) -> Result<String, String> {
+pub(crate) fn camera_pipe_sddl(requesting_user_sid: &str) -> Result<String, String> {
     if requesting_user_sid.len() > 184 || !requesting_user_sid.starts_with("S-1-") {
         return Err("camera Broker requesting user SID is outside bounds".to_owned());
     }

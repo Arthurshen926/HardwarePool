@@ -2,6 +2,8 @@ plugins {
     id 'com.android.application'
 }
 
+apply from: 'gamestream.gradle'
+
 def repositoryRoot = rootProject.file('../..')
 def sharedUiProject = new File(repositoryRoot, 'apps/desktop')
 def sharedUiOutput = new File(sharedUiProject, 'dist')
@@ -87,8 +89,8 @@ android {
         applicationId = 'dev.capyio.android'
         minSdk = 29
         targetSdk = 36
-        versionCode = 18
-        versionName = '0.5.6-dev'
+        versionCode = 23
+        versionName = '0.5.11-dev'
         buildConfigField 'String', 'SOURCE_REVISION', groovy.json.JsonOutput.toJson(
                 System.getenv('CAPYIO_BUILD_REVISION') ?: 'unrecorded')
         buildConfigField 'String', 'BUILT_AT', groovy.json.JsonOutput.toJson(
@@ -140,6 +142,8 @@ android {
         main.java.srcDir '../native-lan-contract/src/main/java'
         main.java.srcDir '../capyio-camera-app/camera-contract/src/main/java'
         main.java.srcDir '../capyio-camera-app/app/src/main/java'
+        main.java.srcDir '../capyio-display-android/display-sink/src/main/java'
+        main.java.srcDir '../capyio-display-android/display-app/src/main/java'
         main.assets.srcDir packagedSharedUiRoot
         main.jniLibs.srcDir packagedRustJniRoot
     }
@@ -174,6 +178,7 @@ tasks.register('verifyDebugEntrypoints') {
             'dev/capyio/android/AndroidCameraCommand.class',
             'dev/capyio/android/AndroidHapticsCommand.class',
             'dev/capyio/android/AndroidHapticsSinkAdapter.class',
+            'dev/capyio/android/AndroidForegroundOwnership.class',
             'dev/capyio/android/AndroidAssetWebViewClient.class',
             'dev/capyio/android/AndroidSharingSelection.class',
             'dev/capyio/android/AndroidGamepadUiCommand.class',
@@ -186,6 +191,8 @@ tasks.register('verifyDebugEntrypoints') {
             'dev/capyio/touchpad/NativeTouchpadRecordBridge.class',
             'io/capyio/camera/lab/CameraCaptureService.class',
             'io/capyio/camera/lab/UnifiedCameraNodeFacade.class',
+            'dev/capyio/display/app/DisplayActivity.class',
+            'dev/capyio/display/MediaCodecSurfaceDecoder.class',
         ].each { relativePath ->
             if (!new File(classesDirectory, relativePath).isFile()) {
                 throw new GradleException("Android entrypoint class is missing: ${relativePath}")
@@ -229,12 +236,18 @@ tasks.register('compileCapabilityCompositionTest', JavaCompile) {
     source file('src/main/java/dev/capyio/android/AndroidCapabilityModules.java')
     source file('src/main/java/dev/capyio/android/AndroidCapabilityCommand.java')
     source file('src/main/java/dev/capyio/android/AndroidAudioCommand.java')
+    source file('src/main/java/dev/capyio/android/AndroidAudioPeer.java')
+    source file('../capyio-display-android/display-app/src/main/java/dev/capyio/display/app/DisplayPrerequisites.java')
+    source file('../capyio-display-android/display-app/src/main/java/dev/capyio/display/app/DisplayProvisioningProperties.java')
+    source file('../capyio-display-android/display-app/src/main/java/dev/capyio/display/app/DisplayProvisioningBundleInstaller.java')
+    source file('../capyio-display-android/display-app/src/main/java/dev/capyio/display/app/DisplaySocketOwnership.java')
     source file('src/main/java/dev/capyio/android/AndroidCameraCommand.java')
     source file('src/main/java/dev/capyio/android/AndroidHapticsCommand.java')
     source file('src/main/java/dev/capyio/android/AndroidSharingSelection.java')
     source file('src/main/java/dev/capyio/android/AndroidGamepadUiCommand.java')
     source file('src/main/java/dev/capyio/android/AndroidTouchpadUiFrame.java')
     source file('src/main/java/dev/capyio/android/AndroidUiInputRelease.java')
+    source file('src/main/java/dev/capyio/android/AndroidForegroundOwnership.java')
     source file('src/main/java/dev/capyio/android/TouchpadMotionFrame.java')
     source file('src/main/java/dev/capyio/android/ControllerPacketJson.java')
     source file('src/main/java/dev/capyio/android/GenerationBoundSourceDelivery.java')
@@ -256,5 +269,21 @@ tasks.register('capabilityCompositionTest', JavaExec) {
     mainClass = 'dev.capyio.android.AndroidCapabilityModulesContractTest'
     systemProperty 'capyio.android.catalogFixture',
             rootProject.file('fixtures/android-core-catalog-v1.json').absolutePath
+    enableAssertions = true
+}
+
+tasks.register('audioPeerContractTest', JavaExec) {
+    group = 'verification'
+    dependsOn tasks.named('compileCapabilityCompositionTest')
+    classpath = files(capabilityCompositionOutput)
+    mainClass = 'dev.capyio.android.AndroidAudioPeerContractTest'
+    enableAssertions = true
+}
+
+tasks.register('displayPrerequisitesContractTest', JavaExec) {
+    group = 'verification'
+    dependsOn tasks.named('compileCapabilityCompositionTest')
+    classpath = files(capabilityCompositionOutput)
+    mainClass = 'dev.capyio.android.DisplayPrerequisitesContractTest'
     enableAssertions = true
 }

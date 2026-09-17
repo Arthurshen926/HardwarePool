@@ -16,6 +16,8 @@ final class NativeMicrophoneConfigLoader {
     private NativeMicrophoneConfigLoader() {}
 
     static NativeLanMicrophoneSessionConfig load(Context context) {
+        AndroidAudioPeer saved = AndroidAudioPeerStore.load(context, "microphone");
+        if (saved != null) return fromPeer(saved);
         try {
             ApplicationInfo info = context.getPackageManager().getApplicationInfo(
                     context.getPackageName(), PackageManager.GET_META_DATA);
@@ -34,6 +36,13 @@ final class NativeMicrophoneConfigLoader {
         } catch (PackageManager.NameNotFoundException impossible) {
             throw new IllegalStateException("own package metadata is unavailable", impossible);
         }
+    }
+
+    static NativeLanMicrophoneSessionConfig fromPeer(AndroidAudioPeer peer) {
+        return new NativeLanMicrophoneSessionConfig(peer.host(), peer.localPort(), peer.peerPort(),
+                UUID.fromString("a2000000-0000-4000-8000-000000000001"),
+                UUID.fromString("a2000000-0000-4000-8000-000000000002"),
+                UUID.fromString("a2000000-0000-4000-8000-000000000003"), 1);
     }
 
     private static String value(Bundle metadata, String suffix) {

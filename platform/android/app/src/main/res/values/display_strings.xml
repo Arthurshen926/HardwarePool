@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="display_waiting_surface">Waiting for display surface</string>
+    <string name="display_cpd1_selected">CPD1 fallback transport selected</string>
+    <string name="display_gamestream_selected">GameStream transport selected</string>
+    <string name="display_provisioning_unavailable">Display configuration unavailable: %1$s</string>
+    <string name="display_gamestream_unavailable">GameStream client unavailable: %1$s</string>
+    <string name="display_client_unavailable">Display client unavailable: %1$s</string>
+</resources>

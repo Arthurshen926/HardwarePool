@@ -6,6 +6,8 @@ tasks.register('capyioCheck') {
     group = 'verification'
     description = 'Runs the Android node contract, lint, and debug APK build gates.'
     dependsOn ':node-contract:check', ':app:capabilityCompositionTest',
+            ':app:audioPeerContractTest',
+            ':app:displayPrerequisitesContractTest',
             ':app:lintDebug', ':app:assembleDebug', ':app:verifyDebugEntrypoints',
             ':app:verifySharedUiAssets'
 }

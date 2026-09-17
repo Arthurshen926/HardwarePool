@@ -1,0 +1,12 @@
+[package]
+name = "capyio-android-display"
+description = "Host-testable Android display Surface decoder lifecycle seam for CapyIO."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[dependencies]
+capyio-core = { path = "../../../crates/capyio-core" }
+capyio-display-transport = { path = "../../../crates/capyio-display-transport" }
+thiserror.workspace = true

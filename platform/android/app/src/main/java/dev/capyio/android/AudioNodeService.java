@@ -21,6 +21,7 @@ import android.os.Vibrator;
 import dev.capyio.android.contract.ActualAudioFormat;
 import dev.capyio.android.contract.AudioCapabilityKind;
 import dev.capyio.android.contract.AudioCapabilitySnapshot;
+import dev.capyio.android.contract.AudioCapabilityState;
 import dev.capyio.android.contract.AudioNodeController;
 import dev.capyio.android.contract.AudioNodeSnapshot;
 import dev.capyio.android.contract.CapabilityCatalogSnapshot;
@@ -49,6 +50,22 @@ public final class AudioNodeService extends Service {
             "dev.capyio.android.action.START_SPEAKER";
     private static final String ACTION_STOP_SPEAKER =
             "dev.capyio.android.action.STOP_SPEAKER";
+    private static final String ACTION_START_IMU =
+            "dev.capyio.android.action.START_IMU";
+    private static final String ACTION_STOP_IMU =
+            "dev.capyio.android.action.STOP_IMU";
+    private static final String ACTION_START_GAMEPAD =
+            "dev.capyio.android.action.START_GAMEPAD";
+    private static final String ACTION_STOP_GAMEPAD =
+            "dev.capyio.android.action.STOP_GAMEPAD";
+    private static final String ACTION_START_TOUCHPAD =
+            "dev.capyio.android.action.START_TOUCHPAD";
+    private static final String ACTION_STOP_TOUCHPAD =
+            "dev.capyio.android.action.STOP_TOUCHPAD";
+    private static final String ACTION_START_HAPTICS =
+            "dev.capyio.android.action.START_HAPTICS";
+    private static final String ACTION_STOP_HAPTICS =
+            "dev.capyio.android.action.STOP_HAPTICS";
     private static final String ACTION_STOP_ALL =
             "dev.capyio.android.action.STOP_ALL";
 
@@ -99,6 +116,42 @@ public final class AudioNodeService extends Service {
     public static void stopSpeaker(Context context) {
         context.startService(new Intent(context, AudioNodeService.class)
                 .setAction(ACTION_STOP_SPEAKER));
+    }
+
+    public static void startImu(Context context) {
+        startForegroundAction(context, ACTION_START_IMU);
+    }
+
+    public static void stopImu(Context context) {
+        startServiceAction(context, ACTION_STOP_IMU);
+    }
+
+    public static void startGamepad(Context context) {
+        startForegroundAction(context, ACTION_START_GAMEPAD);
+    }
+
+    public static void stopGamepad(Context context) {
+        startServiceAction(context, ACTION_STOP_GAMEPAD);
+    }
+
+    public static void startTouchpad(Context context) {
+        startForegroundAction(context, ACTION_START_TOUCHPAD);
+    }
+
+    public static void stopTouchpad(Context context) {
+        startServiceAction(context, ACTION_STOP_TOUCHPAD);
+    }
+
+    public static void startHaptics(Context context) {
+        startForegroundAction(context, ACTION_START_HAPTICS);
+    }
+
+    public static void stopHaptics(Context context) {
+        startServiceAction(context, ACTION_STOP_HAPTICS);
+    }
+
+    private static void startServiceAction(Context context, String action) {
+        context.startService(new Intent(context, AudioNodeService.class).setAction(action));
     }
 
     private static void startForegroundAction(Context context, String action) {
@@ -161,7 +214,7 @@ public final class AudioNodeService extends Service {
         controllerRouteAdapter = new ControllerRouteAdapter(
                 gamepadController::controls, imuAdapter::latestSample);
         hapticsAdapter = new AndroidHapticsSinkAdapter(
-                getSystemService(Vibrator.class), hapticsController, this::notifyStateListener);
+                getSystemService(Vibrator.class), hapticsController, this::postStateChanged);
         touchpadAdapter = new TouchpadRouteAdapter(new TouchpadRouteAdapter.Listener() {
             @Override
             public void onStarted(long generation) {
@@ -216,14 +269,33 @@ public final class AudioNodeService extends Service {
             startCapability(AudioCapabilityKind.SPEAKER_SINK);
         } else if (ACTION_STOP_SPEAKER.equals(action)) {
             stopCapability(AudioCapabilityKind.SPEAKER_SINK);
+        } else if (ACTION_START_IMU.equals(action)) {
+            beginImu();
+        } else if (ACTION_STOP_IMU.equals(action)) {
+            endImu();
+        } else if (ACTION_START_GAMEPAD.equals(action)) {
+            beginGamepad();
+        } else if (ACTION_STOP_GAMEPAD.equals(action)) {
+            endGamepad();
+        } else if (ACTION_START_TOUCHPAD.equals(action)) {
+            beginTouchpad();
+        } else if (ACTION_STOP_TOUCHPAD.equals(action)) {
+            endTouchpad();
+        } else if (ACTION_START_HAPTICS.equals(action)) {
+            hapticsAdapter.start();
+            refreshForegroundSafely();
+        } else if (ACTION_STOP_HAPTICS.equals(action)) {
+            hapticsAdapter.stop();
+            refreshForegroundSafely();
         } else if (ACTION_STOP_ALL.equals(action)) {
             stopCapability(AudioCapabilityKind.MICROPHONE_SOURCE);
             stopCapability(AudioCapabilityKind.SPEAKER_SINK);
-            stopImu();
-            stopGamepad();
-            stopTouchpad();
+            endImu();
+            endGamepad();
+            endTouchpad();
             hapticsAdapter.stop();
             UnifiedCameraNodeFacade.stop(this);
+            refreshForegroundSafely();
         }
         return START_NOT_STICKY;
     }
@@ -267,7 +339,7 @@ public final class AudioNodeService extends Service {
         super.onDestroy();
     }
 
-    private void startCapability(AudioCapabilityKind kind) {
+    private synchronized void startCapability(AudioCapabilityKind kind) {
         TransitionToken transition = controller.beginStart(kind);
         if (!transition.accepted()) {
             notifyStateListener();
@@ -285,7 +357,7 @@ public final class AudioNodeService extends Service {
         notifyStateListener();
     }
 
-    private void stopCapability(AudioCapabilityKind kind) {
+    private synchronized void stopCapability(AudioCapabilityKind kind) {
         TransitionToken transition = controller.beginStop(kind);
         if (!transition.accepted()) {
             notifyStateListener();
@@ -302,25 +374,32 @@ public final class AudioNodeService extends Service {
                 : speakerAdapter;
     }
 
-    private void startImu() {
+    private void beginImu() {
         TransitionToken transition = imuController.beginStart();
         if (transition.accepted()) {
+            if (!refreshForegroundSafely()) {
+                return;
+            }
             imuAdapter.start(transition.generation());
         }
         notifyStateListener();
     }
 
-    private void stopImu() {
+    private void endImu() {
         TransitionToken transition = imuController.beginStop();
         if (transition.accepted()) {
             imuAdapter.stop(transition.generation());
         }
+        refreshForegroundSafely();
         notifyStateListener();
     }
 
-    private synchronized void startGamepad() {
+    private synchronized void beginGamepad() {
         TransitionToken transition = gamepadController.beginStart();
         if (transition.accepted()) {
+            if (!refreshForegroundSafely()) {
+                return;
+            }
             if (touchSurfacePresence == HardwarePresence.PRESENT) {
                 gamepadController.completeStart(transition.generation());
                 startControllerRouteIfNeeded();
@@ -329,15 +408,17 @@ public final class AudioNodeService extends Service {
                         transition.generation(), "CAPY.ANDROID.GAMEPAD_HARDWARE_MISSING");
             }
         }
+        refreshForegroundSafely();
         notifyStateListener();
     }
 
-    private synchronized void stopGamepad() {
+    private synchronized void endGamepad() {
         TransitionToken transition = gamepadController.beginStop();
         if (transition.accepted()) {
             gamepadController.completeStop(transition.generation());
             stopControllerRouteIfUnused();
         }
+        refreshForegroundSafely();
         notifyStateListener();
     }
 
@@ -373,9 +454,12 @@ public final class AudioNodeService extends Service {
         }
     }
 
-    private synchronized void startTouchpad() {
+    private synchronized void beginTouchpad() {
         TransitionToken transition = touchpadController.beginStart();
         if (transition.accepted()) {
+            if (!refreshForegroundSafely()) {
+                return;
+            }
             if (touchSurfacePresence == HardwarePresence.PRESENT) {
                 touchpadAdapter.start(transition.generation());
             } else {
@@ -383,14 +467,16 @@ public final class AudioNodeService extends Service {
                         transition.generation(), "CAPY.ANDROID.TOUCHPAD_HARDWARE_MISSING");
             }
         }
+        refreshForegroundSafely();
         notifyStateListener();
     }
 
-    private synchronized void stopTouchpad() {
+    private synchronized void endTouchpad() {
         TransitionToken transition = touchpadController.beginStop();
         if (transition.accepted()) {
             touchpadAdapter.stop(transition.generation());
         }
+        refreshForegroundSafely();
         notifyStateListener();
     }
 
@@ -490,11 +576,13 @@ public final class AudioNodeService extends Service {
         });
     }
 
-    private void refreshForegroundSafely() {
+    private boolean refreshForegroundSafely() {
         try {
             refreshForeground();
+            return true;
         } catch (RuntimeException denied) {
             failForegroundOwnedCapabilities();
+            return false;
         }
     }
 
@@ -502,6 +590,23 @@ public final class AudioNodeService extends Service {
         AudioNodeSnapshot snapshot = snapshot();
         failForegroundCapability(snapshot.microphone());
         failForegroundCapability(snapshot.speaker());
+        CapabilityLifecycleSnapshot imu = imuController.snapshot();
+        if (imu.state().ownsAdapterLifecycle()) {
+            imuController.fail(imu.generation(), PROBLEM_FOREGROUND);
+            imuAdapter.stop(imu.generation());
+        }
+        CapabilityLifecycleSnapshot gamepad = gamepadController.lifecycle();
+        if (gamepad.state().ownsAdapterLifecycle()) {
+            gamepadController.fail(gamepad.generation(), PROBLEM_FOREGROUND);
+            controllerRouteAdapter.discardControls();
+            stopControllerRouteIfUnused();
+        }
+        CapabilityLifecycleSnapshot touchpad = touchpadController.lifecycle();
+        if (touchpad.state().ownsAdapterLifecycle()) {
+            touchpadController.fail(touchpad.generation(), PROBLEM_FOREGROUND);
+            touchpadAdapter.stop(touchpad.generation());
+        }
+        hapticsAdapter.failForeground(PROBLEM_FOREGROUND);
         if (foreground) {
             stopForeground(STOP_FOREGROUND_REMOVE);
             foreground = false;
@@ -521,7 +626,8 @@ public final class AudioNodeService extends Service {
         AudioNodeSnapshot snapshot = snapshot();
         boolean microphone = snapshot.microphone().state().ownsForegroundLifecycle();
         boolean speaker = snapshot.speaker().state().ownsForegroundLifecycle();
-        if (!microphone && !speaker) {
+        boolean connectedDevice = ownsConnectedDeviceLifecycle();
+        if (!microphone && !speaker && !connectedDevice) {
             if (foreground) {
                 stopForeground(STOP_FOREGROUND_REMOVE);
                 foreground = false;
@@ -530,7 +636,7 @@ public final class AudioNodeService extends Service {
             return;
         }
 
-        Notification notification = buildNotification(microphone, speaker);
+        Notification notification = buildNotification(microphone, speaker, connectedDevice);
         int serviceTypes = 0;
         if (microphone && Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
             serviceTypes |= ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE;
@@ -538,11 +644,23 @@ public final class AudioNodeService extends Service {
         if (speaker) {
             serviceTypes |= ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PLAYBACK;
         }
+        if (connectedDevice) {
+            serviceTypes |= ServiceInfo.FOREGROUND_SERVICE_TYPE_CONNECTED_DEVICE;
+        }
         startForeground(NOTIFICATION_ID, notification, serviceTypes);
         foreground = true;
     }
 
-    private Notification buildNotification(boolean microphone, boolean speaker) {
+    private boolean ownsConnectedDeviceLifecycle() {
+        return AndroidForegroundOwnership.connectedDevice(
+                imuController.snapshot().state(),
+                gamepadController.lifecycle().state(),
+                touchpadController.lifecycle().state(),
+                hapticsController.snapshot().state());
+    }
+
+    private Notification buildNotification(
+            boolean microphone, boolean speaker, boolean connectedDevice) {
         Intent openIntent = new Intent(this, MainActivity.class)
                 .addFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP);
         PendingIntent openPendingIntent = PendingIntent.getActivity(
@@ -556,15 +674,20 @@ public final class AudioNodeService extends Service {
                 new Intent(this, AudioNodeService.class).setAction(ACTION_STOP_ALL),
                 PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE);
 
-        int detail = microphone && speaker
-                ? R.string.notification_both
-                : microphone
-                        ? R.string.notification_microphone
-                        : R.string.notification_speaker;
+        java.util.List<String> details = new java.util.ArrayList<>(3);
+        if (microphone) {
+            details.add(getString(R.string.notification_microphone));
+        }
+        if (speaker) {
+            details.add(getString(R.string.notification_speaker));
+        }
+        if (connectedDevice) {
+            details.add(getString(R.string.notification_connected_device));
+        }
         return new Notification.Builder(this, NOTIFICATION_CHANNEL_ID)
                 .setSmallIcon(R.drawable.ic_capyio)
                 .setContentTitle(getString(R.string.notification_title))
-                .setContentText(getString(detail))
+                .setContentText(String.join(" · ", details))
                 .setContentIntent(openPendingIntent)
                 .setOngoing(true)
                 .setOnlyAlertOnce(true)
@@ -648,6 +771,36 @@ public final class AudioNodeService extends Service {
     }
 
     public final class NodeBinder extends Binder {
+        public boolean configureAudioPeer(String direction, String host, int localPort, int peerPort,
+                boolean trustedLabConfirmed) {
+            synchronized (AudioNodeService.this) {
+                if (!trustedLabConfirmed) return false;
+                AudioNodeSnapshot audio = snapshot();
+                AudioCapabilityState state;
+                if ("microphone".equals(direction)) state = audio.microphone().state();
+                else if ("speaker".equals(direction)) state = audio.speaker().state();
+                else return false;
+                if (state != AudioCapabilityState.STOPPED && state != AudioCapabilityState.FAILED) return false;
+                try {
+                    AndroidAudioPeer peer = new AndroidAudioPeer(host, localPort, peerPort);
+                    Runnable persist = () -> AndroidAudioPeerStore.save(AudioNodeService.this, direction, peer);
+                    if ("microphone".equals(direction)) {
+                        NativeLanSpeakerSessionConfig other = NativeSpeakerConfigLoader.load(AudioNodeService.this);
+                        if (other != null && other.localAddress.getPort() == localPort) return false;
+                        return microphoneAdapter.configure(NativeMicrophoneConfigLoader.fromPeer(peer), persist);
+                    }
+                    if ("speaker".equals(direction)) {
+                        NativeLanMicrophoneSessionConfig other = NativeMicrophoneConfigLoader.load(AudioNodeService.this);
+                        if (other != null && other.localAddress.getPort() == localPort) return false;
+                        return speakerAdapter.configure(NativeSpeakerConfigLoader.fromPeer(peer), persist);
+                    }
+                    return false;
+                } catch (RuntimeException rejected) {
+                    return false;
+                }
+            }
+        }
+
         public AudioNodeSnapshot snapshot() {
             return AudioNodeService.this.snapshot();
         }
@@ -697,11 +850,11 @@ public final class AudioNodeService extends Service {
         }
 
         public void startImu() {
-            mainHandler.post(AudioNodeService.this::startImu);
+            AudioNodeService.startImu(AudioNodeService.this);
         }
 
         public void stopImu() {
-            mainHandler.post(AudioNodeService.this::stopImu);
+            AudioNodeService.stopImu(AudioNodeService.this);
         }
 
         public CapabilityLifecycleSnapshot gamepadLifecycle() {
@@ -713,7 +866,7 @@ public final class AudioNodeService extends Service {
         }
 
         public void startGamepad() {
-            mainHandler.post(AudioNodeService.this::startGamepad);
+            AudioNodeService.startGamepad(AudioNodeService.this);
         }
 
         public boolean configureControllerRoute(String host, int port, String token) {
@@ -744,7 +897,7 @@ public final class AudioNodeService extends Service {
         }
 
         public void stopGamepad() {
-            mainHandler.post(AudioNodeService.this::stopGamepad);
+            AudioNodeService.stopGamepad(AudioNodeService.this);
         }
 
         public CapabilityLifecycleSnapshot touchpadLifecycle() {
@@ -756,7 +909,7 @@ public final class AudioNodeService extends Service {
         }
 
         public void startTouchpad() {
-            mainHandler.post(AudioNodeService.this::startTouchpad);
+            AudioNodeService.startTouchpad(AudioNodeService.this);
         }
 
         public boolean submitTouchpad(
@@ -768,7 +921,7 @@ public final class AudioNodeService extends Service {
         }
 
         public void stopTouchpad() {
-            mainHandler.post(AudioNodeService.this::stopTouchpad);
+            AudioNodeService.stopTouchpad(AudioNodeService.this);
         }
 
         public void releaseUiInputs() {
@@ -780,11 +933,11 @@ public final class AudioNodeService extends Service {
         }
 
         public void startHaptics() {
-            mainHandler.post(hapticsAdapter::start);
+            AudioNodeService.startHaptics(AudioNodeService.this);
         }
 
         public void stopHaptics() {
-            mainHandler.post(hapticsAdapter::stop);
+            AudioNodeService.stopHaptics(AudioNodeService.this);
         }
 
         public boolean submitHaptics(

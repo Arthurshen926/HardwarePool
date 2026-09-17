@@ -36,6 +36,7 @@ public final class AndroidCapabilityModulesContractTest {
         reflectsGenerationBoundTouchpadLifecycleState();
         rejectsStaleSourceFramesBeforeAdapterDelivery();
         releasesUiInputsOnForegroundLoss();
+        retainsServiceForConnectedDeviceLifecycle();
         projectsTheCatalogIntoSharedUiSchemaFour();
         admitsOnlyLocalAttachedSourceSharingIntent();
         projectsSelectedAndroidPublicationCatalog();
@@ -52,6 +53,39 @@ public final class AndroidCapabilityModulesContractTest {
         attachesAndAdmitsHapticsSink();
         System.out.println("Android Capability module composition: PASS ("
                 + assertions + " assertions)");
+    }
+
+    private static void retainsServiceForConnectedDeviceLifecycle() {
+        for (CapabilityLifecycleState owner : List.of(
+                CapabilityLifecycleState.STARTING,
+                CapabilityLifecycleState.ACTIVE,
+                CapabilityLifecycleState.STOPPING)) {
+            check(AndroidForegroundOwnership.connectedDevice(
+                    owner,
+                    CapabilityLifecycleState.STOPPED,
+                    CapabilityLifecycleState.STOPPED,
+                    CapabilityLifecycleState.STOPPED));
+        }
+        check(AndroidForegroundOwnership.connectedDevice(
+                CapabilityLifecycleState.STOPPED,
+                CapabilityLifecycleState.ACTIVE,
+                CapabilityLifecycleState.STOPPED,
+                CapabilityLifecycleState.STOPPED));
+        check(AndroidForegroundOwnership.connectedDevice(
+                CapabilityLifecycleState.STOPPED,
+                CapabilityLifecycleState.STOPPED,
+                CapabilityLifecycleState.ACTIVE,
+                CapabilityLifecycleState.STOPPED));
+        check(AndroidForegroundOwnership.connectedDevice(
+                CapabilityLifecycleState.STOPPED,
+                CapabilityLifecycleState.STOPPED,
+                CapabilityLifecycleState.STOPPED,
+                CapabilityLifecycleState.ACTIVE));
+        check(!AndroidForegroundOwnership.connectedDevice(
+                CapabilityLifecycleState.STOPPED,
+                CapabilityLifecycleState.FAILED,
+                CapabilityLifecycleState.STOPPED,
+                CapabilityLifecycleState.FAILED));
     }
 
     private static void exposesTheCompleteNonDisplayMigrationInventory() {

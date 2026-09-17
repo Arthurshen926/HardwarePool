@@ -36,6 +36,7 @@ mod android_receivers;
 pub mod audio_share_runtime;
 mod camera_session;
 mod diagnostics;
+mod display_control;
 mod gamepad_lab;
 mod microphone_quick_action;
 pub mod micyou_runtime;
@@ -1163,6 +1164,9 @@ pub fn run() {
         })
         .invoke_handler(tauri::generate_handler![
             diagnostics::get_diagnostics,
+            display_control::get_display_sender_state,
+            display_control::start_display_sender,
+            display_control::stop_display_sender,
             get_snapshot,
             set_route,
             set_local_capability_shared,
