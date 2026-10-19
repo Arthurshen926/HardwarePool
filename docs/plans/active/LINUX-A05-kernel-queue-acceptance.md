@@ -1,6 +1,6 @@
 # LINUX-A05 — Finite-batch kernel queue acceptance hardening
 
-Status: implementation prepared; hosted acceptance pending
+Status: accepted on exact implementation commit `4e8c249` (hosted Linux only)
 Created: 2026-10-19
 Requirements: `FR-PORT-004`, `NFR-STAB-002`
 
@@ -38,8 +38,8 @@ Pinned Rust 1.97.1: targeted all-target check, strict Clippy, test compilation a
 workspace formatting passed. The three socket-free batch parser/queue tests and
 14 host unit tests passed. Repository validation passed (88 requirements); the
 Python suite ran 25 tests successfully with one existing Windows-only skip.
-No local socket tests ran. Hosted acceptance for the new regression remains
-pending; no commit, push or workflow execution was performed in this slice.
+No local socket tests ran. These local checks did not establish socket acceptance;
+the subsequent hosted attempts are recorded below.
 
 ## Hosted fixture correction
 
@@ -49,5 +49,23 @@ That is sender-buffer pressure, not demonstrated receiver queue saturation or a
 production defect. The revised setup retains bounded multiple senders and keeps
 filling until an independently fresh sender is blocked before any successful
 write. It fails explicitly if aggregate limits prevent establishing that state.
-The revised fixture still requires exact-head hosted execution; no local sockets
-were attempted and prior hosted acceptance must not be attributed to this fix.
+No local sockets were attempted. Historical acceptance of `07b068e` does not
+cover this fixture correction.
+
+## Exact-head hosted acceptance (2026-10-19)
+
+Implementation `4e8c24907532daf781a8760ab12283edd67d542f` passed
+[run 39295525829, job 118206892623](https://github.com/Arthurshen926/HardwarePool/actions/runs/39295525829/job/118206892623)
+on GitHub-hosted Ubuntu 24.04.5 with Rust 1.97.1. Formatting, strict Clippy and
+mock binary build passed. All 40 focused tests passed (14 host, 14 mock library,
+12 node subprocess), with zero failed, ignored or filtered tests. The full logs
+verify all 18 required successful outcomes, not only their test-list presence,
+including `batch_saturated_kernel_queue_bounds_source_failure_and_cleans_endpoint`.
+
+This establishes bounded Source failure after independently verified target
+queue pressure and the test fixture's socket/directory cleanup. The two-second
+elapsed assertion is not a watchdog; the workflow's 240-second timeout and
+10-second kill-after bound catch hangs. This adds no subprocess lifecycle proof,
+continuous-streaming, hardware or production-networking acceptance. The original
+cloud socket restriction remains unchanged. A later documentation-only evidence
+commit is not the tested implementation SHA.

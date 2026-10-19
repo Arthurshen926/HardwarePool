@@ -79,3 +79,13 @@ commit `07b068e43ccf628326288d2918a2b90021984918`:
 That run passed 39 focused tests and all 17 then-required IPC guards. It does not
 cover subsequent test changes or documentation commits. The original cloud
 socket restriction remains unchanged.
+
+The later kernel-queue fixture hardening passed for implementation
+`4e8c24907532daf781a8760ab12283edd67d542f` in
+[CI run 39295525829](https://github.com/Arthurshen926/HardwarePool/actions/runs/39295525829):
+40 focused tests and all 18 successful IPC guards. This includes bounded Source
+failure under independently established queue pressure and test-fixture cleanup,
+not new subprocess lifecycle or continuous-streaming proof. See
+[LINUX-A05](../../docs/plans/active/LINUX-A05-kernel-queue-acceptance.md) for the
+failed first fixture attempt, correction and evidence limits. Later docs-only
+commits are not the tested implementation SHA.
