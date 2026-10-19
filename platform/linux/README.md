@@ -61,4 +61,8 @@ to `linux-host`. Start sends one synthetic UTF-8 token over separate Unix-local 
 Active requires a Sink receipt. Repeat Start does not resend; Stop clears receipt;
 restart uses a fresh Stream/epoch. Without the additional flag, lifecycle-only
 behavior is unchanged. This needs Linux Unix sockets, not IP listeners or hardware.
-IPC execution remains unverified until the required full tests pass.
+The full finite-fixture tests passed on hosted Ubuntu for commit `4210120`:
+[CI run 39277747051](https://github.com/Arthurshen926/HardwarePool/actions/runs/39277747051).
+This is bounded synthetic IPC evidence, not continuous media or hardware support.
+The original cloud environment still denies Unix socket execution; see ADR 1516
+for the exact tested scope and historical local blocker.

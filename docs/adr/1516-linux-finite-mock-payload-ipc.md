@@ -1,8 +1,9 @@
 # ADR 1516: Finite Linux mock payload over separate local IPC
 
-Status: experimental implementation, 2026-10-19. IPC execution unverified.
+Status: accepted for the finite Linux-local fixture, 2026-10-19.
+Hosted Ubuntu IPC acceptance passed; local cloud socket restrictions remain.
 Reconstructed from retained design/implementation context after a workspace reset;
-this is not a byte-identical recovery claim or completed acceptance.
+this is not a byte-identical recovery claim. Acceptance evidence is recorded below.
 
 ## Decision
 
@@ -61,13 +62,13 @@ Its real process transfer failed closed before Active. An escalated executor fai
 in bwrap setup on a read-only filesystem before tests ran. That draft disappeared
 on environment remount; published lifecycle commit df65fca remained intact.
 
-This reconstruction uses df65fca and preserves those restrictions. No socket or
-escalated test is retried locally. Parser/receipt/endpoint tests and fake-owner
+The reconstruction used df65fca and preserved those restrictions. No socket or
+escalated test was retried locally. Parser/receipt/endpoint tests and fake-owner
 rollback can run without sockets. Full socket transfer, timeout, oversize datagram
 and real subprocess receipt/cleanup tests remain ordinary required tests, not
-ignored tests. The separate experimental CI branch may run these on its authorized
-Linux runner. Until passing results exist, IPC execution remains unverified;
-lifecycle results cannot substitute for payload delivery acceptance.
+ignored tests. IPC execution was unverified at that stage; lifecycle results did
+not substitute for payload delivery acceptance. The subsequent authorized hosted
+run below supplies the missing execution evidence.
 
 Reconstruction checks on 2026-10-19 passed: targeted check, Clippy all-targets with
 warnings denied, formatting/diff whitespace, documentation/manifest validation,
@@ -77,6 +78,38 @@ fault matrix covers both sides' prepare/start/status/stop failure and verifies
 owned-directory removal without opening sockets. The checksum tests reject a
 wrong receipt checksum and same-length corrupted token; stale previous-epoch
 records are rejected. An independent review found no blocking implementation
-issue for an experimental CI candidate. These results do not establish IPC
-execution; the three socket unit tests and real subprocess payload test remain
-required and were not retried in the restricted local environment.
+issue for an experimental CI candidate. Those local results alone did not
+establish IPC execution; the three socket unit tests and real subprocess payload
+test were not retried in the restricted local environment.
+
+
+### Hosted finite-fixture acceptance, 2026-10-19
+
+The dedicated Linux IPC workflow passed for the exact implementation commit
+`4210120b722cf834e432fc12f92772e7f8deb5e7` on the experimental branch
+`codex/linux-ipc-validation-20261019`, using GitHub-hosted Ubuntu 24.04 and
+Rust 1.97.1. Sources:
+
+- [Workflow run 39277747051](https://github.com/Arthurshen926/HardwarePool/actions/runs/39277747051).
+- [Job 118146302738 and execution log](https://github.com/Arthurshen926/HardwarePool/actions/runs/39277747051/job/118146302738).
+- Retained extracted evidence: `linux-ipc-ci-39277747051-evidence.txt`, fetched
+  from the dedicated GitHub job-log API on 2026-10-19 at 15:31 UTC. The log records
+  checkout of the exact commit, the toolchain and completed test summaries. Final
+  logs, rather than stale structured step summaries, establish completion.
+
+The full focused command tested mock-source, mock-sink, linux-host and node with
+`--locked --all-targets`, single-threaded test execution and no test filters.
+The completed log shows 30 tests passing: 13 host unit tests, seven mock library
+tests and ten node subprocess tests; zero failures, ignored or filtered tests.
+All eight workflow-required IPC test names were both discovered and matched to
+explicit `ok` lines after execution.
+
+This proves the bounded separate-socket transfer and Sink-derived receipt,
+missing-peer timeout, oversized datagram rejection, exact-token/checksum and
+Route/Stream/epoch validation, opt-out behavior, once-per-epoch real subprocess
+transfer/restart, and owned IPC cleanup through the tested Stop, shutdown, EOF,
+oversized-input and source-crash paths. It closes acceptance for this finite
+hardware-free fixture only, not continuous streaming, hardware, IP networking,
+production transport/security or non-Linux platforms. Hosted execution does not
+remove or relax the original cloud environment's socket restrictions. Historical
+local failures above remain valid evidence about that different environment.

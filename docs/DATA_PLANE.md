@@ -264,4 +264,5 @@ Explicit `linux-host --mock-routes --mock-payload` composes repository mock
 subprocesses over separate bounded Unix-local datagrams. The generic envelope and
 queue validate one test token before the Sink reports receipt metadata. No payload
 uses JSON-RPC in this mode. This experimental finite synthetic fixture is not
-production transport/media; actual IPC acceptance remains unverified.
+production transport/media. Finite IPC acceptance passed on hosted Ubuntu for
+commit `4210120` (ADR 1516); local cloud socket restrictions remain unchanged.

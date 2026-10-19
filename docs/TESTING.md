@@ -2385,3 +2385,13 @@ both mock binaries, then run `cargo test -p capyio-mock-source -p capyio-linux-h
 record rejection and real subprocess receipt/cleanup tests remain mandatory.
 Sandbox EPERM is an unmet prerequisite, never a passing test or lifecycle proof
 of payload delivery. Socket-free parser/receipt tests can be reported separately.
+
+
+The finite-fixture acceptance run for exact commit
+`4210120b722cf834e432fc12f92772e7f8deb5e7` completed on GitHub-hosted Ubuntu 24.04
+with Rust 1.97.1: [run 39277747051, job 118146302738](https://github.com/Arthurshen926/HardwarePool/actions/runs/39277747051/job/118146302738).
+All 30 focused tests passed (13 host, seven mock library, ten node process), with
+zero ignored/filtered tests and all eight explicit IPC guards satisfied. ADR 1516
+records the retained log evidence and bounded acceptance scope. This hosted run
+does not change the original cloud environment's socket restriction or establish
+continuous streaming, physical hardware or production networking behavior.

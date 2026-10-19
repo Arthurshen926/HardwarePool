@@ -458,4 +458,5 @@ and nullable `sample_receipt`; Start/Stop also return that receipt. Receipt fiel
 are Route ID, Stream ID, epoch, received count, payload-byte count and a
 `fnv1a64:`-prefixed checksum string, never raw
 payload. The bounded private Unix datagram is not this management protocol,
-Sidecar JSON-RPC or a public cross-device protocol. IPC acceptance is unverified.
+Sidecar JSON-RPC or a public cross-device protocol. Finite IPC acceptance passed
+on hosted Ubuntu for commit `4210120`; see ADR 1516 for exact run and scope.
