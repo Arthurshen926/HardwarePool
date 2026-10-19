@@ -2400,5 +2400,11 @@ ADR 1517 batch tests add socket-free ordering, exact binding/timing, aggregate
 receipt, partial completion and transactional queue-full checks. Hosted tests
 require actual four-record IPC, missing/partial sender timeouts, oversized
 datagrams and all owner-cleanup exits. The dedicated workflow retains its eight
-single-record guards and requires batch guards too. Batch IPC remains unverified
-until exact-head hosted acceptance; no restricted local socket retry is allowed.
+single-record guards and requires batch guards too. Exact implementation commit
+`07b068e43ccf628326288d2918a2b90021984918` passed
+[run 39280283094](https://github.com/Arthurshen926/HardwarePool/actions/runs/39280283094) on 2026-10-19:
+39 focused tests (14 host, 13 mock library, 12 node subprocess), zero ignored or
+filtered tests, and all 17 mandatory IPC guards including the paced whole-budget
+regression. This is finite four-record batch acceptance, not continuous streaming,
+hardware or production networking evidence. No restricted local socket retry is
+allowed. A later documentation-only evidence commit is not the tested SHA.

@@ -1,6 +1,6 @@
 # LINUX-A04 — Fixed ordered mock batch
 
-Status: implemented; socket-free validation passed; batch IPC unverified
+Status: complete for the fixed-batch slice; exact-head hosted acceptance passed
 Owner: cloud development
 Created: 2026-10-19
 Requirements: `FR-PORT-004`, `FR-ROUTE-004`, `FR-PROTO-004`, `NFR-STAB-002`
@@ -33,8 +33,8 @@ this implementation assignment. Retain a full patch including new files.
 
 ## Completion
 
-Pending implementation, independent review and exact-head hosted CI. Queue-full
-unit tests are not evidence of general transport flow control. Sequential Start
+Implementation and exact-head hosted acceptance are complete. Queue-full unit
+tests are not evidence of general transport flow control. Sequential Start
 means Stop waits for the bounded transfer operation, not mid-transfer cancellation.
 
 ## Local implementation evidence (2026-10-19)
@@ -50,4 +50,18 @@ All 17 mandatory CI guard names are present, retaining the original eight. A
 CI-only paced partial-sender regression uses one joined, finite test helper
 thread to distinguish the 500 ms total budget from renewed per-record timeouts;
 production remains thread-free. Actual batch IPC, timeout and subprocess cleanup
-acceptance remains pending independent review and exact-head hosted CI.
+acceptance was subsequently established by the exact-head hosted run below.
+
+
+## Hosted completion evidence (2026-10-19)
+
+Implementation commit `07b068e43ccf628326288d2918a2b90021984918` passed
+[run 39280283094](https://github.com/Arthurshen926/HardwarePool/actions/runs/39280283094): 39 focused tests
+(14 host, 13 mock library, 12 node subprocess), zero ignored/filtered tests and all
+17 required IPC guards, including the paced whole-budget regression. The original
+eight single-record guards remain passing. This completes this finite-batch slice;
+no continuous-stream, hardware, network or further feature scope is included.
+
+The local socket restriction and prohibition on local retries/escalation remain
+unchanged. This record attributes CI to the exact implementation SHA only, not to
+any subsequent documentation-only commit carrying the acceptance record.

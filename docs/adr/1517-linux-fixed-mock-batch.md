@@ -1,6 +1,6 @@
 # ADR 1517: Fixed four-record Linux mock batch
 
-Status: accepted for bounded implementation, 2026-10-19; batch IPC execution unverified.
+Status: implemented; fixed-batch hosted IPC acceptance passed, 2026-10-19.
 
 ## Decision
 
@@ -43,5 +43,22 @@ IPC tests cover real four-record delivery, missing/partial peers, oversized data
 repeated Start, Stop/restart and owner cleanup on all supported exits. Existing
 single-record tests and all eight CI guards remain required. Local socket
 execution is prohibited by the known environment restriction; no retries or
-escalation are part of this slice. Batch acceptance remains unverified until
-exact-head hosted CI passes.
+escalation are part of this slice. The original local socket restriction remains
+in force; hosted acceptance does not authorize retrying it locally.
+
+
+## Hosted acceptance evidence (2026-10-19)
+
+Exact implementation commit `07b068e43ccf628326288d2918a2b90021984918` passed
+[Linux IPC validation run 39280283094](https://github.com/Arthurshen926/HardwarePool/actions/runs/39280283094).
+All 39 focused tests passed: 14 host unit, 13 mock library and 12 node subprocess
+tests, with zero ignored or filtered tests. All 17 mandatory IPC guards passed,
+including the original eight and the paced partial-sender whole-budget regression.
+This establishes the fixed four-record transfer, ordered receipt, bounded failure
+and tested cleanup behavior alongside the retained one-record regression suite.
+
+Acceptance is limited to this trusted synthetic finite batch. It does not establish
+continuous streaming, general transport backpressure recovery, hardware support,
+production networking/security or universal hostile-process deadlines. The tested
+SHA above is the implementation commit, not a later documentation-only evidence
+commit; no CI result for such a later commit is implied.
