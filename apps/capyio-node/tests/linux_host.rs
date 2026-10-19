@@ -13,14 +13,21 @@ struct Host {
 }
 impl Host {
     fn spawn() -> Self {
-        let mut child = Command::new(env!("CARGO_BIN_EXE_capyio-node"))
-            .args([
-                "linux-host",
-                "--node-id",
-                ID,
-                "--name",
-                "Linux process test",
-            ])
+        Self::spawn_mode(false)
+    }
+    fn spawn_mode(mock_routes: bool) -> Self {
+        let mut command = Command::new(env!("CARGO_BIN_EXE_capyio-node"));
+        command.args([
+            "linux-host",
+            "--node-id",
+            ID,
+            "--name",
+            "Linux process test",
+        ]);
+        if mock_routes {
+            command.arg("--mock-routes");
+        }
+        let mut child = command
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::inherit())
@@ -68,6 +75,14 @@ impl Host {
 }
 impl Drop for Host {
     fn drop(&mut self) {
+        self.child.stdin.take(); // EOF gives the owner an opportunity to reap its mocks.
+        let deadline = Instant::now() + Duration::from_secs(2);
+        while Instant::now() < deadline {
+            if self.child.try_wait().ok().flatten().is_some() {
+                return;
+            }
+            std::thread::sleep(Duration::from_millis(10));
+        }
         let _ = self.child.kill();
         let _ = self.child.wait();
     }
@@ -140,4 +155,98 @@ fn positional_shutdown_is_rejected_and_process_remains_usable() {
     host.send("host_shutdown", 11);
     assert_eq!(host.reply()["result"]["state"], "stopped");
     host.expect_exit();
+}
+
+// Requires: cargo build -p capyio-mock-source -p capyio-mock-sink
+// The explicit opt-in resolves these repository-built binaries beside capyio-node.
+#[test]
+fn mock_children_drive_runtime_lifecycle_and_host_exits_on_shutdown() {
+    let mut host = Host::spawn_mode(true);
+    host.send("get_snapshot", 1);
+    let snapshot = host.reply()["result"].clone();
+    assert_eq!(
+        snapshot["local_node"]["capabilities"]
+            .as_object()
+            .unwrap()
+            .len(),
+        1
+    );
+    assert_eq!(snapshot["peers"].as_array().unwrap().len(), 1);
+    assert_eq!(snapshot["routes"][0]["state"], "draft");
+    assert_eq!(
+        snapshot["routes"][0]["profile"]["name"],
+        "capyio.test.samples"
+    );
+    host.send("mock_route_start", 2);
+    assert_eq!(host.reply()["result"]["routes"][0]["state"], "active");
+    host.send("mock_route_start", 3);
+    assert_eq!(host.reply()["result"]["routes"][0]["epoch"], 1);
+    host.send("mock_route_stop", 4);
+    assert_eq!(host.reply()["result"]["routes"][0]["state"], "stopped");
+    host.send("mock_route_start", 5);
+    assert_eq!(host.reply()["result"]["routes"][0]["epoch"], 2);
+    // Saturate retained events and prove the management response remains bounded.
+    for id in 6..106 {
+        host.send(
+            if id % 2 == 0 {
+                "mock_route_stop"
+            } else {
+                "mock_route_start"
+            },
+            id,
+        );
+        assert!(host.reply().get("error").is_none());
+    }
+    host.send("get_snapshot", 106);
+    assert_eq!(
+        host.reply()["result"]["events"].as_array().unwrap().len(),
+        256
+    );
+    host.send("host_shutdown", 107);
+    assert_eq!(host.reply()["result"]["state"], "stopped");
+    host.expect_exit();
+}
+#[test]
+fn mock_host_exits_on_eof_and_oversized_input() {
+    for oversized in [false, true] {
+        let mut host = Host::spawn_mode(true);
+        host.send("mock_route_start", 1);
+        assert_eq!(host.reply()["result"]["routes"][0]["state"], "active");
+        if oversized {
+            host.child
+                .stdin
+                .as_mut()
+                .unwrap()
+                .write_all(&vec![b'x'; 4097])
+                .unwrap();
+            assert_eq!(host.reply()["error"]["code"], "request_too_large");
+        } else {
+            host.child.stdin.take();
+        }
+        host.expect_exit();
+    }
+}
+#[test]
+fn unexpected_mock_exit_is_reconciled_before_snapshot() {
+    let mut host = Host::spawn_mode(true);
+    host.send("mock_route_start", 1);
+    assert_eq!(host.reply()["result"]["routes"][0]["state"], "active");
+    // Existing test-only child RPC causes a real exit(23), not a fabricated status.
+    host.send("mock_source_crash", 10);
+    assert!(host.reply().get("error").is_none());
+    host.send("get_snapshot", 2);
+    assert_eq!(host.reply()["result"]["routes"][0]["state"], "failed");
+    host.send("host_status", 3);
+    assert_eq!(host.reply()["result"]["state"], "running");
+    host.send("host_shutdown", 4);
+    host.reply();
+    host.expect_exit();
+}
+#[test]
+fn mock_commands_require_opt_in() {
+    let mut host = Host::spawn();
+    host.send("mock_route_start", 1);
+    assert_eq!(host.reply()["error"]["code"], "mock_mode_disabled");
+    host.send("get_snapshot", 2);
+    assert_eq!(host.reply()["result"]["routes"], json!([]));
 }

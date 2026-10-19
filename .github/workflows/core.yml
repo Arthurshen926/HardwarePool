@@ -35,6 +35,7 @@ jobs:
       - run: cargo fmt --all -- --check
       - run: cargo check --workspace --exclude capyio-desktop --all-targets
       - run: cargo clippy --workspace --exclude capyio-desktop --all-targets -- -D warnings
+      - run: cargo build -p capyio-mock-source -p capyio-mock-sink
       - run: cargo test --workspace --exclude capyio-desktop
       - run: cargo xtask validate-docs
       - run: cargo xtask validate-manifests

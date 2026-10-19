@@ -238,6 +238,16 @@ fn check() -> Result<()> {
 fn test() -> Result<()> {
     run(
         "cargo",
+        [
+            "build",
+            "-p",
+            "capyio-mock-source",
+            "-p",
+            "capyio-mock-sink",
+        ],
+    )?;
+    run(
+        "cargo",
         ["test", "--workspace", "--exclude", "capyio-desktop"],
     )
 }

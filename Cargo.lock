@@ -595,8 +595,11 @@ dependencies = [
 name = "capyio-linux-host"
 version = "0.1.0"
 dependencies = [
+ "capyio-adapter-host",
+ "capyio-adapter-sdk",
  "capyio-core",
  "capyio-runtime",
+ "capyio-testkit",
  "serde",
  "serde_json",
 ]

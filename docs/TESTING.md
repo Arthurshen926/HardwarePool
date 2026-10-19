@@ -2363,3 +2363,18 @@ They prove stable explicit identity, Linux snapshots, bounded local NDJSON,
 malformed-input recovery, EOF, shutdown and oversized-request exit. Process tests
 have bounded response/exit waits and kill/reap on failure. They do not establish
 mock Route composition, secure peer connectivity or Linux hardware/projection.
+
+
+## Linux mock subprocess lifecycle
+
+ADR 1515 adds opt-in Source/Sink subprocess control and synthetic Runtime Route
+acceptance. Build `cargo build -p capyio-mock-source -p capyio-mock-sink` before
+`cargo test -p capyio-linux-host -p capyio-node`; `cargo xtask test` and core CI do
+this explicitly. Tests require the known binaries beside the node executable.
+Real-process tests cover start/stop/restart, event-bound saturation, owned mock
+exit reconciliation on the next snapshot, EOF, oversized input and shutdown.
+Injected controls cover wrong Route/epoch completion, partial-start rollback and
+Stop failure. These prove lifecycle composition, not sample transfer or hardware.
+The cloud environment lacks usable descendant `/proc` inventory; external PID-tree
+cleanup was not independently observed. The existing Sidecar owner performs
+kill/wait cleanup; arbitrary hostile child deadlines remain outside this scope.

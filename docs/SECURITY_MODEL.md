@@ -1428,9 +1428,23 @@ Neither preflight nor these lifecycle fixes issue credentials or grant peer trus
 
 ## Linux inherited-stdio host
 
-ADR 1514 exposes only local status/snapshot/shutdown on inherited process pipes.
+ADR 1514 default mode exposes only local status/snapshot/shutdown on inherited
+process pipes; ADR 1515 below adds an explicit mock-only mode.
 It opens no listener, establishes no peer trust and creates no credentials or
 hardware grants. The caller supplies a public non-nil Node ID, which is identity
 metadata, not authentication. Strict request shape and byte bounds reject malformed
 input. Stdio backpressure remains the local process owner's responsibility; this
 is not a hardened multi-client service or a production network security claim.
+
+
+## Linux explicit mock mode (ADR 1515)
+
+The default ADR 1514 host creates no peers or grants. Explicit `--mock-routes`
+launches only the two known mock executable names beside the node executable,
+without shell/arguments and using embedded repository manifests. The directory
+must contain trusted repository builds: Adapter ID validation is not executable
+authentication. Synthetic peer/Session/consent is visibly test-only, never real
+trust. Fixed mock lifecycle commands cannot name arbitrary paths, PIDs or peers.
+`mock_source_crash` targets only the owned smoke-test source. No credentials,
+leases, network, physical permission or production authorization is introduced.
+See `adr/1515-linux-mock-route-lifecycle.md`.

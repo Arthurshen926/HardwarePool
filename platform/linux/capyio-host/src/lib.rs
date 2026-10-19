@@ -1,7 +1,10 @@
 #![forbid(unsafe_code)]
 
 //! Local, inherited-pipe Linux host management. This is not a network or Adapter API.
-//! No hardware, credentials, peers or synthetic authorizations are created.
+//! No hardware, network or credentials. The explicit mock option creates only
+//! labeled synthetic peer/session context and mock-only authorization.
+
+mod mock_routes;
 
 use std::io::{self, BufRead, Write};
 
@@ -26,6 +29,7 @@ struct Request {
 /// The caller supplies a stable identity; this slice does not persist identities.
 pub struct LinuxNodeHost {
     runtime: NodeRuntime,
+    mocks: Option<mock_routes::MockRoutes>,
 }
 
 impl LinuxNodeHost {
@@ -50,14 +54,35 @@ impl LinuxNodeHost {
         );
         let runtime = NodeRuntime::new(descriptor)
             .map_err(|error| io::Error::new(io::ErrorKind::InvalidInput, error))?;
-        Ok(Self { runtime })
+        Ok(Self {
+            runtime,
+            mocks: None,
+        })
+    }
+
+    /// Opt-in test-only children from a trusted directory containing repository-built
+    /// capyio-mock-source and capyio-mock-sink. No PATH search or shell execution.
+    pub fn with_mock_routes(mut self, directory: &std::path::Path) -> io::Result<Self> {
+        self.mocks = Some(mock_routes::MockRoutes::compose(
+            &mut self.runtime,
+            directory,
+        )?);
+        Ok(self)
+    }
+
+    fn cleanup(&mut self) {
+        if let Some(mut mocks) = self.mocks.take() {
+            let _ = mocks.stop(&mut self.runtime);
+            // SidecarHost Drop kills/reaps both owned children, including errors.
+            drop(mocks);
+        }
     }
 
     /// Sequential bounded NDJSON management. Malformed complete records are
     /// recoverable; oversized records terminate without waiting for a newline.
     /// EOF drops the owned Runtime. stdout backpressure is inherited local IPC,
     /// not a promise of remote-client timeouts or an independently running daemon.
-    pub fn serve(self, mut input: impl BufRead, mut output: impl Write) -> io::Result<()> {
+    pub fn serve(mut self, mut input: impl BufRead, mut output: impl Write) -> io::Result<()> {
         loop {
             let bytes = match read_record(&mut input)? {
                 Record::Eof => return Ok(()),
@@ -85,6 +110,11 @@ impl LinuxNodeHost {
                 write_response(&mut output, error(Some(request.id), "unsupported_version"))?;
                 continue;
             }
+            if matches!(request.command.as_str(), "get_snapshot" | "host_status")
+                && let Some(mocks) = self.mocks.as_mut()
+            {
+                mocks.reconcile(&mut self.runtime);
+            }
             let (result, stop) = match request.command.as_str() {
                 "get_snapshot" => (json!(self.runtime.snapshot()), false),
                 "host_status" => (
@@ -92,11 +122,41 @@ impl LinuxNodeHost {
                         "state": "running", "platform": "linux",
                         "node_id": self.runtime.snapshot().local_node.id,
                         "transport": "inherited_stdio", "hardware_enabled": false,
-                        "network_enabled": false, "identity_persisted": false
+                        "network_enabled": false, "identity_persisted": false,
+                        "mock_routes_enabled": self.mocks.is_some(), "sample_transfer_enabled": false
                     }),
                     false,
                 ),
-                "host_shutdown" => (json!({"state": "stopped"}), true),
+                "mock_route_start" | "mock_route_stop" | "mock_source_crash" => {
+                    let Some(mocks) = self.mocks.as_mut() else {
+                        write_response(&mut output, error(Some(request.id), "mock_mode_disabled"))?;
+                        continue;
+                    };
+                    let outcome = if request.command == "mock_source_crash" {
+                        mocks.inject_source_crash()
+                    } else if request.command == "mock_route_start" {
+                        mocks.start(&mut self.runtime)
+                    } else {
+                        mocks.stop(&mut self.runtime)
+                    };
+                    if outcome.is_err() {
+                        write_response(
+                            &mut output,
+                            error(Some(request.id), "mock_lifecycle_failed"),
+                        )?;
+                        continue;
+                    }
+                    let result = if request.command == "mock_source_crash" {
+                        json!({"test_only": true, "source_exit_observed": true})
+                    } else {
+                        json!({"test_only": true, "routes": self.runtime.snapshot().routes})
+                    };
+                    (result, false)
+                }
+                "host_shutdown" => {
+                    self.cleanup();
+                    (json!({"state": "stopped"}), true)
+                }
                 _ => {
                     write_response(&mut output, error(Some(request.id), "unknown_command"))?;
                     continue;
@@ -110,6 +170,12 @@ impl LinuxNodeHost {
                 return Ok(());
             }
         }
+    }
+}
+
+impl Drop for LinuxNodeHost {
+    fn drop(&mut self) {
+        self.cleanup();
     }
 }
 

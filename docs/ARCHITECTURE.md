@@ -1569,5 +1569,17 @@ claims remain on the roadmap.
 
 ADR 1514 adds a Linux Runtime-owning process through `capyio-node linux-host`.
 The platform crate owns bounded inherited-stdio management and Core/Runtime remain
-OS-independent. The catalog is empty; no peers, synthetic grants, hardware workers
-or network listeners are created. This is not a Linux port of the Windows UI.
+OS-independent. By default the catalog is empty; no peers, synthetic grants,
+hardware workers or network listeners are created. ADR 1515 below defines the
+explicit mock-only exception. This is not a Linux port of the Windows UI.
+
+
+## Linux opt-in mock composition (ADR 1515)
+
+The ADR 1514 default host remains empty. Explicit `--mock-routes` additionally
+composes the repository Source/Sink Sidecars, returned test-only catalogs and one
+synthetic peer/Session/Route. The host owns both children, stages Runtime lifecycle
+and checks child completion identity/epoch before Active. Snapshot/status and
+repeated Start reconcile failures; there is no background liveness guarantee.
+This is process-backed lifecycle simulation, not hardware or sample transfer.
+See `adr/1515-linux-mock-route-lifecycle.md` for cleanup and trust boundaries.

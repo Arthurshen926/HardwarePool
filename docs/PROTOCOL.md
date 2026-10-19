@@ -431,7 +431,22 @@ encrypted input protocol. Deployment currently uses the user's Tailscale path.
 
 ADR 1514 defines a local inherited-stdio NDJSON contract, separate from Adapter
 JSON-RPC and cross-device Protobuf: exactly `version`, `id` and `command`; version
-1 supports `get_snapshot`, `host_status` and `host_shutdown`. Requests are bounded
+1 supports `get_snapshot`, `host_status` and `host_shutdown` by default; ADR 1515
+below adds opt-in mock commands. Requests are bounded
 to 4096 bytes and responses to 65536 bytes, excluding LF. Responses contain `result`
 or `error.code`; no media or credential data is carried. See ADR 1514 for rejection
 and termination semantics. This is not compatible with the Windows named-pipe API.
+
+
+## Linux opt-in mock management (ADR 1515)
+
+ADR 1514's version-1 three-field request object and byte limits remain unchanged.
+Explicit `--mock-routes` permits parameter-free `mock_route_start`,
+`mock_route_stop` and `mock_source_crash`. Otherwise these return
+`error.code=mock_mode_disabled`; operation failures use `mock_lifecycle_failed`.
+Start/Stop success returns `test_only=true` and current mock Routes. Crash success
+returns `test_only=true, source_exit_observed=true`, not a stale Active Route.
+The next snapshot/status or repeated Start reconciles the actual child exit.
+Host status includes `mock_routes_enabled` and `sample_transfer_enabled=false`.
+These local management commands carry no data payload or production peer grant.
+See `adr/1515-linux-mock-route-lifecycle.md` for simulated Session semantics.

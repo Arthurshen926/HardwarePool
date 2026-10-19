@@ -26,6 +26,9 @@ enum Command {
         node_id: capyio_core::NodeId,
         #[arg(long, default_value = "CapyIO Linux Node")]
         name: String,
+        /// Enable synthetic lifecycle using repository mock binaries beside this executable.
+        #[arg(long)]
+        mock_routes: bool,
     },
     /// Runs four independent mock Routes across audio, motion and video Profiles.
     Demo,
@@ -51,10 +54,22 @@ fn main() -> anyhow::Result<()> {
 
     let cli = Cli::parse();
     match cli.command.unwrap_or(Command::Demo) {
-        Command::LinuxHost { node_id, name } => {
+        Command::LinuxHost {
+            node_id,
+            name,
+            mock_routes,
+        } => {
             anyhow::ensure!(cfg!(target_os = "linux"), "linux-host requires Linux");
-            capyio_linux_host::LinuxNodeHost::new(node_id, &name)?
-                .serve(std::io::stdin().lock(), std::io::stdout().lock())?;
+            let mut host = capyio_linux_host::LinuxNodeHost::new(node_id, &name)?;
+            if mock_routes {
+                let executable = std::env::current_exe()?;
+                host = host.with_mock_routes(
+                    executable
+                        .parent()
+                        .context("missing executable directory")?,
+                )?;
+            }
+            host.serve(std::io::stdin().lock(), std::io::stdout().lock())?;
             Ok(())
         }
         Command::Demo => run_demo(),
