@@ -7,6 +7,7 @@ rust-version.workspace = true
 license.workspace = true
 
 [dependencies]
+capyio-mock-source = { path = "../../../adapters/mock-source" }
 capyio-core = { path = "../../../crates/capyio-core" }
 capyio-runtime = { path = "../../../crates/capyio-runtime" }
 serde.workspace = true

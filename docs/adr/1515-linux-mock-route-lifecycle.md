@@ -2,6 +2,9 @@
 
 Status: accepted for implementation, 2026-10-19.
 
+ADR 1516 adds a separate experimental payload option. Without it, lifecycle-only
+behavior and the limits described here remain unchanged.
+
 ## Context
 
 ADR 1514 provides an empty Linux Node host. The next hardware-free slice needs

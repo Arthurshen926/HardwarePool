@@ -53,3 +53,12 @@ failed mock pair. Observation is command-boundary, not a background watchdog.
 These are real subprocesses controlling a simulated Route lifecycle, not data
 transfer. `sample_transfer_enabled`, `hardware_enabled` and `network_enabled` stay
 false. All resources retain `test_only` labeling. No real peer trust is created.
+
+### Experimental finite payload fixture (ADR 1516)
+
+After building the node and both mock binaries, add `--mock-routes --mock-payload`
+to `linux-host`. Start sends one synthetic UTF-8 token over separate Unix-local IPC;
+Active requires a Sink receipt. Repeat Start does not resend; Stop clears receipt;
+restart uses a fresh Stream/epoch. Without the additional flag, lifecycle-only
+behavior is unchanged. This needs Linux Unix sockets, not IP listeners or hardware.
+IPC execution remains unverified until the required full tests pass.

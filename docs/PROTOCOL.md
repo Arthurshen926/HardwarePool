@@ -447,6 +447,15 @@ Explicit `--mock-routes` permits parameter-free `mock_route_start`,
 Start/Stop success returns `test_only=true` and current mock Routes. Crash success
 returns `test_only=true, source_exit_observed=true`, not a stale Active Route.
 The next snapshot/status or repeated Start reconciles the actual child exit.
-Host status includes `mock_routes_enabled` and `sample_transfer_enabled=false`.
+Lifecycle-only host status includes `mock_routes_enabled` and
+`sample_transfer_enabled=false`; ADR 1516 adds a separate experimental opt-in.
 These local management commands carry no data payload or production peer grant.
 See `adr/1515-linux-mock-route-lifecycle.md` for simulated Session semantics.
+
+ADR 1516 adds separate `--mock-payload` opt-in requiring `--mock-routes`.
+Commands remain unchanged. Status includes configured `sample_transfer_enabled`
+and nullable `sample_receipt`; Start/Stop also return that receipt. Receipt fields
+are Route ID, Stream ID, epoch, received count, payload-byte count and a
+`fnv1a64:`-prefixed checksum string, never raw
+payload. The bounded private Unix datagram is not this management protocol,
+Sidecar JSON-RPC or a public cross-device protocol. IPC acceptance is unverified.

@@ -2,6 +2,8 @@
 
 //! Shared deterministic server loop for the two repository Mock Sidecars.
 
+pub mod payload;
+
 use std::collections::{BTreeMap, BTreeSet};
 use std::io::{self, BufRead, Write};
 use std::str::FromStr;
@@ -31,7 +33,8 @@ struct MockRouteStartResult {
     accepted: bool,
     data_endpoint: Option<capyio_adapter_sdk::DataEndpointDescriptor>,
     warnings: Vec<capyio_adapter_sdk::AdapterProblemDescriptor>,
-    test_sample: MockSmokeSample,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    test_sample: Option<MockSmokeSample>,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -47,6 +50,7 @@ pub fn run(kind: MockKind, crash_on_probe: bool) -> Result<(), Box<dyn std::erro
     let mut adapter_instance_id = None;
     let mut prepared_routes = BTreeMap::new();
     let mut active_routes = BTreeMap::new();
+    let mut transfer = None;
 
     for line in stdin.lock().split(b'\n') {
         let mut line = line?;
@@ -70,6 +74,7 @@ pub fn run(kind: MockKind, crash_on_probe: bool) -> Result<(), Box<dyn std::erro
             &mut adapter_instance_id,
             &mut prepared_routes,
             &mut active_routes,
+            &mut transfer,
         )?;
         stdout.write_all(&encode_response_line(&response)?)?;
         stdout.flush()?;
@@ -87,6 +92,7 @@ fn handle_request(
     adapter_instance_id: &mut Option<AdapterInstanceId>,
     prepared_routes: &mut BTreeMap<RouteId, u64>,
     active_routes: &mut BTreeMap<RouteId, u64>,
+    transfer: &mut Option<payload::Transfer>,
 ) -> Result<RpcResponse, capyio_adapter_sdk::RpcError> {
     match request.method.as_str() {
         "adapter.initialize" => {
@@ -136,6 +142,32 @@ fn handle_request(
         "route.prepare" => {
             let params: RoutePrepareRequest = request.decode_params()?;
             params.validate()?;
+            if transfer.is_some() {
+                return failure(
+                    request.id,
+                    "already_prepared",
+                    "stop the existing fixture before preparing another",
+                );
+            }
+            if params.data_endpoint.is_some() {
+                if !prepared_routes.is_empty() {
+                    return failure(
+                        request.id,
+                        "already_prepared",
+                        "only one fixture transfer is allowed",
+                    );
+                }
+                match payload::Transfer::prepare(&params, matches!(kind, MockKind::Sink)) {
+                    Ok(value) => *transfer = Some(value),
+                    Err(_) => {
+                        return failure(
+                            request.id,
+                            "invalid_fixture_endpoint",
+                            "fixture preparation failed",
+                        );
+                    }
+                }
+            }
             prepared_routes.insert(params.route_id, params.epoch);
             RpcResponse::success(
                 request.id,
@@ -156,17 +188,38 @@ fn handle_request(
                     "prepare the same Route epoch before start",
                 );
             }
+            let data_endpoint = if let Some(transfer) = transfer.as_ref() {
+                if active_routes.contains_key(&params.route_id) {
+                    return failure(request.id, "already_active", "fixture must not be resent");
+                }
+                match transfer.start() {
+                    Ok(endpoint) => endpoint,
+                    Err(_) => {
+                        return failure(
+                            request.id,
+                            "fixture_transfer_failed",
+                            "fixture transfer failed",
+                        );
+                    }
+                }
+            } else {
+                None
+            };
             active_routes.insert(params.route_id, params.epoch);
             RpcResponse::success(
                 request.id,
                 &MockRouteStartResult {
                     accepted: true,
-                    data_endpoint: None,
+                    data_endpoint,
                     warnings: Vec::new(),
-                    test_sample: MockSmokeSample {
-                        test_only: true,
-                        sequence: 1,
-                        payload: format!("finite-{kind:?}-sample").to_lowercase(),
+                    test_sample: if transfer.is_some() {
+                        None
+                    } else {
+                        Some(MockSmokeSample {
+                            test_only: true,
+                            sequence: 1,
+                            payload: format!("finite-{kind:?}-sample").to_lowercase(),
+                        })
                     },
                 },
             )
@@ -181,6 +234,7 @@ fn handle_request(
                     "stop must reference the prepared Route epoch",
                 );
             }
+            *transfer = None;
             prepared_routes.remove(&params.route_id);
             active_routes.remove(&params.route_id);
             RpcResponse::success(request.id, &RouteStopResult { accepted: true })
@@ -291,5 +345,27 @@ fn catalog(kind: MockKind, adapter_instance_id: AdapterInstanceId) -> AdapterCat
             metadata: BTreeMap::from([("test_only".to_owned(), "true".to_owned())]),
             ports: BTreeMap::from([(port_id, port)]),
         }],
+    }
+}
+
+#[cfg(test)]
+mod payload_control_tests {
+    use super::*;
+
+    #[test]
+    fn payload_mode_start_response_contains_no_smoke_sample() {
+        let result = MockRouteStartResult {
+            accepted: true,
+            data_endpoint: None,
+            warnings: Vec::new(),
+            test_sample: None,
+        };
+        let response = RpcResponse::success(1, &result).unwrap();
+        let bytes = encode_response_line(&response).unwrap();
+        let value: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+        assert!(value["result"].get("test_sample").is_none());
+        let text = String::from_utf8(bytes).unwrap();
+        assert!(!text.contains("finite-source-sample"));
+        assert!(!text.contains("payload\""));
     }
 }

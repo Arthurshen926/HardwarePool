@@ -11,6 +11,7 @@ publish = false
 name = "capyio_mock_sidecar_support"
 
 [dependencies]
+capyio-data-plane = { path = "../../crates/capyio-data-plane" }
 capyio-adapter-sdk = { path = "../../crates/capyio-adapter-sdk" }
 capyio-core = { path = "../../crates/capyio-core" }
 serde.workspace = true

@@ -16,6 +16,9 @@ impl Host {
         Self::spawn_mode(false)
     }
     fn spawn_mode(mock_routes: bool) -> Self {
+        Self::spawn_options(mock_routes, false)
+    }
+    fn spawn_options(mock_routes: bool, mock_payload: bool) -> Self {
         let mut command = Command::new(env!("CARGO_BIN_EXE_capyio-node"));
         command.args([
             "linux-host",
@@ -26,6 +29,9 @@ impl Host {
         ]);
         if mock_routes {
             command.arg("--mock-routes");
+        }
+        if mock_payload {
+            command.arg("--mock-payload");
         }
         let mut child = command
             .stdin(Stdio::piped())
@@ -249,4 +255,100 @@ fn mock_commands_require_opt_in() {
     assert_eq!(host.reply()["error"]["code"], "mock_mode_disabled");
     host.send("get_snapshot", 2);
     assert_eq!(host.reply()["result"]["routes"], json!([]));
+}
+
+#[test]
+fn payload_requires_explicit_lifecycle_opt_in() {
+    let status = Command::new(env!("CARGO_BIN_EXE_capyio-node"))
+        .args(["linux-host", "--node-id", ID, "--mock-payload"])
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status()
+        .unwrap();
+    assert!(!status.success());
+    for mocks in [false, true] {
+        let mut host = Host::spawn_mode(mocks);
+        host.send("host_status", 1);
+        let reply = host.reply();
+        assert_eq!(reply["result"]["sample_transfer_enabled"], false);
+        assert!(reply["result"]["sample_receipt"].is_null());
+    }
+}
+#[test]
+fn payload_crosses_real_children_once_per_epoch_and_cleans_on_every_exit() {
+    for exit in ["stop", "shutdown", "eof", "oversized", "crash"] {
+        let mut host = Host::spawn_options(true, true);
+        host.send("mock_route_start", 1);
+        let first = host.reply();
+        assert_eq!(first["result"]["routes"][0]["state"], "active");
+        let receipt = first["result"]["sample_receipt"].clone();
+        assert_eq!(receipt["received"], 1);
+        assert_eq!(receipt["payload_bytes"], "finite-source-sample".len());
+        assert_eq!(receipt["epoch"], 1);
+        assert!(
+            receipt["payload_checksum"]
+                .as_str()
+                .unwrap()
+                .starts_with("fnv1a64:")
+        );
+        let directory = std::env::temp_dir().join(format!(
+            "capyio-mock-{}",
+            receipt["stream_id"].as_str().unwrap()
+        ));
+        assert!(directory.join("sink").exists());
+        host.send("mock_route_start", 2);
+        assert_eq!(host.reply()["result"]["sample_receipt"], receipt);
+        match exit {
+            "stop" => {
+                host.send("mock_route_stop", 3);
+                assert!(host.reply()["result"]["sample_receipt"].is_null());
+                assert!(!directory.exists());
+                host.send("mock_route_start", 4);
+                let next = host.reply()["result"]["sample_receipt"].clone();
+                assert_eq!(next["epoch"], 2);
+                assert_ne!(next["stream_id"], receipt["stream_id"]);
+                let next_directory = std::env::temp_dir().join(format!(
+                    "capyio-mock-{}",
+                    next["stream_id"].as_str().unwrap()
+                ));
+                host.send("host_shutdown", 5);
+                host.reply();
+                host.expect_exit();
+                assert!(!next_directory.exists());
+            }
+            "shutdown" => {
+                host.send("host_shutdown", 3);
+                host.reply();
+                host.expect_exit();
+            }
+            "eof" => {
+                host.child.stdin.take();
+                host.expect_exit();
+            }
+            "oversized" => {
+                host.child
+                    .stdin
+                    .as_mut()
+                    .unwrap()
+                    .write_all(&vec![b'x'; 4097])
+                    .unwrap();
+                host.reply();
+                host.expect_exit();
+            }
+            "crash" => {
+                host.send("mock_source_crash", 3);
+                host.reply();
+                host.send("host_status", 4);
+                let result = host.reply();
+                assert!(result["result"]["sample_receipt"].is_null());
+                assert_eq!(result["result"]["state"], "running");
+                host.send("host_shutdown", 5);
+                host.reply();
+                host.expect_exit();
+            }
+            _ => unreachable!(),
+        }
+        assert!(!directory.exists(), "cleanup on {exit}");
+    }
 }

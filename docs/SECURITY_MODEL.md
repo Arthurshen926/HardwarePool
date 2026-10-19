@@ -1448,3 +1448,11 @@ trust. Fixed mock lifecycle commands cannot name arbitrary paths, PIDs or peers.
 `mock_source_crash` targets only the owned smoke-test source. No credentials,
 leases, network, physical permission or production authorization is introduced.
 See `adr/1515-linux-mock-route-lifecycle.md`.
+
+ADR 1516 permits an explicit finite Unix-local mock IPC fixture, not IP networking.
+The host creates and owns one private temporary directory/socket per epoch.
+Repository children exchange one bounded token and return only receipt metadata.
+No grants, credentials, services or system security settings change. Same-user
+processes and caller-controlled temporary-directory ancestry remain trusted;
+this is not peer authentication. Cleanup closes the pair before removing owned
+paths. Forced termination can leave residue; no broad cleanup is authorized.

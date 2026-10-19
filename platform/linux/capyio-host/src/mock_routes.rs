@@ -1,7 +1,8 @@
-//! Explicit synthetic lifecycle composition. No sample transport or peer authentication.
+//! Explicit synthetic lifecycle and opt-in finite local IPC. No peer authentication.
 use std::{collections::BTreeSet, io, path::Path};
 
 use capyio_adapter_host::SidecarHost;
+use capyio_adapter_sdk::DataEndpointDescriptor;
 use capyio_adapter_sdk::{
     AdapterManifest, BoundedJsonObject, RoutePrepareRequest, RouteStartRequest, RouteStatusRequest,
     RouteStatusResult, RouteStopRequest,
@@ -11,6 +12,7 @@ use capyio_core::{
     AdapterState, NodeDescriptor, NodeId, Platform, PortDirection, PortRef, ProtocolVersion,
     RouteBackend, RouteId, RouteState,
 };
+use capyio_mock_sidecar_support::payload::{Endpoint, Receipt, validate_receipt};
 use capyio_runtime::NodeRuntime;
 
 const PEER: &str = "00000000-0000-4000-8000-000000000302";
@@ -25,7 +27,7 @@ fn error(message: impl ToString) -> io::Error {
 
 trait Control {
     fn prepare(&mut self, request: RoutePrepareRequest) -> io::Result<()>;
-    fn start(&mut self, request: RouteStartRequest) -> io::Result<()>;
+    fn start(&mut self, request: RouteStartRequest) -> io::Result<Option<DataEndpointDescriptor>>;
     fn status(&mut self, request: RouteStatusRequest) -> io::Result<RouteStatusResult>;
     fn stop(&mut self, request: RouteStopRequest) -> io::Result<()>;
     fn inject_crash(&mut self) -> io::Result<()>;
@@ -44,8 +46,10 @@ impl Control for SidecarHost {
     fn prepare(&mut self, request: RoutePrepareRequest) -> io::Result<()> {
         self.prepare_route(request).map(|_| ()).map_err(error)
     }
-    fn start(&mut self, request: RouteStartRequest) -> io::Result<()> {
-        self.start_route(request).map(|_| ()).map_err(error)
+    fn start(&mut self, request: RouteStartRequest) -> io::Result<Option<DataEndpointDescriptor>> {
+        self.start_route(request)
+            .map(|result| result.data_endpoint)
+            .map_err(error)
     }
     fn status(&mut self, request: RouteStatusRequest) -> io::Result<RouteStatusResult> {
         self.route_status(request).map_err(error)
@@ -61,6 +65,9 @@ pub(crate) struct MockRoutes {
     prepared: [Option<u64>; 2],
     route_id: RouteId,
     failed: bool,
+    pub(crate) payload_enabled: bool,
+    endpoint: Option<Endpoint>,
+    pub(crate) receipt: Option<Receipt>,
 }
 
 impl MockRoutes {
@@ -173,6 +180,9 @@ impl MockRoutes {
             prepared: [None; 2],
             route_id,
             failed: false,
+            payload_enabled: false,
+            endpoint: None,
+            receipt: None,
         })
     }
 
@@ -240,6 +250,9 @@ impl MockRoutes {
             .map_err(error)?;
         runtime.begin_route_start(self.route_id, 0).map_err(error)?;
         let route = runtime.route(self.route_id).map_err(error)?.clone();
+        if self.payload_enabled {
+            return self.start_payload(runtime);
+        }
         for index in 0..2 {
             let result = (|| {
                 self.children[index].prepare(RoutePrepareRequest {
@@ -272,6 +285,69 @@ impl MockRoutes {
         runtime.activate_route(self.route_id).map_err(error)
     }
 
+    fn start_payload(&mut self, runtime: &mut NodeRuntime) -> io::Result<()> {
+        let route = runtime.route(self.route_id).map_err(error)?.clone();
+        self.receipt = None;
+        let endpoint = match Endpoint::create(capyio_core::StreamId::new()) {
+            Ok(value) => value,
+            Err(err) => {
+                self.fail(runtime, 0);
+                return Err(err);
+            }
+        };
+        let descriptor = endpoint.descriptor.clone();
+        self.endpoint = Some(endpoint);
+        // Bind Sink before Source can send its one finite datagram.
+        for index in [1, 0] {
+            let result = self.children[index].prepare(RoutePrepareRequest {
+                route_id: self.route_id,
+                source: route.source,
+                sink: route.sink,
+                profile: route.profile.clone(),
+                selected_format: route.selected_format.clone(),
+                selected_qos: route.selected_qos_mode.clone().expect("prepared QoS"),
+                backend: route.backend,
+                epoch: route.epoch,
+                data_endpoint: Some(descriptor.clone()),
+                adapter_config: BoundedJsonObject::default(),
+            });
+            if result.is_err() {
+                self.fail(runtime, index);
+                return Err(error("mock payload prepare failed"));
+            }
+            self.prepared[index] = Some(route.epoch);
+        }
+        for index in 0..2 {
+            let result = (|| {
+                let returned = self.children[index].start(RouteStartRequest {
+                    route_id: self.route_id,
+                    epoch: route.epoch,
+                })?;
+                if index == 1 {
+                    self.receipt = Some(validate_receipt(
+                        returned,
+                        &descriptor,
+                        self.route_id,
+                        route.epoch,
+                    )?);
+                }
+                let status = self.children[index].status(RouteStatusRequest {
+                    route_id: self.route_id,
+                })?;
+                validate_active(&status, self.route_id, route.epoch)
+            })();
+            if result.is_err() {
+                self.fail(runtime, index);
+                return Err(error("mock payload transfer failed"));
+            }
+        }
+        if let Err(err) = runtime.activate_route(self.route_id) {
+            self.fail(runtime, 1);
+            return Err(error(err));
+        }
+        Ok(())
+    }
+
     fn fail(&mut self, runtime: &mut NodeRuntime, index: usize) {
         self.failed = true;
         // Stop both prepared participants even when one has already exited.
@@ -283,7 +359,10 @@ impl MockRoutes {
                 });
             }
         }
-        self.children.clear(); // Drop kills/reaps both children after best-effort Stop.
+        self.children.clear();
+        self.receipt = None;
+        self.endpoint = None; // Close children before removing owned IPC.
+        // Drop kills/reaps both children after best-effort Stop.
         for (other, (node, adapter)) in self.owners.into_iter().enumerate() {
             let code = if other == index {
                 "CAPY.LINUX.MOCK_LIFECYCLE_FAILED"
@@ -318,6 +397,8 @@ impl MockRoutes {
                 self.prepared[index] = None;
             }
         }
+        self.receipt = None;
+        self.endpoint = None;
         runtime.stop_route(self.route_id).map_err(error)
     }
 }
@@ -349,6 +430,8 @@ mod tests {
         calls: Rc<RefCell<Vec<String>>>,
         fault: Fault,
         epoch: u64,
+        data_endpoint: Option<DataEndpointDescriptor>,
+        valid_receipt: bool,
     }
     impl Drop for Fake {
         fn drop(&mut self) {
@@ -362,18 +445,46 @@ mod tests {
         fn prepare(&mut self, request: RoutePrepareRequest) -> io::Result<()> {
             self.calls.borrow_mut().push("prepare".into());
             self.epoch = request.epoch;
+            self.data_endpoint = request.data_endpoint;
+            if let Some(endpoint) = &self.data_endpoint {
+                self.calls
+                    .borrow_mut()
+                    .push(format!("endpoint={}", endpoint.address));
+            }
             if matches!(self.fault, Fault::Prepare) {
                 Err(error("injected"))
             } else {
                 Ok(())
             }
         }
-        fn start(&mut self, _: RouteStartRequest) -> io::Result<()> {
+        fn start(
+            &mut self,
+            request: RouteStartRequest,
+        ) -> io::Result<Option<DataEndpointDescriptor>> {
             self.calls.borrow_mut().push("start".into());
             if matches!(self.fault, Fault::Start) {
                 Err(error("injected"))
+            } else if self.valid_receipt {
+                let mut endpoint = self.data_endpoint.clone().expect("payload endpoint");
+                let hash = b"finite-source-sample"
+                    .iter()
+                    .fold(0xcbf29ce484222325u64, |hash, byte| {
+                        (hash ^ u64::from(*byte)).wrapping_mul(0x100000001b3)
+                    });
+                let receipt = Receipt {
+                    route_id: request.route_id,
+                    stream_id: endpoint.metadata["stream_id"].parse().unwrap(),
+                    epoch: request.epoch,
+                    received: 1,
+                    payload_bytes: b"finite-source-sample".len(),
+                    payload_checksum: format!("fnv1a64:{hash:016x}"),
+                };
+                endpoint
+                    .metadata
+                    .insert("receipt".into(), serde_json::to_string(&receipt).unwrap());
+                Ok(Some(endpoint))
             } else {
-                Ok(())
+                Ok(None)
             }
         }
         fn status(&mut self, request: RouteStatusRequest) -> io::Result<RouteStatusResult> {
@@ -399,6 +510,9 @@ mod tests {
     }
     type Calls = [Rc<RefCell<Vec<String>>>; 2];
     fn fixture(fault: Fault) -> (NodeRuntime, MockRoutes, Calls) {
+        fixture_faults([Fault::None, fault], false)
+    }
+    fn fixture_faults(faults: [Fault; 2], valid_receipt: bool) -> (NodeRuntime, MockRoutes, Calls) {
         let lab = DemoLab::new().unwrap();
         let route_id = lab.routes.all()[0];
         let route = lab.runtime.route(route_id).unwrap();
@@ -420,13 +534,17 @@ mod tests {
         let children = vec![
             Box::new(Fake {
                 calls: calls[0].clone(),
-                fault: Fault::None,
+                fault: faults[0],
                 epoch: 0,
+                data_endpoint: None,
+                valid_receipt,
             }) as Box<dyn Control>,
             Box::new(Fake {
                 calls: calls[1].clone(),
-                fault,
+                fault: faults[1],
                 epoch: 0,
+                data_endpoint: None,
+                valid_receipt,
             }) as Box<dyn Control>,
         ];
         (
@@ -437,9 +555,73 @@ mod tests {
                 prepared: [None; 2],
                 route_id,
                 failed: false,
+                payload_enabled: false,
+                endpoint: None,
+                receipt: None,
             },
             calls,
         )
+    }
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn payload_faults_drop_both_children_and_remove_owned_directory() {
+        for fault in [
+            Fault::Prepare,
+            Fault::Start,
+            Fault::WrongId,
+            Fault::WrongEpoch,
+            Fault::Stop,
+        ] {
+            for side in 0..2 {
+                let mut faults = [Fault::None; 2];
+                faults[side] = fault;
+                let (mut runtime, mut mocks, calls) = fixture_faults(faults, true);
+                mocks.payload_enabled = true;
+                if matches!(fault, Fault::Stop) {
+                    mocks.start(&mut runtime).unwrap();
+                    assert!(mocks.receipt.is_some());
+                    assert!(mocks.stop(&mut runtime).is_err());
+                } else {
+                    assert!(mocks.start(&mut runtime).is_err());
+                }
+                assert_eq!(
+                    runtime.route(mocks.route_id).unwrap().state,
+                    RouteState::Failed
+                );
+                assert!(mocks.receipt.is_none());
+                assert!(mocks.endpoint.is_none());
+                assert!(mocks.children.is_empty());
+                let mut observed_directory = false;
+                for log in calls {
+                    let log = log.borrow();
+                    assert_eq!(log.last().unwrap(), "drop");
+                    for call in log.iter() {
+                        if let Some(path) = call.strip_prefix("endpoint=") {
+                            observed_directory = true;
+                            assert!(!std::path::Path::new(path).parent().unwrap().exists());
+                        }
+                    }
+                }
+                assert!(observed_directory);
+            }
+        }
+    }
+    #[test]
+    fn payload_missing_receipt_fails_and_clears_owned_pair() {
+        let (mut runtime, mut mocks, calls) = fixture(Fault::None);
+        mocks.payload_enabled = true;
+        // Fake children perform no socket I/O and return no consumed-data receipt.
+        assert!(mocks.start(&mut runtime).is_err());
+        assert_eq!(
+            runtime.route(mocks.route_id).unwrap().state,
+            RouteState::Failed
+        );
+        assert!(mocks.receipt.is_none());
+        assert!(mocks.endpoint.is_none());
+        assert!(mocks.children.is_empty());
+        for log in calls {
+            assert_eq!(log.borrow().last().unwrap(), "drop");
+        }
     }
     #[test]
     fn start_stop_restart_is_staged_and_idempotent() {

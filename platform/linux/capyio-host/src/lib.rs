@@ -70,6 +70,19 @@ impl LinuxNodeHost {
         Ok(self)
     }
 
+    /// Opt-in finite Unix-local fixture transfer, never hardware or IP networking.
+    pub fn with_mock_payload(mut self) -> io::Result<Self> {
+        if !cfg!(target_os = "linux") {
+            return Err(io::Error::other("mock payload requires Linux"));
+        }
+        let mocks = self
+            .mocks
+            .as_mut()
+            .ok_or_else(|| io::Error::other("mock payload requires mock routes"))?;
+        mocks.payload_enabled = true;
+        Ok(self)
+    }
+
     fn cleanup(&mut self) {
         if let Some(mut mocks) = self.mocks.take() {
             let _ = mocks.stop(&mut self.runtime);
@@ -123,7 +136,8 @@ impl LinuxNodeHost {
                         "node_id": self.runtime.snapshot().local_node.id,
                         "transport": "inherited_stdio", "hardware_enabled": false,
                         "network_enabled": false, "identity_persisted": false,
-                        "mock_routes_enabled": self.mocks.is_some(), "sample_transfer_enabled": false
+                        "mock_routes_enabled": self.mocks.is_some(), "sample_transfer_enabled": self.mocks.as_ref().is_some_and(|m|m.payload_enabled),
+                        "sample_receipt": self.mocks.as_ref().and_then(|m|m.receipt.as_ref())
                     }),
                     false,
                 ),
@@ -149,7 +163,7 @@ impl LinuxNodeHost {
                     let result = if request.command == "mock_source_crash" {
                         json!({"test_only": true, "source_exit_observed": true})
                     } else {
-                        json!({"test_only": true, "routes": self.runtime.snapshot().routes})
+                        json!({"test_only": true, "routes": self.runtime.snapshot().routes, "sample_receipt": mocks.receipt})
                     };
                     (result, false)
                 }

@@ -159,3 +159,8 @@ children are not left running after a completed smoke test.
   controls lifecycle and UX only.
 
 UI must label AdapterManaged limitations and must not imply arbitrary routing.
+
+ADR 1516 adds experimental explicit finite Linux mock Unix-local IPC separate from
+control pipes. Prepare carries endpoint setup; Sink Start carries bounded receipt
+metadata. The old independent smoke sample is omitted in payload mode. This does
+not enable mock IP networking, hardware, continuous media or a public wire.

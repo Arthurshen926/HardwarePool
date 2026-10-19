@@ -29,6 +29,9 @@ enum Command {
         /// Enable synthetic lifecycle using repository mock binaries beside this executable.
         #[arg(long)]
         mock_routes: bool,
+        /// Transfer one finite fixture via separate Linux-local IPC; no hardware or IP network.
+        #[arg(long, requires = "mock_routes")]
+        mock_payload: bool,
     },
     /// Runs four independent mock Routes across audio, motion and video Profiles.
     Demo,
@@ -58,6 +61,7 @@ fn main() -> anyhow::Result<()> {
             node_id,
             name,
             mock_routes,
+            mock_payload,
         } => {
             anyhow::ensure!(cfg!(target_os = "linux"), "linux-host requires Linux");
             let mut host = capyio_linux_host::LinuxNodeHost::new(node_id, &name)?;
@@ -68,6 +72,9 @@ fn main() -> anyhow::Result<()> {
                         .parent()
                         .context("missing executable directory")?,
                 )?;
+            }
+            if mock_payload {
+                host = host.with_mock_payload()?;
             }
             host.serve(std::io::stdin().lock(), std::io::stdout().lock())?;
             Ok(())

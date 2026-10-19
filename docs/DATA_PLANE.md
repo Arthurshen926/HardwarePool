@@ -257,3 +257,11 @@ endpoint-associated render APO into a pre-opened shared-memory/SPSC staging
 ring consumed by the Broker. SysVAD WASAPI loopback is synthetic and cannot
 prove real render PCM. A smaller versioned driver IPC remains available only
 if isolated-target APO lifecycle or certification evidence fails.
+
+## Linux finite mock IPC (ADR 1516)
+
+Explicit `linux-host --mock-routes --mock-payload` composes repository mock
+subprocesses over separate bounded Unix-local datagrams. The generic envelope and
+queue validate one test token before the Sink reports receipt metadata. No payload
+uses JSON-RPC in this mode. This experimental finite synthetic fixture is not
+production transport/media; actual IPC acceptance remains unverified.

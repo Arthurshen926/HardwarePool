@@ -2378,3 +2378,10 @@ Stop failure. These prove lifecycle composition, not sample transfer or hardware
 The cloud environment lacks usable descendant `/proc` inventory; external PID-tree
 cleanup was not independently observed. The existing Sidecar owner performs
 kill/wait cleanup; arbitrary hostile child deadlines remain outside this scope.
+
+ADR 1516's finite Linux payload tests require Unix-domain socket creation. Build
+both mock binaries, then run `cargo test -p capyio-mock-source -p capyio-linux-host
+-p capyio-node --all-targets`. Socket transfer, missing-peer timeout, oversized
+record rejection and real subprocess receipt/cleanup tests remain mandatory.
+Sandbox EPERM is an unmet prerequisite, never a passing test or lifecycle proof
+of payload delivery. Socket-free parser/receipt tests can be reported separately.

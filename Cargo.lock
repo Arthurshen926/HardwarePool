@@ -598,6 +598,7 @@ dependencies = [
  "capyio-adapter-host",
  "capyio-adapter-sdk",
  "capyio-core",
+ "capyio-mock-source",
  "capyio-runtime",
  "capyio-testkit",
  "serde",
@@ -636,6 +637,7 @@ version = "0.1.0"
 dependencies = [
  "capyio-adapter-sdk",
  "capyio-core",
+ "capyio-data-plane",
  "serde",
  "serde_json",
 ]
