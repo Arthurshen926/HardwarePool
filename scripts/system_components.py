@@ -2,7 +2,10 @@
 import argparse
 import hashlib
 import json
-from pathlib import Path
+import os
+import re
+import stat
+from pathlib import Path, PurePosixPath, PureWindowsPath
 
 ROOT = Path(__file__).resolve().parents[1]
 OPERATIONS = ('check', 'verify', 'install', 'upgrade', 'rollback', 'remove')
@@ -32,20 +35,72 @@ def load_model(path):
     return model
 
 
+def is_link(path):
+    attributes = path.lstat()
+    return (stat.S_ISLNK(attributes.st_mode)
+            or bool(getattr(attributes, 'st_file_attributes', 0)
+                    & getattr(stat, 'FILE_ATTRIBUTE_REPARSE_POINT', 0)))
+
+
+def bundle_files(root):
+    """Inventory ordinary files without descending into directory links."""
+    files = set()
+    def failed_walk(error):
+        raise error
+    for directory, directories, names in os.walk(root, followlinks=False, onerror=failed_walk):
+        for name in directories + names:
+            path = Path(directory) / name
+            if is_link(path):
+                raise ValueError('Bundle cannot contain links')
+            if name in names:
+                if not path.is_file():
+                    raise ValueError('Bundle entries must be ordinary files')
+                files.add(path.relative_to(root).as_posix())
+    return files
+
+
 def inspect_bundle(root):
+    if is_link(root) or not root.is_dir():
+        raise ValueError('Bundle root must be an ordinary directory')
+    root = root.resolve()
+    actual_files = bundle_files(root)
     manifest = json.loads((root / 'manifest.json').read_text(encoding='utf-8-sig'))
     if manifest.get('schemaVersion') != 3:
         raise ValueError('Expected schema-v3 application bundle')
+    entries = manifest.get('artifacts')
+    if not isinstance(entries, list) or not entries:
+        raise ValueError('Expected a nonempty artifact inventory')
     records = {}
-    for entry in manifest['artifacts']:
-        name = entry['file']
-        path = (root / name).resolve()
-        if not path.is_relative_to(root.resolve()) or name in records:
+    seen = {'manifest.json'}
+    for entry in entries:
+        if not isinstance(entry, dict):
+            raise ValueError('Invalid artifact record')
+        name = entry.get('file')
+        if (not isinstance(name, str) or not name or '\\' in name or ':' in name
+                or '\x00' in name or PurePosixPath(name).is_absolute()
+                or PureWindowsPath(name).drive or PurePosixPath(name).as_posix() != name
+                or any(part in ('.', '..') for part in name.split('/'))
+                or name.casefold() in seen):
             raise ValueError('Unsafe or duplicate artifact path')
-        expected = entry['sha256'].lower()
-        actual = hashlib.sha256(path.read_bytes()).hexdigest() if path.is_file() else None
+        seen.add(name.casefold())
+        path = root / name
+        expected = entry.get('sha256')
+        size = entry.get('bytes')
+        if (not isinstance(expected, str) or not re.fullmatch(r'[0-9a-fA-F]{64}', expected)
+                or type(size) is not int or size < 0):
+            raise ValueError('Invalid artifact size or SHA256')
+        expected = expected.lower()
+        actual = None
+        size_matches = False
+        if name in actual_files:
+            size_matches = path.stat().st_size == size
+            with path.open('rb') as stream:
+                actual = hashlib.file_digest(stream, 'sha256').hexdigest()
         records[name] = {'expectedSha256': expected, 'actualSha256': actual,
-                         'state': 'verified' if actual == expected else 'mismatch' if actual else 'missing'}
+                         'state': 'verified' if actual == expected and size_matches
+                         else 'mismatch' if actual else 'missing'}
+    if actual_files - {'manifest.json'} - records.keys():
+        raise ValueError('Bundle contains unlisted files')
     return manifest, records
 
 

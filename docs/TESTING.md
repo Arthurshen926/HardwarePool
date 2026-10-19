@@ -7,6 +7,18 @@ They use temporary fixture files, do not build/install packages or contact devic
 and need no Windows service or Android SDK. Keep tests under this pattern portable;
 physical deployment checks remain separate explicitly invoked scripts.
 
+The component inventory fixtures additionally reject empty/malformed inventories,
+unlisted files, duplicate/case-aliased and escaping paths, linked roots/manifests/
+files/directories, and size/hash mismatches. Missing files remain explicit rather
+than verifying an empty set. A valid nested schema-v3 inventory with uppercase
+hashes still passes. Symbolic-link tests report a skip on hosts that cannot create
+fixture links; that skip is not evidence of Windows junction enforcement. These
+tests never execute payloads and do not replace the Windows package-shape gate.
+Portable synthetic Windows reparse-attribute tests cover the Python 3.11-compatible
+check and rejection before any manifest/payload read. A Windows-only test creates
+and removes a junction between temporary directories; non-Windows hosts explicitly
+skip this real-junction case rather than claiming Windows filesystem evidence.
+
 `scripts/test_local_debug_installer.ps1` checks the real file-only NSIS installer
 with fake payloads in an isolated workspace target: installation, overwrite refusal,
 recoverable removal and restore. It does not execute payloads or deploy system
