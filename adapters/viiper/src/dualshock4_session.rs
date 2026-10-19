@@ -145,6 +145,9 @@ pub struct ViiperDs4Worker {
     motion_tracker: InputSequenceTracker,
     latest_controls: GamepadControls,
     latest_motion: ViiperDs4MotionState,
+    partial_feedback_since: Option<Instant>,
+    feedback_buffer: [u8; VIIPER_DS4_FEEDBACK_BYTES],
+    feedback_received: usize,
     state: ViiperDs4WorkerState,
 }
 
@@ -223,6 +226,9 @@ impl ViiperLoopbackClient {
                 motion_tracker,
                 latest_controls: GamepadControls::neutral(),
                 latest_motion: ViiperDs4MotionState::stationary(),
+                partial_feedback_since: None,
+                feedback_buffer: [0; VIIPER_DS4_FEEDBACK_BYTES],
+                feedback_received: 0,
                 state: ViiperDs4WorkerState::Running,
             })
         })();
@@ -355,47 +361,77 @@ impl ViiperDs4Worker {
         Ok(())
     }
 
-    pub fn poll_feedback(&mut self) -> Result<Option<ViiperDs4Feedback>, ViiperDs4SessionError> {
+    /// Nonblocking, fixed-size feedback assembly. Partial TCP records survive
+    /// between calls without holding up forward input.
+    pub fn try_poll_feedback(
+        &mut self,
+    ) -> Result<Option<ViiperDs4Feedback>, ViiperDs4SessionError> {
         if !matches!(
             self.state,
             ViiperDs4WorkerState::Running | ViiperDs4WorkerState::Exhausted
         ) {
             return Err(ViiperDs4SessionError::WorkerNotRunning(self.state));
         }
-        let deadline = Instant::now() + self.client.config().io_timeout();
-        let mut report = [0_u8; VIIPER_DS4_FEEDBACK_BYTES];
-        let mut received = 0;
-        while received < report.len() {
-            let remaining = match deadline
-                .checked_duration_since(Instant::now())
-                .filter(|remaining| !remaining.is_zero())
-            {
-                Some(remaining) => remaining,
-                None if received == 0 => return Ok(None),
-                None => return self.truncated_feedback(received),
-            };
-            if let Err(error) = self.stream_mut()?.set_read_timeout(Some(remaining)) {
+        if self
+            .partial_feedback_since
+            .is_some_and(|since| since.elapsed() >= self.client.config().io_timeout())
+        {
+            return self.truncated_feedback(self.feedback_received);
+        }
+        let mut report = self.feedback_buffer;
+        let offset = self.feedback_received;
+        if let Err(error) = self.stream_mut()?.set_nonblocking(true) {
+            self.fail_stream();
+            return Err(ViiperDs4SessionError::StreamConfiguration(
+                error.to_string(),
+            ));
+        }
+        let available = self.stream_mut()?.read(&mut report[offset..]);
+        if let Err(error) = self.stream_mut()?.set_nonblocking(false) {
+            self.fail_stream();
+            return Err(ViiperDs4SessionError::StreamConfiguration(
+                error.to_string(),
+            ));
+        }
+        match available {
+            Ok(0) => {
                 self.fail_stream();
-                return Err(ViiperDs4SessionError::StreamConfiguration(
-                    error.to_string(),
-                ));
+                Err(ViiperDs4SessionError::StreamPeerClosed)
             }
-            match self.stream_mut()?.read(&mut report[received..]) {
-                Ok(0) if received == 0 => {
-                    self.fail_stream();
-                    return Err(ViiperDs4SessionError::StreamPeerClosed);
+            Ok(count) => {
+                self.feedback_buffer = report;
+                self.feedback_received += count;
+                if self.feedback_received == report.len() {
+                    self.feedback_received = 0;
+                    self.partial_feedback_since = None;
+                    return Ok(Some(decode_dualshock4_feedback(&report)?));
                 }
-                Ok(0) => return self.truncated_feedback(received),
-                Ok(count) => received += count,
-                Err(error) if is_timeout(&error) && received == 0 => return Ok(None),
-                Err(error) if is_timeout(&error) => return self.truncated_feedback(received),
-                Err(error) => {
-                    self.fail_stream();
-                    return Err(ViiperDs4SessionError::StreamRead(error.to_string()));
-                }
+                self.partial_feedback_since.get_or_insert_with(Instant::now);
+                Ok(None)
+            }
+            Err(error) if is_timeout(&error) => Ok(None),
+            Err(error) => {
+                self.fail_stream();
+                Err(ViiperDs4SessionError::StreamRead(error.to_string()))
             }
         }
-        Ok(Some(decode_dualshock4_feedback(&report)?))
+    }
+
+    pub fn poll_feedback(&mut self) -> Result<Option<ViiperDs4Feedback>, ViiperDs4SessionError> {
+        let deadline = Instant::now() + self.client.config().io_timeout();
+        loop {
+            if let Some(feedback) = self.try_poll_feedback()? {
+                return Ok(Some(feedback));
+            }
+            if Instant::now() >= deadline {
+                return if self.feedback_received == 0 {
+                    Ok(None)
+                } else {
+                    self.truncated_feedback(self.feedback_received)
+                };
+            }
+            std::thread::sleep(std::time::Duration::from_millis(1));
+        }
     }
 
     pub fn stop(&mut self) -> Result<(), ViiperDs4StopError> {

@@ -30,10 +30,11 @@ requirements, so only the cross-platform presentation pattern is adopted.
 3. The Node Runtime or platform-managed service owns hardware enumeration,
    permissions and long-running Routes. Closing an Activity or desktop window
    must not define Node lifetime.
-4. `UiSnapshot` schema 4 projects a Runtime capability catalog for both the
+4. `UiSnapshot` schema 5 projects a Runtime capability catalog for both the
    local Node and connected peers. It includes Capability availability,
-   permission requirement and typed Source/Sink/Control Ports. Fixture-backed
-   catalogs and selections remain visibly marked simulated.
+   permission requirement, typed Source/Sink/Control Ports and a schema-v1
+   control-plane readiness record. Fixture-backed catalogs and selections
+   remain visibly marked simulated.
 5. The UI has two task areas: **local capabilities** and **peer capabilities**.
    These are not global sender/receiver roles. A local Source may be selected
    for publication, a local Sink remains a possible Route target, and the same

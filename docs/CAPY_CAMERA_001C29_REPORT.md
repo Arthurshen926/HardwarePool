@@ -34,12 +34,12 @@ the camera.
 - `cargo xtask ci`: PASS.
 - `python scripts/validate_repository.py`: PASS.
 - APK manifest permissions inspected with Android build-tools `aapt2`: PASS.
-- ADB target `100.66.157.119:35491` authenticated as product PD2419, model
+- ADB target `<LAB_IPV4_03>:35491` authenticated as product PD2419, model
   V2419A, device PD2419.
 
-The initial pairing attempt against `100.66.157.119:41071` returned an ADB
+The initial pairing attempt against `<LAB_IPV4_03>:41071` returned an ADB
 protocol fault, but the previously paired authenticated connect endpoint
-`100.66.157.119:35491` was already online. No pairing material was written to
+`<LAB_IPV4_03>:35491` was already online. No pairing material was written to
 the repository.
 
 ## Pending physical evidence

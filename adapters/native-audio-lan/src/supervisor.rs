@@ -12,6 +12,7 @@ use thiserror::Error;
 
 const SPEAKER_READY_PREFIX: &[u8] = b"native_virtual_speaker=true ";
 const MICROPHONE_READY_PREFIX: &[u8] = b"native_virtual_microphone=true ";
+const MICROPHONE_ROUTE_READY_PREFIX: &[u8] = b"native_virtual_microphone_route_v1=true ";
 const MAX_READY_LINE_BYTES: usize = 1_024;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -71,6 +72,35 @@ pub struct NativeSpeakerSupervisor {
 }
 
 impl NativeSpeakerSupervisor {
+    pub fn start_route(
+        &mut self,
+        binding: &crate::NativeLanRouteBinding,
+        route: &capyio_core::Route,
+        session: &capyio_core::Session,
+        now_ms: u64,
+    ) -> Result<u32, NativeSpeakerSupervisorError> {
+        self.start_route_at(self.local, self.peer, binding, route, session, now_ms)
+    }
+
+    /// Per-Route endpoints do not mutate the administrator's legacy configuration.
+    pub fn start_route_at(
+        &mut self,
+        local: SocketAddrV4,
+        peer: SocketAddrV4,
+        binding: &crate::NativeLanRouteBinding,
+        route: &capyio_core::Route,
+        session: &capyio_core::Session,
+        now_ms: u64,
+    ) -> Result<u32, NativeSpeakerSupervisorError> {
+        binding
+            .require_live_context(route, session, now_ms)
+            .map_err(|_| NativeSpeakerSupervisorError::InvalidRouteBinding)?;
+        let args = crate::NativeMicrophoneLaunch::speaker_route_arguments(local, peer, binding)
+            .map_err(|_| NativeSpeakerSupervisorError::InvalidRouteBinding)?;
+        crate::NativeMicrophoneLaunch::parse_speaker(&args, now_ms)
+            .map_err(|_| NativeSpeakerSupervisorError::InvalidRouteBinding)?;
+        self.start_with_arguments(&args, b"native_virtual_speaker_route_v1=true ")
+    }
     pub fn new(
         executable: impl Into<PathBuf>,
         local: SocketAddrV4,
@@ -120,6 +150,17 @@ impl NativeSpeakerSupervisor {
     }
 
     pub fn start(&mut self) -> Result<u32, NativeSpeakerSupervisorError> {
+        self.start_with_arguments(
+            &[self.local.to_string(), self.peer.to_string()],
+            self.ready_prefix,
+        )
+    }
+
+    fn start_with_arguments(
+        &mut self,
+        arguments: &[String],
+        ready_prefix: &'static [u8],
+    ) -> Result<u32, NativeSpeakerSupervisorError> {
         if matches!(
             self.status()?,
             NativeSpeakerSupervisorStatus::Running { .. }
@@ -129,7 +170,7 @@ impl NativeSpeakerSupervisor {
         self.terminal_exit = None;
         let mut command = Command::new(&self.executable);
         command
-            .args([self.local.to_string(), self.peer.to_string()])
+            .args(arguments)
             .stdin(Stdio::null())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped());
@@ -146,7 +187,6 @@ impl NativeSpeakerSupervisor {
         let (ready_tx, ready_rx) = mpsc::channel();
         let (startup_error_tx, startup_error_rx) = mpsc::channel();
         let output_limit = self.limits.process_output_bytes;
-        let ready_prefix = self.ready_prefix;
         let stdout_name = format!("{}-stdout", self.reader_thread_prefix);
         let stderr_name = format!("{}-stderr", self.reader_thread_prefix);
         let stdout = thread::Builder::new()
@@ -285,6 +325,39 @@ impl NativeMicrophoneSupervisor {
 
     pub fn start(&mut self) -> Result<u32, NativeSpeakerSupervisorError> {
         self.0.start()
+    }
+
+    /// Internal controlled-lab handoff. The owner still validates negotiated
+    /// formats, authenticated peer address and local leases, and calls stop on
+    /// revocation/disconnect. Child readiness is not received-media evidence.
+    pub fn start_route(
+        &mut self,
+        binding: &crate::NativeLanRouteBinding,
+        route: &capyio_core::Route,
+        session: &capyio_core::Session,
+        now_ms: u64,
+    ) -> Result<u32, NativeSpeakerSupervisorError> {
+        self.start_route_at(self.0.local, self.0.peer, binding, route, session, now_ms)
+    }
+
+    pub fn start_route_at(
+        &mut self,
+        local: SocketAddrV4,
+        peer: SocketAddrV4,
+        binding: &crate::NativeLanRouteBinding,
+        route: &capyio_core::Route,
+        session: &capyio_core::Session,
+        now_ms: u64,
+    ) -> Result<u32, NativeSpeakerSupervisorError> {
+        binding
+            .require_live_context(route, session, now_ms)
+            .map_err(|_| NativeSpeakerSupervisorError::InvalidRouteBinding)?;
+        let args = crate::NativeMicrophoneLaunch::route_arguments(local, peer, binding)
+            .map_err(|_| NativeSpeakerSupervisorError::InvalidRouteBinding)?;
+        crate::NativeMicrophoneLaunch::parse(&args, now_ms)
+            .map_err(|_| NativeSpeakerSupervisorError::InvalidRouteBinding)?;
+        self.0
+            .start_with_arguments(&args, MICROPHONE_ROUTE_READY_PREFIX)
     }
 
     pub fn status(
@@ -427,6 +500,8 @@ fn configure_hidden_process(_command: &mut Command) {}
 
 #[derive(Debug, Error)]
 pub enum NativeSpeakerSupervisorError {
+    #[error("native microphone Route binding is stale, invalid or not mono PCM")]
+    InvalidRouteBinding,
     #[error("native speaker Broker executable is required")]
     MissingExecutable,
     #[error("native speaker endpoints must be distinct concrete IPv4 socket addresses")]
@@ -514,6 +589,25 @@ mod tests {
         )
         .unwrap();
         assert!(receiver.recv().unwrap().is_err());
+
+        let (sender, receiver) = mpsc::channel();
+        read_stdout(
+            &b"native_virtual_microphone=true local=127.0.0.1:1\n"[..],
+            1024,
+            MICROPHONE_ROUTE_READY_PREFIX,
+            sender,
+        )
+        .unwrap();
+        assert!(receiver.recv().unwrap().is_err());
+        let (sender, receiver) = mpsc::channel();
+        read_stdout(
+            &b"native_virtual_microphone_route_v1=true local=127.0.0.1:1\n"[..],
+            1024,
+            MICROPHONE_ROUTE_READY_PREFIX,
+            sender,
+        )
+        .unwrap();
+        assert!(receiver.recv().unwrap().is_ok());
     }
 
     #[test]

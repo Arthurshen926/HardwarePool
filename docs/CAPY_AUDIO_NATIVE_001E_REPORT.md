@@ -71,7 +71,7 @@ current Windows Tailscale peer, phone UDP port 46000, Windows UDP source port
    ten seconds. The Android UI still reported zero processed frames.
 4. A second early three-second run emitted 300 packets / 600 datagrams. A Tailscale
    capture contained exactly 600 inner UDP datagrams from
-   `100.66.231.100:46001` to `100.66.157.119:46000`; Android was listening on
+   `<LAB_IPV4_04>:46001` to `<LAB_IPV4_03>:46000`; Android was listening on
    UDP 46000, but the UI still reported zero frames.
 5. After ADB reconnection, 0.3.1-dev diagnostics proved that all 500 packets
    completed reassembly but a 32-entry playback queue dropped 44 packets.

@@ -1,6 +1,7 @@
 use std::{
-    collections::BTreeSet,
-    net::IpAddr,
+    collections::{BTreeMap, BTreeSet},
+    io::ErrorKind,
+    net::{IpAddr, SocketAddr, TcpListener},
     str::FromStr,
     sync::{
         Arc, Mutex,
@@ -12,15 +13,25 @@ use std::{
 };
 
 use capyio_control_host::project_publication_catalog;
+use capyio_control_link::{CatalogControlLink, ReceivedControlMessage};
+use capyio_control_tls::{
+    AuthenticatedControlClientChannel, AuthenticatedControlServer,
+    AuthenticatedControlServerChannel, ControlTlsClientIdentity, ControlTlsEndpoint,
+    ControlTlsError, ControlTlsNodeBinding, ControlTlsServerIdentity,
+};
 use capyio_core::{
-    AdapterDeploymentMode, Availability, CapabilityClass, CapabilityId, NodeDescriptor,
-    OnlineState, PermissionRequirement, PortDirection, PortRef, QosMode, Route, RouteId,
-    RouteState, SessionId,
+    AdapterDeploymentMode, AuthorizationState, Availability, CapabilityClass, CapabilityId,
+    MessageId, NodeDescriptor, NodeId, OnlineState, PermissionRequirement, PortDirection, PortRef,
+    QosMode, Route, RouteBackend, RouteId, RouteState, SessionId,
 };
 use capyio_data_plane::{
     BoundedFanout, BoundedJsonlRecorder, ImuSampleV1, NumericImuPanel, RecorderOutcome,
     parse_imu_fixture_jsonl,
 };
+use capyio_discovery::DiscoveryIngress;
+use capyio_discovery_udp::{DiscoveryReceive, DiscoveryUdpSocket};
+use capyio_pairing::{CandidateTrust, PairedControlCandidate, PairedPeerDirectory, PairingState};
+use capyio_protocol::{PortLeaseAction, PortLeaseOutcome, RouteCommandAction};
 use capyio_runtime::NodeRuntime;
 use capyio_sensor_server_adapter::{
     AssembleOutcome, SensorKind, SensorServerConnectionConfig, SensorServerEndpoint,
@@ -28,20 +39,50 @@ use capyio_sensor_server_adapter::{
     SensorServerWebSocketClient,
 };
 use capyio_testkit::{DemoLab, DemoRoutes};
+use capyio_windows_pairing_store::WindowsPairingStore;
 use serde::{Deserialize, Serialize};
-use tauri::State;
 
 mod android_gamepad;
 mod android_receivers;
 pub mod audio_share_runtime;
+#[cfg(windows)]
+mod background_host;
+mod camera_route;
 mod camera_session;
+mod control_exchange;
+mod control_worker;
+mod controller_control;
+mod controller_permission;
+mod controller_settings;
+mod controller_workflow;
+mod desktop_host;
+mod desktop_identity;
 mod diagnostics;
 mod display_control;
+mod display_workflow;
+mod fileless_pairing;
 mod gamepad_lab;
+mod haptics_data;
+mod host_commands;
+mod input_routes;
+mod media_lab_endpoints;
 mod microphone_quick_action;
 pub mod micyou_runtime;
+mod native_audio_route;
+mod network_interfaces;
+#[cfg(windows)]
+mod node_process;
+mod paired_control_listener;
+mod pairing_enrollment;
 mod physical_imu_runtime;
 mod quick_actions;
+mod remote_resource_contract;
+mod route_port_leases;
+mod route_readiness;
+mod route_status_inbox;
+mod route_use_coordinator;
+mod touchpad_data;
+mod touchpad_lease;
 mod windows_gamepad_host;
 
 use gamepad_lab::{GamepadLab, UiGamepadState, UpdateGamepadRequest};
@@ -72,25 +113,366 @@ pub fn run_camera_broker_host(requesting_user_sid: &str) -> Result<(), String> {
     )
 }
 
+/// Headless counterpart of the Settings action for lab automation and
+/// accessibility tooling. It prints/returns only the invitation path.
+pub fn create_pairing_invitation_cli(
+    target_node_id: &str,
+    target_display_name: &str,
+) -> Result<std::path::PathBuf, String> {
+    pairing_invitation_cli(target_node_id, target_display_name, false)
+}
+
+/// Explicit owner-requested recovery. Uses the same old-credential DPAPI check
+/// as Settings; it never adopts a certificate observed on the network.
+pub fn renew_pairing_invitation_cli(
+    target_node_id: &str,
+    target_display_name: &str,
+) -> Result<std::path::PathBuf, String> {
+    pairing_invitation_cli(target_node_id, target_display_name, true)
+}
+
+fn pairing_invitation_cli(
+    target_node_id: &str,
+    target_display_name: &str,
+    renew: bool,
+) -> Result<std::path::PathBuf, String> {
+    let node = DesktopNodeState::production()?;
+    let snapshot = node.runtime.snapshot();
+    let local_node_id = snapshot.local_node.id;
+    let mut control = DesktopControlPlaneState::new(local_node_id)?;
+    control.attach_default_pairing_store(local_node_id);
+    pairing_enrollment::create_invitation(
+        &mut control,
+        local_node_id,
+        &snapshot.local_node.display_name,
+        NodeId::from_str(target_node_id)
+            .map_err(|_| "target Node ID must be a canonical UUID".to_owned())?,
+        target_display_name,
+        renew,
+    )
+}
+
+/// Performs one bounded authenticated catalog exchange and heartbeat without
+/// starting any hardware Route. Intended for installer/lab diagnostics.
+pub fn verify_paired_control_endpoint_cli(
+    target_node_id: &str,
+    host: &str,
+    port: u16,
+) -> Result<usize, String> {
+    let peer_id = NodeId::from_str(target_node_id)
+        .map_err(|_| "target Node ID must be a canonical UUID".to_owned())?;
+    let address = SocketAddr::new(
+        IpAddr::from_str(host).map_err(|_| "control host must be a numeric IP".to_owned())?,
+        port,
+    );
+    if port == 0 || address.ip().is_unspecified() || address.ip().is_multicast() {
+        return Err("control endpoint is invalid".to_owned());
+    }
+    let mut node = DesktopNodeState::production()?;
+    let local_node_id = node.runtime.snapshot().local_node.id;
+    let mut control = DesktopControlPlaneState::new(local_node_id)?;
+    control.attach_default_pairing_store(local_node_id);
+    let plan = control.resolve_manual_control_dial(peer_id, address)?;
+    let channel = connect_authenticated_control_channel(peer_id, local_node_id, &plan)?;
+    let mut link =
+        CatalogControlLink::admit_dialed_peer(&mut node.runtime, channel, plan.display_name)
+            .map_err(|error| error.to_string())?;
+    let prepared = link
+        .prepare_catalog(&node.runtime, &BTreeSet::new())
+        .map_err(|error| error.to_string())?;
+    link.send_catalog(prepared)
+        .map_err(|error| error.to_string())?;
+    let catalog = link.receive_catalog().map_err(|error| error.to_string())?;
+    link.apply_catalog(&mut node.runtime, catalog)
+        .map_err(|error| error.to_string())?;
+    link.send_heartbeat(1, false)
+        .map_err(|error| error.to_string())?;
+    receive_probe_heartbeat(|| {
+        link.receive_control_message()
+            .map_err(|error| error.to_string())
+    })?;
+    let count = node
+        .runtime
+        .snapshot()
+        .peers
+        .iter()
+        .find(|peer| peer.id == peer_id)
+        .map(|peer| peer.capabilities.len())
+        .ok_or_else(|| "authenticated peer catalog is absent".to_owned())?;
+    link.close_and_reconcile(&mut node.runtime)
+        .map_err(|error| error.to_string())?;
+    Ok(count)
+}
+
+/// One bounded inbound control diagnostic for a specifically paired peer.
+/// It never starts a hardware Route and does not own the desktop app lifecycle.
+pub fn verify_paired_control_listener_cli(
+    target_node_id: &str,
+    bind_host: &str,
+    port: u16,
+    on_listening: impl FnOnce(SocketAddr),
+) -> Result<usize, String> {
+    paired_control_listener::verify_once(target_node_id, bind_host, port, on_listening)
+}
+
+/// Physical alpha gate for the unified remote-resource action. It performs the
+/// same authenticated catalog, Route proposal, owner lease, Start, Stop and
+/// release sequence as the desktop UI, but never configures a feature data
+/// endpoint or installs a driver.
+pub fn verify_paired_route_endpoint_cli(
+    target_node_id: &str,
+    host: &str,
+    port: u16,
+    capability_id: &str,
+) -> Result<RouteId, String> {
+    verify_paired_route_endpoint(target_node_id, host, port, capability_id, false, 0)
+}
+
+/// Bounded consent gate; waits for the real owner UI and never starts a data Adapter.
+pub fn verify_paired_touchpad_consent_cli(
+    target_node_id: &str,
+    host: &str,
+    port: u16,
+) -> Result<RouteId, String> {
+    verify_paired_route_endpoint(target_node_id, host, port, "touchpad", true, 0)
+}
+
+/// Explicit physical gate; real input opens only after local preflight and
+/// the tablet owner's visible consent. No driver deployment is performed.
+pub fn verify_paired_touchpad_data_cli(
+    node: &str,
+    host: &str,
+    port: u16,
+) -> Result<RouteId, String> {
+    verify_paired_route_endpoint(node, host, port, "touchpad", true, 15)
+}
+
+/// Fixed-duration physical renewal gate, longer than the original five-minute lease.
+pub fn verify_paired_touchpad_soak_cli(
+    node: &str,
+    host: &str,
+    port: u16,
+) -> Result<RouteId, String> {
+    verify_paired_route_endpoint(node, host, port, "touchpad", true, 370)
+}
+
+fn verify_paired_route_endpoint(
+    target_node_id: &str,
+    host: &str,
+    port: u16,
+    capability_id: &str,
+    wait_for_consent: bool,
+    data_seconds: u64,
+) -> Result<RouteId, String> {
+    let real_data = data_seconds != 0;
+    let peer_id = NodeId::from_str(target_node_id)
+        .map_err(|_| "target Node ID must be a canonical UUID".to_owned())?;
+    let capability_selector = capability_id.to_owned();
+    let address = SocketAddr::new(
+        IpAddr::from_str(host).map_err(|_| "control host must be a numeric IP".to_owned())?,
+        port,
+    );
+    if port == 0 || address.ip().is_unspecified() || address.ip().is_multicast() {
+        return Err("control endpoint is invalid".to_owned());
+    }
+    let mut node = DesktopNodeState::production()?;
+    if real_data {
+        touchpad_data::preflight_projection()?;
+        touchpad_data::install_catalog(&mut node.runtime)?;
+    }
+    if wait_for_consent && !real_data {
+        // Diagnostic-only simulated Sink; never changes ordinary desktop inventory.
+        let mut catalog = node.runtime.snapshot().local_node;
+        let capability = catalog
+            .capabilities
+            .values_mut()
+            .find(|c| c.class == CapabilityClass::Touchpad)
+            .ok_or("touchpad consent fixture missing")?;
+        for port in capability.ports.values_mut() {
+            port.interoperability_mode = capyio_core::InteroperabilityMode::AdapterManaged;
+        }
+        catalog
+            .adapter_instances
+            .get_mut(&capability.adapter_instance_id)
+            .ok_or("fixture adapter missing")?
+            .supported_route_modes
+            .insert(RouteBackend::AdapterManaged);
+        node.runtime
+            .replace_local_catalog(catalog)
+            .map_err(|e| e.to_string())?;
+        println!("CAPYIO_CONSENT_FIXTURE sink=simulated input_injected=false");
+    }
+    let local_node_id = node.runtime.snapshot().local_node.id;
+    let mut control = DesktopControlPlaneState::new(local_node_id)?;
+    control.attach_default_pairing_store(local_node_id);
+    let plan = control.resolve_manual_control_dial(peer_id, address)?;
+    let bundle = plan
+        .store
+        .load_control_credential(&plan.candidate.credential_handle)
+        .map_err(|error| error.to_string())?;
+    let identity =
+        ControlTlsClientIdentity::from_bundle(plan.candidate.peer_certificate_sha256, bundle);
+    let channel = AuthenticatedControlClientChannel::connect_fresh_session(
+        ControlTlsEndpoint {
+            address,
+            io_timeout: Duration::from_secs(5),
+        },
+        &plan.candidate.server_name,
+        identity,
+        ControlTlsNodeBinding::new(peer_id, local_node_id).map_err(|error| error.to_string())?,
+    )
+    .map_err(|error| error.to_string())?;
+    let node = Arc::new(Mutex::new(node));
+    let mut link = {
+        let mut node_guard = node
+            .lock()
+            .map_err(|_| "Node state lock poisoned".to_owned())?;
+        CatalogControlLink::admit_dialed_peer(
+            &mut node_guard.runtime,
+            channel,
+            plan.display_name.clone(),
+        )
+        .map_err(|error| error.to_string())?
+    };
+    let prepared = {
+        let node_guard = node
+            .lock()
+            .map_err(|_| "Node state lock poisoned".to_owned())?;
+        link.prepare_catalog(&node_guard.runtime, &BTreeSet::new())
+            .map_err(|error| error.to_string())?
+    };
+    link.send_catalog(prepared)
+        .map_err(|error| error.to_string())?;
+    let catalog = link.receive_catalog().map_err(|error| error.to_string())?;
+    {
+        let mut node_guard = node
+            .lock()
+            .map_err(|_| "Node state lock poisoned".to_owned())?;
+        link.apply_catalog(&mut node_guard.runtime, catalog)
+            .map_err(|error| error.to_string())?;
+    }
+    let capability_id = {
+        let node_guard = node
+            .lock()
+            .map_err(|_| "Node state lock poisoned".to_owned())?;
+        let peer = node_guard
+            .runtime
+            .snapshot()
+            .peers
+            .into_iter()
+            .find(|peer| peer.id == peer_id)
+            .ok_or_else(|| "authenticated peer catalog is absent".to_owned())?;
+        CapabilityId::from_str(&capability_selector)
+            .ok()
+            .or_else(|| {
+                peer.capabilities.values().find_map(|capability| {
+                    (capability_class_label(&capability.class)
+                        .eq_ignore_ascii_case(&capability_selector)
+                        || capability
+                            .display_name
+                            .eq_ignore_ascii_case(&capability_selector))
+                    .then_some(capability.id)
+                })
+            })
+            .ok_or_else(|| "Capability selector is absent from the peer catalog".to_owned())?
+    };
+    let deadline = Instant::now() + Duration::from_secs(45);
+    let (route_id, remote_port, worker) = loop {
+        match start_remote_capability_route_with_data(
+            &mut link,
+            &node,
+            capability_id,
+            real_data.then_some(&plan),
+            None,
+            None,
+        ) {
+            Ok(Some(started)) => break started,
+            Ok(None) => {
+                if !wait_for_consent || Instant::now() >= deadline {
+                    return Err("等待本机资源所有者确认超时；未启动输入".into());
+                }
+                let pending_route = node
+                    .lock()
+                    .map_err(|_| "Node state lock poisoned".to_owned())?
+                    .runtime
+                    .snapshot()
+                    .routes
+                    .into_iter()
+                    .find(|route| {
+                        route.session_id == link.session_id()
+                            && route.source.capability_id == capability_id
+                            && route.state == RouteState::Draft
+                            && route.authorization == AuthorizationState::Pending
+                    })
+                    .ok_or("pending resource request disappeared")?;
+                println!(
+                    "CAPYIO_RESOURCE_CONSENT_PENDING route={} input_injected=false",
+                    pending_route.id
+                );
+                {
+                    let mut stdout = std::io::stdout();
+                    let _ = std::io::Write::flush(&mut stdout);
+                }
+                thread::sleep(Duration::from_secs(1));
+            }
+            Err(error) => return Err(error),
+        }
+    };
+    if real_data {
+        if worker.is_none() {
+            return Err("peer did not negotiate a real touchpad data connection".into());
+        }
+        println!("CAPYIO_TOUCHPAD_DATA_READY transport=mtls driver_installed=false");
+        for sequence in 1..=data_seconds {
+            thread::sleep(Duration::from_secs(1));
+            if worker.as_ref().is_none_or(|worker| worker.is_finished()) {
+                return Err("触控板数据接收器提前退出；不能判定实机验证通过".into());
+            }
+            if sequence % touchpad_lease::RENEW_INTERVAL.as_secs() == 0 {
+                touchpad_lease::renew(&mut link, &node, route_id, remote_port)?;
+                println!("CAPYIO_TOUCHPAD_LEASE_RENEWED elapsed_seconds={sequence}");
+            }
+            link.send_heartbeat(sequence, false)
+                .map_err(|e| e.to_string())?;
+            loop {
+                match link.receive_control_message().map_err(|e| e.to_string())? {
+                    ReceivedControlMessage::Heartbeat(heartbeat)
+                        if heartbeat.acknowledgement && heartbeat.sequence == sequence =>
+                    {
+                        break;
+                    }
+                    ReceivedControlMessage::Catalog(catalog) => {
+                        let mut node = node.lock().map_err(|_| "Node lock poisoned")?;
+                        link.apply_catalog(&mut node.runtime, catalog)
+                            .map_err(|e| e.to_string())?;
+                    }
+                    ReceivedControlMessage::Heartbeat(heartbeat) if !heartbeat.acknowledgement => {
+                        link.send_heartbeat(heartbeat.sequence, true)
+                            .map_err(|e| e.to_string())?;
+                    }
+                    _ => return Err("unexpected physical gate control response".into()),
+                }
+            }
+        }
+    }
+    stop_remote_capability_route(&mut link, &node, route_id, remote_port)?;
+    drop(worker);
+    {
+        let mut node_guard = node
+            .lock()
+            .map_err(|_| "Node state lock poisoned".to_owned())?;
+        link.close_and_reconcile(&mut node_guard.runtime)
+            .map_err(|error| error.to_string())?;
+    }
+    Ok(route_id)
+}
+
 #[cfg(not(windows))]
 pub fn run_camera_broker_host(_requesting_user_sid: &str) -> Result<(), String> {
     Err("camera Broker host requires Windows".to_owned())
 }
 
-struct AppState {
-    node: Arc<Mutex<DesktopNodeState>>,
-    local_shared_capabilities: Mutex<BTreeSet<CapabilityId>>,
-    physical_imu: PhysicalImuRoute,
-    live_imu: Arc<Mutex<UiLiveImu>>,
-    live_imu_controller: Mutex<Option<LiveImuController>>,
-    gamepad_lab: Arc<Mutex<GamepadLab>>,
-    gamepad_worker: GamepadProjectionWorker,
-    windows_gamepad_preflight_running: AtomicBool,
-    audio_share: Arc<Mutex<AudioShareQuickAction>>,
-    microphone: Arc<Mutex<MicrophoneQuickAction>>,
-    audio_worker: AudioQuickActionWorker,
-    android_receivers: Mutex<android_receivers::AndroidReceiverActions>,
-}
+struct HostState(Arc<desktop_host::DesktopHost>);
 
 /// Process-owned Node state. `DemoLab` is only a deterministic bootstrap source;
 /// long-lived platform workers and future authenticated control connections share
@@ -101,7 +483,208 @@ struct DesktopNodeState {
     demo_routes: DemoRoutes,
 }
 
+/// Host-owned control-plane inventory. Socket listeners, OS credential loading
+/// and authenticated connections will update this owner in later slices; the
+/// UI only receives its bounded observation snapshot.
+struct DesktopControlPlaneState {
+    clock: Instant,
+    discovery_ingress: DiscoveryIngress,
+    paired_peers: PairedPeerDirectory,
+    discovery_listening: bool,
+    credential_store_ready: bool,
+    credential_store_failed: bool,
+    authenticated_connection_count: usize,
+    catalog_exchange_active: bool,
+    pairing_store: Option<WindowsPairingStore>,
+}
+
+struct ResolvedControlDial {
+    candidate: PairedControlCandidate,
+    display_name: String,
+    store: WindowsPairingStore,
+}
+
+impl DesktopControlPlaneState {
+    fn new(local_node_id: capyio_core::NodeId) -> Result<Self, String> {
+        Ok(Self {
+            clock: Instant::now(),
+            discovery_ingress: DiscoveryIngress::new(local_node_id)
+                .map_err(|error| error.to_string())?,
+            paired_peers: PairedPeerDirectory::new(local_node_id)
+                .map_err(|error| error.to_string())?,
+            discovery_listening: false,
+            credential_store_ready: false,
+            credential_store_failed: false,
+            authenticated_connection_count: 0,
+            catalog_exchange_active: false,
+            pairing_store: None,
+        })
+    }
+
+    fn attach_pairing_store(&mut self, store: WindowsPairingStore) -> Result<(), String> {
+        let directory = store.load_directory().map_err(|error| error.to_string())?;
+        self.paired_peers = directory;
+        self.pairing_store = Some(store);
+        self.credential_store_ready = true;
+        self.credential_store_failed = false;
+        Ok(())
+    }
+
+    fn attach_default_pairing_store(&mut self, local_node_id: capyio_core::NodeId) {
+        let result = WindowsPairingStore::default_for_user(local_node_id)
+            .map_err(|error| error.to_string())
+            .and_then(|store| self.attach_pairing_store(store));
+        if result.is_err() {
+            self.credential_store_ready = false;
+            self.credential_store_failed = true;
+            self.pairing_store = None;
+        }
+    }
+
+    fn refresh_pairing_directory(&mut self) -> Result<(), String> {
+        let store = self
+            .pairing_store
+            .clone()
+            .ok_or_else(|| "pairing credential store is unavailable".to_owned())?;
+        match store.load_directory() {
+            Ok(directory) => {
+                self.paired_peers = directory;
+                self.credential_store_ready = true;
+                self.credential_store_failed = false;
+                Ok(())
+            }
+            Err(error) => {
+                self.credential_store_ready = false;
+                self.credential_store_failed = true;
+                // Never dial with cached trust after a failed refresh.
+                Err(format!("pairing directory refresh failed: {error}"))
+            }
+        }
+    }
+
+    fn resolve_control_dial(
+        &mut self,
+        peer_id: NodeId,
+        now_ms: u64,
+    ) -> Result<ResolvedControlDial, String> {
+        self.refresh_pairing_directory()?;
+        self.discovery_ingress.expire(now_ms);
+        let candidate = self
+            .discovery_ingress
+            .candidates()
+            .find(|candidate| candidate.node_id == peer_id)
+            .copied()
+            .ok_or_else(|| "selected discovery candidate is absent or expired".to_owned())?;
+        let CandidateTrust::Paired(candidate) = self.paired_peers.classify(candidate, now_ms)
+        else {
+            return Err("selected discovery candidate is not actively paired".to_owned());
+        };
+        let display_name = self
+            .paired_peers
+            .peers()
+            .find(|peer| peer.node_id == peer_id)
+            .map(|peer| peer.display_name.clone())
+            .ok_or_else(|| "paired peer metadata is unavailable".to_owned())?;
+        let store = self
+            .pairing_store
+            .clone()
+            .ok_or_else(|| "pairing credential store is unavailable".to_owned())?;
+        Ok(ResolvedControlDial {
+            candidate,
+            display_name,
+            store,
+        })
+    }
+
+    fn resolve_manual_control_dial(
+        &mut self,
+        peer_id: NodeId,
+        endpoint: SocketAddr,
+    ) -> Result<ResolvedControlDial, String> {
+        self.refresh_pairing_directory()?;
+        let peer = self
+            .paired_peers
+            .peers()
+            .find(|peer| peer.node_id == peer_id)
+            .ok_or_else(|| "manual endpoint belongs to an unpaired Node".to_owned())?;
+        if !matches!(peer.state, PairingState::Active) {
+            return Err("manual endpoint belongs to a revoked Node".to_owned());
+        }
+        let store = self
+            .pairing_store
+            .clone()
+            .ok_or_else(|| "pairing credential store is unavailable".to_owned())?;
+        Ok(ResolvedControlDial {
+            candidate: PairedControlCandidate {
+                node_id: peer_id,
+                endpoint,
+                server_name: peer.server_name.clone(),
+                credential_handle: peer.credential_handle.clone(),
+                peer_certificate_sha256: peer.peer_certificate_sha256,
+                instance_nonce: 0,
+            },
+            display_name: peer.display_name.clone(),
+            store,
+        })
+    }
+}
+
 impl DesktopNodeState {
+    fn production() -> Result<Self, String> {
+        Self::with_local_identity(desktop_identity::for_current_user()?)
+    }
+
+    /// Keep the compatibility fixture catalogs, but bind their local endpoints
+    /// to the account's persisted Node before installing any real Adapter.
+    fn with_local_identity(local_node_id: NodeId) -> Result<Self, String> {
+        if local_node_id.as_uuid().is_nil() {
+            return Err("desktop Node identity cannot be nil".into());
+        }
+        let lab = DemoLab::new().map_err(|error| error.to_string())?;
+        let snapshot = lab.runtime.snapshot();
+        let previous_id = snapshot.local_node.id;
+        let mut local = snapshot.local_node;
+        local.id = local_node_id;
+        if snapshot.peers.iter().any(|peer| peer.id == local_node_id) {
+            return Err("desktop Node identity conflicts with the compatibility peer".into());
+        }
+        let mut runtime = NodeRuntime::new(local).map_err(|error| error.to_string())?;
+        for peer in snapshot.peers {
+            let online = peer.online_state == OnlineState::Online;
+            runtime
+                .register_peer(peer, online)
+                .map_err(|error| error.to_string())?;
+        }
+        for session in snapshot.sessions {
+            runtime
+                .open_session_with_id(session.id, session.remote_node_id)
+                .map_err(|error| error.to_string())?;
+        }
+        for mut route in snapshot.routes {
+            if route.source.node_id == previous_id {
+                route.source.node_id = local_node_id;
+            }
+            if route.sink.node_id == previous_id {
+                route.sink.node_id = local_node_id;
+            }
+            runtime
+                .create_route_with_id(
+                    route.id,
+                    route.session_id,
+                    route.source,
+                    route.sink,
+                    route.backend,
+                )
+                .map_err(|error| error.to_string())?;
+        }
+        Ok(Self {
+            runtime,
+            bootstrap_session_id: lab.session_id,
+            demo_routes: lab.routes,
+        })
+    }
+
+    #[cfg(test)]
     fn demo() -> Result<Self, String> {
         let lab = DemoLab::new().map_err(|error| error.to_string())?;
         Ok(Self {
@@ -144,44 +727,536 @@ impl Drop for AtomicSingleFlight<'_> {
     }
 }
 
-impl Drop for AppState {
-    fn drop(&mut self) {
-        if let Ok(controller) = self.live_imu_controller.get_mut()
-            && let Some(controller) = controller.take()
-        {
-            controller.stop.store(true, Ordering::Release);
-            let _ = controller.worker.join();
-        }
-        self.audio_worker.stop.store(true, Ordering::Release);
-        if let Some(worker) = self.audio_worker.worker.take() {
-            let _ = worker.join();
-        }
-        self.gamepad_worker.stop.store(true, Ordering::Release);
-        if let Some(worker) = self.gamepad_worker.worker.take() {
-            let _ = worker.join();
-        }
-        if let (Ok(mut node), Ok(mut gamepad)) = (self.node.lock(), self.gamepad_lab.lock()) {
-            let _ = gamepad.stop_windows_projection(&mut node.runtime);
-        }
-        if let Ok(mut audio_share) = self.audio_share.lock()
-            && let Ok(mut node) = self.node.lock()
-        {
-            audio_share.shutdown(&mut node.runtime);
-        }
-        if let Ok(mut microphone) = self.microphone.lock()
-            && let Ok(mut node) = self.node.lock()
-        {
-            microphone.shutdown(&mut node.runtime);
-        }
-        if let Ok(receivers) = self.android_receivers.get_mut() {
-            receivers.shutdown();
-        }
-    }
-}
-
 struct LiveImuController {
     stop: Arc<AtomicBool>,
     worker: JoinHandle<()>,
+}
+
+struct DiscoveryController {
+    stop: Arc<AtomicBool>,
+    worker: JoinHandle<()>,
+}
+
+struct PairedListenerController {
+    stop: Arc<AtomicBool>,
+    worker: JoinHandle<()>,
+    peer_id: NodeId,
+    local_addr: SocketAddr,
+}
+
+struct PairedListenerContext {
+    gamepad_lab: Arc<Mutex<GamepadLab>>,
+    android_receivers: Arc<Mutex<android_receivers::AndroidReceiverActions>>,
+    node: Arc<Mutex<DesktopNodeState>>,
+    control_plane: Arc<Mutex<DesktopControlPlaneState>>,
+    links: Arc<Mutex<BTreeMap<NodeId, ControlLinkController>>>,
+    selected: Arc<Mutex<BTreeSet<CapabilityId>>>,
+}
+
+impl PairedListenerController {
+    fn stop_and_join(self) {
+        self.stop.store(true, Ordering::Release);
+        let _ = self.worker.join();
+    }
+}
+
+enum ControlLinkCommand {
+    ObserveMedia {
+        reply: mpsc::Sender<Vec<route_readiness::RouteMediaSnapshot>>,
+    },
+    StartDisplay {
+        selection: capyio_protocol::v1::DisplayStreamSelection,
+        automatic: bool,
+        reply: mpsc::Sender<Result<(), String>>,
+    },
+    StopDisplay {
+        reply: mpsc::Sender<Result<(), String>>,
+    },
+    StartController {
+        mode: controller_workflow::ControllerMode,
+        reply: mpsc::Sender<Result<(), String>>,
+    },
+    StopController {
+        reply: mpsc::Sender<Result<(), String>>,
+    },
+    ResolveController {
+        route: RouteId,
+        allow: bool,
+        remember: bool,
+        reply: mpsc::Sender<Result<(), String>>,
+    },
+    Publish,
+    StartRemoteCapability {
+        capability_id: CapabilityId,
+        reply: mpsc::Sender<Result<(), String>>,
+    },
+    StopRemoteCapability {
+        capability_id: CapabilityId,
+        reply: mpsc::Sender<Result<(), String>>,
+    },
+    Stop,
+}
+
+/// Owns one authenticated control transport after the initial catalog exchange.
+/// The socket never enters a Tauri command or snapshot path.
+struct ControlLinkController {
+    active: Arc<AtomicBool>,
+    commands: SyncSender<ControlLinkCommand>,
+    worker: Option<JoinHandle<Result<(), String>>>,
+}
+
+fn receive_route_status_for(
+    link: &mut CatalogControlLink,
+    node: &Arc<Mutex<DesktopNodeState>>,
+    route_id: RouteId,
+) -> Result<Route, String> {
+    receive_route_status_details_for(link, node, route_id).map(|status| status.route)
+}
+
+fn receive_route_status_details_for(
+    link: &mut CatalogControlLink,
+    node: &Arc<Mutex<DesktopNodeState>>,
+    route_id: RouteId,
+) -> Result<capyio_protocol::ValidatedRouteStatus, String> {
+    for _ in 0..control_exchange::MAX_EXCHANGE_MESSAGES {
+        match link
+            .receive_control_message()
+            .map_err(|error| error.to_string())?
+        {
+            ReceivedControlMessage::RouteStatus(status) if status.route.id == route_id => {
+                let peer_route = status.route.clone();
+                let mut node = node
+                    .lock()
+                    .map_err(|_| "Node state lock poisoned".to_owned())?;
+                link.apply_route_status(&mut node.runtime, &status, false)
+                    .map_err(|error| error.to_string())?;
+                if let AuthorizationState::Authorized { expires_at_ms } = peer_route.authorization {
+                    if node
+                        .runtime
+                        .route(peer_route.id)
+                        .map_err(|e| e.to_string())?
+                        .authorization
+                        == AuthorizationState::Pending
+                    {
+                        node.runtime
+                            .authorize_route(peer_route.id, expires_at_ms)
+                            .map_err(|e| e.to_string())?;
+                    }
+                    link.apply_route_status(&mut node.runtime, &status, true)
+                        .map_err(|e| e.to_string())?;
+                }
+                if peer_route.authorization == AuthorizationState::Denied {
+                    node.runtime
+                        .deny_pending_route(peer_route.id)
+                        .map_err(|e| e.to_string())?;
+                }
+                return Ok(*status);
+            }
+            ReceivedControlMessage::Catalog(catalog) => {
+                let mut node = node
+                    .lock()
+                    .map_err(|_| "Node state lock poisoned".to_owned())?;
+                link.apply_catalog(&mut node.runtime, catalog)
+                    .map_err(|error| error.to_string())?;
+            }
+            ReceivedControlMessage::Heartbeat(heartbeat) if !heartbeat.acknowledgement => {
+                link.send_heartbeat(heartbeat.sequence, true)
+                    .map_err(|error| error.to_string())?;
+            }
+            ReceivedControlMessage::ControllerSettingsState(value) => {
+                controller_settings::received(
+                    &link.peer_node_id().to_string(),
+                    &link.session_id().to_string(),
+                    value,
+                );
+            }
+            ReceivedControlMessage::RouteStatus(status) => {
+                control_exchange::apply_intervening_route(link, node, &status)?;
+            }
+            ReceivedControlMessage::DisplaySessionControl(value) => {
+                display_workflow::defer_message(link.session_id(), value)?;
+            }
+            _ => return Err("peer returned an unexpected Route control message".to_owned()),
+        }
+    }
+    Err("peer Route response limit exceeded".to_owned())
+}
+
+enum ResourceDataWorker {
+    Touchpad(touchpad_data::TouchpadDataWorker),
+    Haptics(haptics_data::HapticsDataWorker),
+}
+impl ResourceDataWorker {
+    fn is_finished(&self) -> bool {
+        match self {
+            Self::Touchpad(worker) => worker.is_finished(),
+            Self::Haptics(worker) => worker.is_finished(),
+        }
+    }
+}
+type StartedRemoteRoute = (RouteId, PortRef, Option<ResourceDataWorker>);
+
+fn start_remote_capability_route_with_data(
+    link: &mut CatalogControlLink,
+    node: &Arc<Mutex<DesktopNodeState>>,
+    capability_id: CapabilityId,
+    dial: Option<&ResolvedControlDial>,
+    gamepad: Option<&Arc<Mutex<GamepadLab>>>,
+    selected: Option<&Arc<Mutex<BTreeSet<CapabilityId>>>>,
+) -> Result<Option<StartedRemoteRoute>, String> {
+    let request_time = unix_now_ms()?;
+    let reverse_haptics = node
+        .lock()
+        .map_err(|_| "Node lock poisoned")?
+        .runtime
+        .snapshot()
+        .peers
+        .iter()
+        .find(|peer| peer.id == link.peer_node_id())
+        .and_then(|peer| peer.capabilities.get(&capability_id))
+        .is_some_and(|cap| {
+            cap.class == CapabilityClass::Haptics
+                && cap.ports.values().any(|port| {
+                    port.direction == PortDirection::Sink
+                        && port.profile == capyio_core::ProfileId::haptics_feedback_v1()
+                })
+        });
+    if reverse_haptics {
+        if gamepad
+            .ok_or("振动需要桌面手柄宿主")?
+            .lock()
+            .map_err(|_| "gamepad lock poisoned")?
+            .feedback_motors()
+            .is_none()
+        {
+            return Err("请先启动 DS4 或 Xbox 手柄，再申请游戏振动".into());
+        }
+        let outgoing = {
+            let mut node = node.lock().map_err(|_| "Node lock poisoned")?;
+            haptics_data::install_catalog(&mut node.runtime)?;
+            let mut selected = selected
+                .ok_or("振动 Source 发布上下文缺失")?
+                .lock()
+                .map_err(|_| "publication lock poisoned")?;
+            selected.insert(
+                CapabilityId::from_str(haptics_data::CAPABILITY).map_err(|e| e.to_string())?,
+            );
+            link.prepare_catalog(&node.runtime, &selected)
+                .map_err(|e| e.to_string())?
+        };
+        link.send_catalog(outgoing).map_err(|e| e.to_string())?;
+    }
+    let (route, remote_port) = {
+        let mut node = node
+            .lock()
+            .map_err(|_| "Node state lock poisoned".to_owned())?;
+        let snapshot = node.runtime.snapshot();
+        let peer = snapshot
+            .peers
+            .iter()
+            .find(|peer| peer.id == link.peer_node_id())
+            .ok_or_else(|| "authenticated peer catalog is unavailable".to_owned())?;
+        let capability = peer
+            .capabilities
+            .get(&capability_id)
+            .ok_or_else(|| "selected remote Capability is no longer published".to_owned())?;
+        let source = capability
+            .ports
+            .values()
+            .find(|port| {
+                port.direction
+                    == if reverse_haptics {
+                        PortDirection::Sink
+                    } else {
+                        PortDirection::Source
+                    }
+            })
+            .ok_or_else(|| "selected remote Capability has no Source Port".to_owned())?;
+        native_audio_route::require_product_data_path(&source.profile)?;
+        if source.profile == capyio_core::ProfileId::touchpad_frames_v1() && dial.is_some() {
+            touchpad_data::preflight_projection()?;
+        }
+        let remote_port = PortRef {
+            node_id: peer.id,
+            capability_id,
+            port_id: source.id,
+        };
+        let local_port = snapshot
+            .local_node
+            .capabilities
+            .values()
+            .flat_map(|capability| {
+                capability
+                    .ports
+                    .values()
+                    .map(move |port| (capability.id, port))
+            })
+            .find(|(_, port)| {
+                port.direction == if reverse_haptics { PortDirection::Source } else { PortDirection::Sink }
+                    && port.profile == source.profile
+                    && port.interoperability_mode == source.interoperability_mode
+                    && port
+                        .formats
+                        .iter()
+                        .any(|format| source.formats.contains(format))
+                    && port
+                        .qos_modes
+                        .iter()
+                        .any(|mode| source.qos_modes.contains(mode))
+            })
+            .map(|(capability_id, port)| PortRef {
+                node_id: snapshot.local_node.id,
+                capability_id,
+                port_id: port.id,
+            })
+            .ok_or_else(|| {
+                if capability.class == CapabilityClass::Touchpad {
+                    return "Windows 触控板接收器尚未接入此远程资源协议；当前演示 Sink 不能代替真实接收器。请勿将目录已连接当作触控板已就绪。".to_owned();
+                }
+                format!(
+                    "Windows has no compatible Sink for {}/{}",
+                    source.profile.name, source.profile.major
+                )
+            })?;
+        let (route_source, route_sink) = if reverse_haptics {
+            (local_port, remote_port)
+        } else {
+            (remote_port, local_port)
+        };
+        let mut last_error = None;
+        let mut route_id = snapshot.routes.iter().find(|route| {
+            route.session_id == link.session_id() && route.source == route_source && route.sink == route_sink
+                && route.state == RouteState::Draft
+                && matches!(route.authorization, AuthorizationState::Pending | AuthorizationState::Authorized { .. })
+                && !matches!(route.authorization, AuthorizationState::Authorized { expires_at_ms: Some(expiry) } if expiry <= request_time.saturating_add(1_000))
+        }).map(|route| route.id);
+        for backend in [
+            RouteBackend::CapyDataPlane,
+            RouteBackend::AdapterManaged,
+            RouteBackend::ExternalProtocol,
+        ] {
+            if route_id.is_some() {
+                break;
+            }
+            match node
+                .runtime
+                .create_route(link.session_id(), route_source, route_sink, backend)
+            {
+                Ok(created) => {
+                    route_id = Some(created);
+                    break;
+                }
+                Err(error) => last_error = Some(error.to_string()),
+            }
+        }
+        let route_id = route_id.ok_or_else(|| {
+            last_error.unwrap_or_else(|| "no compatible Route backend".to_owned())
+        })?;
+        (
+            node.runtime
+                .route(route_id)
+                .map_err(|error| error.to_string())?
+                .clone(),
+            remote_port,
+        )
+    };
+    link.send_route_status(&route)
+        .map_err(|error| error.to_string())?;
+    let accepted = receive_route_status_for(link, node, route.id)?;
+    if accepted.authorization == AuthorizationState::Pending {
+        return Ok(None);
+    }
+    if !matches!(
+        accepted.authorization,
+        AuthorizationState::Authorized { .. }
+    ) {
+        return Err("平板已拒绝或请求已过期，未申请占用、未启动硬件。".to_owned());
+    }
+    let lease_ttl = touchpad_lease::ttl(&accepted.authorization, unix_now_ms()?)?;
+    let request_id = link
+        .send_port_lease_request(route.id, remote_port, PortLeaseAction::Acquire, lease_ttl)
+        .map_err(|error| error.to_string())?;
+    let response = control_exchange::receive_lease(link, node, request_id, route.id, remote_port)?;
+    if !matches!(
+        response.outcome,
+        PortLeaseOutcome::Acquired | PortLeaseOutcome::Renewed
+    ) {
+        return Err(match response.outcome {
+            PortLeaseOutcome::Conflict => "remote hardware is already occupied".to_owned(),
+            _ => "remote node denied the hardware lease".to_owned(),
+        });
+    }
+    if route.profile == capyio_core::ProfileId::touchpad_frames_v1() && dial.is_none() {
+        // Consent-only diagnostic: do not request or open a real data endpoint.
+        return Ok(Some((route.id, remote_port, None)));
+    }
+    link.send_route_command(route.id, RouteCommandAction::Start)
+        .map_err(|error| error.to_string())?;
+    let status = receive_route_status_details_for(link, node, route.id)?;
+    let remote = status.route;
+    if let Some(offer) = status.haptics_data {
+        let worker = haptics_data::start(
+            node.clone(),
+            gamepad.ok_or("gamepad host missing")?.clone(),
+            dial.ok_or("haptics data requires a paired endpoint")?,
+            link.tls_binding(),
+            remote,
+            offer,
+        );
+        return match worker {
+            Ok(worker) => Ok(Some((
+                route.id,
+                remote_port,
+                Some(ResourceDataWorker::Haptics(worker)),
+            ))),
+            Err(error) => {
+                let _ = stop_remote_capability_route(link, node, route.id, remote_port);
+                Err(error)
+            }
+        };
+    }
+    if let Some(offer) = status.touchpad_data {
+        let dial = dial.ok_or("触控板返回真实数据端口；当前诊断模式不会打开输入设备")?;
+        let worker = touchpad_data::start(node.clone(), dial, link.tls_binding(), remote, offer);
+        return match worker {
+            Ok(worker) => Ok(Some((
+                route.id,
+                remote_port,
+                Some(ResourceDataWorker::Touchpad(worker)),
+            ))),
+            Err(error) => {
+                let _ = stop_remote_capability_route(link, node, route.id, remote_port);
+                Err(error)
+            }
+        };
+    }
+    if route.profile == capyio_core::ProfileId::touchpad_frames_v1() || reverse_haptics {
+        let _ = stop_remote_capability_route(link, node, route.id, remote_port);
+        return Err(
+            "对端没有返回加密触控数据端点，请更新两端软件；未将逻辑连接当作输入就绪。".into(),
+        );
+    }
+    if remote.state != RouteState::Active {
+        return Err("remote Route did not become active".to_owned());
+    }
+    let now_ms = unix_now_ms()?;
+    node.lock()
+        .map_err(|_| "Node state lock poisoned".to_owned())?
+        .runtime
+        .set_route_active(route.id, true, now_ms)
+        .map_err(|error| error.to_string())?;
+    Ok(Some((route.id, remote_port, None)))
+}
+
+fn stop_remote_capability_route(
+    link: &mut CatalogControlLink,
+    node: &Arc<Mutex<DesktopNodeState>>,
+    route_id: RouteId,
+    remote_port: PortRef,
+) -> Result<(), String> {
+    // Record local intent before the peer closes its data channel. Otherwise
+    // the data worker can report a transport failure during a normal Stop.
+    {
+        let mut node = node.lock().map_err(|_| "Node state lock poisoned")?;
+        if matches!(
+            node.runtime
+                .route(route_id)
+                .map_err(|e| e.to_string())?
+                .state,
+            RouteState::Prepared | RouteState::Starting | RouteState::Active | RouteState::Offline
+        ) {
+            node.runtime
+                .begin_route_stop(route_id)
+                .map_err(|e| e.to_string())?;
+        }
+    }
+    let remote_result = (|| {
+        link.send_route_command(route_id, RouteCommandAction::Stop)
+            .map_err(|error| error.to_string())?;
+        let stopped = receive_route_status_for(link, node, route_id)?;
+        let request_id = link
+            .send_port_lease_request(route_id, remote_port, PortLeaseAction::Release, 0)
+            .map_err(|error| error.to_string())?;
+        let response =
+            control_exchange::receive_lease(link, node, request_id, route_id, remote_port)?;
+        if response.outcome != PortLeaseOutcome::Released
+            && !(response.outcome == PortLeaseOutcome::Denied
+                && stopped.state == RouteState::Stopped)
+        {
+            return Err("remote node did not release the hardware lease".to_owned());
+        }
+        Ok(())
+    })();
+    // A failed exchange must still release this node's hardware lease.
+    let local_result = node
+        .lock()
+        .map_err(|_| "Node state lock poisoned".to_owned())?
+        .runtime
+        .set_route_active(route_id, false, unix_now_ms()?)
+        .map_err(|error| error.to_string());
+    remote_result.and(local_result)
+}
+
+fn cancel_pending_remote_route(
+    link: &mut CatalogControlLink,
+    node: &Arc<Mutex<DesktopNodeState>>,
+    route_id: RouteId,
+) -> Result<(), String> {
+    link.send_route_command(route_id, RouteCommandAction::Stop)
+        .map_err(|e| e.to_string())?;
+    receive_route_status_for(link, node, route_id)?;
+    let mut node = node.lock().map_err(|_| "Node state lock poisoned")?;
+    if node
+        .runtime
+        .route(route_id)
+        .map_err(|e| e.to_string())?
+        .authorization
+        == AuthorizationState::Pending
+    {
+        node.runtime
+            .deny_pending_route(route_id)
+            .map_err(|e| e.to_string())?;
+    }
+    Ok(())
+}
+
+fn get_controller_use(
+    state: &HostState,
+) -> Result<Option<controller_workflow::UiControllerUse>, String> {
+    state.0.get_controller_use()
+}
+
+fn start_controller_use(
+    state: &HostState,
+    peer_node_id: String,
+    mode: controller_workflow::ControllerMode,
+) -> Result<(), String> {
+    state.0.start_controller_use(peer_node_id, mode)
+}
+
+fn stop_controller_use(state: &HostState) -> Result<(), String> {
+    state.0.stop_controller_use()
+}
+
+fn get_resource_requests() -> Result<Vec<controller_control::ResourceRequest>, String> {
+    controller_control::pending()
+}
+
+fn resolve_resource_request(
+    state: &HostState,
+    route_id: String,
+    allow: bool,
+    remember: bool,
+) -> Result<(), String> {
+    state.0.resolve_resource_request(route_id, allow, remember)
+}
+
+fn unix_now_ms() -> Result<u64, String> {
+    let value = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_err(|_| "system clock is before Unix epoch".to_owned())?
+        .as_millis();
+    u64::try_from(value).map_err(|_| "system clock exceeds Runtime range".to_owned())
 }
 
 struct AudioQuickActionWorker {
@@ -192,6 +1267,25 @@ struct AudioQuickActionWorker {
 struct GamepadProjectionWorker {
     stop: Arc<AtomicBool>,
     worker: Option<JoinHandle<()>>,
+}
+
+fn receive_probe_heartbeat(
+    mut receive: impl FnMut() -> Result<ReceivedControlMessage, String>,
+) -> Result<(), String> {
+    // Settings may precede the heartbeat response, but a probe must remain
+    // bounded and must not silently consume unrelated commands or bad sequences.
+    for _ in 0..8 {
+        match receive()? {
+            ReceivedControlMessage::Heartbeat(value)
+                if value.acknowledgement && value.sequence == 1 =>
+            {
+                return Ok(());
+            }
+            ReceivedControlMessage::ControllerSettingsState(_) => {}
+            _ => return Err("peer heartbeat acknowledgement is invalid".to_owned()),
+        }
+    }
+    Err("peer heartbeat acknowledgement did not arrive within probe message bound".to_owned())
 }
 
 #[derive(Debug, Deserialize)]
@@ -223,7 +1317,14 @@ struct RefreshWindowsGamepadPreflightRequest {
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 struct StartWindowsGamepadProjectionRequest {
-    enable_xinput_companion: bool,
+    controller_kind: windows_gamepad_host::UiWindowsControllerKind,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct StartControllerHostRequest {
+    controller_kind: windows_gamepad_host::UiWindowsControllerKind,
+    port: u16,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -292,19 +1393,72 @@ struct SetLocalCapabilitySharedRequest {
     selected: bool,
 }
 
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct SetRemoteCapabilityUseRequest {
+    capability_id: String,
+    active: bool,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct StartDiscoveryRequest {
+    interface_ipv4: String,
+}
+
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 struct UiSnapshot {
     backend_mode: &'static str,
     schema_version: u8,
     project_version: &'static str,
+    control_plane: UiControlPlaneStatus,
     nodes: Vec<UiNode>,
     capabilities: Vec<UiCapability>,
     routes: Vec<UiRoute>,
+    port_leases: Vec<UiPortLease>,
     adapters: Vec<UiAdapter>,
     events: Vec<UiEvent>,
     warnings: Vec<String>,
     imu_fixture: UiImuFixture,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct UiControlPlaneStatus {
+    schema_version: u8,
+    simulated: bool,
+    discovery_state: &'static str,
+    pairing_state: &'static str,
+    transport_state: &'static str,
+    catalog_exchange_state: &'static str,
+    discovered_candidate_count: usize,
+    paired_peer_count: usize,
+    authenticated_connection_count: usize,
+    listen_port: Option<u16>,
+    pairing_store_path: Option<String>,
+    process_user_sid: Option<String>,
+}
+
+#[cfg(windows)]
+fn current_process_sid_for_ui() -> Option<String> {
+    capyio_windows_service::current_process_user_sid().ok()
+}
+
+#[cfg(not(windows))]
+fn current_process_sid_for_ui() -> Option<String> {
+    None
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct UiPortLease {
+    node_id: String,
+    capability_id: String,
+    port_id: String,
+    route_id: String,
+    session_id: String,
+    expires_at_ms: u64,
 }
 
 #[derive(Debug, Serialize)]
@@ -351,12 +1505,17 @@ struct UiCapabilityPort {
 #[serde(rename_all = "camelCase")]
 struct UiRoute {
     id: String,
+    error: Option<String>,
+    source_capability_id: Option<String>,
+    sink_capability_id: Option<String>,
     title: String,
     summary: String,
     profile: String,
     backend: String,
     state: String,
     active: bool,
+    authorization: &'static str,
+    authorization_expires_at_ms: Option<u64>,
     source: UiPort,
     sink: UiPort,
     format_summary: Option<String>,
@@ -429,428 +1588,347 @@ struct UiVector3 {
     z: f64,
 }
 
-#[tauri::command]
-fn get_snapshot(state: State<'_, AppState>) -> Result<UiSnapshot, String> {
-    let node = state.node.lock().map_err(|_| "Node state lock poisoned")?;
-    let selected = state
-        .local_shared_capabilities
-        .lock()
-        .map_err(|_| "local Capability selection lock poisoned")?;
-    Ok(to_ui_snapshot(&node, &selected))
+fn get_snapshot(state: &HostState) -> Result<UiSnapshot, String> {
+    state.0.snapshot()
 }
 
-#[tauri::command]
-fn set_route(request: SetRouteRequest, state: State<'_, AppState>) -> Result<UiSnapshot, String> {
+fn get_discovery_interfaces() -> Result<Vec<network_interfaces::DiscoveryInterface>, String> {
+    network_interfaces::enumerate()
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct UiPairedPeer {
+    node_id: String,
+    display_name: String,
+    revoked: bool,
+    paired_at_ms: u64,
+}
+
+fn paired_peer_metadata(control: &DesktopControlPlaneState) -> Vec<UiPairedPeer> {
+    control
+        .paired_peers
+        .peers()
+        .map(|peer| UiPairedPeer {
+            node_id: peer.node_id.to_string(),
+            display_name: peer.display_name.clone(),
+            revoked: !matches!(peer.state, PairingState::Active),
+            paired_at_ms: peer.paired_at_ms,
+        })
+        .collect()
+}
+
+fn get_paired_peers(state: &HostState) -> Result<Vec<UiPairedPeer>, String> {
+    state.0.get_paired_peers()
+}
+
+fn check_paired_credential(request: PeerControlRequest, state: &HostState) -> Result<(), String> {
+    state.0.check_paired_credential(request)
+}
+
+fn verify_credential_readable(
+    store: &WindowsPairingStore,
+    handle: &capyio_pairing::CredentialHandle,
+) -> Result<(), String> {
+    store.load_control_credential(handle)
+        .map(|_| ())
+        .map_err(|_| "当前进程账号无法读取该设备的配对凭据；请使用原配对账号运行 CapyIO，或在当前账号重新配对。".to_owned())
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct UiDiscoveryCandidate {
+    node_id: String,
+    host: String,
+    control_port: u16,
+    last_seen_age_ms: u64,
+    pairing_state: &'static str,
+}
+
+fn discovery_candidates(
+    control: &mut DesktopControlPlaneState,
+    now_ms: u64,
+) -> Vec<UiDiscoveryCandidate> {
+    control.discovery_ingress.expire(now_ms);
+    control
+        .discovery_ingress
+        .candidates()
+        .filter_map(|candidate| {
+            let pairing_state = match control.paired_peers.classify(*candidate, now_ms) {
+                CandidateTrust::Paired(_) => "paired",
+                CandidateTrust::Unpaired => "unpaired",
+                CandidateTrust::Revoked => "revoked",
+                CandidateTrust::Expired => return None,
+            };
+            Some(UiDiscoveryCandidate {
+                node_id: candidate.node_id.to_string(),
+                host: candidate.endpoint.ip().to_string(),
+                control_port: candidate.endpoint.port(),
+                last_seen_age_ms: now_ms.saturating_sub(candidate.last_seen_ms),
+                pairing_state,
+            })
+        })
+        .collect()
+}
+
+fn get_discovery_candidates(state: &HostState) -> Result<Vec<UiDiscoveryCandidate>, String> {
+    state.0.get_discovery_candidates()
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct PeerControlRequest {
+    node_id: String,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct PairingInvitationRequest {
+    node_id: String,
+    display_name: String,
+    #[serde(default)]
+    renew_existing: bool,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct ManualPeerControlRequest {
+    node_id: String,
+    host: String,
+    port: u16,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct PairedListenerRequest {
+    node_id: String,
+    bind_host: String,
+    port: u16,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct UiPairedListenerStatus {
+    node_id: String,
+    bind_host: String,
+    port: u16,
+}
+
+fn get_paired_listener_status(state: &HostState) -> Result<Option<UiPairedListenerStatus>, String> {
+    state.0.get_paired_listener_status()
+}
+
+fn start_paired_listener(request: PairedListenerRequest, state: &HostState) -> Result<u16, String> {
+    state.0.start_paired_listener(request)
+}
+
+fn stop_paired_listener(state: &HostState) -> Result<(), String> {
+    state.0.stop_paired_listener()
+}
+
+fn create_pairing_invitation(
+    request: PairingInvitationRequest,
+    state: &HostState,
+) -> Result<String, String> {
+    state.0.create_pairing_invitation(request)
+}
+
+fn connect_discovered_peer(request: PeerControlRequest, state: &HostState) -> Result<(), String> {
+    state.0.connect_discovered_peer_blocking(request)
+}
+
+fn connect_paired_peer_at(
+    request: ManualPeerControlRequest,
+    state: &HostState,
+) -> Result<(), String> {
+    state.0.connect_paired_peer_at_blocking(request)
+}
+
+fn connect_authenticated_control_channel(
+    peer_id: NodeId,
+    local_node_id: NodeId,
+    plan: &ResolvedControlDial,
+) -> Result<AuthenticatedControlClientChannel, String> {
+    let fingerprint = plan.candidate.peer_certificate_sha256.as_bytes();
+    let public_context = format!(
+        "endpoint={}, paired_name={:?}, peer_cert_sha256_prefix={:02x}{:02x}{:02x}{:02x}",
+        plan.candidate.endpoint,
+        plan.display_name,
+        fingerprint[0],
+        fingerprint[1],
+        fingerprint[2],
+        fingerprint[3]
+    );
+    let bundle = plan
+        .store
+        .load_control_credential(&plan.candidate.credential_handle)
+        .map_err(|error| {
+            format!("paired control credential could not be loaded ({public_context}): {error}")
+        })?;
+    let identity =
+        ControlTlsClientIdentity::from_bundle(plan.candidate.peer_certificate_sha256, bundle);
+    let expected_nodes =
+        ControlTlsNodeBinding::new(peer_id, local_node_id).map_err(|error| error.to_string())?;
+    AuthenticatedControlClientChannel::connect_fresh_session(
+        ControlTlsEndpoint {
+            address: plan.candidate.endpoint,
+            io_timeout: Duration::from_secs(5),
+        },
+        &plan.candidate.server_name,
+        identity,
+        expected_nodes,
+    )
+    .map_err(|error| format!("authenticated control connection failed ({public_context}): {error}"))
+}
+
+fn disconnect_peer(request: PeerControlRequest, state: &HostState) -> Result<(), String> {
+    let peer_id = NodeId::from_str(&request.node_id)
+        .map_err(|_| "peer Node ID must be a canonical UUID".to_owned())?;
+    state.0.disconnect_peer(peer_id)
+}
+
+fn start_discovery(
+    request: StartDiscoveryRequest,
+    state: &HostState,
+) -> Result<UiSnapshot, String> {
+    state.0.start_discovery(&request.interface_ipv4)
+}
+
+fn stop_discovery(state: &HostState) -> Result<UiSnapshot, String> {
+    state.0.stop_discovery()
+}
+
+fn set_route(request: SetRouteRequest, state: &HostState) -> Result<UiSnapshot, String> {
     let route_id = RouteId::from_str(&request.route_id).map_err(|_| "invalid Route ID")?;
-    if state
-        .audio_share
-        .lock()
-        .map_err(|_| "Audio Share state lock poisoned")?
-        .owns_route(route_id)
-    {
-        return Err(
-            "use the versioned Quick Action to control the physical speaker Route".to_owned(),
-        );
-    }
-    if state
-        .microphone
-        .lock()
-        .map_err(|_| "MicYou state lock poisoned")?
-        .owns_route(route_id)
-    {
-        return Err(
-            "use the versioned Quick Action to control the physical microphone Route".to_owned(),
-        );
-    }
-    let mut node = state.node.lock().map_err(|_| "Node state lock poisoned")?;
-    node.set_demo_route_active(route_id, request.active, unix_time_ms()?)?;
-    let selected = state
-        .local_shared_capabilities
-        .lock()
-        .map_err(|_| "local Capability selection lock poisoned")?;
-    Ok(to_ui_snapshot(&node, &selected))
+    state.0.set_route(route_id, request.active)
 }
 
-#[tauri::command]
 fn set_local_capability_shared(
     request: SetLocalCapabilitySharedRequest,
-    state: State<'_, AppState>,
+    state: &HostState,
 ) -> Result<UiSnapshot, String> {
     let capability_id = CapabilityId::from_str(&request.capability_id)
         .map_err(|_| "invalid Capability ID".to_owned())?;
-    let node = state.node.lock().map_err(|_| "Node state lock poisoned")?;
-    let mut selected = state
-        .local_shared_capabilities
-        .lock()
-        .map_err(|_| "local Capability selection lock poisoned")?;
-    update_local_capability_selection(
-        &node.runtime,
-        &mut selected,
-        capability_id,
-        request.selected,
-    )?;
-    Ok(to_ui_snapshot(&node, &selected))
+    state
+        .0
+        .set_local_capability_shared(capability_id, request.selected)
 }
 
-#[tauri::command]
-fn reset_demo(state: State<'_, AppState>) -> Result<UiSnapshot, String> {
-    if state
-        .audio_share
-        .lock()
-        .map_err(|_| "Audio Share state lock poisoned")?
-        .is_configured()
-    {
-        return Err(
-            "restart the desktop host to reset a configured physical speaker Route".to_owned(),
-        );
-    }
-    if state
-        .microphone
-        .lock()
-        .map_err(|_| "MicYou state lock poisoned")?
-        .is_configured()
-    {
-        return Err(
-            "restart the desktop host to reset a configured physical microphone Route".to_owned(),
-        );
-    }
-    if state
-        .live_imu_controller
-        .lock()
-        .map_err(|_| "live IMU controller lock poisoned")?
-        .is_some()
-    {
-        return Err("stop the physical IMU Route before resetting the demo".to_owned());
-    }
-    let mut node = state.node.lock().map_err(|_| "Node state lock poisoned")?;
-    *node = DesktopNodeState::demo()?;
-    let session_id = node.bootstrap_session_id;
-    PhysicalImuRoute::install(&mut node.runtime, session_id)?;
-    *state
-        .gamepad_lab
-        .lock()
-        .map_err(|_| "gamepad lab state lock poisoned".to_owned())? = GamepadLab::new()?;
-    let mut selected = state
-        .local_shared_capabilities
-        .lock()
-        .map_err(|_| "local Capability selection lock poisoned")?;
-    selected.clear();
-    Ok(to_ui_snapshot(&node, &selected))
+fn set_remote_capability_use(
+    request: SetRemoteCapabilityUseRequest,
+    state: &HostState,
+) -> Result<UiSnapshot, String> {
+    let capability_id = CapabilityId::from_str(&request.capability_id)
+        .map_err(|_| "invalid Capability ID".to_owned())?;
+    state
+        .0
+        .set_remote_capability_use(capability_id, request.active)
 }
 
-#[tauri::command]
-fn get_quick_actions(state: State<'_, AppState>) -> Result<Vec<UiQuickAction>, String> {
-    let speaker = {
-        let audio_share = state
-            .audio_share
-            .lock()
-            .map_err(|_| "Audio Share state lock poisoned")?;
-        let node = state.node.lock().map_err(|_| "Node state lock poisoned")?;
-        audio_share.dto(&node.runtime)?
-    };
-    let microphone = {
-        let microphone = state
-            .microphone
-            .lock()
-            .map_err(|_| "MicYou state lock poisoned")?;
-        let node = state.node.lock().map_err(|_| "Node state lock poisoned")?;
-        microphone.dto(&node.runtime)?
-    };
-    let mut actions = vec![speaker, microphone];
-    actions.extend(
-        state
-            .android_receivers
-            .lock()
-            .map_err(|_| "Android receiver state lock poisoned")?
-            .actions(),
-    );
-    Ok(actions)
+fn reset_demo(state: &HostState) -> Result<UiSnapshot, String> {
+    state.0.reset_demo()
 }
 
-#[tauri::command]
+fn get_quick_actions(state: &HostState) -> Result<Vec<UiQuickAction>, String> {
+    state.0.get_quick_actions()
+}
+
 fn invoke_quick_action(
     request: InvokeQuickActionRequest,
-    state: State<'_, AppState>,
+    state: &HostState,
 ) -> Result<UiQuickAction, String> {
-    if android_receivers::AndroidReceiverActions::owns(&request.action_id) {
-        return state
-            .android_receivers
-            .lock()
-            .map_err(|_| "Android receiver state lock poisoned".to_owned())?
-            .invoke(&request.action_id, request.operation);
-    }
-    if request.action_id == MICYOU_ACTION_ID {
-        let mut microphone = state
-            .microphone
-            .lock()
-            .map_err(|_| "MicYou state lock poisoned")?;
-        let mut node = state.node.lock().map_err(|_| "Node state lock poisoned")?;
-        microphone.invoke(&mut node.runtime, request, unix_time_ms()?)
-    } else {
-        let mut audio_share = state
-            .audio_share
-            .lock()
-            .map_err(|_| "Audio Share state lock poisoned")?;
-        let mut node = state.node.lock().map_err(|_| "Node state lock poisoned")?;
-        audio_share.invoke(&mut node.runtime, request, unix_time_ms()?)
-    }
+    state.0.invoke_quick_action(request)
 }
 
-#[tauri::command]
-fn get_audio_endpoints(state: State<'_, AppState>) -> Result<UiAudioEndpointCatalog, String> {
-    let mut audio_share = state
-        .audio_share
-        .lock()
-        .map_err(|_| "Audio Share state lock poisoned")?;
-    let can_select = {
-        let node = state.node.lock().map_err(|_| "Node state lock poisoned")?;
-        audio_share.endpoint_selection_available(&node.runtime)
-    };
-    Ok(audio_share.endpoint_catalog(can_select))
+fn get_audio_endpoints(state: &HostState) -> Result<UiAudioEndpointCatalog, String> {
+    state.0.get_audio_endpoints()
 }
 
-#[tauri::command]
 fn select_audio_endpoint(
     request: SelectAudioEndpointRequest,
-    state: State<'_, AppState>,
+    state: &HostState,
 ) -> Result<UiQuickAction, String> {
-    let mut audio_share = state
-        .audio_share
-        .lock()
-        .map_err(|_| "Audio Share state lock poisoned")?;
-    let node = state.node.lock().map_err(|_| "Node state lock poisoned")?;
-    audio_share.select_endpoint(&node.runtime, request)
+    state.0.select_audio_endpoint(request)
 }
 
-#[tauri::command]
-fn get_live_imu(state: State<'_, AppState>) -> Result<UiLiveImu, String> {
-    state
-        .live_imu
-        .lock()
-        .map_err(|_| "live IMU state lock poisoned".to_owned())
-        .map(|snapshot| snapshot.clone())
+fn get_live_imu(state: &HostState) -> Result<UiLiveImu, String> {
+    state.0.get_live_imu()
 }
 
-#[tauri::command]
-fn get_gamepad_state(state: State<'_, AppState>) -> Result<UiGamepadState, String> {
-    state
-        .gamepad_lab
-        .lock()
-        .map_err(|_| "gamepad lab state lock poisoned".to_owned())
-        .map(|lab| lab.snapshot())
+fn get_gamepad_state(state: &HostState) -> Result<UiGamepadState, String> {
+    state.0.get_gamepad_state()
 }
 
-#[tauri::command]
 async fn refresh_windows_gamepad_preflight(
     request: RefreshWindowsGamepadPreflightRequest,
-    state: State<'_, AppState>,
+    state: &HostState,
 ) -> Result<UiGamepadState, String> {
-    let _single_flight = AtomicSingleFlight::acquire(
-        &state.windows_gamepad_preflight_running,
-        "Windows gamepad preflight is already running",
-    )?;
+    let _single_flight = state.0.begin_windows_preflight()?;
     let projection = tauri::async_runtime::spawn_blocking(move || {
         windows_gamepad_host::probe_read_only(request.controller_kind)
     })
     .await
     .map_err(|_| "Windows gamepad preflight worker panicked".to_owned())?;
-    Ok(state
-        .gamepad_lab
-        .lock()
-        .map_err(|_| "gamepad lab state lock poisoned".to_owned())?
-        .apply_windows_preflight(projection))
+    state.0.apply_windows_preflight(projection)
 }
 
-#[tauri::command]
 fn update_gamepad_state(
     request: UpdateGamepadRequest,
-    state: State<'_, AppState>,
+    state: &HostState,
 ) -> Result<UiGamepadState, String> {
-    state
-        .gamepad_lab
-        .lock()
-        .map_err(|_| "gamepad lab state lock poisoned".to_owned())?
-        .apply(request)
+    state.0.update_gamepad_state(request)
 }
 
-#[tauri::command]
 fn start_gamepad_dsu(
     request: StartGamepadDsuRequest,
-    state: State<'_, AppState>,
+    state: &HostState,
 ) -> Result<UiGamepadState, String> {
-    if request.port == 0 {
-        return Err("DSU port must be non-zero".to_owned());
-    }
-    state
-        .gamepad_lab
-        .lock()
-        .map_err(|_| "gamepad lab state lock poisoned".to_owned())?
-        .start_dsu_mode(request.port, request.mode)
+    state.0.start_gamepad_dsu(request)
 }
 
-#[tauri::command]
-fn stop_gamepad_dsu(state: State<'_, AppState>) -> Result<UiGamepadState, String> {
-    state
-        .gamepad_lab
-        .lock()
-        .map_err(|_| "gamepad lab state lock poisoned".to_owned())?
-        .stop_dsu()
+fn stop_gamepad_dsu(state: &HostState) -> Result<UiGamepadState, String> {
+    state.0.stop_gamepad_dsu()
 }
 
-#[tauri::command]
 fn start_android_gamepad(
     request: StartAndroidGamepadRequest,
-    state: State<'_, AppState>,
+    state: &HostState,
 ) -> Result<UiGamepadState, String> {
-    state
-        .gamepad_lab
-        .lock()
-        .map_err(|_| "gamepad lab state lock poisoned".to_owned())?
-        .start_android(request.port)
+    state.0.start_android_gamepad(request)
 }
 
-#[tauri::command]
-fn stop_android_gamepad(state: State<'_, AppState>) -> Result<UiGamepadState, String> {
-    state
-        .gamepad_lab
-        .lock()
-        .map_err(|_| "gamepad lab state lock poisoned".to_owned())?
-        .stop_android()
+fn stop_android_gamepad(state: &HostState) -> Result<UiGamepadState, String> {
+    state.0.stop_android_gamepad()
 }
 
-#[tauri::command]
 fn start_windows_gamepad_projection(
     request: StartWindowsGamepadProjectionRequest,
-    state: State<'_, AppState>,
+    state: &HostState,
 ) -> Result<UiGamepadState, String> {
-    let mut node = state.node.lock().map_err(|_| "Node state lock poisoned")?;
-    state
-        .gamepad_lab
-        .lock()
-        .map_err(|_| "gamepad lab state lock poisoned".to_owned())?
-        .start_windows_projection(&mut node.runtime, request.enable_xinput_companion)
+    state.0.start_windows_gamepad_projection(request)
 }
 
-#[tauri::command]
-fn stop_windows_gamepad_projection(state: State<'_, AppState>) -> Result<UiGamepadState, String> {
-    let mut node = state.node.lock().map_err(|_| "Node state lock poisoned")?;
-    state
-        .gamepad_lab
-        .lock()
-        .map_err(|_| "gamepad lab state lock poisoned".to_owned())?
-        .stop_windows_projection(&mut node.runtime)
+fn stop_windows_gamepad_projection(state: &HostState) -> Result<UiGamepadState, String> {
+    state.0.stop_windows_gamepad_projection()
 }
 
-#[tauri::command]
-fn start_live_imu(
-    request: StartLiveImuRequest,
-    state: State<'_, AppState>,
-) -> Result<UiLiveImu, String> {
-    let ip = request
-        .ip
-        .parse::<IpAddr>()
-        .map_err(|_| "live IMU endpoint must be an IP literal".to_owned())?;
-    let endpoint =
-        SensorServerEndpoint::new(ip, request.port).map_err(|error| error.to_string())?;
-    let mut controller = state
-        .live_imu_controller
-        .lock()
-        .map_err(|_| "live IMU controller lock poisoned".to_owned())?;
-    if controller
-        .as_ref()
-        .is_some_and(|controller| controller.worker.is_finished())
-    {
-        let finished = controller.take().expect("checked as present");
-        finished
-            .worker
-            .join()
-            .map_err(|_| "live IMU worker panicked".to_owned())?;
-    }
-    if controller.is_some() {
-        return Err("live IMU lab is already running".to_owned());
-    }
-    let (epoch, route_id) = {
-        let mut node = state
-            .node
-            .lock()
-            .map_err(|_| "physical IMU Runtime lock poisoned".to_owned())?;
-        let epoch = state
-            .physical_imu
-            .begin_start(&mut node.runtime, unix_time_ms()?)?;
-        (epoch, state.physical_imu.route_id().to_string())
-    };
-    {
-        let mut snapshot = state
-            .live_imu
-            .lock()
-            .map_err(|_| "live IMU state lock poisoned".to_owned())?;
-        *snapshot = UiLiveImu {
-            status: "connecting",
-            simulated: false,
-            route_id,
-            route_state: "starting",
-            endpoint: Some(endpoint.address().to_string()),
-            profile: "capyio.motion.imu-samples/1",
-            stream_epoch: epoch,
-            sequence: None,
-            source_timestamp_nanos: None,
-            clock_domain_id: None,
-            acceleration: None,
-            angular_velocity: None,
-            received_samples: 0,
-            problem_code: None,
-            problem: None,
-        };
-    }
-    let stop = Arc::new(AtomicBool::new(false));
-    let worker_stop = Arc::clone(&stop);
-    let shared = Arc::clone(&state.live_imu);
-    let runtime = Arc::clone(&state.node);
-    let route = state.physical_imu;
-    let worker = thread::spawn(move || {
-        run_live_imu(endpoint, epoch, &worker_stop, &shared, &runtime, route)
-    });
-    *controller = Some(LiveImuController { stop, worker });
-    state
-        .live_imu
-        .lock()
-        .map_err(|_| "live IMU state lock poisoned".to_owned())
-        .map(|snapshot| snapshot.clone())
+fn start_controller_host(
+    request: StartControllerHostRequest,
+    state: &HostState,
+) -> Result<UiGamepadState, String> {
+    state.0.start_controller_host(request)
 }
 
-#[tauri::command]
-fn stop_live_imu(state: State<'_, AppState>) -> Result<UiLiveImu, String> {
-    let controller = state
-        .live_imu_controller
-        .lock()
-        .map_err(|_| "live IMU controller lock poisoned".to_owned())?
-        .take();
-    if let Some(controller) = controller {
-        controller.stop.store(true, Ordering::Release);
-        controller
-            .worker
-            .join()
-            .map_err(|_| "live IMU worker panicked".to_owned())?;
-    }
-    let (route_state, route_epoch) = {
-        let mut node = state
-            .node
-            .lock()
-            .map_err(|_| "physical IMU Runtime lock poisoned".to_owned())?;
-        state.physical_imu.stop(&mut node.runtime)?;
-        (
-            state.physical_imu.route_state(&node.runtime)?,
-            state.physical_imu.route_epoch(&node.runtime)?,
-        )
-    };
-    let mut snapshot = state
-        .live_imu
-        .lock()
-        .map_err(|_| "live IMU state lock poisoned".to_owned())?;
-    snapshot.status = "stopped";
-    snapshot.route_state = route_state_label(route_state);
-    snapshot.stream_epoch = route_epoch;
-    Ok(snapshot.clone())
+fn stop_controller_host(state: &HostState) -> Result<UiGamepadState, String> {
+    state.0.stop_controller_host()
+}
+
+fn start_live_imu(request: StartLiveImuRequest, state: &HostState) -> Result<UiLiveImu, String> {
+    state.0.start_live_imu(request)
+}
+
+fn stop_live_imu(state: &HostState) -> Result<UiLiveImu, String> {
+    state.0.stop_live_imu()
 }
 
 fn run_live_imu(
@@ -1086,115 +2164,45 @@ pub fn run_windows_gamepad_read_only_preflight() -> Result<(), String> {
 }
 
 pub fn run() {
-    let mut node = DesktopNodeState::demo().expect("valid deterministic demo bootstrap");
-    let session_id = node.bootstrap_session_id;
-    let physical_imu = PhysicalImuRoute::install(&mut node.runtime, session_id)
-        .expect("valid physical IMU Runtime catalog");
-    let live_imu = UiLiveImu::idle(physical_imu, &node.runtime).expect("valid physical IMU Route");
-    let audio_share = Arc::new(Mutex::new(AudioShareQuickAction::install(
-        &mut node.runtime,
-        session_id,
-    )));
-    let microphone = Arc::new(Mutex::new(MicrophoneQuickAction::install(
-        &mut node.runtime,
-        session_id,
-    )));
-    let windows_host = WindowsGamepadHost::install(&mut node.runtime, session_id)
-        .expect("valid fixed Windows gamepad host configuration");
-    let gamepad_lab = Arc::new(Mutex::new(
-        GamepadLab::new_with_windows_host(windows_host).expect("valid gamepad simulator"),
-    ));
-    let node = Arc::new(Mutex::new(node));
-    let audio_stop = Arc::new(AtomicBool::new(false));
-    let worker_stop = Arc::clone(&audio_stop);
-    let worker_audio_share = Arc::clone(&audio_share);
-    let worker_microphone = Arc::clone(&microphone);
-    let worker_node = Arc::clone(&node);
-    let audio_worker = thread::spawn(move || {
-        while !worker_stop.load(Ordering::Acquire) {
-            if let (Ok(mut audio_share), Ok(mut node)) =
-                (worker_audio_share.lock(), worker_node.lock())
-            {
-                audio_share.poll(&mut node.runtime);
-            }
-            if let (Ok(mut microphone), Ok(mut node)) =
-                (worker_microphone.lock(), worker_node.lock())
-            {
-                microphone.poll(&mut node.runtime);
-            }
-            thread::sleep(Duration::from_millis(250));
-        }
-    });
-    let gamepad_stop = Arc::new(AtomicBool::new(false));
-    let worker_stop = Arc::clone(&gamepad_stop);
-    let worker_gamepad = Arc::clone(&gamepad_lab);
-    let worker_node = Arc::clone(&node);
-    let gamepad_worker = thread::Builder::new()
-        .name("capyio-windows-gamepad".to_owned())
-        .spawn(move || {
-            while !worker_stop.load(Ordering::Acquire) {
-                if let (Ok(mut node), Ok(mut gamepad)) = (worker_node.lock(), worker_gamepad.lock())
-                {
-                    gamepad.poll_windows_projection(&mut node.runtime);
-                }
-                thread::sleep(Duration::from_millis(4));
-            }
-        })
-        .expect("start Windows gamepad projection worker");
-    tauri::Builder::default()
-        .manage(AppState {
-            node,
-            local_shared_capabilities: Mutex::new(BTreeSet::new()),
-            physical_imu,
-            live_imu: Arc::new(Mutex::new(live_imu)),
-            live_imu_controller: Mutex::new(None),
-            gamepad_lab,
-            gamepad_worker: GamepadProjectionWorker {
-                stop: gamepad_stop,
-                worker: Some(gamepad_worker),
-            },
-            windows_gamepad_preflight_running: AtomicBool::new(false),
-            audio_share,
-            microphone,
-            audio_worker: AudioQuickActionWorker {
-                stop: audio_stop,
-                worker: Some(audio_worker),
-            },
-            android_receivers: Mutex::new(android_receivers::AndroidReceiverActions::new()),
-        })
-        .invoke_handler(tauri::generate_handler![
-            diagnostics::get_diagnostics,
-            display_control::get_display_sender_state,
-            display_control::start_display_sender,
-            display_control::stop_display_sender,
-            get_snapshot,
-            set_route,
-            set_local_capability_shared,
-            reset_demo,
-            get_live_imu,
-            start_live_imu,
-            stop_live_imu,
-            get_gamepad_state,
-            refresh_windows_gamepad_preflight,
-            update_gamepad_state,
-            start_gamepad_dsu,
-            stop_gamepad_dsu,
-            start_android_gamepad,
-            stop_android_gamepad,
-            start_windows_gamepad_projection,
-            stop_windows_gamepad_projection,
-            get_quick_actions,
-            invoke_quick_action,
-            get_audio_endpoints,
-            select_audio_endpoint
-        ])
-        .run(tauri::generate_context!())
-        .expect("run CapyIO Tauri application");
+    #[cfg(windows)]
+    node_process::run_shell();
+    #[cfg(not(windows))]
+    {
+        let state = Arc::new(HostState(Arc::new(desktop_host::DesktopHost::start())));
+        tauri::Builder::default()
+            .invoke_handler(move |invoke| {
+                let command = invoke.message.command().to_owned();
+                let tauri::ipc::InvokeBody::Json(args) = invoke.message.payload() else {
+                    return false;
+                };
+                let result = host_commands::dispatch(&state, &command, args);
+                invoke
+                    .resolver
+                    .respond(result.map_err(tauri::ipc::InvokeError::from));
+                true
+            })
+            .run(tauri::generate_context!())
+            .expect("run CapyIO");
+    }
 }
 
-fn to_ui_snapshot(node: &DesktopNodeState, selected: &BTreeSet<CapabilityId>) -> UiSnapshot {
+#[cfg(windows)]
+pub fn run_node_host() -> Result<(), String> {
+    node_process::run_host()
+}
+
+fn to_ui_snapshot(
+    node: &DesktopNodeState,
+    selected: &BTreeSet<CapabilityId>,
+    control_plane: &DesktopControlPlaneState,
+) -> UiSnapshot {
     let snapshot = node.runtime.snapshot();
     let local_node_id = snapshot.local_node.id;
+    let bootstrap_peer_id = node
+        .runtime
+        .session(node.bootstrap_session_id)
+        .ok()
+        .map(|session| session.remote_node_id);
     let all_nodes = std::iter::once(&snapshot.local_node).chain(snapshot.peers.iter());
     let nodes = all_nodes
         .clone()
@@ -1213,6 +2221,17 @@ fn to_ui_snapshot(node: &DesktopNodeState, selected: &BTreeSet<CapabilityId>) ->
         .flat_map(|node| {
             let local = node.id == local_node_id;
             node.capabilities.values().map(move |capability| {
+                let adapter_type = node
+                    .adapter_instances
+                    .get(&capability.adapter_instance_id)
+                    .map(|adapter| adapter.adapter_type.as_str())
+                    .unwrap_or("unknown");
+                let simulated = Some(node.id) == bootstrap_peer_id
+                    || (local
+                        && matches!(
+                            adapter_type,
+                            "capyio.windows.audio" | "capyio.windows.projection"
+                        ));
                 let selectable_for_sharing = local
                     && capability.availability != Availability::Offline
                     && capability
@@ -1230,8 +2249,14 @@ fn to_ui_snapshot(node: &DesktopNodeState, selected: &BTreeSet<CapabilityId>) ->
                     permission_requirement: permission_requirement_label(
                         capability.permission_requirement,
                     ),
-                    inventory_source: "runtime_catalog",
-                    simulated: true,
+                    inventory_source: if simulated {
+                        "runtime_catalog"
+                    } else if local {
+                        "host_adapter_catalog"
+                    } else {
+                        "authenticated_peer_catalog"
+                    },
+                    simulated,
                     selectable_for_sharing,
                     selected_for_sharing: selectable_for_sharing
                         && selected.contains(&capability.id),
@@ -1274,8 +2299,29 @@ fn to_ui_snapshot(node: &DesktopNodeState, selected: &BTreeSet<CapabilityId>) ->
     let routes = snapshot
         .routes
         .iter()
-        .filter(|route| node.demo_routes.all().contains(&route.id))
-        .map(|route| route_to_ui(route, &snapshot.local_node, &snapshot.peers))
+        // Real pending/starting Routes must be visible too: the resource UI
+        // derives waiting/Cancel/Stop from this authoritative runtime list.
+        .map(|route| {
+            let mut ui = route_to_ui(
+                route,
+                &snapshot.local_node,
+                &snapshot.peers,
+                node.demo_routes.all().contains(&route.id),
+            );
+            ui.error = snapshot
+                .problems
+                .iter()
+                .rev()
+                .find(|problem| route.diagnostic_ids.contains(&problem.id))
+                .map(|problem| {
+                    format!(
+                        "{}：{}",
+                        problem.human_message,
+                        problem.technical_detail.as_deref().unwrap_or(&problem.code)
+                    )
+                });
+            ui
+        })
         .collect();
     let events = snapshot
         .events
@@ -1285,14 +2331,59 @@ fn to_ui_snapshot(node: &DesktopNodeState, selected: &BTreeSet<CapabilityId>) ->
             summary: format!("{:?}", event.kind),
         })
         .collect();
+    let port_leases = snapshot
+        .port_leases
+        .iter()
+        .map(|lease| UiPortLease {
+            node_id: lease.port.node_id.to_string(),
+            capability_id: lease.port.capability_id.to_string(),
+            port_id: lease.port.port_id.to_string(),
+            route_id: lease.route_id.to_string(),
+            session_id: lease.session_id.to_string(),
+            expires_at_ms: lease.expires_at_ms,
+        })
+        .collect();
 
     UiSnapshot {
         backend_mode: "tauri_demo",
-        schema_version: 4,
+        schema_version: 5,
         project_version: env!("CARGO_PKG_VERSION"),
+        control_plane: UiControlPlaneStatus {
+            schema_version: 1,
+            simulated: false,
+            discovery_state: if control_plane.discovery_listening {
+                "listening"
+            } else {
+                "not_started"
+            },
+            pairing_state: if control_plane.credential_store_failed {
+                "failed"
+            } else if control_plane.credential_store_ready {
+                "ready"
+            } else {
+                "not_configured"
+            },
+            transport_state: if control_plane.authenticated_connection_count > 0 {
+                "connected"
+            } else {
+                "not_connected"
+            },
+            catalog_exchange_state: if control_plane.catalog_exchange_active {
+                "active"
+            } else {
+                "not_connected"
+            },
+            discovered_candidate_count: control_plane.discovery_ingress.candidates().len(),
+            paired_peer_count: control_plane.paired_peers.peers().len(),
+            authenticated_connection_count: control_plane.authenticated_connection_count,
+            listen_port: None,
+            pairing_store_path: control_plane.pairing_store.as_ref().map(|store| store.directory_path().display().to_string()),
+            process_user_sid: current_process_sid_for_ui(),
+        },
         nodes,
         capabilities,
         routes,
+        port_leases,
         adapters,
         events,
         warnings: vec![
@@ -1383,7 +2474,12 @@ fn vector3(value: [f64; 3]) -> UiVector3 {
     }
 }
 
-fn route_to_ui(route: &Route, local: &NodeDescriptor, peers: &[NodeDescriptor]) -> UiRoute {
+fn route_to_ui(
+    route: &Route,
+    local: &NodeDescriptor,
+    peers: &[NodeDescriptor],
+    simulated: bool,
+) -> UiRoute {
     let source = resolve_port(route.source, local, peers);
     let sink = resolve_port(route.sink, local, peers);
     let active = route.state == RouteState::Active;
@@ -1400,29 +2496,55 @@ fn route_to_ui(route: &Route, local: &NodeDescriptor, peers: &[NodeDescriptor]) 
         .map(qos_label)
         .map(str::to_owned)
         .collect();
-    let projection_note = match sink.capability_class.as_str() {
-        "panel" => "CapyIO 应用内 Panel（模拟）",
-        "gamepad" => "本地游戏手柄投影（best-effort，模拟）",
-        "microphone" => "Windows 系统端点投影（驱动尚未实现）",
-        "speaker" => "Android 应用内播放端（模拟）",
-        _ => "标准 Port Sink",
+    let projection_note = if !simulated {
+        "由目标节点的 Adapter 提供；就绪状态见 Route，媒体观测见诊断"
+    } else {
+        match sink.capability_class.as_str() {
+            "panel" => "CapyIO 应用内 Panel（模拟）",
+            "gamepad" => "本地游戏手柄投影（best-effort，模拟）",
+            "microphone" => "Windows 系统端点投影（驱动尚未实现）",
+            "speaker" => "Android 应用内播放端（模拟）",
+            _ => "标准 Port Sink",
+        }
     }
     .to_owned();
 
     UiRoute {
         id: route.id.to_string(),
+        error: None,
+        source_capability_id: Some(route.source.capability_id.to_string()),
+        sink_capability_id: Some(route.sink.capability_id.to_string()),
         title,
         summary,
         profile: format!("{}/{}", route.profile.name, route.profile.major),
         backend: format!("{:?}", route.backend).to_lowercase(),
         state: route_state_label(route.state).to_owned(),
         active,
+        authorization: match route.authorization {
+            AuthorizationState::Pending => "pending",
+            AuthorizationState::Authorized { .. } => "authorized",
+            AuthorizationState::Denied => "denied",
+            AuthorizationState::Revoked => "revoked",
+        },
+        authorization_expires_at_ms: match route.authorization {
+            AuthorizationState::Authorized { expires_at_ms } => expires_at_ms,
+            _ => None,
+        },
         source,
         sink,
         format_summary,
         qos_modes,
         projection_note,
-        metrics: demo_metrics(&route.profile.name, active),
+        metrics: if simulated {
+            demo_metrics(&route.profile.name, active)
+        } else {
+            UiMetricSet {
+                estimated_latency_ms: None,
+                packet_loss_percent: None,
+                buffer_fill_ms: None,
+                simulated: false,
+            }
+        },
     }
 }
 
@@ -1552,11 +2674,71 @@ fn unix_time_ms() -> Result<u64, String> {
 
 #[cfg(test)]
 mod tests {
-    use std::net::{Ipv4Addr, TcpListener};
+    use std::{
+        fs,
+        net::{Ipv4Addr, TcpListener},
+        path::PathBuf,
+    };
 
     use tungstenite::{Message, accept};
 
     use super::*;
+
+    #[test]
+    fn probe_heartbeat_accepts_bounded_settings_interleave_only() {
+        let settings = || {
+            ReceivedControlMessage::ControllerSettingsState(
+                capyio_protocol::v1::ControllerSettingsState {
+                    revision: 1,
+                    motion_enabled: true,
+                    haptics_strength: 70,
+                    request_id: 0,
+                    error: String::new(),
+                },
+            )
+        };
+        let heartbeat = |sequence| {
+            ReceivedControlMessage::Heartbeat(capyio_protocol::ValidatedControlHeartbeat {
+                message_id: capyio_core::MessageId::new(),
+                session_id: capyio_core::SessionId::new(),
+                sequence,
+                acknowledgement: true,
+            })
+        };
+        let mut messages = vec![settings(), heartbeat(1)].into_iter();
+        assert!(receive_probe_heartbeat(|| Ok(messages.next().unwrap())).is_ok());
+        assert!(receive_probe_heartbeat(|| Ok(settings())).is_err());
+        assert!(receive_probe_heartbeat(|| Ok(heartbeat(2))).is_err());
+        assert!(
+            receive_probe_heartbeat(|| Ok(ReceivedControlMessage::ControllerSettingsRequest(
+                capyio_protocol::v1::ControllerSettingsRequest {
+                    request_id: 1,
+                    expected_revision: 1,
+                    motion_enabled: true,
+                    haptics_strength: 70,
+                }
+            )))
+            .is_err()
+        );
+    }
+
+    struct TemporaryDirectory(PathBuf);
+
+    impl TemporaryDirectory {
+        fn new(name: &str) -> Self {
+            let path =
+                std::env::temp_dir().join(format!("capyio-desktop-{name}-{}", std::process::id()));
+            let _ = fs::remove_dir_all(&path);
+            fs::create_dir(&path).expect("create temporary desktop test directory");
+            Self(path)
+        }
+    }
+
+    impl Drop for TemporaryDirectory {
+        fn drop(&mut self) {
+            let _ = fs::remove_dir_all(&self.0);
+        }
+    }
 
     fn physical_node() -> (DesktopNodeState, PhysicalImuRoute) {
         let mut node = DesktopNodeState::demo().expect("demo Runtime bootstrap");
@@ -1633,8 +2815,19 @@ mod tests {
                 .is_err()
         );
 
-        let dto = to_ui_snapshot(&node, &selected);
-        assert_eq!(dto.schema_version, 4);
+        let control_plane =
+            DesktopControlPlaneState::new(runtime.local_node.id).expect("control plane");
+        let dto = to_ui_snapshot(&node, &selected, &control_plane);
+        assert_eq!(dto.schema_version, 5);
+        assert_eq!(dto.control_plane.schema_version, 1);
+        assert!(!dto.control_plane.simulated);
+        assert_eq!(dto.control_plane.discovery_state, "not_started");
+        assert_eq!(dto.control_plane.pairing_state, "not_configured");
+        assert_eq!(dto.control_plane.transport_state, "not_connected");
+        assert_eq!(dto.control_plane.catalog_exchange_state, "not_connected");
+        assert_eq!(dto.control_plane.discovered_candidate_count, 0);
+        assert_eq!(dto.control_plane.paired_peer_count, 0);
+        assert_eq!(dto.control_plane.authenticated_connection_count, 0);
         assert!(dto.capabilities.iter().any(|capability| {
             capability.local
                 && capability.id == local_source.to_string()
@@ -1654,6 +2847,492 @@ mod tests {
                 .count(),
             2
         );
+        for route in &dto.routes {
+            let source = runtime
+                .routes
+                .iter()
+                .find(|candidate| candidate.id.to_string() == route.id)
+                .expect("UI Route remains Runtime-owned");
+            assert_eq!(
+                route.source_capability_id.as_deref(),
+                Some(source.source.capability_id.to_string()).as_deref()
+            );
+            assert_eq!(
+                route.sink_capability_id.as_deref(),
+                Some(source.sink.capability_id.to_string()).as_deref()
+            );
+            assert_ne!(route.authorization, "unknown");
+        }
+    }
+
+    #[test]
+    fn pending_non_demo_route_is_visible_for_resource_cancel() {
+        let mut node = DesktopNodeState::demo().unwrap();
+        let template = node
+            .runtime
+            .route(node.demo_routes.phone_microphone_to_windows)
+            .unwrap()
+            .clone();
+        let id = RouteId::new();
+        node.runtime
+            .create_route_with_id(
+                id,
+                template.session_id,
+                template.source,
+                template.sink,
+                template.backend,
+            )
+            .unwrap();
+        assert!(!node.demo_routes.all().contains(&id));
+        let control = DesktopControlPlaneState::new(node.runtime.snapshot().local_node.id).unwrap();
+        let dto = to_ui_snapshot(&node, &BTreeSet::new(), &control);
+        let pending = dto
+            .routes
+            .iter()
+            .find(|route| route.id == id.to_string())
+            .expect("real pending Route must reach resource UI");
+        assert_eq!(pending.state, "draft");
+        assert_eq!(pending.authorization, "pending");
+        assert!(!pending.active);
+        assert!(!pending.metrics.simulated);
+        let snapshot = node.runtime.snapshot();
+        let mut active = node.runtime.route(id).unwrap().clone();
+        active.state = RouteState::Active;
+        let real = route_to_ui(&active, &snapshot.local_node, &snapshot.peers, false);
+        assert!(real.metrics.estimated_latency_ms.is_none());
+        assert!(real.metrics.packet_loss_percent.is_none());
+        assert!(real.metrics.buffer_fill_ms.is_none());
+        assert!(!real.projection_note.contains("模拟"));
+        let demo = route_to_ui(&active, &snapshot.local_node, &snapshot.peers, true);
+        assert!(demo.metrics.simulated);
+        assert!(demo.metrics.estimated_latency_ms.is_some());
+        assert_eq!(
+            pending.source_capability_id.as_deref(),
+            Some(template.source.capability_id.to_string()).as_deref()
+        );
+        assert_eq!(
+            pending.sink_capability_id.as_deref(),
+            Some(template.sink.capability_id.to_string()).as_deref()
+        );
+        node.runtime
+            .report_route_offline(
+                id,
+                capyio_core::Problem {
+                    id: capyio_core::ProblemId::new(),
+                    code: "CAPY.AUDIO_ROUTE.FAILED".into(),
+                    category: capyio_core::ProblemCategory::Transport,
+                    severity: capyio_core::ProblemSeverity::Warning,
+                    retryable: true,
+                    related_node: None,
+                    related_adapter: None,
+                    related_route: Some(id),
+                    human_message: "音频启动失败".into(),
+                    technical_detail: Some("phase=worker; exact failure".into()),
+                },
+            )
+            .unwrap();
+        let dto = to_ui_snapshot(&node, &BTreeSet::new(), &control);
+        let failed = dto
+            .routes
+            .iter()
+            .find(|route| route.id == id.to_string())
+            .unwrap();
+        assert_eq!(failed.state, "offline");
+        assert!(
+            failed
+                .error
+                .as_deref()
+                .unwrap()
+                .contains("phase=worker; exact failure")
+        );
+    }
+
+    #[test]
+    fn desktop_control_plane_snapshot_comes_from_host_owned_state() {
+        use capyio_discovery::DiscoveryAnnouncement;
+        use capyio_pairing::{CertificateFingerprint, CredentialHandle, PairedPeerRecord};
+
+        let node = DesktopNodeState::demo().expect("demo Runtime bootstrap");
+        let mut control_plane =
+            DesktopControlPlaneState::new(node.runtime.snapshot().local_node.id)
+                .expect("control plane");
+        let peer_id = capyio_core::NodeId::new();
+        control_plane
+            .discovery_ingress
+            .ingest(
+                Ipv4Addr::new(192, 168, 1, 20).into(),
+                &DiscoveryAnnouncement::new(peer_id, 42_420, 7)
+                    .expect("announcement")
+                    .encode(),
+                100,
+            )
+            .expect("candidate");
+        control_plane
+            .paired_peers
+            .add(
+                PairedPeerRecord::new(
+                    peer_id,
+                    "Test peer",
+                    "peer.capyio.test",
+                    CredentialHandle::new("os-keystore:test-peer").expect("handle"),
+                    CertificateFingerprint::from_certificate_der(b"test certificate")
+                        .expect("fingerprint"),
+                    90,
+                )
+                .expect("peer record"),
+            )
+            .expect("paired peer");
+        control_plane.discovery_listening = true;
+        control_plane.credential_store_ready = true;
+        control_plane.authenticated_connection_count = 1;
+        control_plane.catalog_exchange_active = true;
+
+        let dto = to_ui_snapshot(&node, &BTreeSet::new(), &control_plane);
+        assert_eq!(dto.control_plane.discovery_state, "listening");
+        assert_eq!(dto.control_plane.pairing_state, "ready");
+        assert_eq!(dto.control_plane.transport_state, "connected");
+        assert_eq!(dto.control_plane.catalog_exchange_state, "active");
+        assert_eq!(dto.control_plane.discovered_candidate_count, 1);
+        assert_eq!(dto.control_plane.paired_peer_count, 1);
+        assert_eq!(dto.control_plane.authenticated_connection_count, 1);
+
+        control_plane.credential_store_ready = false;
+        control_plane.credential_store_failed = true;
+        let failed = to_ui_snapshot(&node, &BTreeSet::new(), &control_plane);
+        assert_eq!(failed.control_plane.pairing_state, "failed");
+    }
+
+    #[test]
+    fn authenticated_peer_catalog_is_not_labeled_as_demo_inventory() {
+        let mut node = DesktopNodeState::demo().expect("demo Runtime bootstrap");
+        let mut peer = capyio_testkit::android_node();
+        peer.id = NodeId::new();
+        peer.display_name = "Authenticated tablet".to_owned();
+        let peer_id = peer.id;
+        node.runtime.register_peer(peer, true).expect("real peer");
+        node.runtime.open_session(peer_id).expect("peer Session");
+        let control = DesktopControlPlaneState::new(node.runtime.snapshot().local_node.id)
+            .expect("control plane");
+
+        let dto = to_ui_snapshot(&node, &BTreeSet::new(), &control);
+        let capabilities = dto
+            .capabilities
+            .iter()
+            .filter(|capability| capability.node_id == peer_id.to_string())
+            .collect::<Vec<_>>();
+        assert!(!capabilities.is_empty());
+        assert!(capabilities.iter().all(|capability| !capability.simulated));
+        assert!(
+            capabilities
+                .iter()
+                .all(|capability| capability.inventory_source == "authenticated_peer_catalog")
+        );
+    }
+
+    #[test]
+    fn desktop_control_plane_recovers_paired_peer_metadata_from_store() {
+        use capyio_pairing::{CertificateFingerprint, CredentialHandle, PairedPeerRecord};
+
+        let temp = TemporaryDirectory::new("pairing-store");
+        let local = capyio_core::NodeId::new();
+        let peer = capyio_core::NodeId::new();
+        let store = WindowsPairingStore::from_local_app_data(&temp.0, local).expect("store");
+        let mut directory = PairedPeerDirectory::new(local).expect("directory");
+        directory
+            .add(
+                PairedPeerRecord::new(
+                    peer,
+                    "Recovered tablet",
+                    "tablet.capyio.test",
+                    CredentialHandle::new(format!("windows-dpapi:{}", "a".repeat(64)))
+                        .expect("handle"),
+                    CertificateFingerprint::new([9; 32]).expect("fingerprint"),
+                    100,
+                )
+                .expect("record"),
+            )
+            .expect("add record");
+        store
+            .commit_directory(&directory)
+            .expect("commit directory");
+
+        let mut control = DesktopControlPlaneState::new(local).expect("control plane");
+        control
+            .attach_pairing_store(store.clone())
+            .expect("load store");
+        assert!(control.credential_store_ready);
+        assert!(!control.credential_store_failed);
+        assert_eq!(control.paired_peers.peers().count(), 1);
+        assert_eq!(control.paired_peers.peers().next().unwrap().node_id, peer);
+        assert_eq!(
+            control.pairing_store.as_ref().unwrap().directory_path(),
+            store.directory_path()
+        );
+        let metadata = serde_json::to_value(paired_peer_metadata(&control)).unwrap();
+        assert_eq!(
+            metadata,
+            serde_json::json!([{
+                "nodeId": peer.to_string(), "displayName": "Recovered tablet", "revoked": false,
+                "pairedAtMs": 100
+            }])
+        );
+        control
+            .discovery_ingress
+            .ingest(
+                Ipv4Addr::new(192, 168, 1, 50).into(),
+                &capyio_discovery::DiscoveryAnnouncement::new(peer, 42420, 9)
+                    .unwrap()
+                    .encode(),
+                100,
+            )
+            .unwrap();
+        let plan = control
+            .resolve_control_dial(peer, 101)
+            .expect("paired fresh dial plan");
+        assert_eq!(plan.candidate.node_id, peer);
+        assert_eq!(plan.candidate.endpoint.to_string(), "192.168.1.50:42420");
+        assert_eq!(plan.display_name, "Recovered tablet");
+        assert_eq!(
+            plan.candidate.credential_handle.as_str(),
+            format!("windows-dpapi:{}", "a".repeat(64))
+        );
+        let manual = control
+            .resolve_manual_control_dial(
+                peer,
+                "100.110.59.35:42095".parse().expect("manual endpoint"),
+            )
+            .expect("active paired manual dial plan");
+        assert_eq!(manual.candidate.endpoint.to_string(), "100.110.59.35:42095");
+        assert!(
+            verify_credential_readable(&store, &manual.candidate.credential_handle)
+                .unwrap_err()
+                .contains("当前进程账号无法读取")
+        );
+        assert_eq!(manual.candidate.instance_nonce, 0);
+        assert!(
+            control
+                .resolve_manual_control_dial(
+                    NodeId::new(),
+                    "192.168.1.9:42420".parse().expect("unpaired endpoint")
+                )
+                .is_err()
+        );
+        control.paired_peers.revoke(peer, 200).unwrap();
+        store.commit_directory(&control.paired_peers).unwrap();
+        assert!(paired_peer_metadata(&control)[0].revoked);
+        assert!(
+            control
+                .resolve_manual_control_dial(peer, "192.168.1.50:42420".parse().unwrap())
+                .is_err()
+        );
+    }
+
+    #[test]
+    fn pairing_dials_refresh_replaced_revoked_and_corrupt_records() {
+        use capyio_pairing::{CertificateFingerprint, CredentialHandle, PairedPeerRecord};
+
+        let temp = TemporaryDirectory::new("pairing-refresh");
+        let local = NodeId::new();
+        let peer = NodeId::new();
+        let store = WindowsPairingStore::from_local_app_data(&temp.0, local).unwrap();
+        let directory = |name: &str, byte: u8| {
+            let mut directory = PairedPeerDirectory::new(local).unwrap();
+            directory
+                .add(
+                    PairedPeerRecord::new(
+                        peer,
+                        name,
+                        "tablet.capyio.test",
+                        CredentialHandle::new(format!(
+                            "windows-dpapi:{}",
+                            format!("{byte:02x}").repeat(32)
+                        ))
+                        .unwrap(),
+                        CertificateFingerprint::new([byte; 32]).unwrap(),
+                        100,
+                    )
+                    .unwrap(),
+                )
+                .unwrap();
+            directory
+        };
+        store
+            .commit_directory(&directory("Old pairing", 1))
+            .unwrap();
+        let mut control = DesktopControlPlaneState::new(local).unwrap();
+        control.attach_pairing_store(store.clone()).unwrap();
+        let endpoint = "192.168.1.50:42420".parse().unwrap();
+        control
+            .discovery_ingress
+            .ingest(
+                Ipv4Addr::new(192, 168, 1, 50).into(),
+                &capyio_discovery::DiscoveryAnnouncement::new(peer, 42420, 9)
+                    .unwrap()
+                    .encode(),
+                100,
+            )
+            .unwrap();
+
+        // Simulate a pairing update by another local process while the UI lives.
+        store
+            .commit_directory(&directory("Current pairing", 2))
+            .unwrap();
+        let manual = control.resolve_manual_control_dial(peer, endpoint).unwrap();
+        assert_eq!(manual.display_name, "Current pairing");
+        assert_eq!(
+            manual.candidate.peer_certificate_sha256,
+            CertificateFingerprint::new([2; 32]).unwrap()
+        );
+        assert_eq!(
+            manual.candidate.credential_handle.as_str(),
+            format!("windows-dpapi:{}", "02".repeat(32))
+        );
+        store
+            .commit_directory(&directory("Discovery pairing", 3))
+            .unwrap();
+        assert_eq!(
+            control
+                .resolve_control_dial(peer, 101)
+                .unwrap()
+                .display_name,
+            "Discovery pairing"
+        );
+        assert_eq!(
+            paired_peer_metadata(&control)[0].display_name,
+            "Discovery pairing"
+        );
+
+        let mut revoked = directory("Revoked pairing", 3);
+        revoked.revoke(peer, 200).unwrap();
+        store.commit_directory(&revoked).unwrap();
+        assert!(control.resolve_manual_control_dial(peer, endpoint).is_err());
+        assert!(control.resolve_control_dial(peer, 201).is_err());
+        assert!(paired_peer_metadata(&control)[0].revoked);
+
+        store
+            .commit_directory(&directory("Restored pairing", 4))
+            .unwrap();
+        control.refresh_pairing_directory().unwrap();
+        fs::write(temp.0.join("CapyIO/Control/Pairing/peers-v1.json"), b"{}").unwrap();
+        assert!(
+            control
+                .resolve_manual_control_dial(peer, endpoint)
+                .err()
+                .expect("corrupt store must fail")
+                .contains("pairing directory refresh failed")
+        );
+        assert!(control.resolve_control_dial(peer, 202).is_err());
+        assert!(!control.credential_store_ready);
+        assert!(control.credential_store_failed);
+
+        // A missing directory is empty trust, never permission to use old keys.
+        store
+            .commit_directory(&PairedPeerDirectory::new(local).unwrap())
+            .unwrap();
+        assert!(control.resolve_manual_control_dial(peer, endpoint).is_err());
+        assert_eq!(control.paired_peers.peers().count(), 0);
+    }
+
+    #[test]
+    fn desktop_control_plane_rejects_corrupt_pairing_directory_without_partial_load() {
+        let temp = TemporaryDirectory::new("corrupt-pairing-store");
+        let local = capyio_core::NodeId::new();
+        let store = WindowsPairingStore::from_local_app_data(&temp.0, local).expect("store");
+        let root = temp.0.join("CapyIO/Control/Pairing");
+        fs::create_dir_all(&root).expect("pairing root");
+        fs::write(root.join("peers-v1.json"), b"{}").expect("corrupt directory");
+
+        let mut control = DesktopControlPlaneState::new(local).expect("control plane");
+        assert!(control.attach_pairing_store(store).is_err());
+        assert!(!control.credential_store_ready);
+        assert_eq!(control.paired_peers.peers().count(), 0);
+    }
+
+    #[test]
+    fn discovered_device_observer_expires_candidates_even_after_listener_stop() {
+        use capyio_discovery::{DISCOVERY_CANDIDATE_TTL_MS, DiscoveryAnnouncement};
+        let local = capyio_core::NodeId::new();
+        let peer = capyio_core::NodeId::new();
+        let mut control = DesktopControlPlaneState::new(local).unwrap();
+        control
+            .discovery_ingress
+            .ingest(
+                Ipv4Addr::new(192, 168, 1, 20).into(),
+                &DiscoveryAnnouncement::new(peer, 42420, 7).unwrap().encode(),
+                100,
+            )
+            .unwrap();
+        let observed = discovery_candidates(&mut control, 200);
+        assert_eq!(observed.len(), 1);
+        assert_eq!(observed[0].node_id, peer.to_string());
+        assert_eq!(observed[0].host, "192.168.1.20");
+        assert_eq!(observed[0].control_port, 42420);
+        assert_eq!(observed[0].last_seen_age_ms, 100);
+        assert_eq!(observed[0].pairing_state, "unpaired");
+        assert!(!control.discovery_listening);
+        assert_eq!(control.paired_peers.peers().len(), 0);
+        assert_eq!(control.authenticated_connection_count, 0);
+        assert!(discovery_candidates(&mut control, 101 + DISCOVERY_CANDIDATE_TTL_MS).is_empty());
+        assert_eq!(control.discovery_ingress.candidates().len(), 0);
+    }
+
+    #[test]
+    fn discovered_device_observer_projects_pairing_state_without_authentication() {
+        use capyio_discovery::DiscoveryAnnouncement;
+        use capyio_pairing::{CertificateFingerprint, CredentialHandle, PairedPeerRecord};
+
+        let local = capyio_core::NodeId::new();
+        let active_peer = capyio_core::NodeId::new();
+        let revoked_peer = capyio_core::NodeId::new();
+        let mut control = DesktopControlPlaneState::new(local).unwrap();
+        for (peer, nonce) in [(active_peer, 7), (revoked_peer, 8)] {
+            control
+                .discovery_ingress
+                .ingest(
+                    Ipv4Addr::new(192, 168, 1, nonce as u8).into(),
+                    &DiscoveryAnnouncement::new(peer, 42420, nonce)
+                        .unwrap()
+                        .encode(),
+                    100,
+                )
+                .unwrap();
+            control
+                .paired_peers
+                .add(
+                    PairedPeerRecord::new(
+                        peer,
+                        format!("Peer {nonce}"),
+                        format!("peer-{nonce}.capyio.test"),
+                        CredentialHandle::new(format!("test:{nonce}")).unwrap(),
+                        CertificateFingerprint::new([nonce as u8; 32]).unwrap(),
+                        90,
+                    )
+                    .unwrap(),
+                )
+                .unwrap();
+        }
+        control.paired_peers.revoke(revoked_peer, 110).unwrap();
+
+        let observed = discovery_candidates(&mut control, 200);
+        assert_eq!(observed.len(), 2);
+        assert_eq!(
+            observed
+                .iter()
+                .find(|candidate| candidate.node_id == active_peer.to_string())
+                .unwrap()
+                .pairing_state,
+            "paired"
+        );
+        assert_eq!(
+            observed
+                .iter()
+                .find(|candidate| candidate.node_id == revoked_peer.to_string())
+                .unwrap()
+                .pairing_state,
+            "revoked"
+        );
+        assert_eq!(control.authenticated_connection_count, 0);
+        assert!(!control.catalog_exchange_active);
     }
 
     #[test]

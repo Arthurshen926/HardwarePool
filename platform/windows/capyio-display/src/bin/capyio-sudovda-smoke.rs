@@ -22,7 +22,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     use capyio_core::ids::CapabilityId;
     use capyio_windows_display::{
         DisplayOutputBindingError, IddMonitorConnectRequest, IddMonitorIdentity, IddMonitorMode,
-        SudoVdaMonitorLease, activate_owned_windows_display_output,
+        SudoVdaMonitorLease, configure_owned_windows_display_output,
         configure_process_display_dpi_awareness, verify_owned_windows_display_output,
     };
 
@@ -39,11 +39,19 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     let capability_id = std::env::var("CAPYIO_SUDOVDA_SMOKE_CAPABILITY_ID")
         .unwrap_or_else(|_| "6e8916f4-c570-4e55-a4a5-c06678808f8d".to_owned());
     let identity = IddMonitorIdentity::new(capability_id.parse::<CapabilityId>()?)?;
-    let mode = IddMonitorMode {
-        width: 2640,
-        height: 1216,
-        refresh_millihz: 120_000,
+    let dimension = |key: &str, fallback: u32| -> Result<u32, Box<dyn std::error::Error>> {
+        Ok(std::env::var(key)
+            .ok()
+            .map(|v| v.parse::<u32>())
+            .transpose()?
+            .unwrap_or(fallback))
     };
+    let mode = IddMonitorMode {
+        width: dimension("CAPYIO_SUDOVDA_SMOKE_WIDTH", 2640)?,
+        height: dimension("CAPYIO_SUDOVDA_SMOKE_HEIGHT", 1216)?,
+        refresh_millihz: dimension("CAPYIO_SUDOVDA_SMOKE_REFRESH_MILLIHZ", 120_000)?,
+    };
+    mode.validate()?;
     let mut lease = SudoVdaMonitorLease::create(IddMonitorConnectRequest {
         identity,
         preferred_mode: mode,
@@ -63,9 +71,10 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
                 Ok(binding) => break binding,
                 Err(
                     DisplayOutputBindingError::InactiveOwnedPath
-                    | DisplayOutputBindingError::DesktopMonitorUnavailable,
+                    | DisplayOutputBindingError::DesktopMonitorUnavailable
+                    | DisplayOutputBindingError::ModeMismatch,
                 ) if !activation_attempted => {
-                    activate_owned_windows_display_output(monitor)?;
+                    configure_owned_windows_display_output(monitor, mode)?;
                     activation_attempted = true;
                 }
                 Err(_error) if Instant::now() < deadline => {
@@ -97,7 +106,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
                             "SudoVDA output lost after {}ms; attempting bounded topology reactivation",
                             started.elapsed().as_millis()
                         );
-                        activate_owned_windows_display_output(monitor)?;
+                        configure_owned_windows_display_output(monitor, mode)?;
                         reactivations_left -= 1;
                         continue;
                     }

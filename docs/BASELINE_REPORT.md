@@ -69,7 +69,7 @@ current Codex process did not inherit the installed Rust/Node/JBR paths, so the
 successful rerun used this process-local prefix:
 
 ```powershell
-$env:Path = 'C:\Users\arthu\.cargo\bin;C:\Program Files\nodejs;C:\Program Files\Android\Android Studio\jbr\bin;' + $env:Path
+$env:Path = '%USERPROFILE%\.cargo\bin;C:\Program Files\nodejs;C:\Program Files\Android\Android Studio\jbr\bin;' + $env:Path
 ```
 
 The first `cargo xtask doctor` therefore reported Node and Corepack missing.

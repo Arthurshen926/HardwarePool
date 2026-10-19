@@ -27,7 +27,10 @@
     }
   },
   "bundle": {
-    "active": false,
-    "targets": "all"
+    "publisher": "Arthurshen926",
+    "active": true,
+    "targets": ["nsis"],
+    "shortDescription": "Cross-device I/O capability fabric",
+    "longDescription": "CapyIO connects explicitly shared hardware capabilities between paired devices on a trusted local network."
   }
 }

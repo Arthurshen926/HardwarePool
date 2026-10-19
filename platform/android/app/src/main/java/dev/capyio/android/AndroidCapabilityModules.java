@@ -228,9 +228,9 @@ final class AndroidCapabilityModules {
         return new CapabilitySnapshot(
                 "android.haptics",
                 "Phone Vibration",
-                CapabilityKind.HAPTICS,
-                availability,
-                CapabilityPermissionRequirement.NONE,
+                  CapabilityKind.HAPTICS,
+                  availability,
+                  CapabilityPermissionRequirement.USER_CONFIRMATION,
                 hardwarePresence,
                 true,
                 List.of(new CapabilityPortSnapshot(
@@ -317,7 +317,9 @@ final class AndroidCapabilityModules {
             availability = CapabilityAvailability.OFFLINE;
             problemCode = inventoryProblem(hardwarePresence);
         } else if (lifecycle.state() == CapabilityLifecycleState.FAILED) {
-            availability = CapabilityAvailability.OFFLINE;
+            // A failed data Route does not remove the local touchscreen.
+            // Keep the Source publishable so a fresh authorized Route can retry.
+            availability = CapabilityAvailability.AVAILABLE;
             problemCode = lifecycle.problemCode();
         } else {
             availability = lifecycle.state().ownsAdapterLifecycle()

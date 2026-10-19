@@ -12,14 +12,14 @@ Windows SDK 10.0.26100.0 and Visual Studio Build Tools 17.14. A pinned SysVAD
 kernel library and the SwapAPO baseline have compiled locally without deploying
 a driver. The human explicitly authorized controlled local deployment testing.
 
-The identified host is `DESKTOP-AT8EVE9`, AMD64, Windows build `26200.9168`.
+The identified host is `LAB-WINDOWS-HOST`, AMD64, Windows build `26200.9168`.
 It is normally reached through Remote Desktop, so a driver failure can remove
 the only management path. Authorization therefore does not by itself make the
 host deployment-ready.
 
 ## Decision
 
-Gate 7B may use `DESKTOP-AT8EVE9` for a bounded local driver lab only when all
+Gate 7B may use `LAB-WINDOWS-HOST` for a bounded local driver lab only when all
 of the following are retained before each first install or materially changed
 package:
 

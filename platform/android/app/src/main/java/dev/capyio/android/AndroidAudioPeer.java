@@ -2,6 +2,16 @@ package dev.capyio.android;
 
 /** Explicit trusted-network lab endpoint; not pairing or authorization. */
 public record AndroidAudioPeer(String host, int localPort, int peerPort) {
+    public static String savedSettingsJson(String direction, AndroidAudioPeer peer) {
+        if (!"microphone".equals(direction) && !"speaker".equals(direction)) {
+            throw new IllegalArgumentException("Unknown audio direction");
+        }
+        return "{\"schemaVersion\":1,\"direction\":\"" + direction + "\",\"savedPeer\":"
+                + (peer == null ? "null" : "{\"host\":\"" + peer.host()
+                + "\",\"localPort\":" + peer.localPort() + ",\"peerPort\":" + peer.peerPort() + "}")
+                + "}";
+    }
+
     public AndroidAudioPeer {
         if (host == null || host.length() > 15 || localPort < 1 || localPort > 65535
                 || peerPort < 1 || peerPort > 65535) {

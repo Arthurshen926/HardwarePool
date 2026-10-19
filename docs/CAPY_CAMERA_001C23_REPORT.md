@@ -82,7 +82,7 @@ tested.
 ## Authorized physical evidence
 
 The exact C23 APK was installed on the approved V2419A and the exact Windows
-package was temporarily deployed on `DESKTOP-AT8EVE9`. ADB was used only for
+package was temporarily deployed on `LAB-WINDOWS-HOST`. ADB was used only for
 installation; no `adb reverse` mapping was created. Private interface/device
 addresses are intentionally omitted from repository evidence.
 

@@ -91,6 +91,15 @@ internal static class HidReportProbe
             }
             DateTime deadline = DateTime.UtcNow.AddSeconds(holdSeconds);
             byte[] baseline = null;
+            byte[] latest = null;
+            bool[] changedBytes = new bool[target.InputReportBytes];
+            bool ds4 = vendorId == 0x054c && productId == 0x09cc;
+            int[] motionMin = { Int16.MaxValue, Int16.MaxValue, Int16.MaxValue, Int16.MaxValue, Int16.MaxValue, Int16.MaxValue };
+            int[] motionMax = { Int16.MinValue, Int16.MinValue, Int16.MinValue, Int16.MinValue, Int16.MinValue, Int16.MinValue };
+            ulong motionReports = 0;
+            ushort? lastDs4Timestamp = null;
+            ulong ds4TimestampBackwards = 0;
+            ulong ds4TimestampAdvances = 0;
             ulong reports = 0;
             ulong changedReports = 0;
             ulong readTimeouts = 0;
@@ -103,16 +112,39 @@ internal static class HidReportProbe
                     continue;
                 }
                 reports++;
+                latest = report;
+                // DS4 USB input report 0x01: gyro XYZ at 13, accel XYZ at 19.
+                // Count these separately: packet counters change even when IMU is absent.
+                if (ds4 && report.Length == 64 && report[0] == 1)
+                {
+                    motionReports++;
+                    ushort timestamp = BitConverter.ToUInt16(report, 10);
+                    if (lastDs4Timestamp.HasValue)
+                    {
+                        ushort delta = unchecked((ushort)(timestamp - lastDs4Timestamp.Value));
+                        if (delta > 32768) ds4TimestampBackwards++;
+                        else if (delta > 0) ds4TimestampAdvances++;
+                    }
+                    lastDs4Timestamp = timestamp;
+                    for (int axis = 0; axis < 6; axis++)
+                    {
+                        int value = BitConverter.ToInt16(report, 13 + axis * 2);
+                        motionMin[axis] = Math.Min(motionMin[axis], value);
+                        motionMax[axis] = Math.Max(motionMax[axis], value);
+                    }
+                }
                 if (baseline == null)
                 {
                     baseline = report;
                     Console.WriteLine(
                         "CAPYIO_HID_FIRST_REPORT_PREFIX="
-                        + BitConverter.ToString(report, 0, Math.Min(8, report.Length)));
+                        + BitConverter.ToString(report, 0, Math.Min(64, report.Length)));
                 }
                 else if (Different(report, baseline))
                 {
                     changedReports++;
+                    for (int index = 0; index < report.Length; index++)
+                        changedBytes[index] |= report[index] != baseline[index];
                 }
             }
             Console.WriteLine(
@@ -120,6 +152,22 @@ internal static class HidReportProbe
                 reports,
                 changedReports,
                 readTimeouts);
+            if (latest != null)
+            {
+                Console.WriteLine("CAPYIO_HID_LAST_REPORT=" + BitConverter.ToString(latest));
+                List<string> offsets = new List<string>();
+                for (int index = 0; index < changedBytes.Length; index++)
+                    if (changedBytes[index]) offsets.Add(index.ToString(CultureInfo.InvariantCulture));
+                Console.WriteLine("CAPYIO_HID_CHANGED_OFFSETS=" + String.Join(",", offsets));
+                if (motionReports > 0)
+                {
+                    Console.WriteLine("CAPYIO_DS4_CLOCK=advances={0} backwards_or_long_gap={1}",
+                        ds4TimestampAdvances, ds4TimestampBackwards);
+                    for (int axis = 0; axis < 6; axis++)
+                        Console.WriteLine("CAPYIO_DS4_MOTION_AXIS={0} min={1} max={2}",
+                            axis, motionMin[axis], motionMax[axis]);
+                }
+            }
             if (reports == 0)
             {
                 throw new InvalidOperationException("the HID interface produced no input report");

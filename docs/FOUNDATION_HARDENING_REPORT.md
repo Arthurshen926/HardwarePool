@@ -65,7 +65,7 @@ git diff --check
 ```
 
 The Codex shell initially omitted both Cargo and Node from its process `PATH`.
-The installed tools were found at `C:\Users\arthu\.cargo\bin` and
+The installed tools were found at `%USERPROFILE%\.cargo\bin` and
 `C:\Program Files\nodejs`; the successful full CI run prepended those locations
 to that process only. No tool was installed and no persistent system setting was
 changed. The pinned frontend package manager resolved to pnpm 11.5.3 through

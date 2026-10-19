@@ -43,12 +43,12 @@ The Adapter tests prove:
 
 Approved Android target:
 
-- ADB target used explicitly: `100.66.157.119:33071`;
+- ADB target used explicitly: `<LAB_IPV4_03>:33071`;
 - model: Vivo `V2419A` (`PD2419`);
 - installed receiver: `io.github.mkckr0.audio_share_app` v0.3.4,
   version code 3004;
 - receiver configuration observed through UI automation:
-  `100.66.231.100:65530`;
+  `<LAB_IPV4_04>:65530`;
 - path: host and phone on the existing Tailscale network.
 
 The second 10-second 440 Hz run reported:

@@ -32,6 +32,27 @@ fn main() {
 
 fn run() -> Result<(), Box<dyn Error>> {
     let options = Options::parse()?;
+    if let Some(binding) = options.route_binding {
+        binding.require_live()?;
+        let remaining =
+            Duration::from_millis(binding.expires_at_ms.saturating_sub(camera_wall_ms()));
+        let deadline = Instant::now()
+            .checked_add(remaining)
+            .ok_or("camera deadline overflow")?;
+        // This dedicated child may be blocked in accept/read or decoder work.
+        // Exit closes only its own sockets/mappings; the parent reaps the child
+        // and closes its separate CameraSession projection owner.
+        thread::Builder::new()
+            .name("camera-route-expiry".into())
+            .spawn(move || {
+                loop {
+                    if Instant::now() >= deadline || camera_wall_ms() >= binding.expires_at_ms {
+                        std::process::exit(0);
+                    }
+                    thread::sleep(Duration::from_millis(50));
+                }
+            })?;
+    }
     let listener = TcpListener::bind(SocketAddrV4::new(options.bind_ip, options.port))?;
     println!(
         "CAPYIO_AVC_LAB_READY transport={} port={} max_access_units={} decode_nv12={} publish_scope={}",
@@ -52,6 +73,8 @@ fn run() -> Result<(), Box<dyn Error>> {
     let mut payload_bytes = 0_u64;
     let mut last_sequence = 0_u64;
     let mut decoded_frames = 0_u64;
+    #[cfg(windows)]
+    let mut last_progress_frames = 0_u64;
     let mut decoded_bytes = 0_u64;
     let mut first_decoded_checksum = None;
     let mut last_decoded_checksum = None;
@@ -80,6 +103,9 @@ fn run() -> Result<(), Box<dyn Error>> {
         while let Some(record) = read_avc_record(&mut connection)? {
             match &record {
                 AvcRecord::Config { stream, config } => {
+                    if let Some(binding) = options.route_binding {
+                        binding.require_stream(stream.stream_id, stream.epoch)?;
+                    }
                     if guard.is_some() {
                         return Err("received more than one config record".into());
                     }
@@ -172,9 +198,20 @@ fn run() -> Result<(), Box<dyn Error>> {
                                     publisher.as_mut(),
                                 )?;
                             }
+                            if options.route_binding.is_some()
+                                && decoded_frames > 0
+                                && (last_progress_frames == 0
+                                    || decoded_frames.saturating_sub(last_progress_frames) >= 15)
+                            {
+                                let published = publisher
+                                    .as_ref()
+                                    .map_or(0, SharedFramePublisher::published_frames);
+                                println!("CAPYIO_AVC_ROUTE_FRAME published={published}");
+                                last_progress_frames = decoded_frames;
+                            }
                         }
                     }
-                    if access_units >= options.max_access_units {
+                    if !options.continuous && access_units >= options.max_access_units {
                         break;
                     }
                 }
@@ -202,7 +239,7 @@ fn run() -> Result<(), Box<dyn Error>> {
             }
         }
 
-        if access_units >= options.max_access_units {
+        if !options.continuous && access_units >= options.max_access_units {
             break 'connections;
         }
         let Some(grace) = options.reconnect_grace else {
@@ -672,9 +709,64 @@ struct Options {
     allowed_peer_ip: Ipv4Addr,
     transport_mode: TransportMode,
     max_access_units: u64,
+    continuous: bool,
     decode_nv12: bool,
     publish_scope: PublishScope,
     reconnect_grace: Option<Duration>,
+    route_binding: Option<CameraRouteBinding>,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct CameraRouteBinding {
+    stream: [u8; 16],
+    epoch: u64,
+    expires_at_ms: u64,
+}
+impl CameraRouteBinding {
+    fn require_live(self) -> Result<(), Box<dyn Error>> {
+        if self.epoch == 0
+            || self.epoch > i32::MAX as u64
+            || self.stream == [0; 16]
+            || self.expires_at_ms <= camera_wall_ms()
+            || self.expires_at_ms > 9_007_199_254_740_991
+        {
+            return Err("invalid or expired camera Route binding".into());
+        }
+        Ok(())
+    }
+    fn require_stream(self, stream: [u8; 16], epoch: u64) -> Result<(), Box<dyn Error>> {
+        self.require_live()?;
+        if self.stream != stream || self.epoch != epoch {
+            return Err("camera config does not match admitted Route stream/epoch".into());
+        }
+        Ok(())
+    }
+}
+fn camera_wall_ms() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_millis()
+        .min(u128::from(u64::MAX)) as u64
+}
+fn parse_stream_uuid(raw: &str) -> Result<[u8; 16], Box<dyn Error>> {
+    if raw.len() != 36
+        || [8, 13, 18, 23]
+            .into_iter()
+            .any(|index| raw.as_bytes()[index] != b'-')
+    {
+        return Err("expected camera Stream UUID".into());
+    }
+    let hex = raw.bytes().filter(|byte| *byte != b'-').collect::<Vec<_>>();
+    if hex.len() != 32 || !hex.iter().all(u8::is_ascii_hexdigit) {
+        return Err("expected camera Stream UUID".into());
+    }
+    let mut bytes = [0; 16];
+    for index in 0..16 {
+        bytes[index] =
+            u8::from_str_radix(std::str::from_utf8(&hex[index * 2..index * 2 + 2])?, 16)?;
+    }
+    Ok(bytes)
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -717,13 +809,47 @@ impl Options {
     fn parse_from(mut arguments: impl Iterator<Item = String>) -> Result<Self, Box<dyn Error>> {
         let mut port = DEFAULT_PORT;
         let mut max_access_units = DEFAULT_MAX_ACCESS_UNITS;
+        let mut continuous = false;
         let mut decode_nv12 = false;
         let mut publish_scope = PublishScope::None;
         let mut reconnect_grace = None;
         let mut trusted_lan_bind = None;
         let mut trusted_lan_peer = None;
+        let mut route_stream = None;
+        let mut route_epoch = None;
+        let mut route_expiry = None;
         while let Some(argument) = arguments.next() {
             match argument.as_str() {
+                "--route-stream" => {
+                    if route_stream.is_some() {
+                        return Err("duplicate camera Route stream".into());
+                    }
+                    route_stream = Some(parse_stream_uuid(
+                        &arguments.next().ok_or("missing camera Route stream")?,
+                    )?);
+                }
+                "--route-epoch" => {
+                    if route_epoch.is_some() {
+                        return Err("duplicate camera Route epoch".into());
+                    }
+                    route_epoch = Some(
+                        arguments
+                            .next()
+                            .ok_or("missing camera Route epoch")?
+                            .parse::<u64>()?,
+                    );
+                }
+                "--route-expires-at-ms" => {
+                    if route_expiry.is_some() {
+                        return Err("duplicate camera Route expiry".into());
+                    }
+                    route_expiry = Some(
+                        arguments
+                            .next()
+                            .ok_or("missing camera Route expiry")?
+                            .parse::<u64>()?,
+                    );
+                }
                 "--port" => {
                     port = arguments.next().ok_or("--port requires a value")?.parse()?;
                     if port == 0 {
@@ -739,6 +865,7 @@ impl Options {
                         return Err("--max-access-units is outside 1..=7200".into());
                     }
                 }
+                "--continuous" => continuous = true,
                 "--decode-nv12" => decode_nv12 = true,
                 "--reconnect-grace-millis" => {
                     let millis: u64 = arguments
@@ -812,15 +939,32 @@ impl Options {
                 );
             }
         };
+        let route_binding = match (route_stream, route_epoch, route_expiry) {
+            (None, None, None) => None,
+            (Some(stream), Some(epoch), Some(expires_at_ms))
+                if transport_mode == TransportMode::TrustedLanLab =>
+            {
+                let binding = CameraRouteBinding {
+                    stream,
+                    epoch,
+                    expires_at_ms,
+                };
+                binding.require_live()?;
+                Some(binding)
+            }
+            _ => return Err("camera Route binding must be complete and use trusted LAN".into()),
+        };
         Ok(Self {
             port,
             bind_ip,
             allowed_peer_ip,
             transport_mode,
             max_access_units,
+            continuous,
             decode_nv12,
             publish_scope,
             reconnect_grace,
+            route_binding,
         })
     }
 }
@@ -854,6 +998,36 @@ fn is_trusted_lan_ipv4(address: Ipv4Addr) -> bool {
 
 #[cfg(all(test, windows))]
 mod tests {
+    #[test]
+    fn route_binding_requires_exact_stream_epoch_and_finite_deadline() {
+        let stream = super::parse_stream_uuid("12345678-1234-1234-1234-123456789abc").unwrap();
+        let binding = super::CameraRouteBinding {
+            stream,
+            epoch: 7,
+            expires_at_ms: super::camera_wall_ms() + 60_000,
+        };
+        assert!(binding.require_stream(stream, 7).is_ok());
+        assert!(binding.require_stream([3; 16], 7).is_err());
+        assert!(binding.require_stream(stream, 8).is_err());
+        assert!(
+            super::CameraRouteBinding {
+                expires_at_ms: 1,
+                ..binding
+            }
+            .require_live()
+            .is_err()
+        );
+        assert!(super::parse_stream_uuid("bad").is_err());
+        let args = vec![
+            "--trusted-lan-bind".into(),
+            "100.66.231.100".into(),
+            "--trusted-lan-peer".into(),
+            "100.110.59.35".into(),
+            "--route-stream".into(),
+            "12345678-1234-1234-1234-123456789abc".into(),
+        ];
+        assert!(super::Options::parse_from(args.into_iter()).is_err());
+    }
     use super::*;
     use std::io::{Read, Write};
     use std::net::TcpStream;

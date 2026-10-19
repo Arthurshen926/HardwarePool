@@ -161,6 +161,6 @@ and evidence details are in
 
 Prefer a Hyper-V Generation 2 VM or dedicated Windows installation with
 snapshots, debugging and recovery planning. ADR 0029 permits
-`DESKTOP-AT8EVE9` as a Gate 7B controlled local-lab exception only after the
+`LAB-WINDOWS-HOST` as a Gate 7B controlled local-lab exception only after the
 preflight above passes. Remote-only access without a verified recovery path is
 not sufficient for a kernel-driver deployment.

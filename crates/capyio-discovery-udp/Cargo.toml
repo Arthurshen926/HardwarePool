@@ -1,0 +1,12 @@
+[package]
+name = "capyio-discovery-udp"
+description = "Bounded IPv4 multicast transport host for CapyIO discovery announcements."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish = false
+
+[dependencies]
+capyio-discovery = { path = "../capyio-discovery" }
+thiserror.workspace = true

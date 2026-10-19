@@ -34,7 +34,7 @@ inferred from the wireless-debugging address.
 Touchpad acceptance uses the existing controlled loopback receiver:
 
 ```powershell
-adb -s 100.66.157.119:44187 reverse tcp:61000 tcp:61000
+adb -s <LAB_IPV4_03>:44187 reverse tcp:61000 tcp:61000
 cargo run -p capyio-remote-touchpad-adapter --bin capyio-ptp-adb-lab -- `
   --inject --acknowledge-desktop-input --manual-session
 ```

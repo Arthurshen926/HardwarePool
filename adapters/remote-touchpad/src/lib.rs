@@ -2,9 +2,9 @@
 
 //! Deterministic `touch-events/1` snapshot to `pointer-events/1` conversion.
 //!
-//! This crate owns only a bounded semantic conversion state machine. It does
-//! not open a socket, capture hardware input, inject operating-system input,
-//! implement HID/VIIPER, or recognize multi-finger gestures.
+//! Default features expose bounded semantic/Adapter state machines. The opt-in
+//! `tls` composition receives a separately authenticated stream and drives an
+//! explicitly supplied Sink factory. It never opens a listener or grants trust.
 
 mod bounded_channel;
 mod delivery;
@@ -85,7 +85,10 @@ pub use worker::{
     PrivateTouchpadRuntimeWorkerMetrics, PrivateTouchpadSinkFactory,
 };
 #[cfg(windows)]
-pub use worker::{WindowsSyntheticTouchpadSinkFactory, WindowsVhfTouchpadSinkFactory};
+pub use worker::{
+    WindowsSyntheticTouchpadSinkFactory, WindowsVhfPrecisionTouchpadSinkFactory,
+    WindowsVhfTouchpadSinkFactory,
+};
 
 use std::{error::Error, fmt};
 
@@ -481,3 +484,5 @@ impl TouchpadConverter {
 fn outside_tap_slop(origin: NormalizedPosition, current: NormalizedPosition) -> bool {
     origin.x.abs_diff(current.x) > TAP_SLOP_UNITS || origin.y.abs_diff(current.y) > TAP_SLOP_UNITS
 }
+#[cfg(feature = "tls")]
+pub mod secure_receiver;

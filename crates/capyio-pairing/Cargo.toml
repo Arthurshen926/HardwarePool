@@ -1,0 +1,17 @@
+[package]
+name = "capyio-pairing"
+description = "Bounded post-pairing peer directory and discovery trust classification for CapyIO."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish = false
+
+[dependencies]
+capyio-core = { path = "../capyio-core" }
+capyio-discovery = { path = "../capyio-discovery" }
+sha2.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+uuid.workspace = true

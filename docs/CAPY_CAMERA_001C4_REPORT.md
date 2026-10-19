@@ -46,7 +46,7 @@ location permission. Capture remains user-started and Activity-visible.
 ## Device status and remaining gates
 
 After exact authorization, the hash-recorded APK was installed on the sole
-online target `100.66.157.119:33909`, identified by ADB as vivo V2419A / PD2419.
+online target `<LAB_IPV4_03>:33909`, identified by ADB as vivo V2419A / PD2419.
 Device-side `sha256sum` and `stat` matched the local 2,602,993-byte APK and
 SHA-256 exactly. Package state reported version 0.1.0, target SDK 36 and both
 CAMERA and INTERNET granted. The mapping list contained only

@@ -13,6 +13,44 @@ Android permission UI. Pairing secrets and transient endpoints are omitted.
 
 ## Artifacts
 
+### Unified 0.5.11 regression on the integrated branch
+
+Revision `b42092b55c3dcaa2581f5dfa077cd39bc749c1c7` was rebuilt from the
+integrated branch and exercised through the installed unified APK without an
+APK or driver change. The transient wireless-debug endpoint and pairing data
+are omitted. The following bounded physical checks completed on TB323FU:
+
+- Camera produced 90 1280x720 AVC access units. Windows Media Foundation
+  decoded all 90 into 124,416,000 NV12 bytes; the first and last checksums
+  differed, and cleanup stopped capture and removed the reverse mapping.
+- Speaker received a three-second 440 Hz stream: 300 packets, 600 datagrams
+  and 144,000 Android frames at 48 kHz stereo S16LE.
+- Microphone delivered 1,124 packets and 1,079,040 payload bytes to the bounded
+  Windows probe. The probe reported zero malformed, wrong-peer, duplicate or
+  discontinuity counters. No audio was retained.
+- The combined gamepad/IMU Source delivered 341 authenticated state packets.
+  All received packets contained non-zero physical motion and 115 contained a
+  non-neutral button state. Remote sequences covered 0 through 347, so this
+  short UDP run is transport/semantics evidence, not a zero-loss claim.
+- The already-installed VHF touchpad path accepted 6 frames and the exact
+  `0->1->2->0` contact transition with a maximum of two contacts, then closed
+  the device. No driver was installed, updated or removed. The non-elevated
+  synthetic fallback still fails explicitly with Win32 error 5.
+- Haptics entered and left its owned lifecycle and issued the bounded
+  confirmation pulse. Tactile strength was not assessed by a person.
+
+Display did not pass this repeat. Starting the Android receiver before the
+Windows sender caused connection retries to exhaust. Starting the Windows
+sender first made both configured TCP ports reachable and advanced Android to
+`GameStream: RTSP handshake`, but no decoded frame was presented before the
+bounded observation ended. Windows control state remained `running`, so this
+is retained as an open startup/handshake defect rather than a successful
+display regression. Both sides were stopped after capture.
+
+The fresh integrated test package manifest is under the ignored
+`target/integrated-test` tree. Physical screenshots and raw transient logs stay
+under ignored `target/evidence`; they are not release artifacts.
+
 ### Unified display bundle import — 0.5.11-dev
 
 The unified APK now opens Android's system document picker from the shared

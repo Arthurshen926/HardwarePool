@@ -12,7 +12,7 @@ offload streams. Its loopback stream generates a synthetic sine tone instead.
 CapyIO already rejects that signal as media evidence and obtains real post-mix
 render PCM from the endpoint-associated APO and bounded render ring.
 
-On `DESKTOP-AT8EVE9`, NetEase UU Remote 4.38.3.9325 installs its own render and
+On `LAB-WINDOWS-HOST`, NetEase UU Remote 4.38.3.9325 installs its own render and
 capture endpoints and records host audio. With only the CapyIO speaker Route
 active, the Android microphone remained `STOPPED` with zero frames and packets,
 while eight seconds of ordinary Windows playback reached Android as 384,000

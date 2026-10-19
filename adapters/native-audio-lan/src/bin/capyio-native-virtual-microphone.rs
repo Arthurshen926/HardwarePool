@@ -20,61 +20,51 @@ fn windows_main() -> Result<(), String> {
     use std::{
         env,
         io::Write,
-        time::{Duration, Instant},
+        time::{Duration, Instant, SystemTime, UNIX_EPOCH},
     };
 
     use capyio_native_audio_lan::{
         MAX_NATIVE_LAN_INFLIGHT_PACKETS, NativeLanEndpointConfig, NativeLanReceiveOutcome,
-        NativeLanUdpEndpoint, microphone_lab_binding,
+        NativeLanUdpEndpoint, NativeMicrophoneLaunch,
     };
     use capyio_windows_capture_ring::{CaptureRingProducer, CaptureWriteOutcome};
 
-    let mut args = env::args();
-    let executable = args
-        .next()
-        .unwrap_or_else(|| "capyio-native-virtual-microphone".to_owned());
-    let usage = || format!("usage: {executable} <windows-ipv4:port> <phone-ipv4:port> [seconds]");
-    let local = args
-        .next()
-        .ok_or_else(&usage)
-        .and_then(|value| parse_explicit_ipv4(&value, "local"))?;
-    let peer = args
-        .next()
-        .ok_or_else(&usage)
-        .and_then(|value| parse_explicit_ipv4(&value, "peer"))?;
-    let duration = args
-        .next()
-        .map(|value| {
-            value
-                .parse::<u64>()
-                .ok()
-                .filter(|seconds| (1..=300).contains(seconds))
-                .map(Duration::from_secs)
-                .ok_or_else(|| "seconds must be between 1 and 300".to_owned())
-        })
-        .transpose()?;
-    if args.next().is_some() {
-        return Err(usage());
-    }
-
-    let binding = microphone_lab_binding();
+    let wall_ms = || -> Result<u64, String> {
+        SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map_err(|_| "invalid local clock".to_owned())?
+            .as_millis()
+            .try_into()
+            .map_err(|_| "local clock overflow".to_owned())
+    };
+    let args = env::args().skip(1).take(9).collect::<Vec<_>>();
+    let launch = NativeMicrophoneLaunch::parse(&args, wall_ms()?)?;
+    let deadline = launch.deadline(wall_ms()?, Instant::now())?;
+    let peer = launch.peer;
     let mut endpoint = NativeLanUdpEndpoint::bind(
-        local,
+        launch.local.into(),
         NativeLanEndpointConfig {
-            peer,
+            peer: peer.into(),
             read_timeout: Duration::from_millis(50),
             inflight_packet_capacity: MAX_NATIVE_LAN_INFLIGHT_PACKETS,
         },
-        binding,
+        launch.binding.clone(),
     )
     .map_err(|error| error.to_string())?;
     let mut ring = CaptureRingProducer::attach().map_err(|error| error.to_string())?;
-    let deadline = duration.map(|value| Instant::now() + value);
+    if !launch.is_live(deadline, wall_ms()?, Instant::now()) {
+        return Err("audio grant ended during worker startup".into());
+    }
     let mut packets_committed = 0_u64;
     let mut packets_dropped_full = 0_u64;
     let mut frames_committed = 0_u64;
     println!(
-        "native_virtual_microphone=true local={} peer={} format=s16le/48000/mono ring=Global\\CapyIO.CaptureRing.v1",
+        "{} local={} peer={} format=s16le/48000/mono ring=Global\\CapyIO.CaptureRing.v1",
+        if launch.expires_at_ms.is_some() {
+            "native_virtual_microphone_route_v1=true"
+        } else {
+            "native_virtual_microphone=true"
+        },
         endpoint.local_addr().map_err(|error| error.to_string())?,
         peer
     );
@@ -83,11 +73,15 @@ fn windows_main() -> Result<(), String> {
         .map_err(|error| format!("flush native microphone readiness: {error}"))?;
 
     loop {
-        if deadline.is_some_and(|value| Instant::now() >= value) {
+        if !launch.is_live(deadline, wall_ms()?, Instant::now()) {
             break;
         }
         match endpoint.receive() {
             Ok(NativeLanReceiveOutcome::Packet(packet)) => {
+                // A packet can arrive as a blocking receive crosses grant expiry.
+                if !launch.is_live(deadline, wall_ms()?, Instant::now()) {
+                    break;
+                }
                 match ring
                     .try_write_s16le_mono(&packet.payload)
                     .map_err(|error| error.to_string())?
@@ -131,25 +125,6 @@ fn windows_main() -> Result<(), String> {
         capture.last_error,
     );
     Ok(())
-}
-
-#[cfg(windows)]
-fn parse_explicit_ipv4(value: &str, name: &str) -> Result<std::net::SocketAddr, String> {
-    use std::net::{IpAddr, Ipv4Addr, SocketAddr};
-
-    let address = value
-        .parse::<SocketAddr>()
-        .map_err(|_| format!("{name} must be an explicit IPv4 socket address"))?;
-    let IpAddr::V4(ip) = address.ip() else {
-        return Err(format!("{name} must use IPv4"));
-    };
-    if address.port() == 0 || ip.is_unspecified() || ip.is_multicast() || ip == Ipv4Addr::BROADCAST
-    {
-        return Err(format!(
-            "{name} must be a concrete unicast IPv4 and non-zero port"
-        ));
-    }
-    Ok(address)
 }
 
 #[cfg(test)]

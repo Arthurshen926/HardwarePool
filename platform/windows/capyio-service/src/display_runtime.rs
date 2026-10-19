@@ -3,7 +3,7 @@ use std::{
     path::PathBuf,
     sync::{
         Arc,
-        atomic::{AtomicBool, Ordering},
+        atomic::{AtomicBool, AtomicU64, Ordering},
         mpsc,
     },
     thread::{self, JoinHandle},
@@ -12,7 +12,52 @@ use std::{
 
 use serde::{Deserialize, Serialize};
 
-use crate::{SingleDisplayServiceHost, load_single_display_service_config};
+use crate::SingleDisplayServiceHost;
+use crate::display_host::{
+    DisplaySessionSettings, load_single_display_service_config_with_settings,
+};
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct DisplayPeerLaunchRequest {
+    pub session_id: String,
+    pub route_id: String,
+    pub stream_id: String,
+    pub stream_epoch: u64,
+    pub sink_capability_id: String,
+    pub host_ipv4: String,
+    pub settings: DisplaySessionSettings,
+    pub expires_at_ms: u64,
+}
+#[derive(Clone, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct DisplayPeerLaunchPrepared {
+    pub generation: u64,
+    pub launch_record: Vec<u8>,
+}
+pub(crate) fn peer_now_ms() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_millis() as u64
+}
+
+fn peer_host_problem(
+    status: &crate::SingleDisplayStatusHandle,
+    fallback: &'static str,
+) -> &'static str {
+    match status.snapshot().problem_code.as_deref() {
+        Some("CAPY.DISPLAY.ENGINE_READY_FAILED") => "CAPY.DISPLAY.ENGINE_READY_FAILED",
+        Some("CAPY.DISPLAY.ENGINE_READY_TIMEOUT") => "CAPY.DISPLAY.ENGINE_READY_TIMEOUT",
+        Some("CAPY.DISPLAY.ENGINE_READY_PIPE_FAILED") => "CAPY.DISPLAY.ENGINE_READY_PIPE_FAILED",
+        Some("CAPY.DISPLAY.ENGINE_READY_ACK_INVALID") => "CAPY.DISPLAY.ENGINE_READY_ACK_INVALID",
+        Some("CAPY.DISPLAY.ENGINE_WORKER_FAILED") => "CAPY.DISPLAY.ENGINE_WORKER_FAILED",
+        Some(code) => {
+            crate::display_worker_failure::retained_display_worker_problem(code).unwrap_or(fallback)
+        }
+        None => fallback,
+    }
+}
 
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case")]
@@ -33,10 +78,15 @@ pub struct DisplayExecutionSnapshot {
     pub problem_code: Option<&'static str>,
 }
 
+type PeerCommit = (Vec<u8>, mpsc::SyncSender<Result<(), &'static str>>);
+
 /// Owns exactly one cooperative host thread and an independent stop signal.
 /// Shutdown joins the host, including its existing worker/topology cleanup.
 /// It must not run on a UI or audio callback thread.
 pub struct DisplayServiceRuntime {
+    peer_commit: Option<mpsc::SyncSender<PeerCommit>>,
+    peer_result: Option<mpsc::Receiver<Result<(), &'static str>>>,
+    peer_deadline: Option<Arc<AtomicU64>>,
     stop: Arc<AtomicBool>,
     worker: Option<JoinHandle<Result<(), &'static str>>>,
     ready: Option<mpsc::Receiver<()>>,
@@ -47,6 +97,9 @@ pub struct DisplayServiceRuntime {
 impl Default for DisplayServiceRuntime {
     fn default() -> Self {
         Self {
+            peer_commit: None,
+            peer_result: None,
+            peer_deadline: None,
             stop: Arc::new(AtomicBool::new(false)),
             worker: None,
             ready: None,
@@ -62,13 +115,171 @@ impl Default for DisplayServiceRuntime {
 }
 
 impl DisplayServiceRuntime {
-    pub fn start(&mut self, path: PathBuf) -> Result<(), &'static str> {
+    pub fn prepare_peer(
+        &mut self,
+        path: PathBuf,
+        request: DisplayPeerLaunchRequest,
+    ) -> Result<DisplayPeerLaunchPrepared, &'static str> {
+        request.settings.validate()?;
+        let remaining = request.expires_at_ms.saturating_sub(peer_now_ms());
+        if remaining == 0 || remaining > 600_000 || request.stream_epoch == 0 {
+            return Err("CAPY.DISPLAY.PEER_LEASE_INVALID");
+        }
+        let (prepared_tx, prepared_rx) = mpsc::sync_channel(1);
+        let deadline = Arc::new(AtomicU64::new(request.expires_at_ms));
+        let host_deadline = Arc::clone(&deadline);
+        let (commit_tx, commit_rx) =
+            mpsc::sync_channel::<(Vec<u8>, mpsc::SyncSender<Result<(), &'static str>>)>(1);
         self.start_with(move || {
-            let config = load_single_display_service_config(&path)
+            let config =
+                crate::display_host::load_peer_display_service_config(&path, request.settings)
+                    .map_err(|_| "CAPY.DISPLAY.CONFIGURATION_INVALID")?;
+            let mut host = SingleDisplayServiceHost::open_peer(config)
+                .map_err(|_| "CAPY.DISPLAY.HOST_OPEN_FAILED")?;
+            let pending = host
+                .prepare_peer(&request, host_deadline)
+                .map_err(|_| "CAPY.DISPLAY.PEER_PREPARE_FAILED")?;
+            let status = host.status_handle();
+            let _ = prepared_tx.send(pending.record().to_vec());
+            Ok(move |stop: Arc<AtomicBool>| {
+                let deadline = Instant::now() + Duration::from_secs(30);
+                let mut pending = Some(pending);
+                loop {
+                    if stop.load(Ordering::Acquire)
+                        || Instant::now() >= deadline
+                        || peer_now_ms() >= request.expires_at_ms
+                    {
+                        let cancelled = stop.load(Ordering::Acquire);
+                        stop.store(true, Ordering::Release);
+                        host.run(stop).map_err(|_| "CAPY.DISPLAY.HOST_FAILED")?;
+                        return if cancelled {
+                            Ok(())
+                        } else {
+                            Err("CAPY.DISPLAY.PEER_ACK_TIMEOUT")
+                        };
+                    }
+                    match commit_rx.recv_timeout(Duration::from_millis(25)) {
+                        Ok((mut ack, reply)) => {
+                            let result =
+                                host.commit_peer(pending.take().unwrap(), &ack)
+                                    .map_err(|_| {
+                                        peer_host_problem(
+                                            &status,
+                                            "CAPY.DISPLAY.PEER_COMMIT_FAILED",
+                                        )
+                                    });
+                            ack.fill(0);
+                            let _ = reply.send(result);
+                            if result.is_err() {
+                                stop.store(true, Ordering::Release);
+                            }
+                            let run = host.run(stop).map_err(|e| {
+                                if e == "CAPY.DISPLAY.LEASE_EXPIRED" {
+                                    "CAPY.DISPLAY.LEASE_EXPIRED"
+                                } else {
+                                    peer_host_problem(&status, "CAPY.DISPLAY.HOST_FAILED")
+                                }
+                            });
+                            return result.and(run);
+                        }
+                        Err(mpsc::RecvTimeoutError::Timeout) => {}
+                        Err(_) => {
+                            stop.store(true, Ordering::Release);
+                            return host.run(stop).map_err(|_| "CAPY.DISPLAY.HOST_FAILED");
+                        }
+                    }
+                }
+            })
+        })?;
+        self.peer_commit = Some(commit_tx);
+        self.peer_deadline = Some(deadline);
+        self.startup_deadline = Some(Instant::now() + Duration::from_secs(35));
+        match prepared_rx.recv_timeout(Duration::from_secs(8)) {
+            Ok(launch_record) => Ok(DisplayPeerLaunchPrepared {
+                generation: self.snapshot.generation,
+                launch_record,
+            }),
+            Err(_) => {
+                self.request_stop();
+                Err("CAPY.DISPLAY.PEER_PREPARE_FAILED")
+            }
+        }
+    }
+    pub fn commit_peer(
+        &mut self,
+        generation: u64,
+        acknowledgement: Vec<u8>,
+    ) -> Result<(), &'static str> {
+        if generation != self.snapshot.generation || acknowledgement.len() != 64 {
+            return Err("CAPY.DISPLAY.PEER_ACK_INVALID");
+        }
+        let sender = self
+            .peer_commit
+            .take()
+            .ok_or("CAPY.DISPLAY.PEER_ACK_INVALID")?;
+        let (tx, rx) = mpsc::sync_channel(1);
+        sender
+            .send((acknowledgement, tx))
+            .map_err(|_| "CAPY.DISPLAY.PEER_COMMIT_FAILED")?;
+        self.peer_result = Some(rx);
+        self.snapshot.state = DisplayExecutionState::Starting;
+        self.startup_deadline = Some(Instant::now() + Duration::from_secs(40));
+        Ok(())
+    }
+    pub fn renew_peer(&mut self, generation: u64, expires_at_ms: u64) -> Result<(), &'static str> {
+        self.poll();
+        let now = peer_now_ms();
+        if generation != self.snapshot.generation
+            || !matches!(
+                self.snapshot.state,
+                DisplayExecutionState::Starting | DisplayExecutionState::Running
+            )
+            || expires_at_ms <= now
+            || expires_at_ms.saturating_sub(now) > 600_000
+        {
+            return Err("CAPY.DISPLAY.PEER_LEASE_INVALID");
+        }
+        let deadline = self
+            .peer_deadline
+            .as_ref()
+            .ok_or("CAPY.DISPLAY.PEER_LEASE_INVALID")?;
+        if deadline.load(Ordering::Acquire) <= now {
+            return Err("CAPY.DISPLAY.PEER_LEASE_INVALID");
+        }
+        deadline.store(expires_at_ms, Ordering::Release);
+        Ok(())
+    }
+    pub fn start(&mut self, path: PathBuf) -> Result<(), &'static str> {
+        self.start_with_settings(path, None)
+    }
+
+    pub fn start_with_settings(
+        &mut self,
+        path: PathBuf,
+        settings: Option<DisplaySessionSettings>,
+    ) -> Result<(), &'static str> {
+        if let Some(settings) = settings {
+            settings.validate()?;
+        }
+        self.start_with(move || {
+            let config = load_single_display_service_config_with_settings(&path, settings)
                 .map_err(|_| "CAPY.DISPLAY.CONFIGURATION_INVALID")?;
             let host = SingleDisplayServiceHost::open(config)
                 .map_err(|_| "CAPY.DISPLAY.HOST_OPEN_FAILED")?;
-            Ok(move |stop| host.run(stop).map_err(|_| "CAPY.DISPLAY.HOST_FAILED"))
+            let status = host.status_handle();
+            Ok(move |stop| {
+                host.run(stop)
+                    .map_err(|_| match status.snapshot().problem_code.as_deref() {
+                        Some("CAPY.DISPLAY.ENGINE_WORKER_FAILED") => {
+                            "CAPY.DISPLAY.ENGINE_WORKER_FAILED"
+                        }
+                        Some(code) => {
+                            crate::display_worker_failure::retained_display_worker_problem(code)
+                                .unwrap_or("CAPY.DISPLAY.HOST_FAILED")
+                        }
+                        _ => "CAPY.DISPLAY.HOST_FAILED",
+                    })
+            })
         })
     }
 
@@ -135,9 +346,27 @@ impl DisplayServiceRuntime {
             .is_some_and(|ready| ready.try_recv().is_ok())
         {
             self.ready = None;
-            self.startup_deadline = None;
-            if self.snapshot.state == DisplayExecutionState::Starting {
+            if self.peer_commit.is_none()
+                && self.peer_result.is_none()
+                && self.snapshot.state == DisplayExecutionState::Starting
+            {
+                self.startup_deadline = None;
                 self.snapshot.state = DisplayExecutionState::Running;
+            }
+        }
+        if let Some(result) = self.peer_result.as_ref().and_then(|rx| rx.try_recv().ok()) {
+            self.peer_result = None;
+            self.startup_deadline = None;
+            match result {
+                Ok(()) if self.snapshot.state == DisplayExecutionState::Starting => {
+                    self.snapshot.state = DisplayExecutionState::Running
+                }
+                Err(problem) => {
+                    self.snapshot.problem_code = Some(problem);
+                    self.snapshot.state = DisplayExecutionState::Stopping;
+                    self.stop.store(true, Ordering::Release);
+                }
+                _ => {}
             }
         }
         if self.worker.as_ref().is_some_and(JoinHandle::is_finished) {
@@ -156,11 +385,32 @@ impl DisplayServiceRuntime {
     }
 
     pub fn request_stop(&mut self) {
+        self.peer_commit = None;
         self.poll();
         if self.worker.is_some() {
             self.stop.store(true, Ordering::Release);
             self.snapshot.state = DisplayExecutionState::Stopping;
         }
+    }
+
+    pub fn stop_peer(&mut self, generation: u64) -> Result<(), &'static str> {
+        self.poll();
+        if generation == 0 || generation != self.snapshot.generation {
+            return Err("CAPY.DISPLAY.PEER_GENERATION_MISMATCH");
+        }
+        // A completed stop for this generation is idempotent. An active
+        // legacy/manual host is not owned by this peer API.
+        if matches!(
+            self.snapshot.state,
+            DisplayExecutionState::Stopped | DisplayExecutionState::Failed
+        ) {
+            return Ok(());
+        }
+        if self.peer_deadline.is_none() {
+            return Err("CAPY.DISPLAY.PEER_GENERATION_MISMATCH");
+        }
+        self.request_stop();
+        Ok(())
     }
 
     pub fn shutdown(&mut self) -> DisplayExecutionSnapshot {
@@ -174,6 +424,9 @@ impl DisplayServiceRuntime {
             return;
         };
         self.ready = None;
+        self.peer_commit = None;
+        self.peer_result = None;
+        self.peer_deadline = None;
         self.startup_deadline = None;
         let problem = match worker.join() {
             Ok(Ok(())) if self.stop.load(Ordering::Acquire) => None,
@@ -200,6 +453,106 @@ impl Drop for DisplayServiceRuntime {
 mod tests {
     use super::*;
     use std::time::{Duration, Instant};
+
+    #[test]
+    fn stale_peer_stop_does_not_stop_new_generation() {
+        let mut runtime = DisplayServiceRuntime::default();
+        runtime
+            .start_with(|| {
+                Ok(|stop: Arc<AtomicBool>| {
+                    while !stop.load(Ordering::Acquire) {
+                        thread::sleep(Duration::from_millis(1));
+                    }
+                    Ok(())
+                })
+            })
+            .unwrap();
+        runtime.peer_deadline = Some(Arc::new(AtomicU64::new(peer_now_ms() + 60_000)));
+        assert!(runtime.stop_peer(2).is_err());
+        assert!(!runtime.stop.load(Ordering::Acquire));
+        runtime.stop_peer(1).unwrap();
+        assert!(runtime.stop.load(Ordering::Acquire));
+        runtime.shutdown();
+        runtime.stop_peer(1).unwrap();
+    }
+
+    #[test]
+    fn peer_commit_is_nonblocking_and_reports_worker_result() {
+        let mut runtime = DisplayServiceRuntime::default();
+        let (tx, rx) = mpsc::sync_channel(1);
+        runtime.peer_commit = Some(tx);
+        runtime.snapshot.generation = 8;
+        runtime.commit_peer(8, vec![3; 64]).unwrap();
+        assert_eq!(runtime.snapshot.state, DisplayExecutionState::Starting);
+        assert!(runtime.commit_peer(8, vec![3; 64]).is_err());
+        let (ack, reply) = rx.try_recv().unwrap();
+        assert_eq!(ack, vec![3; 64]);
+        reply.send(Ok(())).unwrap();
+        runtime.poll();
+        assert_eq!(runtime.snapshot.state, DisplayExecutionState::Running);
+        let (tx, rx) = mpsc::sync_channel(1);
+        runtime.peer_commit = Some(tx);
+        runtime.commit_peer(8, vec![4; 64]).unwrap();
+        rx.try_recv()
+            .unwrap()
+            .1
+            .send(Err("CAPY.DISPLAY.PEER_COMMIT_FAILED"))
+            .unwrap();
+        runtime.poll();
+        assert_eq!(
+            runtime.snapshot.problem_code,
+            Some("CAPY.DISPLAY.PEER_COMMIT_FAILED")
+        );
+    }
+
+    #[test]
+    fn peer_prepare_rejects_expired_or_unbounded_grant_before_open() {
+        let mut runtime = DisplayServiceRuntime::default();
+        let mut request = DisplayPeerLaunchRequest {
+            session_id: String::new(),
+            route_id: String::new(),
+            stream_id: String::new(),
+            stream_epoch: 1,
+            sink_capability_id: String::new(),
+            host_ipv4: "127.0.0.1".into(),
+            settings: DisplaySessionSettings {
+                width: 1280,
+                height: 720,
+                refresh_millihertz: 60_000,
+                bitrate_kbps: 8000,
+            },
+            expires_at_ms: 0,
+        };
+        assert_eq!(
+            runtime
+                .prepare_peer(PathBuf::from("never-read"), request.clone())
+                .err(),
+            Some("CAPY.DISPLAY.PEER_LEASE_INVALID")
+        );
+        request.expires_at_ms = peer_now_ms() + 700_000;
+        assert_eq!(
+            runtime
+                .prepare_peer(PathBuf::from("never-read"), request)
+                .err(),
+            Some("CAPY.DISPLAY.PEER_LEASE_INVALID")
+        );
+        assert_eq!(runtime.snapshot.generation, 0);
+    }
+
+    #[test]
+    fn peer_renew_is_generation_scoped_and_cannot_revive_expiry() {
+        let mut runtime = DisplayServiceRuntime::default();
+        let now = peer_now_ms();
+        let deadline = Arc::new(AtomicU64::new(now + 60_000));
+        runtime.peer_deadline = Some(Arc::clone(&deadline));
+        runtime.snapshot.generation = 3;
+        runtime.snapshot.state = DisplayExecutionState::Running;
+        assert!(runtime.renew_peer(2, now + 120_000).is_err());
+        runtime.renew_peer(3, now + 120_000).unwrap();
+        assert_eq!(deadline.load(Ordering::Acquire), now + 120_000);
+        deadline.store(now - 1, Ordering::Release);
+        assert!(runtime.renew_peer(3, now + 120_000).is_err());
+    }
 
     #[test]
     fn optional_display_config_rejects_relative_missing_and_duplicate_paths() {

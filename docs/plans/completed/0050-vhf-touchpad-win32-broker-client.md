@@ -27,7 +27,7 @@ projects direction-neutral touchpad snapshots into the driver's fixed ABI.
 - fake-transport tests for Hello/Data/Close, failed writes and malformed Acks;
 - a read-only probe that reports whether exactly one driver interface exists;
 - record the renewed Android wireless-debug endpoint as
-  `100.66.157.119:46143` without installing or changing the APK.
+  `<LAB_IPV4_03>:46143` without installing or changing the APK.
 
 ## Out of scope
 

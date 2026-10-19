@@ -1,0 +1,18 @@
+[package]
+name = "capyio-windows-pairing-store"
+description = "Atomic current-user storage for CapyIO pairing metadata and DPAPI-protected credentials."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish = false
+
+[dependencies]
+capyio-control-credentials = { path = "../../../crates/capyio-control-credentials" }
+capyio-core = { path = "../../../crates/capyio-core" }
+capyio-pairing = { path = "../../../crates/capyio-pairing" }
+capyio-windows-credential-protection = { path = "../capyio-credential-protection" }
+thiserror.workspace = true
+
+[target.'cfg(windows)'.dependencies]
+windows-sys = { workspace = true, features = ["Win32_Foundation", "Win32_Storage_FileSystem", "Win32_System_Com", "Win32_UI_Shell"] }

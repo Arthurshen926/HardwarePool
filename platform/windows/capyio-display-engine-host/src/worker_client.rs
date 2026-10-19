@@ -77,9 +77,22 @@ impl DisplayWorkerConnection {
         &mut self,
         lease: &DisplayWorkerLease,
     ) -> Result<DisplayWorkerControlEvent, DisplayWorkerClientError> {
+        self.wait_for_control_checked(lease, || true)
+    }
+
+    /// Keeps platform liveness checks running while no control record arrives.
+    /// A failed check closes this worker; it never reactivates another output.
+    pub fn wait_for_control_checked(
+        &mut self,
+        lease: &DisplayWorkerLease,
+        mut healthy: impl FnMut() -> bool,
+    ) -> Result<DisplayWorkerControlEvent, DisplayWorkerClientError> {
         let mut bytes = [0_u8; DISPLAY_WORKER_CONTROL_BYTES];
         let mut offset = 0;
         while offset < bytes.len() {
+            if !healthy() {
+                return Err(DisplayWorkerClientError::ExecutionUnavailable);
+            }
             let mut read = 0_u32;
             // SAFETY: the retained pipe is live and the remaining fixed record
             // storage is writable for this synchronous call.
@@ -429,6 +442,7 @@ impl Drop for OwnedPipe {
 
 #[derive(Debug)]
 pub enum DisplayWorkerClientError {
+    ExecutionUnavailable,
     InvalidPipeName,
     Open(io::Error),
     Configure(io::Error),
@@ -447,6 +461,9 @@ pub enum DisplayWorkerClientError {
 impl fmt::Display for DisplayWorkerClientError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
+            Self::ExecutionUnavailable => {
+                formatter.write_str("display output became unavailable during streaming")
+            }
             Self::InvalidPipeName => formatter.write_str("display worker pipe name is invalid"),
             Self::Open(error) => write!(formatter, "open display worker pipe failed: {error}"),
             Self::Configure(error) => {

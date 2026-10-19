@@ -58,7 +58,7 @@ typecheck/build.
 ## Controlled system regression
 
 The common `RequestSample` implementation changed, so the existing
-fixture-backed system roundtrip was repeated on `DESKTOP-AT8EVE9` with the new
+fixture-backed system roundtrip was repeated on `LAB-WINDOWS-HOST` with the new
 release DLL. The DLL is 175616 bytes with SHA-256
 `14BC961B36A7AD40116C1AEFA46F38DA2F3EAA190940CF6330C4C62215CD0948`.
 The fixed deployment hash, CLSID path and `ThreadingModel=Both` were verified;

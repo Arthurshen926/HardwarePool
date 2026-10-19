@@ -53,7 +53,7 @@ therefore also rejected and expanded to the bounded whole-session retry above.
 ## Physical evidence
 
 After exact-target authorization, the final hash-locked APK was installed on
-`V2419A / PD2419` at `100.66.157.119:40263`; CAMERA and INTERNET remained the
+`V2419A / PD2419` at `<LAB_IPV4_03>:40263`; CAMERA and INTERNET remained the
 only declared permissions.
 
 Two intermediate attempts were retained as design evidence rather than pass:

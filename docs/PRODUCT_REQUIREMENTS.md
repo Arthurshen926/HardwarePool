@@ -290,7 +290,7 @@ The product has two experiences:
   lifecycle/rollback tests and truthful evidence;
 - uncontrolled Windows virtual-audio installation on a daily-development host;
   ADRs 0027–0029 permit the dedicated `CapyIO Speaker` only in an identified
-  isolated target or the explicitly approved `DESKTOP-AT8EVE9` local lab after
+  isolated target or the explicitly approved `LAB-WINDOWS-HOST` local lab after
   recovery, exact-package and rollback preflight evidence;
 - unapproved Android permission, foreground-service, APK or physical-device
   operations; every approved lab action remains target-specific and retained as

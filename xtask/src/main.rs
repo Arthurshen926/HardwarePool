@@ -33,6 +33,8 @@ enum Task {
     Test,
     /// Runs the local merge-gate approximation.
     Ci,
+    /// Strict Windows/Android Alpha software gate; no optional tool skips or deployment.
+    AlphaCheck,
     /// Runs the deterministic CLI demo.
     Demo,
     /// Replays the deterministic IMU fixture into Panel and Recorder sinks.
@@ -76,6 +78,7 @@ fn main() -> Result<()> {
         Task::Check => check(),
         Task::Test => test(),
         Task::Ci => ci(),
+        Task::AlphaCheck => alpha_check(&root),
         Task::Demo => run("cargo", ["run", "--package", "capyio-node", "--", "demo"]),
         Task::ImuDemo => imu_demo(),
         Task::ValidateDocs => validate_docs(),
@@ -248,6 +251,7 @@ fn ci() -> Result<()> {
     validate_manifests()?;
     adapter_smoke(&repository_root()?)?;
     run("python", ["scripts/validate_repository.py"])?;
+    release_tool_tests()?;
 
     if command_available("pnpm") {
         run("pnpm", ["--filter", "@capyio/desktop", "typecheck"])?;
@@ -255,6 +259,57 @@ fn ci() -> Result<()> {
     } else {
         println!("pnpm is not available; frontend checks were skipped");
     }
+    Ok(())
+}
+
+fn release_tool_tests() -> Result<()> {
+    run(
+        "python",
+        [
+            "-m",
+            "unittest",
+            "discover",
+            "-s",
+            "scripts",
+            "-p",
+            "test_*.py",
+        ],
+    )
+}
+
+fn alpha_check(root: &Path) -> Result<()> {
+    if !cfg!(windows) {
+        bail!(
+            "alpha-check requires Windows for the full Windows/Android candidate; use ci for portable checks"
+        );
+    }
+    // Unlike the portable CI approximation, every candidate check is mandatory.
+    // Hardware acceptance and publication approval remain separate release gates.
+    run("cargo", ["fmt", "--all", "--", "--check"])?;
+    run("cargo", ["check", "--workspace", "--all-targets"])?;
+    run(
+        "cargo",
+        [
+            "clippy",
+            "--workspace",
+            "--all-targets",
+            "--",
+            "-D",
+            "warnings",
+        ],
+    )?;
+    run("cargo", ["test", "--workspace"])?;
+    validate_docs()?;
+    validate_manifests()?;
+    adapter_smoke(root)?;
+    run("python", ["scripts/validate_repository.py"])?;
+    release_tool_tests()?;
+    run("pnpm", ["--filter", "@capyio/desktop", "build"])?;
+    run("node", ["--test", "scripts/*.test.mjs"])?;
+    android_check(root)?;
+    println!(
+        "Alpha software checks passed; physical reliability and release approval are not implied."
+    );
     Ok(())
 }
 

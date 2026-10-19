@@ -2,7 +2,7 @@ package dev.capyio.android;
 
 import dev.capyio.android.contract.GamepadControlsSnapshot;
 
-/** Pure encoder for the existing bounded Android Controller Lab v1 datagram. */
+/** Version 2 separates controls from unavailable or disabled motion. */
 final class ControllerPacketJson {
     private ControllerPacketJson() {}
 
@@ -20,9 +20,22 @@ final class ControllerPacketJson {
             float angularVelocityX,
             float angularVelocityY,
             float angularVelocityZ) {
+        return encode(token, session, sequence, timestampNanos, state,
+                accelerationTimestampNanos, accelerationX, accelerationY, accelerationZ,
+                angularVelocityTimestampNanos, angularVelocityX, angularVelocityY, angularVelocityZ, true);
+    }
+
+    static String encode(String token, String session, long sequence, long timestampNanos,
+            GamepadControlsSnapshot state, long accelerationTimestampNanos,
+            float accelerationX, float accelerationY, float accelerationZ,
+            long angularVelocityTimestampNanos, float angularVelocityX,
+            float angularVelocityY, float angularVelocityZ, boolean gamepadMotionEnabled) {
+        boolean motionAvailable = accelerationTimestampNanos > 0 && angularVelocityTimestampNanos > 0;
         return new StringBuilder(640)
                 .append('{')
-                .append("\"version\":1,")
+                .append("\"version\":2,")
+                .append("\"motionAvailable\":").append(motionAvailable).append(',')
+                .append("\"gamepadMotionEnabled\":").append(gamepadMotionEnabled).append(',')
                 .append("\"token\":\"").append(token).append("\",")
                 .append("\"session\":\"").append(session).append("\",")
                 .append("\"sequence\":").append(sequence).append(',')
@@ -45,9 +58,9 @@ final class ControllerPacketJson {
                 .append(Float.toString(angularVelocityY)).append(',')
                 .append(Float.toString(angularVelocityZ)).append("],")
                 .append("\"accelerationTimestampNanos\":")
-                .append(Math.max(1, accelerationTimestampNanos)).append(',')
+                .append(accelerationTimestampNanos).append(',')
                 .append("\"angularVelocityTimestampNanos\":")
-                .append(Math.max(1, angularVelocityTimestampNanos))
+                .append(angularVelocityTimestampNanos)
                 .append('}')
                 .toString();
     }

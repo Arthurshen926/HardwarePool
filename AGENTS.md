@@ -91,7 +91,11 @@ Never perform these without explicit human approval and a verified target:
 - delete user data or reset a physical device.
 
 Driver tests default to an isolated VM or dedicated test installation. ADR 0029
-permits the identified `DESKTOP-AT8EVE9` host as a Gate 7B controlled local-lab
+permits the identified `LAB-WINDOWS-HOST` host as a Gate 7B controlled local-lab
 exception only after its recovery posture, exact package and rollback command
 have been recorded. Driver deployment/removal and every boot/security-policy
 change still require separate explicit human approval.
+
+Public snapshot note: `LAB-WINDOWS-HOST` is a placeholder, not an approved device.
+Verify the exact privately approved target and recovery/rollback evidence before
+any separately approved lab operation. This source snapshot grants no deployment approval.

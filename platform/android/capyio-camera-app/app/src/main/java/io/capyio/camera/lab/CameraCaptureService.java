@@ -51,7 +51,7 @@ public final class CameraCaptureService extends Service {
             FrameObservation.LensFacing facing,
             CameraSourceSelection source,
             AvcQualityPreset quality,
-            CameraTransportEndpoint endpoint) {}
+            CameraTransportEndpoint endpoint, CameraRouteBinding route) {}
 
     private static final String ACTION_START =
             "io.capyio.camera.lab.action.START_CAPTURE";
@@ -101,6 +101,12 @@ public final class CameraCaptureService extends Service {
             CameraSourceSelection source,
             AvcQualityPreset quality,
             CameraTransportEndpoint endpoint) {
+        start(context,facing,source,quality,endpoint,null);
+    }
+
+    static void start(Context context, FrameObservation.LensFacing facing,
+            CameraSourceSelection source, AvcQualityPreset quality,
+            CameraTransportEndpoint endpoint, CameraRouteBinding route) {
         Intent intent = new Intent(context, CameraCaptureService.class)
                 .setAction(ACTION_START)
                 .putExtra(EXTRA_FACING, facing.name())
@@ -110,6 +116,11 @@ public final class CameraCaptureService extends Service {
                         endpoint.mode() == CameraTransportEndpoint.Mode.ADB_REVERSE
                                 ? ""
                                 : endpoint.host());
+        if (route != null) {
+            intent.putExtra("route_stream",route.streamId().toString());
+            intent.putExtra("route_epoch",route.epoch());
+            intent.putExtra("route_expiry",route.expiresAtMs());
+        }
         if (source != null) {
             intent.putExtra(EXTRA_SOURCE_ID, source.cameraId());
             intent.putExtra(EXTRA_SOURCE_FACING, source.facing().name());
@@ -142,7 +153,12 @@ public final class CameraCaptureService extends Service {
             stopCapture(false, "");
             return START_NOT_STICKY;
         }
-        enterForeground(notification(getString(R.string.camera_notification_starting)));
+        try {
+            enterForeground(notification(getString(R.string.camera_notification_starting)));
+        } catch (SecurityException | IllegalStateException error) {
+            stopCapture(true, "Open CapyIO in the foreground and allow camera access, then retry sharing.");
+            return START_NOT_STICKY;
+        }
         try {
             startCapture(configFrom(intent));
         } catch (IllegalArgumentException | IllegalStateException error) {
@@ -195,6 +211,7 @@ public final class CameraCaptureService extends Service {
                 config.quality(),
                 config.endpoint(),
                 listenerFor(currentGeneration));
+        created.bindRoute(config.route());
         synchronized (lock) {
             if (generation != currentGeneration || phase != Phase.STARTING) {
                 created.close();
@@ -442,7 +459,9 @@ public final class CameraCaptureService extends Service {
                     : null;
             source = new CameraSourceSelection(sourceId, sourceFacing, zoom);
         }
-        return new Config(facing, source, quality, endpoint);
+        CameraRouteBinding route = intent.hasExtra("route_stream") ? new CameraRouteBinding(
+                requiredExtra(intent,"route_stream"),intent.getLongExtra("route_epoch",0),intent.getLongExtra("route_expiry",0)) : null;
+        return new Config(facing, source, quality, endpoint, route);
     }
 
     private static String requiredExtra(Intent intent, String name) {

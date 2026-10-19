@@ -66,6 +66,7 @@ mod windows_lab {
         },
         ConsumerProbe,
         ConsumerCurrentProbe,
+        ConsumerCurrentLiveProbe,
         Cleanup,
     }
 
@@ -80,7 +81,8 @@ mod windows_lab {
                 live_hold(LiveTransport::TrustedLan { bind_ip, peer_ip })
             }
             LabCommand::ConsumerProbe => consumer_probe(),
-            LabCommand::ConsumerCurrentProbe => consumer_current_probe(),
+            LabCommand::ConsumerCurrentProbe => consumer_current_probe(false),
+            LabCommand::ConsumerCurrentLiveProbe => consumer_current_probe(true),
             LabCommand::Cleanup => cleanup(),
         }
     }
@@ -123,9 +125,10 @@ mod windows_lab {
             "live-hold" => Ok(LabCommand::LiveHold),
             "consumer-probe" => Ok(LabCommand::ConsumerProbe),
             "consumer-current-probe" => Ok(LabCommand::ConsumerCurrentProbe),
+            "consumer-current-live-probe" => Ok(LabCommand::ConsumerCurrentLiveProbe),
             "cleanup" => Ok(LabCommand::Cleanup),
             _ => Err(lab_error(
-                "unknown command; expected preflight, roundtrip, shared-roundtrip, gui-hold, live-hold, trusted-lan-live-hold, consumer-probe, consumer-current-probe, or cleanup",
+                "unknown command; expected preflight, roundtrip, shared-roundtrip, gui-hold, live-hold, trusted-lan-live-hold, consumer-probe, consumer-current-probe, consumer-current-live-probe, or cleanup",
             )),
         }
     }
@@ -707,12 +710,12 @@ mod windows_lab {
         Ok(())
     }
 
-    fn consumer_current_probe() -> LabResult {
+    fn consumer_current_probe(require_live: bool) -> LabResult {
         let _media_foundation = MediaFoundationRuntime::startup()?;
         let activate = wait_for_unique_current_capyio_camera()?;
         let source: IMFMediaSource = unsafe { activate.ActivateObject() }
             .map_err(|error| stage_error("consumer_activate", error))?;
-        let validation = validate_frame_delivery(&source);
+        let validation = validate_frame_delivery_mode(&source, require_live);
         let shutdown = unsafe { activate.ShutdownObject() }
             .map_err(|error| stage_error("consumer_shutdown", error));
         let evidence = validation?;
@@ -956,6 +959,13 @@ mod windows_lab {
     }
 
     fn validate_frame_delivery(source: &IMFMediaSource) -> LabResult<FrameEvidence> {
+        validate_frame_delivery_mode(source, false)
+    }
+
+    fn validate_frame_delivery_mode(
+        source: &IMFMediaSource,
+        require_live: bool,
+    ) -> LabResult<FrameEvidence> {
         (|| -> LabResult<FrameEvidence> {
             let reader =
                 unsafe { MFCreateSourceReaderFromMediaSource(source, None::<&IMFAttributes>) }
@@ -1003,6 +1013,27 @@ mod windows_lab {
                     "frame_validate_delta_gap",
                     format!("sample delta exceeds one second: {sample_delta_100ns}"),
                 ));
+            }
+            if require_live {
+                // The registered source deliberately starts with 15 placeholder frames.
+                // Require multiple later samples whose middle row differs from its color bars.
+                let mut live_samples = 0;
+                for _ in 0..90 {
+                    let sample = read_source_reader_sample(&reader, video_stream)?;
+                    if !inspect_content(&sample)?.1 {
+                        live_samples += 1;
+                        if live_samples == 3 {
+                            break;
+                        }
+                    }
+                }
+                if live_samples < 3 {
+                    return Err(stage_error(
+                        "live_content",
+                        "only placeholder frames observed",
+                    ));
+                }
+                println!("non_placeholder_samples={live_samples}");
             }
             Ok(FrameEvidence {
                 sample_bytes,
@@ -1058,6 +1089,10 @@ mod windows_lab {
     }
 
     fn inspect_first_luma(sample: &IMFSample) -> LabResult<u8> {
+        Ok(inspect_content(sample)?.0)
+    }
+
+    fn inspect_content(sample: &IMFSample) -> LabResult<(u8, bool)> {
         let required = u32::try_from(fixture_stream_spec().packed_frame_bytes().unwrap())
             .map_err(|error| stage_error("content_layout", error))?;
         let buffer = unsafe { MFCreateMemoryBuffer(required) }
@@ -1078,7 +1113,13 @@ mod windows_lab {
                 ),
             ))
         } else {
-            validate_luma(unsafe { *bytes })
+            let luma = validate_luma(unsafe { *bytes });
+            // Fixed 1280x720 NV12 contract; the animated clock occupies only the bottom band.
+            let palette = [235, 219, 188, 173, 78, 63, 32, 16];
+            let placeholder = palette.iter().enumerate().all(|(bar, expected)| unsafe {
+                *bytes.add(360 * 1280 + bar * 160 + 80) == *expected
+            });
+            luma.map(|value| (value, placeholder))
         };
         unsafe { buffer.Unlock() }.map_err(|error| stage_error("content_buffer", error))?;
         result

@@ -58,7 +58,7 @@ No candidate source or binary was imported. Exact revisions and hashes are in
 - extracted upstream `LICENSE` SHA-256
   `07639618C7B94AB9953CC61715F6325877E1854DCA611ED9B1BD54497CF5E93A`;
 - no upstream source or binary imported;
-- identified local host: `DESKTOP-AT8EVE9`, AMD64 Windows build 26200.9168;
+- identified local host: `LAB-WINDOWS-HOST`, AMD64 Windows build 26200.9168;
 - Visual Studio Build Tools 17.14, Windows SDK 10.0.26100.0 and WDK
   10.0.26100.6584 present;
 - WDK MSBuild integration and x64 InfVerif execute locally;
@@ -71,7 +71,7 @@ No candidate source or binary was imported. Exact revisions and hashes are in
 - the full solution still requires current-toolset ATL/Spectre, a deliberate
   signing-disabled compile configuration and reconciliation of the upstream
   base INF with current InfVerif `/w` rules. The APO and extension INFs pass;
-- `DESKTOP-AT8EVE9\arthu` is a member of the built-in `Hyper-V Administrators`
+- `LAB-WINDOWS-HOST\local-user` is a member of the built-in `Hyper-V Administrators`
   group, and the refreshed login token contains group SID `S-1-5-32-578`;
 - `CapyIO-DriverLab` is an identified Hyper-V Generation 2 target at
   `F:\CapyIO-DriverLab\vm`, configured with 8 vCPU, 4–16 GiB dynamic memory,
@@ -107,7 +107,7 @@ APO compile is evidence only and is not a production configuration.
 
 ## Open prerequisite
 
-Run the ADR 0029 elevated recovery audit for `DESKTOP-AT8EVE9`, retain exact
+Run the ADR 0029 elevated recovery audit for `LAB-WINDOWS-HOST`, retain exact
 package/rollback evidence and obtain package-specific approval before B2
 deployment. B2T subsequently proved the supported simulated-Broker PCM ingest
 and physical Android submission described in `CAPY_AUDIO_001B2T_REPORT.md`;

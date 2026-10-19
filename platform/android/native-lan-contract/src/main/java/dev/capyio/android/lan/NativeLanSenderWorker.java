@@ -8,10 +8,12 @@ import java.util.function.Consumer;
 /** Owns packet-queue to UDP movement on one bounded background worker. */
 public final class NativeLanSenderWorker implements AutoCloseable {
     public static final String PROBLEM_IO = "CAPY.ANDROID.LAN_SEND_IO";
+    public static final String PROBLEM_ROUTE_ENDED = "CAPY.ANDROID.LAN_ROUTE_ENDED";
 
     private final NativeLanUdpEndpoint endpoint;
     private final NativeLanPacketQueue input;
     private final Consumer<String> failureListener;
+    private final NativeLanRouteGuard routeGuard;
     private final AtomicBoolean running = new AtomicBoolean();
     private Thread worker;
     private boolean started;
@@ -21,11 +23,22 @@ public final class NativeLanSenderWorker implements AutoCloseable {
             NativeLanUdpEndpoint endpoint,
             NativeLanPacketQueue input,
             Consumer<String> failureListener) {
+        this(endpoint, input, failureListener, null);
+    }
+
+    /** Null guard is reserved for the existing explicitly trusted lab path. */
+    public NativeLanSenderWorker(
+            NativeLanUdpEndpoint endpoint, NativeLanPacketQueue input,
+            Consumer<String> failureListener, NativeLanRouteGuard routeGuard) {
         this.endpoint = Objects.requireNonNull(endpoint, "endpoint");
         this.input = Objects.requireNonNull(input, "input");
         this.failureListener = Objects.requireNonNull(failureListener, "failureListener");
+        this.routeGuard = routeGuard;
         if (!endpoint.binding().matches(input.binding())) {
             throw new IllegalArgumentException("sender endpoint and queue bindings differ");
+        }
+        if (routeGuard != null && !endpoint.binding().matches(routeGuard.route.binding)) {
+            throw new IllegalArgumentException("sender Route guard binding differs");
         }
     }
 
@@ -48,6 +61,7 @@ public final class NativeLanSenderWorker implements AutoCloseable {
             stopped = true;
             running.set(false);
         }
+        if (routeGuard != null) routeGuard.revoke();
         endpoint.close();
         if (current != null && current != Thread.currentThread()) {
             current.interrupt();
@@ -67,7 +81,9 @@ public final class NativeLanSenderWorker implements AutoCloseable {
     private void run() {
         try {
             while (running.get()) {
+                if (!routeIsLive()) break;
                 NativeLanPacketCodec.Packet packet = input.poll(50);
+                if (!running.get() || !routeIsLive()) break;
                 if (packet != null) {
                     endpoint.send(packet);
                 }
@@ -80,11 +96,18 @@ public final class NativeLanSenderWorker implements AutoCloseable {
             }
         } finally {
             running.set(false);
+            if (routeGuard != null) routeGuard.revoke();
             endpoint.close();
             synchronized (this) {
                 worker = null;
             }
         }
+    }
+
+    private boolean routeIsLive() {
+        if (routeGuard == null || routeGuard.isLive()) return true;
+        if (running.getAndSet(false)) failureListener.accept(PROBLEM_ROUTE_ENDED);
+        return false;
     }
 
     private static void joinBounded(Thread thread) {

@@ -1,0 +1,11 @@
+[package]
+name = "capyio-control-credentials"
+description = "Bounded, versioned secret bundle for CapyIO control TLS identities."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish = false
+
+[dependencies]
+thiserror.workspace = true

@@ -1,6 +1,6 @@
 # Security Policy
 
-CapyIO is pre-release software that is intended to access microphones, speakers, system audio endpoints, and eventually other sensitive hardware capabilities. Do not use current builds for secrets, regulated data, or unattended production systems.
+CapyIO is pre-release software that is intended to access microphones, speakers, system audio endpoints, cameras, touch input and other sensitive hardware capabilities. Do not use current builds for secrets, regulated data, or unattended production systems.
 
 ## Reporting a vulnerability
 
@@ -26,3 +26,11 @@ Do not include microphone recordings, tokens, certificates, device identifiers, 
 - Disconnect and malformed input must fail closed without destabilizing OS audio services.
 
 See `docs/SECURITY_MODEL.md` for the detailed model and `AGENTS.md` for protected operations.
+
+## Current Alpha boundary
+
+Supported acceptance is limited to Windows + Android on trusted LAN/Tailscale.
+Pairing and authenticated control are implemented; not all media has application-layer
+encryption. System projection needs separately installed components; camera currently
+needs an elevated Host. Setup must not disable Secure Boot or enable test signing.
+Public release approval remains false. See [current status](docs/CURRENT_STATUS.md).

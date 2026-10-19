@@ -13,6 +13,7 @@ import java.util.UUID;
 import java.util.concurrent.ArrayBlockingQueue;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.function.Supplier;
+import java.util.function.BooleanSupplier;
 
 /** Bounded UDP publisher shared by the unified gamepad and standalone IMU Sources. */
 final class ControllerRouteAdapter {
@@ -24,18 +25,21 @@ final class ControllerRouteAdapter {
 
     private final Supplier<GamepadControlsSnapshot> controls;
     private final Supplier<ImuSourceAdapter.SampleSnapshot> motion;
+    private final BooleanSupplier gamepadMotion;
     private final AtomicBoolean running = new AtomicBoolean();
     private final ArrayBlockingQueue<GamepadControlsSnapshot> controlFrames =
             new ArrayBlockingQueue<>(MAX_CONTROL_FRAMES);
     private volatile Endpoint endpoint;
     private volatile Thread worker;
     private volatile String problemCode;
+    private volatile boolean sentFrame;
 
     ControllerRouteAdapter(
             Supplier<GamepadControlsSnapshot> controls,
-            Supplier<ImuSourceAdapter.SampleSnapshot> motion) {
+            Supplier<ImuSourceAdapter.SampleSnapshot> motion, BooleanSupplier gamepadMotion) {
         this.controls = controls;
         this.motion = motion;
+        this.gamepadMotion = gamepadMotion;
     }
 
     synchronized boolean configure(String host, int port, String token) {
@@ -61,6 +65,7 @@ final class ControllerRouteAdapter {
             return false;
         }
         running.set(true);
+        sentFrame = false;
         controlFrames.clear();
         worker = new Thread(this::run, "capyio-controller-route");
         worker.start();
@@ -74,12 +79,20 @@ final class ControllerRouteAdapter {
         Thread current = worker;
         if (current != null) {
             current.interrupt();
+            try { current.join(250); }
+            catch (InterruptedException interrupted) { Thread.currentThread().interrupt(); }
         }
+    }
+
+    synchronized void clearEndpoint() {
+        endpoint = null;
     }
 
     boolean isRunning() {
         return running.get();
     }
+
+    boolean hasSentFrame() { return running.get() && sentFrame; }
 
     boolean submitControls(GamepadControlsSnapshot snapshot) {
         return !running.get() || controlFrames.offer(snapshot);
@@ -105,20 +118,26 @@ final class ControllerRouteAdapter {
         try (DatagramSocket socket = new DatagramSocket()) {
             InetAddress address = InetAddress.getByName(target.host);
             while (running.get()) {
-                GamepadControlsSnapshot snapshot = controlFrames.poll();
-                if (snapshot == null) {
-                    snapshot = controls.get();
+                // Drain bursts in order: two sticks plus buttons can produce more
+                // than one update per tick. Never discard button release edges.
+                for (int batch = 0; batch < 16 && running.get(); batch++) {
+                    GamepadControlsSnapshot snapshot = controlFrames.poll();
+                    if (snapshot == null) {
+                        if (batch != 0) break;
+                        snapshot = controls.get();
+                    }
+                    byte[] bytes = encode(
+                            target.token,
+                            session,
+                            sequence++,
+                            snapshot,
+                            motion.get()).getBytes(StandardCharsets.UTF_8);
+                    if (bytes.length > MAX_PACKET_BYTES) {
+                        throw new IllegalStateException("controller packet exceeds bound");
+                    }
+                    socket.send(new DatagramPacket(bytes, bytes.length, address, target.port));
+                    sentFrame = true;
                 }
-                byte[] bytes = encode(
-                        target.token,
-                        session,
-                        sequence++,
-                        snapshot,
-                        motion.get()).getBytes(StandardCharsets.UTF_8);
-                if (bytes.length > MAX_PACKET_BYTES) {
-                    throw new IllegalStateException("controller packet exceeds bound");
-                }
-                socket.send(new DatagramPacket(bytes, bytes.length, address, target.port));
                 try {
                     Thread.sleep(FRAME_MILLIS);
                 } catch (InterruptedException stopped) {
@@ -146,7 +165,7 @@ final class ControllerRouteAdapter {
         }
     }
 
-    static String encode(
+    private String encode(
             String token,
             String session,
             long sequence,
@@ -165,7 +184,7 @@ final class ControllerRouteAdapter {
                 motion.angularVelocityTimestampNanos(),
                 motion.angularVelocityX(),
                 motion.angularVelocityY(),
-                motion.angularVelocityZ());
+                motion.angularVelocityZ(), gamepadMotion.getAsBoolean());
     }
 
     private record Endpoint(String host, int port, String token) {

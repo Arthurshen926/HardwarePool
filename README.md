@@ -1,8 +1,17 @@
 # CapyIO
 
-> **Pre-alpha controlled lab. Real IMU, remote-speaker and remote-microphone
-> paths now exist, but installation, security and release qualification are not
-> complete.**
+Cloud source snapshot: [2026-10-19 handoff and validation](docs/CLOUD_SYNC_HANDOFF_20261019.md).
+
+Local installable candidate: [delivery and limits](docs/LOCAL_ALPHA_CURRENT.md).
+Windows users: [first run](docs/FIRST_RUN_WINDOWS.md).
+
+Current integration status: [CURRENT_STATUS](docs/CURRENT_STATUS.md).
+Architecture navigation: [CURRENT_ARCHITECTURE](docs/CURRENT_ARCHITECTURE.md).
+The [five-phase Alpha closeout](docs/ALPHA_CONSOLIDATION.md) freezes new hardware
+features and separates software checks from physical and release acceptance.
+
+> **0.5.24 Alpha Release Preparation — feature frozen.** Windows + Android/Y700
+> has bounded physical acceptance; public distribution and driver signing are not complete.
 
 **CapyIO — Cross-device I/O Capability Fabric**
 **CapyIO 跨设备 I/O 能力织网平台**
@@ -21,26 +30,25 @@ Routes, lifecycle and diagnostics.
 
 ## Current executable scope
 
-The repository combines deterministic foundation code with three controlled-
-lab vertical slices:
+The current primary path is first-party pairing, authenticated control, catalogs,
+native speaker/microphone, camera and touchpad. Windows UI and Node Host are
+separate processes: closing the window leaves the node running; reopening attaches
+to it. Android uses one service with capability-specific modules.
 
-- pure Rust domain/runtime/protocol crates;
-- typed Port and independent Route lifecycle tests;
-- a browser Mock UI and a Tauri host with Quick Actions and Workspace views;
-- real Android IMU to Windows Panel/Recorder operation through SensorServer;
-- a dedicated Windows `CapyIO Speaker` path to an Android receiver;
-- an Android MicYou microphone path into a Windows virtual capture endpoint;
-- one first-party Android audio Node shell and bounded native-LAN
-  wire/packetizer/worker reference, plus a speaker implementation awaiting
-  exact-device audible acceptance;
-- Adapter manifests, bounded external-process supervision and local platform
-  helpers;
-- offline repository validation and CI commands.
+Gamepad, haptics, display and IMU remain experimental. Audio Share, MicYou and
+SensorServer are retained compatibility integrations, not default runtime
+prerequisites. Their sources and developer diagnostics remain available.
 
-The real paths above are accepted only on the identified local lab. CapyIO does
-**not** yet provide a production installer, signed public packages, a complete
-first-party Android media path, pairing/authenticated transport, WAN support,
-camera sharing or a release-qualified background/reboot lifecycle.
+The tested environment is Windows + Android/Y700 on trusted LAN/Tailscale.
+Control TLS does not imply full application-layer media encryption. Camera
+projection currently requires an elevated Host. System audio, VHF touchpad,
+camera registration and optional display/gamepad backends have installation
+prerequisites; the application installer does not deploy them automatically.
+No public signed driver package or production installer is claimed.
+
+See [current evidence](docs/ALPHA_FOLLOWUP_20261003.md),
+[system component model](docs/SYSTEM_COMPONENTS.md) and
+[release preparation](docs/ALPHA_RELEASE_PREPARATION.md).
 
 ## Repository map
 
@@ -54,13 +62,13 @@ crates/capyio-adapter-host  desktop sidecar supervision
 crates/capyio-testkit       stable fixtures
 apps/capyio-node            headless four-Route demo
 apps/desktop                Vue + Tauri control surface
-adapters/audio-share        bounded remote-speaker process boundary
-adapters/micyou             bounded remote-microphone process boundary
+adapters/audio-share        compatibility-only remote-speaker boundary
+adapters/micyou             compatibility-only remote-microphone boundary
 adapters/native-audio-lan   bounded native audio UDP lab reference
 adapters/mock-source        finite test Source Sidecar and manifest
 adapters/mock-sink          finite test Sink Sidecar and manifest
 platform/windows            Windows Broker, presence and host-config helpers
-platform/android            CapyIO Android audio Node/service shell
+platform/android            unified Android Node and capability modules
 drivers/windows-audio       CapyIO Speaker/microphone controlled-lab package
 protocol/                   Protobuf and JSON Schema sources
 docs/                       normative requirements, architecture and plans
@@ -73,6 +81,7 @@ Prerequisites and pinned versions are in [docs/TOOLCHAIN.md](docs/TOOLCHAIN.md).
 ```text
 cargo xtask doctor
 cargo xtask ci
+cargo xtask alpha-check
 cargo xtask demo
 cargo xtask adapter-smoke
 cargo xtask android-check
@@ -86,6 +95,9 @@ Tauri shell can expose real lab Quick Actions when their separately approved
 host dependencies are installed and configured. See
 [First Run on Windows](docs/FIRST_RUN_WINDOWS.md) and
 [Android microphone sharing](docs/MICROPHONE_SHARING_WINDOWS_ANDROID.md).
+For the current unified Android/Windows physical test order, UI map and
+per-capability pass/fail criteria, use the
+[physical acceptance guide](docs/PHYSICAL_ACCEPTANCE_GUIDE.md).
 
 ## Product modes
 

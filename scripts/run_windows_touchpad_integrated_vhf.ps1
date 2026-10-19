@@ -4,7 +4,7 @@ param()
 $ErrorActionPreference = 'Stop'
 $repositoryRoot = Split-Path -Parent $PSScriptRoot
 $executable = Join-Path $repositoryRoot 'target\debug\capyio-ptp-adb-lab.exe'
-$expectedHash = 'E0123E541C245F5A90B82CFA761729C1EF56C9352E3C4D315AFB34312A1D59A3'
+$expectedHash = 'AA30156643E9A5A233558C5936D751E38F1D03F2E1106B6216FBDBEBE31C6AA7'
 $evidenceRoot = Join-Path $repositoryRoot 'target\lab-evidence'
 $evidencePath = Join-Path $evidenceRoot 'integrated-android-vhf.txt'
 

@@ -110,22 +110,22 @@ public final class AndroidCoreCatalogJson {
                     "adapter_managed");
             case "android.imu" -> new CatalogPolicy(
                     "dev.capyio.android.imu-local",
-                    "local_pipeline",
+                    "external_protocol",
                     "measurement",
                     "android.sensor.elapsed_realtime",
                     "standard_port");
             case "android.gamepad" -> new CatalogPolicy(
                     "dev.capyio.android.gamepad-local",
-                    "local_pipeline",
+                    "adapter_managed",
                     "interactive",
                     "android.uptime_nanos",
-                    "standard_port");
+                    "adapter_managed");
             case "android.haptics" -> new CatalogPolicy(
-                    "dev.capyio.android.haptics-local",
-                    "local_pipeline",
+                    "dev.capyio.android.haptics-tls",
+                    "adapter_managed",
                     "interactive",
                     null,
-                    "standard_port");
+                    "adapter_managed");
             default -> throw new IllegalArgumentException(
                     "unsupported Android capability policy: " + capabilityKey);
         };

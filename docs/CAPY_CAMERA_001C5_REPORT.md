@@ -42,7 +42,7 @@ receiver.
 ## Physical Windows/Android evidence
 
 The already installed, hash-recorded Camera Lab APK on the explicitly selected
-`100.66.157.119:33909` vivo V2419A / PD2419 was used without reinstall or
+`<LAB_IPV4_03>:33909` vivo V2419A / PD2419 was used without reinstall or
 permission changes. The receiver ran as:
 
 ```text

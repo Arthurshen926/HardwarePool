@@ -15,29 +15,29 @@ function fixed(value: number): string { return Number.isFinite(value) ? value.to
 <template>
   <div class="telemetry" aria-label="完整手柄状态可视化">
     <div class="telemetry__meta">
-      <div><span>Source</span><strong>{{ state.source }}</strong></div>
-      <div><span>Epoch / Seq</span><strong>{{ state.streamEpoch }} / {{ state.sequence ?? "—" }}</strong></div>
-      <div><span>Last update</span><strong>{{ state.lastUpdate }}</strong></div>
+      <div><span>数据来源</span><strong>{{ state.source }}</strong></div>
+      <div><span>会话 / 序号</span><strong>{{ state.streamEpoch }} / {{ state.sequence ?? "—" }}</strong></div>
+      <div><span>最近更新</span><strong>{{ state.lastUpdate }}</strong></div>
     </div>
     <div class="telemetry__body">
       <div class="trigger-meter"><span>L2</span><i><b :style="{ height: `${triggerPercent(state.leftTrigger)}%` }"></b></i><strong>{{ state.leftTrigger }}</strong></div>
-      <div class="stick-meter"><span>LS</span><i><b :style="{ left: `${axisPercent(state.leftStick.x)}%`, top: `${axisPercent(-state.leftStick.y)}%` }"></b></i><small>{{ state.leftStick.x }}, {{ state.leftStick.y }}</small></div>
+      <div class="stick-meter"><span>左摇杆</span><i><b :style="{ left: `${axisPercent(state.leftStick.x)}%`, top: `${axisPercent(-state.leftStick.y)}%` }"></b></i><small>{{ state.leftStick.x }}, {{ state.leftStick.y }}</small></div>
       <div class="button-map">
         <span class="button-map__north" :class="{ on: pressed.has('north') }">Y</span>
         <span class="button-map__west" :class="{ on: pressed.has('west') }">X</span>
         <span class="button-map__east" :class="{ on: pressed.has('east') }">B</span>
         <span class="button-map__south" :class="{ on: pressed.has('south') }">A</span>
-        <small>D-pad {{ state.dpad.x }}, {{ state.dpad.y }}</small>
+        <small>方向键 {{ state.dpad.x }}, {{ state.dpad.y }}</small>
       </div>
-      <div class="stick-meter"><span>RS</span><i><b :style="{ left: `${axisPercent(state.rightStick.x)}%`, top: `${axisPercent(-state.rightStick.y)}%` }"></b></i><small>{{ state.rightStick.x }}, {{ state.rightStick.y }}</small></div>
+      <div class="stick-meter"><span>右摇杆</span><i><b :style="{ left: `${axisPercent(state.rightStick.x)}%`, top: `${axisPercent(-state.rightStick.y)}%` }"></b></i><small>{{ state.rightStick.x }}, {{ state.rightStick.y }}</small></div>
       <div class="trigger-meter"><span>R2</span><i><b :style="{ height: `${triggerPercent(state.rightTrigger)}%` }"></b></i><strong>{{ state.rightTrigger }}</strong></div>
     </div>
     <div class="button-strip">
-      <span v-for="button in trackedButtons" :key="button" :class="{ on: pressed.has(button) }">{{ button.replaceAll('_', ' ') }}</span>
+      <span v-for="button in trackedButtons" :key="button" :class="{ on: pressed.has(button) }">{{ ({ left_shoulder: '左肩键', right_shoulder: '右肩键', left_stick: '左摇杆按键', right_stick: '右摇杆按键', select: '选择', start: '开始', guide: '主页' } as Partial<Record<GamepadButton, string>>)[button] ?? button }}</span>
     </div>
-    <div class="motion-grid" aria-label="IMU live values">
-      <div><span>Acceleration · m/s²</span><strong>X {{ fixed(state.motion.acceleration[0]) }}</strong><strong>Y {{ fixed(state.motion.acceleration[1]) }}</strong><strong>Z {{ fixed(state.motion.acceleration[2]) }}</strong></div>
-      <div><span>Angular velocity · rad/s</span><strong>X {{ fixed(state.motion.angularVelocity[0]) }}</strong><strong>Y {{ fixed(state.motion.angularVelocity[1]) }}</strong><strong>Z {{ fixed(state.motion.angularVelocity[2]) }}</strong></div>
+    <div class="motion-grid" aria-label="实时体感数据">
+      <div><span>加速度 · m/s²</span><strong>X {{ fixed(state.motion.acceleration[0]) }}</strong><strong>Y {{ fixed(state.motion.acceleration[1]) }}</strong><strong>Z {{ fixed(state.motion.acceleration[2]) }}</strong></div>
+      <div><span>角速度 · rad/s</span><strong>X {{ fixed(state.motion.angularVelocity[0]) }}</strong><strong>Y {{ fixed(state.motion.angularVelocity[1]) }}</strong><strong>Z {{ fixed(state.motion.angularVelocity[2]) }}</strong></div>
     </div>
   </div>
 </template>

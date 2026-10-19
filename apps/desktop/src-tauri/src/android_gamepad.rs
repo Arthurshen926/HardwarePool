@@ -32,6 +32,8 @@ pub(crate) struct AndroidAcceptedState {
     pub(crate) controls: GamepadState,
     pub(crate) motion: DataEnvelope<ImuSampleV1>,
     pub(crate) remote_sequence: u64,
+    pub(crate) motion_available: bool,
+    pub(crate) gamepad_motion_enabled: bool,
 }
 
 #[derive(Clone, Debug, Default)]
@@ -57,7 +59,7 @@ pub(crate) enum AndroidProjectionEvent {
 enum ProjectionSenders {
     Dsu {
         motion: DsuImuWorkerSender,
-        controls: DsuGamepadWorkerSender,
+        controls: Option<DsuGamepadWorkerSender>,
     },
     PairedState(SyncSender<AndroidProjectionEvent>),
 }
@@ -66,6 +68,10 @@ enum ProjectionSenders {
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 struct AndroidControllerPacket {
     version: u8,
+    #[serde(default)]
+    motion_available: Option<bool>,
+    #[serde(default)]
+    gamepad_motion_enabled: Option<bool>,
     token: String,
     session: String,
     sequence: u64,
@@ -86,6 +92,8 @@ struct AndroidControllerPacket {
 }
 
 struct ValidatedPacket {
+    motion_available: bool,
+    gamepad_motion_enabled: bool,
     session: String,
     remote_sequence: u64,
     timestamp_nanos: u64,
@@ -166,12 +174,18 @@ impl ReceiverState {
             },
             controls: packet.controls,
         };
-        let motion = motion_envelope(
+        let mut motion = motion_envelope(
             self.motion_stream_id,
             self.stream_epoch,
             self.next_motion_sequence,
             MotionFrame {
-                timestamp_nanos: packet.timestamp_nanos,
+                timestamp_nanos: if packet.motion_available {
+                    packet
+                        .acceleration_timestamp_nanos
+                        .max(packet.angular_velocity_timestamp_nanos)
+                } else {
+                    packet.timestamp_nanos
+                },
                 acceleration: packet.acceleration,
                 angular_velocity: packet.angular_velocity,
                 acceleration_timestamp_nanos: packet.acceleration_timestamp_nanos,
@@ -180,10 +194,18 @@ impl ReceiverState {
         );
         self.next_controls_sequence = self.next_controls_sequence.saturating_add(1);
         self.next_motion_sequence = self.next_motion_sequence.saturating_add(1);
+        if !packet.motion_available {
+            motion.clock_domain_id = "capyio.projection.neutral".to_owned();
+            motion.payload.acceleration = [0.0, 0.0, 9.806_65];
+            motion.payload.angular_velocity = [0.0; 3];
+            motion.payload.component_timestamps = None;
+        }
         AndroidAcceptedState {
             controls,
             motion,
             remote_sequence: packet.remote_sequence,
+            motion_available: packet.motion_available,
+            gamepad_motion_enabled: packet.gamepad_motion_enabled,
         }
     }
 
@@ -220,6 +242,8 @@ impl ReceiverState {
             controls,
             motion,
             remote_sequence,
+            motion_available: false,
+            gamepad_motion_enabled: false,
         };
         self.snapshot.latest = Some(neutral.clone());
         neutral
@@ -342,13 +366,10 @@ impl AndroidGamepadListener {
             .lock()
             .map_err(|_| "Android controller projection lock poisoned".to_owned())?;
         *slot = match (motion, controls) {
-            (Some(motion), Some(controls)) => Some(ProjectionSenders::Dsu { motion, controls }),
+            (Some(motion), controls) => Some(ProjectionSenders::Dsu { motion, controls }),
             (None, None) => None,
             _ => {
-                return Err(
-                    "Android controller projection requires both motion and controls senders"
-                        .to_owned(),
-                );
+                return Err("Android controller projection requires a motion sender".to_owned());
             }
         };
         Ok(())
@@ -453,8 +474,10 @@ fn run_listener(
                     && let Some(event) = submit_projection_state(&senders, accepted)
                     && let Ok(mut guard) = state.lock()
                 {
-                    guard.snapshot.projection_queue_full =
-                        guard.snapshot.projection_queue_full.saturating_add(1);
+                    if event == "projection_queue_full" {
+                        guard.snapshot.projection_queue_full =
+                            guard.snapshot.projection_queue_full.saturating_add(1);
+                    }
                     guard.snapshot.last_event = event;
                 }
             }
@@ -510,10 +533,18 @@ fn submit_projection_state(
 ) -> Option<&'static str> {
     match projection {
         ProjectionSenders::Dsu { motion, controls } => {
+            if !accepted.motion_available {
+                // DSU has no absent-motion sample. Stop the export instead of
+                // republishing its cached measurement with new controls.
+                motion.request_stop();
+                return Some("motion_unavailable_dsu_stopped");
+            }
             let motion = motion.try_submit(accepted.motion);
-            let controls = controls.try_submit(accepted.controls);
+            let controls = controls
+                .as_ref()
+                .map(|sender| sender.try_submit(accepted.controls));
             (matches!(motion, DsuSubmitOutcome::QueueFull)
-                || matches!(controls, DsuSubmitOutcome::QueueFull))
+                || matches!(controls, Some(DsuSubmitOutcome::QueueFull)))
             .then_some("projection_queue_full")
         }
         ProjectionSenders::PairedState(sender) => {
@@ -529,7 +560,9 @@ fn submit_projection_state(
 fn request_projection_offline(projection: &ProjectionSenders) {
     match projection {
         ProjectionSenders::Dsu { controls, .. } => {
-            let _ = controls.request_neutral();
+            if let Some(controls) = controls {
+                let _ = controls.request_neutral();
+            }
         }
         ProjectionSenders::PairedState(sender) => {
             let _ = sender.try_send(AndroidProjectionEvent::UpstreamOffline);
@@ -547,7 +580,7 @@ fn reject(state: &Arc<Mutex<ReceiverState>>, event: &'static str) {
 fn decode_packet(bytes: &[u8], expected_token: &str) -> Result<ValidatedPacket, String> {
     let packet: AndroidControllerPacket =
         serde_json::from_slice(bytes).map_err(|_| "invalid JSON packet".to_owned())?;
-    if packet.version != 1 {
+    if packet.version != 1 && packet.version != 2 {
         return Err("unsupported Android controller packet version".to_owned());
     }
     if !tokens_equal(packet.token.as_bytes(), expected_token.as_bytes()) {
@@ -562,12 +595,36 @@ fn decode_packet(bytes: &[u8], expected_token: &str) -> Result<ValidatedPacket, 
     {
         return Err("invalid Android controller session".to_owned());
     }
-    if packet.timestamp_nanos == 0
-        || packet.acceleration_timestamp_nanos == 0
-        || packet.angular_velocity_timestamp_nanos == 0
-    {
+    if packet.timestamp_nanos == 0 {
         return Err("Android controller timestamps must be positive".to_owned());
     }
+    let fresh = |timestamp: u64| {
+        timestamp > 1
+            && timestamp <= packet.timestamp_nanos
+            && packet.timestamp_nanos - timestamp <= 350_000_000
+    };
+    let fresh_motion = fresh(packet.acceleration_timestamp_nanos)
+        && fresh(packet.angular_velocity_timestamp_nanos);
+    let (motion_available, gamepad_motion_enabled) = if packet.version == 2 {
+        let available = packet
+            .motion_available
+            .ok_or("missing motion availability")?;
+        let enabled = packet
+            .gamepad_motion_enabled
+            .ok_or("missing gamepad motion selection")?;
+        if available && !fresh_motion {
+            return Err("stale or invalid motion timestamps".to_owned());
+        }
+        if !available
+            && (packet.acceleration_timestamp_nanos != 0
+                || packet.angular_velocity_timestamp_nanos != 0)
+        {
+            return Err("unavailable motion must have absent timestamps".to_owned());
+        }
+        (available, enabled)
+    } else {
+        (fresh_motion, true)
+    };
     let mut buttons = GamepadButtons::empty();
     for button in [
         GamepadButton::South,
@@ -632,6 +689,8 @@ fn decode_packet(bytes: &[u8], expected_token: &str) -> Result<ValidatedPacket, 
         }
     }
     Ok(ValidatedPacket {
+        motion_available,
+        gamepad_motion_enabled,
         session: packet.session,
         remote_sequence: packet.sequence,
         timestamp_nanos: packet.timestamp_nanos,
@@ -664,7 +723,7 @@ fn motion_envelope(
             units: ImuUnitsV1::default(),
             coordinate_frame: ImuCoordinateFrame::AndroidDeviceXRightYUpZOut,
             accuracy: ImuAccuracy::Unreliable,
-            calibration: ImuCalibration::FactoryCalibrated,
+            calibration: ImuCalibration::Raw,
             sensor: ImuSensorMetadataV1 {
                 sensor_name: "Android Controller Lab accelerometer + gyroscope".to_owned(),
                 vendor: "Android SensorManager".to_owned(),
@@ -708,6 +767,44 @@ mod tests {
 
     fn loopback_target(listener: &AndroidGamepadListener) -> SocketAddrV4 {
         SocketAddrV4::new(Ipv4Addr::LOCALHOST, listener.local_address().port())
+    }
+
+    #[test]
+    fn v2_controls_do_not_require_motion_and_motion_selection_is_independent() {
+        let valid = packet(0, 1).replace(
+            "\"version\":1",
+            "\"version\":2,\"motionAvailable\":true,\"gamepadMotionEnabled\":false",
+        );
+        let decoded =
+            decode_packet(valid.as_bytes(), TOKEN).expect("independent IMU without DS4 motion");
+        assert!(decoded.motion_available);
+        assert!(!decoded.gamepad_motion_enabled);
+        let absent = valid
+            .replace("\"motionAvailable\":true", "\"motionAvailable\":false")
+            .replace(
+                "\"accelerationTimestampNanos\":90",
+                "\"accelerationTimestampNanos\":0",
+            )
+            .replace(
+                "\"angularVelocityTimestampNanos\":95",
+                "\"angularVelocityTimestampNanos\":0",
+            );
+        let decoded = decode_packet(absent.as_bytes(), TOKEN).expect("controls only");
+        assert!(!decoded.motion_available);
+        assert_ne!(decoded.controls, GamepadControls::neutral());
+        let stale = valid.replace("\"timestampNanos\":100", "\"timestampNanos\":400000100");
+        assert!(decode_packet(stale.as_bytes(), TOKEN).is_err());
+        let missing = valid.replace(",\"motionAvailable\":true", "");
+        assert!(decode_packet(missing.as_bytes(), TOKEN).is_err());
+        let legacy_missing = packet(0, 1).replace(
+            "\"accelerationTimestampNanos\":90",
+            "\"accelerationTimestampNanos\":1",
+        );
+        assert!(
+            !decode_packet(legacy_missing.as_bytes(), TOKEN)
+                .expect("legacy controls only")
+                .motion_available
+        );
     }
 
     #[test]

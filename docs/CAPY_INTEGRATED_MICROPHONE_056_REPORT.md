@@ -15,7 +15,7 @@ this comparison; its precise Windows policy cause is not established.
 The same existing `cpal_capture_open.exe` was run against the AB13X physical
 USB microphone and the CapyIO virtual microphone. Under
 `codexsandboxoffline` in Session 1, both enumerated but failed stream creation
-with `0x80070057`. Under the actual `arthu` user in Session 1, both opened:
+with `0x80070057`. Under the actual `local-user` user in Session 1, both opened:
 
 - USB: 99 callbacks, 95,040 samples, RMS 0.00371339, peak 0.05651996;
 - CapyIO before Android Start: 99 callbacks, 47,520 samples, zero RMS/peak.

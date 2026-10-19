@@ -34,6 +34,7 @@ public final class AndroidCapabilityModulesContractTest {
         reflectsGenerationBoundImuLifecycleState();
         reflectsGenerationBoundGamepadLifecycleState();
         reflectsGenerationBoundTouchpadLifecycleState();
+        keepsTouchpadSourcePublishableAfterDataFailure();
         rejectsStaleSourceFramesBeforeAdapterDelivery();
         releasesUiInputsOnForegroundLoss();
         retainsServiceForConnectedDeviceLifecycle();
@@ -48,6 +49,17 @@ public final class AndroidCapabilityModulesContractTest {
         parsesAndProjectsClosedTouchpadUiFrames();
         reconstructsTouchpadPointerLifecycle();
         encodesControllerLabDatagram();
+        sharesImuSamplingWithoutStoppingAnotherUser();
+        check(HapticsStrength.amplitude(1000, 0) == 0);
+        check(HapticsStrength.amplitude(1000, 100) == 255);
+        check(HapticsStrength.amplitude(1000, 50) == 128);
+        check(HapticsStrength.amplitude(0, 100) == 0);
+        check(HapticsStrength.amplitude(1, 1) == 1);
+        check(ResourceConsentMemory.allows("touchpad", 100, -1, 100));
+        check(!ResourceConsentMemory.allows("haptics", 100, -1, 100));
+        check(ResourceConsentMemory.allows("haptics", 100, 100, -1));
+        check(!ResourceConsentMemory.allows("haptics", 101, 100, 100));
+        check(!ResourceConsentMemory.allows("touchpad", -1, -1, -1));
         projectsAndAdmitsClosedAudioQuickActions();
         attachesAndAdmitsClosedCameraQuickAction();
         attachesAndAdmitsHapticsSink();
@@ -56,6 +68,18 @@ public final class AndroidCapabilityModulesContractTest {
     }
 
     private static void retainsServiceForConnectedDeviceLifecycle() {
+        check(AndroidForegroundOwnership.connectedDevice(true, false, null, null, null, null));
+        check(AndroidForegroundOwnership.connectedDevice(false, true, null, null, null, null));
+        check(!AndroidForegroundOwnership.connectedDevice(false, false, null, null, null, null));
+        TouchpadNodeController touchpad = new TouchpadNodeController();
+        long generation = touchpad.beginStart().generation();
+        check(touchpad.completeStart(generation));
+        check(touchpad.completeRemoteStop(generation));
+        check(touchpad.lifecycle().state() == CapabilityLifecycleState.STOPPED);
+        long retry = touchpad.beginStart().generation();
+        check(!touchpad.completeRemoteStop(generation));
+        check(touchpad.lifecycle().generation() == retry);
+        check(touchpad.completeRemoteStop(retry));
         for (CapabilityLifecycleState owner : List.of(
                 CapabilityLifecycleState.STARTING,
                 CapabilityLifecycleState.ACTIVE,
@@ -86,6 +110,38 @@ public final class AndroidCapabilityModulesContractTest {
                 CapabilityLifecycleState.FAILED,
                 CapabilityLifecycleState.STOPPED,
                 CapabilityLifecycleState.FAILED));
+    }
+
+    private static void keepsTouchpadSourcePublishableAfterDataFailure() {
+        TouchpadNodeController touchpad = new TouchpadNodeController();
+        long generation = touchpad.beginStart().generation();
+        check(touchpad.fail(generation, "CAPY.ANDROID.TOUCHPAD_RECEIVER_UNAVAILABLE"));
+        CapabilityCatalogSnapshot catalog = AndroidCapabilityModules.createRegistry(
+                new AudioNodeController(),
+                new CapabilityLifecycleController(),
+                new GamepadNodeController(),
+                touchpad,
+                () -> true,
+                () -> true,
+                HardwarePresence.PRESENT,
+                HardwarePresence.PRESENT,
+                HardwarePresence.PRESENT,
+                HardwarePresence.PRESENT,
+                HardwarePresence.PRESENT,
+                HardwarePresence.PRESENT).snapshot("test-node");
+        CapabilitySnapshot source = capability(catalog, "android.touchpad");
+        check(source.availability() == CapabilityAvailability.AVAILABLE);
+        check("CAPY.ANDROID.TOUCHPAD_RECEIVER_UNAVAILABLE".equals(source.problemCode()));
+        check(new AndroidSharingSelection().update(catalog, "test-node:android.touchpad", true));
+        String coreCatalog = AndroidCoreCatalogJson.encode(catalog, "test-platform", "test-runtime");
+        check(coreCatalog.contains("\"key\":\"android.touchpad\""));
+        check(coreCatalog.contains("\"availability\":\"available\""));
+        String actions = AndroidUiSnapshotJson.encodeQuickActions(
+                new CapabilityLifecycleController().snapshot(),
+                new CapabilityLifecycleController().snapshot(),
+                touchpad.lifecycle());
+        check(actions.contains("\"availableOperations\":[\"stop\"]"));
+        check(actions.contains("上一次触控链路失败"));
     }
 
     private static void exposesTheCompleteNonDisplayMigrationInventory() {
@@ -325,23 +381,42 @@ public final class AndroidCapabilityModulesContractTest {
                 HardwarePresence.PRESENT).snapshot("test-node");
 
         String json = AndroidUiSnapshotJson.encode(catalog, "16", "0.4.3-dev");
-        check(json.startsWith("{\"backendMode\":\"android_node\",\"schemaVersion\":4,"));
+        check(json.startsWith("{\"backendMode\":\"android_node\",\"schemaVersion\":5,"));
+        check(json.contains("\"controlPlane\":{\"schemaVersion\":1,\"simulated\":false"));
+        check(json.contains("\"discoveryState\":\"not_started\""));
+        check(json.contains("\"pairingState\":\"not_configured\""));
+        check(json.contains("\"transportState\":\"not_connected\""));
+        check(json.contains("\"catalogExchangeState\":\"not_connected\""));
         check(json.contains("\"id\":\"test-node\",\"displayName\":\"CapyIO Android\""));
         check(json.contains("\"capabilityCount\":7"));
         check(occurrences(json, "\"inventorySource\":\"android_node_catalog\"") == 7);
         check(json.contains("\"capabilityClass\":\"microphone\""));
         check(json.contains("\"direction\":\"source\""));
         check(json.contains("\"direction\":\"sink\""));
-        check(occurrences(json, "\"selectableForSharing\":true") == 4);
-        check(occurrences(json, "\"selectableForSharing\":false") == 3);
+        check(occurrences(json, "\"selectableForSharing\":true") == 5);
+        check(occurrences(json, "\"selectableForSharing\":false") == 2);
         check(occurrences(json, "\"selectedForSharing\":false") == 7);
         check(json.endsWith("\"imuFixture\":null}"));
+        String pairingReady = AndroidUiSnapshotJson.encode(
+                catalog, "16", "0.4.3-dev", java.util.Set.of(), "ready", 0);
+        check(pairingReady.contains("\"pairingState\":\"ready\""));
+        check(pairingReady.contains("\"pairedPeerCount\":0"));
+        String controlConnected = AndroidUiSnapshotJson.encode(
+                catalog, "16", "0.4.3-dev", java.util.Set.of(), "ready", 1, true, true);
+        check(controlConnected.contains("\"discoveryState\":\"listening\""));
+        check(controlConnected.contains("\"transportState\":\"connected\""));
+        check(controlConnected.contains("\"catalogExchangeState\":\"active\""));
+        check(controlConnected.contains("\"authenticatedConnectionCount\":1"));
+        String pairingFailed = AndroidUiSnapshotJson.encode(
+                catalog, "16", "0.4.3-dev", java.util.Set.of(), "failed", 0);
+        check(pairingFailed.contains("\"pairingState\":\"failed\""));
         check("\"a\\\"b\\\\c\\n\\ud83d\\ude00\"".equals(
                 AndroidUiSnapshotJson.encodeStringForContractTest("a\"b\\c\n\ud83d\ude00")));
 
         String disconnected = AndroidUiSnapshotJson.encodeDisconnected("16", "0.4.3-dev");
         check(disconnected.contains("\"online\":false"));
         check(disconnected.contains("\"capabilities\":[]"));
+        check(disconnected.contains("\"controlPlane\":{\"schemaVersion\":1"));
     }
 
     private static void admitsOnlyLocalAttachedSourceSharingIntent() {
@@ -364,7 +439,9 @@ public final class AndroidCapabilityModulesContractTest {
         check(selection.update(catalog, "test-node:android.imu", true));
         check(selection.update(catalog, "test-node:android.gamepad", true));
         check(selection.update(catalog, "test-node:android.touchpad", true));
-        check(!selection.update(catalog, "test-node:android.speaker", true));
+        check(selection.update(catalog, "test-node:android.speaker", true));
+        check(selection.update(catalog, "test-node:android.speaker", false));
+        check(selection.publicationCatalog(catalog).capabilities().stream().noneMatch(c -> c.capabilityKey().equals("android.speaker")));
         check(!selection.update(catalog, "test-node:android.haptics", true));
         check(!selection.update(catalog, "test-node:android.camera", true));
         check(!selection.update(catalog, "other-node:android.imu", true));
@@ -399,6 +476,7 @@ public final class AndroidCapabilityModulesContractTest {
                 HardwarePresence.PRESENT).snapshot("test-node");
         AndroidSharingSelection selection = new AndroidSharingSelection();
         check(selection.update(catalog, "test-node:android.microphone", true));
+        check(selection.update(catalog, "test-node:android.speaker", true));
         var published = selection.publicationCatalog(catalog);
 
         check(published.nodeId().equals(catalog.nodeId()));
@@ -437,6 +515,9 @@ public final class AndroidCapabilityModulesContractTest {
         AndroidSharingSelection selection = new AndroidSharingSelection();
         check(selection.update(
                 catalog,
+                "00000000-0000-4000-8000-00000000a001:android.speaker", true));
+        check(selection.update(
+                catalog,
                 "00000000-0000-4000-8000-00000000a001:android.microphone",
                 true));
 
@@ -449,8 +530,8 @@ public final class AndroidCapabilityModulesContractTest {
         check(json.contains("\"key\":\"android.haptics\""));
         check(!json.contains("\"key\":\"android.imu\""));
         check(json.contains("\"supported_route_modes\":[\"adapter_managed\"]"));
-        check(json.contains("\"supported_route_modes\":[\"local_pipeline\"]"));
-        check(json.contains("\"interoperability\":\"standard_port\""));
+        check(json.contains("\"adapter_type\":\"dev.capyio.android.haptics-tls\""));
+        check(json.contains("\"interoperability\":\"adapter_managed\""));
         check(json.contains("\"clock_domain\":null"));
         String fixturePath = System.getProperty("capyio.android.catalogFixture");
         check(fixturePath != null);
@@ -535,7 +616,9 @@ public final class AndroidCapabilityModulesContractTest {
         check(stopped.contains("capyio.quick-action.android-imu"));
         check(stopped.contains("capyio.quick-action.android-gamepad"));
         check(stopped.contains("capyio.quick-action.android-touchpad"));
-        check(occurrences(stopped, "\"availableOperations\":[\"start\"]") == 3);
+        check(occurrences(stopped, "\"availableOperations\":[\"start\"]") == 2);
+        check(stopped.contains("\"id\":\"capyio.quick-action.android-touchpad\""));
+        check(stopped.contains("\"availableOperations\":[]"));
         check(!stopped.contains("\"routeId\":\""));
 
         TransitionToken imuStart = imu.beginStart();
@@ -899,6 +982,28 @@ public final class AndroidCapabilityModulesContractTest {
         TouchpadMotionFrame cancel =
                 TouchpadMotionFrame.between(List.of(first, second), List.of());
         check(cancel.action == TouchpadMotionFrame.ACTION_CANCEL && cancel.ids.length == 0);
+
+        TouchpadContactSnapshot third = new TouchpadContactSnapshot(2, 500, 600, 512);
+        TouchpadContactSnapshot fourth = new TouchpadContactSnapshot(3, 700, 800, 512);
+        List<TouchpadMotionFrame> simultaneous = TouchpadMotionFrame.sequence(
+                List.of(), List.of(first, second, third, fourth));
+        check(simultaneous.size() == 4);
+        check(simultaneous.get(0).action == TouchpadMotionFrame.ACTION_DOWN);
+        for (int index = 1; index < simultaneous.size(); index++) {
+            check(simultaneous.get(index).action == TouchpadMotionFrame.ACTION_POINTER_DOWN);
+            check(simultaneous.get(index).actionIndex == index);
+            check(simultaneous.get(index).ids.length == index + 1);
+        }
+        List<TouchpadMotionFrame> replacement = TouchpadMotionFrame.sequence(
+                List.of(first, second), List.of(second, third));
+        check(replacement.size() == 3);
+        check(replacement.get(0).action == TouchpadMotionFrame.ACTION_CANCEL);
+        check(replacement.get(1).action == TouchpadMotionFrame.ACTION_DOWN);
+        check(replacement.get(2).action == TouchpadMotionFrame.ACTION_POINTER_DOWN);
+        List<TouchpadMotionFrame> simultaneousRelease = TouchpadMotionFrame.sequence(
+                List.of(first, second, third, fourth), List.of());
+        check(simultaneousRelease.size() == 1
+                && simultaneousRelease.get(0).action == TouchpadMotionFrame.ACTION_CANCEL);
     }
 
     private static void encodesControllerLabDatagram() {
@@ -908,12 +1013,29 @@ public final class AndroidCapabilityModulesContractTest {
                 "c0decafe", "session-1", 7, 99, controls,
                 90, 0.0f, 1.0f, 9.7f,
                 95, 0.1f, 0.2f, 0.3f);
-        check(packet.startsWith("{\"version\":1,\"token\":\"c0decafe\""));
+        check(packet.startsWith("{\"version\":2,"));
+        check(packet.contains("\"motionAvailable\":true,\"gamepadMotionEnabled\":true"));
         check(packet.contains("\"sequence\":7,\"timestampNanos\":99"));
         check(packet.contains("\"buttons\":1,\"dpadX\":-1,\"dpadY\":1"));
         check(packet.contains("\"leftX\":-12000,\"leftY\":9000"));
         check(packet.contains("\"acceleration\":[0.0,1.0,9.7]"));
         check(packet.endsWith("\"angularVelocityTimestampNanos\":95}"));
+        String absent = ControllerPacketJson.encode("c0decafe", "session-1", 8, 100,
+                controls, 0, 0, 0, 0, 0, 0, 0, 0, false);
+        check(absent.contains("\"motionAvailable\":false,\"gamepadMotionEnabled\":false"));
+        check(absent.contains("\"accelerationTimestampNanos\":0"));
+        check(absent.endsWith("\"angularVelocityTimestampNanos\":0}"));
+    }
+
+    private static void sharesImuSamplingWithoutStoppingAnotherUser() {
+        ImuSamplingUsers users = new ImuSamplingUsers();
+        check(!users.inUse());
+        users.acquireGamepad(); users.acquireIndependent();
+        users.releaseGamepad(); check(users.inUse());
+        users.releaseIndependent(); check(!users.inUse());
+        users.acquireIndependent(); users.acquireGamepad();
+        users.releaseIndependent(); check(users.inUse());
+        users.acquireGamepad(); users.releaseGamepad(); check(!users.inUse());
     }
 
     private static CapabilitySnapshot capability(

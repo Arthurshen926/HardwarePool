@@ -50,8 +50,13 @@ public final class DisplayNodeFacade {
 
     public static String stateJson(Context context) {
         DisplayPrerequisites state = inspect(context);
+        android.content.SharedPreferences viewing = context.getSharedPreferences("capyio-display-viewing", Context.MODE_PRIVATE);
         try {
             return new JSONObject().put("schemaVersion", 1)
+                    .put("viewingOptions", new JSONObject()
+                            .put("fullscreen", viewing.getBoolean("fullscreen", true))
+                            .put("keepAwake", viewing.getBoolean("keepAwake", true))
+                            .put("showStatistics", viewing.getBoolean("showStatistics", false)))
                     .put("transport", state.transport())
                     .put("configurationPresent", state.configurationPresent())
                     .put("nativeClientAvailable", state.nativeClientAvailable())

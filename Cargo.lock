@@ -343,11 +343,23 @@ name = "capyio-android-jni"
 version = "0.1.0"
 dependencies = [
  "capyio-android-host",
+ "capyio-control-credentials",
+ "capyio-control-link",
+ "capyio-control-tls",
  "capyio-core",
+ "capyio-discovery",
+ "capyio-discovery-udp",
+ "capyio-enrollment",
  "capyio-input",
+ "capyio-pairing",
+ "capyio-protocol",
  "capyio-remote-touchpad-adapter",
  "capyio-runtime",
+ "capyio-testkit",
  "jni 0.22.4",
+ "rcgen",
+ "serde",
+ "serde_json",
 ]
 
 [[package]]
@@ -372,6 +384,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "capyio-control-credentials"
+version = "0.1.0"
+dependencies = [
+ "thiserror 2.0.20",
+]
+
+[[package]]
 name = "capyio-control-host"
 version = "0.1.0"
 dependencies = [
@@ -380,6 +399,37 @@ dependencies = [
  "capyio-runtime",
  "capyio-testkit",
  "thiserror 2.0.20",
+]
+
+[[package]]
+name = "capyio-control-link"
+version = "0.1.0"
+dependencies = [
+ "capyio-control-host",
+ "capyio-control-tls",
+ "capyio-core",
+ "capyio-protocol",
+ "capyio-runtime",
+ "capyio-testkit",
+ "rcgen",
+ "thiserror 2.0.20",
+]
+
+[[package]]
+name = "capyio-control-tls"
+version = "0.1.0"
+dependencies = [
+ "capyio-control-credentials",
+ "capyio-control-host",
+ "capyio-core",
+ "capyio-pairing",
+ "capyio-protocol",
+ "capyio-runtime",
+ "capyio-testkit",
+ "rcgen",
+ "rustls",
+ "thiserror 2.0.20",
+ "uuid",
 ]
 
 [[package]]
@@ -406,27 +456,57 @@ dependencies = [
 name = "capyio-desktop"
 version = "0.1.0"
 dependencies = [
+ "capyio-audio",
  "capyio-audio-share-adapter",
+ "capyio-control-credentials",
  "capyio-control-host",
+ "capyio-control-link",
+ "capyio-control-tls",
  "capyio-core",
  "capyio-data-plane",
+ "capyio-discovery",
+ "capyio-discovery-udp",
  "capyio-dsu-adapter",
+ "capyio-enrollment",
  "capyio-input",
  "capyio-micyou-adapter",
  "capyio-micyou-host-config",
+ "capyio-pairing",
+ "capyio-protocol",
+ "capyio-remote-touchpad-adapter",
  "capyio-runtime",
  "capyio-sensor-server-adapter",
  "capyio-testkit",
  "capyio-viiper-adapter",
  "capyio-windows-camera-share",
  "capyio-windows-input",
+ "capyio-windows-pairing-store",
  "capyio-windows-service",
+ "rcgen",
  "serde",
  "serde_json",
+ "sha2",
  "tauri",
  "tauri-build",
  "tungstenite",
  "windows-sys 0.61.2",
+]
+
+[[package]]
+name = "capyio-discovery"
+version = "0.1.0"
+dependencies = [
+ "capyio-core",
+ "thiserror 2.0.20",
+ "uuid",
+]
+
+[[package]]
+name = "capyio-discovery-udp"
+version = "0.1.0"
+dependencies = [
+ "capyio-discovery",
+ "thiserror 2.0.20",
 ]
 
 [[package]]
@@ -443,6 +523,8 @@ dependencies = [
 name = "capyio-display-engine-host"
 version = "0.1.0"
 dependencies = [
+ "capyio-control-tls",
+ "capyio-core",
  "capyio-display-stream-adapter",
  "capyio-display-tls",
  "capyio-windows-display",
@@ -481,6 +563,22 @@ version = "0.1.0"
 dependencies = [
  "capyio-data-plane",
  "capyio-input",
+]
+
+[[package]]
+name = "capyio-enrollment"
+version = "0.1.0"
+dependencies = [
+ "capyio-control-credentials",
+ "capyio-core",
+ "capyio-pairing",
+ "rcgen",
+ "ring",
+ "rustls",
+ "serde",
+ "serde_json",
+ "sha2",
+ "spake2",
 ]
 
 [[package]]
@@ -559,6 +657,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "capyio-pairing"
+version = "0.1.0"
+dependencies = [
+ "capyio-core",
+ "capyio-discovery",
+ "serde",
+ "serde_json",
+ "sha2",
+ "thiserror 2.0.20",
+ "uuid",
+]
+
+[[package]]
 name = "capyio-process-presence"
 version = "0.1.0"
 dependencies = [
@@ -585,11 +696,13 @@ name = "capyio-remote-touchpad-adapter"
 version = "0.1.0"
 dependencies = [
  "capyio-android-host",
+ "capyio-control-tls",
  "capyio-core",
  "capyio-input",
  "capyio-runtime",
  "capyio-testkit",
  "capyio-windows-input",
+ "rcgen",
 ]
 
 [[package]]
@@ -671,6 +784,7 @@ dependencies = [
  "capyio-core",
  "capyio-windows-camera",
  "capyio-windows-camera-share",
+ "capyio-windows-service",
 ]
 
 [[package]]
@@ -701,6 +815,14 @@ version = "0.1.0"
 dependencies = [
  "thiserror 2.0.20",
  "windows-sys 0.61.2",
+]
+
+[[package]]
+name = "capyio-windows-credential-protection"
+version = "0.1.0"
+dependencies = [
+ "thiserror 2.0.20",
+ "windows",
 ]
 
 [[package]]
@@ -736,6 +858,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "capyio-windows-pairing-store"
+version = "0.1.0"
+dependencies = [
+ "capyio-control-credentials",
+ "capyio-core",
+ "capyio-pairing",
+ "capyio-windows-credential-protection",
+ "thiserror 2.0.20",
+ "windows-sys 0.61.2",
+]
+
+[[package]]
 name = "capyio-windows-render-ring"
 version = "0.1.0"
 dependencies = [
@@ -747,6 +881,7 @@ dependencies = [
 name = "capyio-windows-service"
 version = "0.1.0"
 dependencies = [
+ "capyio-audio",
  "capyio-audio-share-adapter",
  "capyio-core",
  "capyio-display",
@@ -758,6 +893,7 @@ dependencies = [
  "capyio-micyou-host-config",
  "capyio-native-audio-lan",
  "capyio-video",
+ "capyio-windows-camera-share",
  "capyio-windows-capture-ring",
  "capyio-windows-display",
  "serde",
@@ -851,7 +987,7 @@ checksum = "d524456ba66e72eb8b115ff89e01e497f8e6d11d78b70b1aa13c0fbd97540a81"
 dependencies = [
  "cfg-if",
  "cpufeatures 0.3.0",
- "rand_core",
+ "rand_core 0.10.1",
 ]
 
 [[package]]
@@ -1079,6 +1215,32 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "52560adf09603e58c9a7ee1fe1dcb95a16927b17c127f0ac02d6e768a0e25bc1"
 
 [[package]]
+name = "curve25519-dalek"
+version = "4.1.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "97fb8b7c4503de7d6ae7b42ab72a5a59857b4c937ec27a3d4539dba95b5ab2be"
+dependencies = [
+ "cfg-if",
+ "cpufeatures 0.2.17",
+ "curve25519-dalek-derive",
+ "fiat-crypto",
+ "rand_core 0.6.4",
+ "rustc_version",
+ "subtle",
+]
+
+[[package]]
+name = "curve25519-dalek-derive"
+version = "0.1.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "f46882e17999c6cc590af592290432be3bce0428cb0d5f8b6715e4dc7b383eb3"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn 2.0.119",
+]
+
+[[package]]
 name = "darling"
 version = "0.23.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1198,6 +1360,7 @@ checksum = "9ed9a281f7bc9b7576e61468ba615a66a5c8cfdff42420a70aa82701a3b1e292"
 dependencies = [
  "block-buffer 0.10.4",
  "crypto-common 0.1.7",
+ "subtle",
 ]
 
 [[package]]
@@ -1411,6 +1574,12 @@ checksum = "1e6853b52649d4ac5c0bd02320cddc5ba956bdb407c4b75a2c6b75bf51500f8c"
 dependencies = [
  "simd-adler32",
 ]
+
+[[package]]
+name = "fiat-crypto"
+version = "0.2.9"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "28dea519a9695b9977216879a3ebfddf92f1c08c05d984f8996aecd6ecdc811d"
 
 [[package]]
 name = "field-offset"
@@ -1710,7 +1879,7 @@ dependencies = [
  "cfg-if",
  "libc",
  "r-efi 6.0.0",
- "rand_core",
+ "rand_core 0.10.1",
 ]
 
 [[package]]
@@ -1899,6 +2068,24 @@ name = "hex"
 version = "0.4.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7f24254aa9a54b5c858eaee2f5bccdb46aaf0e486a595ed5fd8f86ba55232a70"
+
+[[package]]
+name = "hkdf"
+version = "0.12.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "7b5f8eb2ad728638ea2c7d47a21db23b7b58a72ed6a38256b8a1849f15fbbdf7"
+dependencies = [
+ "hmac",
+]
+
+[[package]]
+name = "hmac"
+version = "0.12.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "6c49c37c09c17a53d937dfbb742eb3a961d65a994e6bcdcf37e7399d0cc8ab5e"
+dependencies = [
+ "digest 0.10.7",
+]
 
 [[package]]
 name = "html5ever"
@@ -3297,7 +3484,16 @@ checksum = "c7f5fa3a058cd35567ef9bfa5e75732bee0f9e4c55fa90477bef2dfcdbc4be80"
 dependencies = [
  "chacha20",
  "getrandom 0.4.3",
- "rand_core",
+ "rand_core 0.10.1",
+]
+
+[[package]]
+name = "rand_core"
+version = "0.6.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ec0be4795e2f6a28069bec0b5ff3e2ac9bafc99e6a9a7dc3547996c5c816922c"
+dependencies = [
+ "getrandom 0.2.17",
 ]
 
 [[package]]
@@ -3896,6 +4092,18 @@ dependencies = [
  "gobject-sys",
  "libc",
  "system-deps",
+]
+
+[[package]]
+name = "spake2"
+version = "0.4.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "c5482afe85a0b6ce956c945401598dbc527593c77ba51d0a87a586938b1b893a"
+dependencies = [
+ "curve25519-dalek",
+ "hkdf",
+ "rand_core 0.6.4",
+ "sha2",
 ]
 
 [[package]]

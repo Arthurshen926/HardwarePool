@@ -2,6 +2,8 @@ use std::{error::Error, fmt};
 
 use capyio_core::{PortRef, Route, RouteId};
 use capyio_input::{InputStreamDescriptor, TouchpadDescriptor};
+#[cfg(windows)]
+use capyio_input::{TouchpadButtonState, TouchpadButtonType, TouchpadFrame, TouchpadFrameKind};
 
 use crate::{
     PrivateTouchpadEnqueueOutcome, PrivateTouchpadEpochAdvanceOutcome,
@@ -88,6 +90,268 @@ impl PrivateTouchpadSinkFactory for WindowsVhfTouchpadSinkFactory {
         _first_sequence: u64,
     ) -> Result<Self::Sink, Self::Error> {
         capyio_windows_input::VhfTouchpadSession::open_win32(descriptor, stream.stream_epoch)
+    }
+}
+
+#[cfg(windows)]
+const TAP_DRAG_FIRST_TAP_MIN_DURATION_NANOS: u64 = 20_000_000;
+#[cfg(windows)]
+const TAP_DRAG_FIRST_TAP_MAX_DURATION_NANOS: u64 = 300_000_000;
+#[cfg(windows)]
+const TAP_DRAG_FIRST_TAP_MAX_MOTION_HIMETRIC: i64 = 150;
+#[cfg(windows)]
+const TAP_DRAG_MAX_INTER_CONTACT_GAP_NANOS: u64 = 500_000_000;
+#[cfg(windows)]
+const TAP_DRAG_MAX_START_POSITION_DELTA_HIMETRIC: i64 = 500;
+
+#[cfg(windows)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct TapCandidate {
+    released_at_nanos: u64,
+    x_himetric: u32,
+    y_himetric: u32,
+}
+
+#[cfg(windows)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct ActiveTap {
+    started_at_nanos: u64,
+    x_himetric: u32,
+    y_himetric: u32,
+    max_delta_x_himetric: i64,
+    max_delta_y_himetric: i64,
+}
+
+#[cfg(windows)]
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+struct TapDragButtonLatch {
+    active_tap: Option<ActiveTap>,
+    candidate: Option<TapCandidate>,
+    button_held: bool,
+    previous_contact_count: usize,
+}
+
+#[cfg(windows)]
+impl TapDragButtonLatch {
+    fn project(&mut self, frame: &TouchpadFrame) -> TouchpadFrame {
+        let mut output = frame.clone();
+        output.button = TouchpadButtonState::Released;
+        if frame.kind == TouchpadFrameKind::CancelAll {
+            *self = Self::default();
+            return output;
+        }
+        let count = frame.contacts.len();
+        match frame.contacts.as_slice() {
+            [_] if self.button_held => output.button = TouchpadButtonState::Pressed,
+            [contact] if self.previous_contact_count == 0 => {
+                let qualifies = self.candidate.is_some_and(|candidate| {
+                    frame
+                        .header
+                        .source_timestamp_nanos
+                        .checked_sub(candidate.released_at_nanos)
+                        .is_some_and(|gap| gap <= TAP_DRAG_MAX_INTER_CONTACT_GAP_NANOS)
+                        && (i64::from(contact.position.x_himetric)
+                            - i64::from(candidate.x_himetric))
+                        .abs()
+                            <= TAP_DRAG_MAX_START_POSITION_DELTA_HIMETRIC
+                        && (i64::from(contact.position.y_himetric)
+                            - i64::from(candidate.y_himetric))
+                        .abs()
+                            <= TAP_DRAG_MAX_START_POSITION_DELTA_HIMETRIC
+                });
+                self.candidate = None;
+                if qualifies {
+                    self.button_held = true;
+                    output.button = TouchpadButtonState::Pressed;
+                    self.active_tap = None;
+                } else {
+                    self.active_tap = Some(ActiveTap {
+                        started_at_nanos: frame.header.source_timestamp_nanos,
+                        x_himetric: contact.position.x_himetric,
+                        y_himetric: contact.position.y_himetric,
+                        max_delta_x_himetric: 0,
+                        max_delta_y_himetric: 0,
+                    });
+                }
+            }
+            [contact] => {
+                if let Some(active) = self.active_tap.as_mut() {
+                    active.max_delta_x_himetric = active.max_delta_x_himetric.max(
+                        (i64::from(contact.position.x_himetric) - i64::from(active.x_himetric))
+                            .abs(),
+                    );
+                    active.max_delta_y_himetric = active.max_delta_y_himetric.max(
+                        (i64::from(contact.position.y_himetric) - i64::from(active.y_himetric))
+                            .abs(),
+                    );
+                }
+            }
+            [] => {
+                if self.button_held {
+                    self.button_held = false;
+                    self.active_tap = None;
+                    self.candidate = None;
+                } else if self.previous_contact_count == 1
+                    && let Some(active) = self.active_tap.take()
+                {
+                    let duration = frame
+                        .header
+                        .source_timestamp_nanos
+                        .saturating_sub(active.started_at_nanos);
+                    if (TAP_DRAG_FIRST_TAP_MIN_DURATION_NANOS
+                        ..=TAP_DRAG_FIRST_TAP_MAX_DURATION_NANOS)
+                        .contains(&duration)
+                        && active.max_delta_x_himetric <= TAP_DRAG_FIRST_TAP_MAX_MOTION_HIMETRIC
+                        && active.max_delta_y_himetric <= TAP_DRAG_FIRST_TAP_MAX_MOTION_HIMETRIC
+                    {
+                        self.candidate = Some(TapCandidate {
+                            released_at_nanos: frame.header.source_timestamp_nanos,
+                            x_himetric: active.x_himetric,
+                            y_himetric: active.y_himetric,
+                        });
+                    } else {
+                        self.candidate = None;
+                    }
+                }
+            }
+            _ => {
+                self.active_tap = None;
+                self.candidate = None;
+                self.button_held = false;
+            }
+        }
+        self.previous_contact_count = count;
+        output
+    }
+}
+
+#[cfg(all(test, windows))]
+mod windows_precision_tests {
+    use super::TapDragButtonLatch;
+    use capyio_input::{
+        InputFrameHeader, TouchpadButtonState, TouchpadContact, TouchpadFrame, TouchpadFrameKind,
+        TouchpadPosition,
+    };
+
+    fn frame(sequence: u64, timestamp: u64, contacts: usize) -> TouchpadFrame {
+        TouchpadFrame {
+            header: InputFrameHeader {
+                stream_id: "00000000-0000-4000-8000-00000000e021"
+                    .parse()
+                    .expect("stream id"),
+                stream_epoch: 1,
+                sequence,
+                source_timestamp_nanos: timestamp,
+            },
+            kind: TouchpadFrameKind::Update,
+            button: TouchpadButtonState::Released,
+            contacts: (0..contacts)
+                .map(|contact_id| TouchpadContact {
+                    contact_id: contact_id as u32,
+                    position: TouchpadPosition {
+                        x_himetric: 2_000 + contact_id as u32 * 500,
+                        y_himetric: 3_000,
+                    },
+                    confidence: true,
+                    size: None,
+                    pressure: None,
+                })
+                .collect(),
+        }
+    }
+
+    #[test]
+    fn clickpad_latch_holds_second_tap_until_release() {
+        let mut latch = TapDragButtonLatch::default();
+        assert_eq!(
+            latch.project(&frame(0, 10_000_000, 1)).button,
+            TouchpadButtonState::Released
+        );
+        assert_eq!(
+            latch.project(&frame(1, 110_000_000, 0)).button,
+            TouchpadButtonState::Released
+        );
+        assert_eq!(
+            latch.project(&frame(2, 210_000_000, 1)).button,
+            TouchpadButtonState::Pressed
+        );
+        assert_eq!(
+            latch.project(&frame(3, 230_000_000, 1)).button,
+            TouchpadButtonState::Pressed
+        );
+        assert_eq!(
+            latch.project(&frame(4, 250_000_000, 0)).button,
+            TouchpadButtonState::Released
+        );
+    }
+
+    #[test]
+    fn multi_contact_frame_cancels_clickpad_latch() {
+        let mut latch = TapDragButtonLatch::default();
+        let _ = latch.project(&frame(0, 10_000_000, 1));
+        let _ = latch.project(&frame(1, 110_000_000, 0));
+        assert_eq!(
+            latch.project(&frame(2, 210_000_000, 2)).button,
+            TouchpadButtonState::Released
+        );
+        assert_eq!(
+            latch.project(&frame(3, 230_000_000, 1)).button,
+            TouchpadButtonState::Released
+        );
+    }
+}
+
+/// VHF Precision Touchpad sink used by the unified product path. It exposes a
+/// ClickPad descriptor and preserves the standalone lab's double-tap-drag
+/// compatibility latch while leaving multi-contact gestures to Windows.
+#[cfg(windows)]
+pub struct WindowsVhfPrecisionTouchpadSink {
+    session: capyio_windows_input::VhfTouchpadSession<capyio_windows_input::VhfWin32Transport>,
+    tap_drag: TapDragButtonLatch,
+}
+
+#[cfg(windows)]
+impl PrivateTouchpadSink for WindowsVhfPrecisionTouchpadSink {
+    type Error = capyio_windows_input::VhfTouchpadSessionError;
+
+    fn submit_frame(&mut self, frame: &TouchpadFrame) -> Result<(), Self::Error> {
+        self.session.submit_frame(&self.tap_drag.project(frame))
+    }
+
+    fn advance_epoch(&mut self, new_epoch: u64, _first_sequence: u64) -> Result<(), Self::Error> {
+        self.tap_drag = TapDragButtonLatch::default();
+        self.session.advance_epoch(new_epoch)
+    }
+
+    fn close(&mut self) -> Result<(), Self::Error> {
+        self.tap_drag = TapDragButtonLatch::default();
+        self.session.close()
+    }
+}
+
+#[cfg(windows)]
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub struct WindowsVhfPrecisionTouchpadSinkFactory;
+
+#[cfg(windows)]
+impl PrivateTouchpadSinkFactory for WindowsVhfPrecisionTouchpadSinkFactory {
+    type Sink = WindowsVhfPrecisionTouchpadSink;
+    type Error = capyio_windows_input::VhfTouchpadSessionError;
+
+    fn open(
+        &mut self,
+        stream: &InputStreamDescriptor,
+        mut descriptor: TouchpadDescriptor,
+        _first_sequence: u64,
+    ) -> Result<Self::Sink, Self::Error> {
+        descriptor.button_type = TouchpadButtonType::ClickPad;
+        Ok(WindowsVhfPrecisionTouchpadSink {
+            session: capyio_windows_input::VhfTouchpadSession::open_win32(
+                descriptor,
+                stream.stream_epoch,
+            )?,
+            tap_drag: TapDragButtonLatch::default(),
+        })
     }
 }
 

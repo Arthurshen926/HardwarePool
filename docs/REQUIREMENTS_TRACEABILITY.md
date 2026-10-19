@@ -90,7 +90,7 @@ hardware, networking, security or performance behavior has run.
 | `FR-AUDIO-004` | planned | Gate 8 | ADR 0004/0035 retain independent Routes; a physical duplex/AEC association remains later work. |
 | `FR-PROTO-001` | verified | Gate 2 | `capyio.v1` Envelope constants and binary round-trip/version tests. |
 | `FR-PROTO-002` | verified | Gate 2 | Reserved Protobuf ranges plus offline duplicate/reserved-field validation. |
-| `FR-PROTO-003` | planned | Gate 14 | Production control additions still need heartbeat and complete authorization semantics. |
+| `FR-PROTO-003` | planned | Gate 14 | Session-bound heartbeat and platform-owned bounded liveness loops exist; this future requirement remains planned until complete production authorization semantics and physical loss timing are delivered. |
 | `FR-PROTO-004` | verified | Gate 3 | Protocol/Sidecar contracts exclude continuous payloads; generic Route-control round-trip tests enforce the seam. |
 | `FR-PROTO-005` | verified | Gate 2 | Explicit validated conversions between generated Protobuf and Core descriptors. |
 | `FR-PROTO-006` | verified | Gate 2 | Unknown/zero enum and unsupported-major tests in `capyio-protocol`. |

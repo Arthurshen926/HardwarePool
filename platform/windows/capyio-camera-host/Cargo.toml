@@ -15,6 +15,7 @@ capyio-core = { path = "../../../crates/capyio-core" }
 capyio-windows-camera = { path = "../capyio-camera" }
 
 [target.'cfg(windows)'.dependencies]
+capyio-windows-service = { path = "../capyio-service" }
 capyio-windows-camera-share = { path = "../capyio-camera-share" }
 
 [dev-dependencies]

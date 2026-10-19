@@ -38,7 +38,7 @@ absent because no driver was installed.
 
 ## Android endpoint
 
-Wireless ADB reconnected successfully to `100.66.157.119:46143` and reported
+Wireless ADB reconnected successfully to `<LAB_IPV4_03>:46143` and reported
 the API-36 vivo `V2419A` device online. The installed lab package is
 `dev.capyio.touchpad.lab` version `0.6`/code `6`; its declared `INTERNET`
 permission is granted. The existing reverse mapping is `tcp:38173` to device

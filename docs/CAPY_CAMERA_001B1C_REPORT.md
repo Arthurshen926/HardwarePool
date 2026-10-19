@@ -55,7 +55,7 @@ The final release DLL is 174080 bytes with SHA-256
 `FA1389606818D4753F064B66F1B484C73D059E8E91DE36EF11258EDDCAC355BE`.
 The exact package, ACL and CLSID values were verified after deployment.
 
-On `DESKTOP-AT8EVE9`, the elevated closed roundtrip passed registration, exact
+On `LAB-WINDOWS-HOST`, the elevated closed roundtrip passed registration, exact
 enumeration, `GetMediaSource` and two-frame Source Reader delivery. It validated
 the full NV12 byte count, exact sample duration, monotonic bounded downstream
 timestamps and a BT.709-limited Y value copied to CPU memory. The command then

@@ -1,0 +1,23 @@
+[package]
+name = "capyio-control-tls"
+description = "Mutually authenticated TLS 1.3 transport for bounded CapyIO control envelopes."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish = false
+
+[dependencies]
+capyio-control-credentials = { path = "../capyio-control-credentials" }
+capyio-core = { path = "../capyio-core" }
+capyio-protocol = { path = "../capyio-protocol" }
+capyio-pairing = { path = "../capyio-pairing" }
+rustls.workspace = true
+thiserror.workspace = true
+uuid.workspace = true
+
+[dev-dependencies]
+capyio-control-host = { path = "../capyio-control-host" }
+capyio-runtime = { path = "../capyio-runtime" }
+capyio-testkit = { path = "../capyio-testkit" }
+rcgen = { version = "=0.14.5", default-features = false, features = ["ring"] }

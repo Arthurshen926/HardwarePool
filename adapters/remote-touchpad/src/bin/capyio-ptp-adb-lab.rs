@@ -34,6 +34,7 @@ mod windows_lab {
     const ROUTE_EPOCH: u64 = 1;
     const MAX_CONTACTS: u8 = 5;
     const IO_TIMEOUT: Duration = Duration::from_secs(30);
+    const ACTIVE_CONTACT_IO_TIMEOUT: Duration = Duration::from_secs(2);
     const CURSOR_OBSERVATION_IO_TIMEOUT: Duration = Duration::from_secs(180);
     const TAP_DRAG_TRACE_IO_TIMEOUT: Duration = Duration::from_secs(180);
     const CURSOR_SOURCE_MOTION_MIN_HIMETRIC: i64 = 100;
@@ -262,8 +263,12 @@ mod windows_lab {
         let mut last_contact_count = None;
         let mut max_contacts_observed = 0_usize;
         loop {
-            let mut header = [0_u8; PRIVATE_TOUCHPAD_TRANSPORT_HEADER_BYTES];
-            connection.read_exact(&mut header)?;
+            let Some(header) = read_transport_header(&mut connection)? else {
+                // Boundary EOF is a peer stop, not permission to retain active contacts.
+                transport.disconnect()?;
+                println!("peer_disconnect=record_boundary_eof");
+                break;
+            };
             match header[5] {
                 2 => {
                     let record = read_data_record(&mut connection, header)?;
@@ -277,6 +282,13 @@ mod windows_lab {
                             }
                         };
                     let current_contact_count = usize::from(outcome.receive.active_contacts);
+                    // An idle manual session may wait, but held OS contacts may not remain
+                    // stuck for that entire wait if the phone/network vanishes.
+                    connection.set_read_timeout(Some(if current_contact_count == 0 {
+                        io_timeout
+                    } else {
+                        ACTIVE_CONTACT_IO_TIMEOUT
+                    }))?;
                     max_contacts_observed = max_contacts_observed.max(current_contact_count);
                     let gesture_started = current_contact_count > 0 && gesture_peak_contacts == 0;
                     if gesture_started && options.anchor_and_observe_cursor {
@@ -1035,6 +1047,23 @@ mod windows_lab {
         connection.set_write_timeout(Some(io_timeout))
     }
 
+    fn read_transport_header(
+        reader: &mut impl Read,
+    ) -> std::io::Result<Option<[u8; PRIVATE_TOUCHPAD_TRANSPORT_HEADER_BYTES]>> {
+        let mut header = [0_u8; PRIVATE_TOUCHPAD_TRANSPORT_HEADER_BYTES];
+        loop {
+            match reader.read(&mut header[..1]) {
+                Ok(0) => return Ok(None),
+                Ok(_) => break,
+                Err(error) if error.kind() == std::io::ErrorKind::Interrupted => continue,
+                Err(error) => return Err(error),
+            }
+        }
+        // A partial record remains a protocol failure, with Drop closing the Sink.
+        reader.read_exact(&mut header[1..])?;
+        Ok(Some(header))
+    }
+
     fn read_data_record(
         connection: &mut TcpStream,
         header: [u8; PRIVATE_TOUCHPAD_TRANSPORT_HEADER_BYTES],
@@ -1121,6 +1150,26 @@ mod windows_lab {
 
         fn args(values: &[&str]) -> Vec<String> {
             values.iter().map(|value| (*value).to_owned()).collect()
+        }
+
+        #[test]
+        fn transport_eof_is_clean_only_at_a_record_boundary() {
+            assert!(ACTIVE_CONTACT_IO_TIMEOUT <= Duration::from_secs(2));
+            assert!(ACTIVE_CONTACT_IO_TIMEOUT < MANUAL_IO_TIMEOUT);
+            assert_eq!(read_transport_header(&mut &[][..]).unwrap(), None);
+            let header = [7; PRIVATE_TOUCHPAD_TRANSPORT_HEADER_BYTES];
+            assert_eq!(
+                read_transport_header(&mut &header[..]).unwrap(),
+                Some(header)
+            );
+            for length in 1..header.len() {
+                assert_eq!(
+                    read_transport_header(&mut &header[..length])
+                        .unwrap_err()
+                        .kind(),
+                    std::io::ErrorKind::UnexpectedEof
+                );
+            }
         }
 
         fn latch_frame(

@@ -3,6 +3,7 @@ import { computed } from "vue";
 
 import type { QuickActionOperation, UiAudioEndpointCatalog, UiQuickAction } from "../lib/types";
 import StatusPill from "./StatusPill.vue";
+import { actionPresentation } from "../lib/resource-navigation";
 
 const props = defineProps<{ action: UiQuickAction; busy: boolean; audioEndpoints: UiAudioEndpointCatalog | null }>();
 const emit = defineEmits<{
@@ -24,17 +25,27 @@ const isMicrophoneAction = computed(
 const isSpeakerAction = computed(
   () => props.action.id === "capyio.quick-action.remote-speaker",
 );
+const evidenceLabel = computed(() => ({
+  not_started: "尚无数据到达证明",
+  process_and_route_state: "进程及连接状态已确认",
+  stable_tcp_receiver_presence: "接收端连接已确认",
+  stable_phone_tcp_presence: "手机连接已确认",
+  native_receiver_process_ready_only: "原生接收进程已就绪",
+})[props.action.evidenceLevel]);
 
 const actionIcon = computed(() => {
   if (props.action.id.includes("microphone")) return "MIC";
   if (props.action.id.includes("imu")) return "IMU";
   if (props.action.id.includes("gamepad")) return "PAD";
+  if (props.action.id.includes("camera")) return "CAM";
+  if (props.action.id.includes("touchpad")) return "PAD";
   return "AUD";
 });
 
 function operationLabel(operation: QuickActionOperation): string {
   if (operation === "retry") return "重试";
-  if (operation === "stop") return "停止";
+  if (operation === "stop") return props.action.id === "capyio.quick-action.android-touchpad"
+    && props.action.status === "failed" ? "清除错误" : "停止";
   return "启动";
 }
 
@@ -49,17 +60,16 @@ function chooseEndpoint(event: Event): void {
     <header class="capability-card__header">
       <div class="capability-card__identity">
         <div class="capability-card__icon" aria-hidden="true">{{ actionIcon }}</div>
-        <div><p class="eyebrow">Quick Action schema v{{ action.schemaVersion }}</p><h3 :id="`${action.id}-title`">{{ action.title }}</h3></div>
+        <div><p class="eyebrow">{{ action.kind === 'capability_control' ? '本机功能' : '连接功能' }}</p><h3 :id="`${action.id}-title`">{{ actionPresentation(action).title }}</h3></div>
       </div>
       <StatusPill :tone="tone" :label="action.status" />
     </header>
-    <p>{{ action.summary }}</p>
+    <p>{{ actionPresentation(action).summary }}</p>
     <dl class="capability-card__facts">
-      <div><dt>{{ action.kind === "capability_control" ? "Adapter" : "Runtime" }}</dt><dd>{{ action.kind === "capability_control" ? action.status : (action.routeState ?? "not installed") }}<template v-if="action.routeEpoch !== null"> · epoch {{ action.routeEpoch }}</template></dd></div>
-      <div><dt>Evidence</dt><dd>{{ action.evidenceLevel }}</dd></div>
       <div v-if="action.connectionHint"><dt>提示</dt><dd>{{ action.connectionHint }}</dd></div>
       <div v-if="isMicrophoneAction"><dt>Windows 端</dt><dd>在录音或会议应用中选择 CapyIO 麦克风输入；当前实验室驱动也可能显示为“麦克风 (CapyIO Speaker with Render Bridge)”。</dd></div>
     </dl>
+    <details><summary>运行诊断</summary><p>状态 {{ action.routeState ?? action.status }}<span v-if="action.routeEpoch !== null"> · 运行代次 {{ action.routeEpoch }}</span> · {{ evidenceLabel }}</p><p>启动状态不代表远端已收到数据或系统应用已可用。</p></details>
     <div v-if="isSpeakerAction && audioEndpoints?.supported" class="audio-endpoint-picker">
       <label :for="`${action.id}-endpoint`">Windows 播放设备（本次运行）</label>
       <div class="audio-endpoint-picker__controls">

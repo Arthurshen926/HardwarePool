@@ -32,6 +32,16 @@ public final class TouchpadNodeController {
         return lifecycle.completeStop(generation);
     }
 
+    /** Terminal worker completion without a local UI Stop; stale workers cannot stop retries. */
+    public synchronized boolean completeRemoteStop(long generation) {
+        CapabilityLifecycleSnapshot current = lifecycle.snapshot();
+        if (current.generation() != generation
+                || (current.state() != CapabilityLifecycleState.ACTIVE
+                    && current.state() != CapabilityLifecycleState.STARTING)) return false;
+        TransitionToken stop = beginStop();
+        return stop.accepted() && completeStop(stop.generation());
+    }
+
     public synchronized boolean fail(long generation, String problemCode) {
         boolean failed = lifecycle.fail(generation, problemCode);
         if (failed) {

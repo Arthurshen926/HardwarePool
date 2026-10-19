@@ -112,6 +112,13 @@ epoch advance closes/releases the prior driver generation and completes a new
 Hello before accepting frames. Invalid Route preflight is tested with the real
 factory type and returns before interface enumeration/open.
 
+The unified desktop Route uses `WindowsVhfPrecisionTouchpadSinkFactory`. It
+opens the same protected interface only after Route preflight, advertises the
+projection as a ClickPad, and applies the bounded double-tap-drag button latch
+previously exercised by the standalone lab. Multi-contact frames remain intact
+for Windows Precision Touchpad gesture recognition. Latch tests cover hold,
+release and multi-contact cancellation without opening a driver interface.
+
 The VHF real-interface acceptance is a separate exact-name ignored test. It
 opens an already installed protected interface through an authorized Runtime
 Route, completes Hello and immediately closes without submitting a contact

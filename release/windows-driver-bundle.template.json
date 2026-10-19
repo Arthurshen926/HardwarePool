@@ -1,0 +1,69 @@
+{
+  "schemaVersion": 1,
+  "architecture": "x64",
+  "signingPolicy": "microsoft-hardware-dashboard",
+  "packages": [
+    {
+      "role": "audio-apo",
+      "inf": "audio/ComponentizedApoSample.inf",
+      "catalog": "audio/capyioaudio.cat",
+      "signerThumbprint": "REPLACE_WITH_VERIFIED_CATALOG_CERTIFICATE_THUMBPRINT"
+    },
+    {
+      "role": "audio-extension",
+      "inf": "audio/ComponentizedAudioSampleExtension.inf",
+      "catalog": "audio/capyioaudio.cat",
+      "signerThumbprint": "REPLACE_WITH_VERIFIED_CATALOG_CERTIFICATE_THUMBPRINT"
+    },
+    {
+      "role": "audio-base",
+      "inf": "audio/ComponentizedAudioSample.inf",
+      "catalog": "audio/capyioaudio.cat",
+      "signerThumbprint": "REPLACE_WITH_VERIFIED_CATALOG_CERTIFICATE_THUMBPRINT"
+    },
+    {
+      "role": "touchpad",
+      "inf": "touchpad/CapyIOVhfTouchpad.inf",
+      "catalog": "touchpad/CapyIOVhfTouchpad.cat",
+      "signerThumbprint": "REPLACE_WITH_VERIFIED_CATALOG_CERTIFICATE_THUMBPRINT"
+    }
+  ],
+  "files": [
+    {
+      "path": "audio/CapyIOAudio.sys",
+      "sha256": "REPLACE_WITH_SIGNED_FILE_SHA256"
+    },
+    {
+      "path": "audio/CapyIORenderAPO.dll",
+      "sha256": "REPLACE_WITH_SIGNED_FILE_SHA256"
+    },
+    {
+      "path": "audio/ComponentizedApoSample.inf",
+      "sha256": "REPLACE_WITH_SIGNED_FILE_SHA256"
+    },
+    {
+      "path": "audio/ComponentizedAudioSample.inf",
+      "sha256": "REPLACE_WITH_SIGNED_FILE_SHA256"
+    },
+    {
+      "path": "audio/ComponentizedAudioSampleExtension.inf",
+      "sha256": "REPLACE_WITH_SIGNED_FILE_SHA256"
+    },
+    {
+      "path": "audio/capyioaudio.cat",
+      "sha256": "REPLACE_WITH_SIGNED_FILE_SHA256"
+    },
+    {
+      "path": "touchpad/CapyIOVhfTouchpad.cat",
+      "sha256": "REPLACE_WITH_SIGNED_FILE_SHA256"
+    },
+    {
+      "path": "touchpad/CapyIOVhfTouchpad.inf",
+      "sha256": "REPLACE_WITH_SIGNED_FILE_SHA256"
+    },
+    {
+      "path": "touchpad/CapyIOVhfTouchpad.sys",
+      "sha256": "REPLACE_WITH_SIGNED_FILE_SHA256"
+    }
+  ]
+}

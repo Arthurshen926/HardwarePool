@@ -19,7 +19,8 @@ mod worker_protocol;
 pub use event_queue::EngineEventBatch;
 #[cfg(windows)]
 pub use launch_exchange::{
-    exchange_authenticated_engine_launch, try_exchange_authenticated_engine_launch,
+    PendingServiceEngineLaunch, exchange_authenticated_engine_launch,
+    exchange_paired_node_engine_launch, try_exchange_authenticated_engine_launch,
 };
 #[cfg(windows)]
 pub use loader::{

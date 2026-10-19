@@ -42,3 +42,16 @@ cargo run -p capyio-native-audio-lan --bin capyio-native-virtual-speaker -- <win
 The tone isolates wire/Android playback. The Windows-only virtual-speaker
 Broker owns `Global\CapyIO.RenderRing.v1`, packetizes its S16LE conversion and
 uses the same lab binding. Both remain insecure controlled-lab tools.
+
+`NativeLanRouteBinding` (ADR 1491) is a bounded dynamic worker handoff with
+live Route revalidation. It does not replace the lab entry points or provide
+transport security. Android has a matching configuration factory; authenticated
+control negotiation and production worker lifecycle wiring remain follow-up work.
+
+ADR 1493 wires the microphone supervisor and real Windows capture-ring helper
+to an explicit `--route-v1 <session> <route> <stream> <epoch> <expiry-ms>` mode
+after the two endpoint arguments. It is an internal controlled-lab process
+handoff, not permission to send arbitrary network traffic or a secure transport.
+The helper rejects incomplete bindings and stops at finite expiry; the runtime
+owner must still stop it on revocation, lost leases or disconnect. Product
+control negotiation does not yet invoke this mode automatically.

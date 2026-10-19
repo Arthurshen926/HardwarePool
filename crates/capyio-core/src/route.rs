@@ -136,6 +136,36 @@ impl Route {
         Ok(())
     }
 
+    /// Extends an ongoing finite grant without restarting the stream epoch.
+    /// The caller is the local authorization owner, not an untrusted peer.
+    pub fn renew_authorization(
+        &mut self,
+        expires_at_ms: u64,
+        now_ms: u64,
+    ) -> Result<(), CoreError> {
+        require_state(
+            self.state,
+            &[RouteState::Starting, RouteState::Active],
+            "renew_authorization",
+        )?;
+        let AuthorizationState::Authorized {
+            expires_at_ms: Some(previous),
+        } = self.authorization
+        else {
+            return Err(CoreError::InvalidAuthorizationTransition);
+        };
+        if previous <= now_ms {
+            return Err(CoreError::AuthorizationExpired);
+        }
+        if expires_at_ms <= previous {
+            return Err(CoreError::InvalidAuthorizationTransition);
+        }
+        self.authorization = AuthorizationState::Authorized {
+            expires_at_ms: Some(expires_at_ms),
+        };
+        Ok(())
+    }
+
     pub fn prepare(
         &mut self,
         selected_format: Option<FormatDescriptor>,

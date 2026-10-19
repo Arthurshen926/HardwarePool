@@ -27,7 +27,7 @@ VHF Broker interfaces: exactly one
 
 The package certificate exists only in the intended LocalMachine Root and
 TrustedPublisher stores with thumbprint
-`D6EF151680FAC70FDF34623DEC23041D76372D7E`.
+`<redacted-certificate-thumbprint>`.
 
 ## Broker acceptance
 

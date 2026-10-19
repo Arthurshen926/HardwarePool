@@ -32,62 +32,39 @@ fn windows_main() -> Result<(), String> {
     use std::{
         env,
         io::Write,
-        net::IpAddr,
         thread,
-        time::{Duration, Instant},
+        time::{Duration, Instant, SystemTime, UNIX_EPOCH},
     };
 
     use capyio_audio::AudioMediaPacket;
     use capyio_native_audio_lan::{
         MAX_NATIVE_LAN_INFLIGHT_PACKETS, NativeLanEndpointConfig, NativeLanUdpEndpoint,
-        speaker_lab_binding,
+        NativeMicrophoneLaunch,
     };
     use capyio_windows_render_ring::RenderRingConsumer;
 
-    let mut args = env::args();
-    let executable = args
-        .next()
-        .unwrap_or_else(|| "capyio-native-virtual-speaker".to_owned());
-    let usage = || format!("usage: {executable} <local-ipv4:port> <phone-ipv4:port> [seconds]");
-    let local = args
-        .next()
-        .ok_or_else(&usage)
-        .and_then(|value| parse_explicit_ipv4(&value, "local"))?;
-    let peer = args
-        .next()
-        .ok_or_else(&usage)
-        .and_then(|value| parse_explicit_ipv4(&value, "peer"))?;
-    let duration = args
-        .next()
-        .map(|value| {
-            value
-                .parse::<u64>()
-                .ok()
-                .filter(|seconds| (1..=300).contains(seconds))
-                .map(Duration::from_secs)
-                .ok_or_else(|| "seconds must be between 1 and 300".to_owned())
-        })
-        .transpose()?;
-    if args.next().is_some() {
-        return Err(usage());
-    }
-
-    if !matches!(local.ip(), IpAddr::V4(ip) if is_concrete_unicast(ip))
-        || !matches!(peer.ip(), IpAddr::V4(ip) if is_concrete_unicast(ip))
-        || local.port() == 0
-        || peer.port() == 0
-    {
-        return Err("local and peer must be concrete unicast IPv4 socket addresses".to_owned());
-    }
+    let wall_ms = || {
+        SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_millis()
+            .min(u128::from(u64::MAX)) as u64
+    };
+    let launch = NativeMicrophoneLaunch::parse_speaker(
+        &env::args().skip(1).take(9).collect::<Vec<_>>(),
+        wall_ms(),
+    )?;
+    let deadline = launch.deadline(wall_ms(), Instant::now())?;
+    let peer = launch.peer;
 
     // The Broker creates the protected cross-session mapping before an
     // application opens CapyIO Speaker and AudioDG attaches the render APO.
     let mut ring = RenderRingConsumer::create_baseline().map_err(|error| error.to_string())?;
-    let binding = speaker_lab_binding();
+    let binding = launch.binding.clone();
     let mut endpoint = NativeLanUdpEndpoint::bind(
-        local,
+        launch.local.into(),
         NativeLanEndpointConfig {
-            peer,
+            peer: peer.into(),
             read_timeout: Duration::from_millis(50),
             inflight_packet_capacity: MAX_NATIVE_LAN_INFLIGHT_PACKETS,
         },
@@ -99,9 +76,13 @@ fn windows_main() -> Result<(), String> {
     let mut sequence = 0_u64;
     let mut first_sample_index = 0_u64;
     let mut last_ring_dropped = 0_u64;
-    let deadline = duration.map(|value| Instant::now() + value);
+    let ready = if launch.expires_at_ms.is_some() {
+        "native_virtual_speaker_route_v1=true"
+    } else {
+        "native_virtual_speaker=true"
+    };
     println!(
-        "native_virtual_speaker=true local={} peer={} format=s16le/48000/stereo ring=Global\\CapyIO.RenderRing.v1",
+        "{ready} local={} peer={} format=s16le/48000/stereo ring=Global\\CapyIO.RenderRing.v1",
         endpoint.local_addr().map_err(|error| error.to_string())?,
         peer
     );
@@ -110,7 +91,7 @@ fn windows_main() -> Result<(), String> {
         .map_err(|error| format!("flush native speaker readiness: {error}"))?;
 
     loop {
-        if deadline.is_some_and(|value| Instant::now() >= value) {
+        if !launch.is_live(deadline, wall_ms(), Instant::now()) {
             break;
         }
         match ring.try_read_s16le(&mut pcm_block) {
@@ -171,18 +152,6 @@ fn windows_main() -> Result<(), String> {
         accumulator.dropped_bytes,
     );
     Ok(())
-}
-
-#[cfg(windows)]
-fn parse_explicit_ipv4(value: &str, name: &str) -> Result<std::net::SocketAddr, String> {
-    value
-        .parse::<std::net::SocketAddr>()
-        .map_err(|_| format!("{name} must be an explicit IPv4 socket address"))
-}
-
-#[cfg(windows)]
-fn is_concrete_unicast(ip: std::net::Ipv4Addr) -> bool {
-    !ip.is_unspecified() && !ip.is_multicast() && ip != std::net::Ipv4Addr::BROADCAST
 }
 
 #[cfg(any(windows, test))]

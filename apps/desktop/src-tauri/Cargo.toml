@@ -18,29 +18,44 @@ path = "src/main.rs"
 tauri-build = { version = "2.6.2", features = [] }
 
 [dependencies]
+capyio-audio = { path = "../../../crates/capyio-audio" }
 capyio-audio-share-adapter = { path = "../../../adapters/audio-share" }
 capyio-control-host = { path = "../../../crates/capyio-control-host" }
+capyio-control-credentials = { path = "../../../crates/capyio-control-credentials" }
+capyio-control-link = { path = "../../../crates/capyio-control-link" }
+capyio-control-tls = { path = "../../../crates/capyio-control-tls" }
 capyio-core = { path = "../../../crates/capyio-core" }
 capyio-data-plane = { path = "../../../crates/capyio-data-plane" }
+capyio-discovery = { path = "../../../crates/capyio-discovery" }
+capyio-discovery-udp = { path = "../../../crates/capyio-discovery-udp" }
 capyio-dsu-adapter = { path = "../../../adapters/dsu" }
 capyio-input = { path = "../../../crates/capyio-input" }
 capyio-micyou-adapter = { path = "../../../adapters/micyou" }
 capyio-micyou-host-config = { path = "../../../platform/windows/micyou-host-config" }
+capyio-pairing = { path = "../../../crates/capyio-pairing" }
+capyio-enrollment = { path = "../../../crates/capyio-enrollment" }
+capyio-protocol = { path = "../../../crates/capyio-protocol" }
 capyio-runtime = { path = "../../../crates/capyio-runtime" }
+capyio-remote-touchpad-adapter = { path = "../../../adapters/remote-touchpad", features = ["tls"] }
 capyio-sensor-server-adapter = { path = "../../../adapters/sensor-server" }
 capyio-testkit = { path = "../../../crates/capyio-testkit" }
 capyio-viiper-adapter = { path = "../../../adapters/viiper" }
 capyio-windows-input = { path = "../../../platform/windows/capyio-input" }
+capyio-windows-pairing-store = { path = "../../../platform/windows/capyio-pairing-store" }
 capyio-windows-service = { path = "../../../platform/windows/capyio-service" }
 serde.workspace = true
 serde_json.workspace = true
+sha2.workspace = true
 tauri = { version = "2.11.2", features = [] }
+rcgen = { version = "=0.14.5", default-features = false, features = ["ring"] }
 
 [target.'cfg(windows)'.dependencies]
 windows-sys = { workspace = true, features = [
     "Win32_Foundation",
+    "Win32_NetworkManagement_IpHelper",
     "Win32_Security",
     "Win32_System_Threading",
+    "Win32_System_RemoteDesktop",
     "Win32_UI_Shell",
     "Win32_UI_WindowsAndMessaging",
 ] }

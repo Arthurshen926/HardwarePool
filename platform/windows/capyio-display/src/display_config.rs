@@ -666,6 +666,25 @@ fn apply_exact_mode(
     height: u32,
     frequency: u32,
 ) -> Result<(i32, i32, i32), DisplayTopologyError> {
+    apply_exact_mode_impl(gdi_device_name, width, height, frequency, true)
+}
+
+pub(super) fn apply_owned_exact_mode(
+    gdi_device_name: &str,
+    width: u32,
+    height: u32,
+    frequency: u32,
+) -> Result<(), DisplayTopologyError> {
+    apply_exact_mode_impl(gdi_device_name, width, height, frequency, false).map(|_| ())
+}
+
+fn apply_exact_mode_impl(
+    gdi_device_name: &str,
+    width: u32,
+    height: u32,
+    frequency: u32,
+    global: bool,
+) -> Result<(i32, i32, i32), DisplayTopologyError> {
     let wide_name = nul_terminated(gdi_device_name);
     let name = PCWSTR(wide_name.as_ptr());
     let mut current = new_devmode();
@@ -731,7 +750,11 @@ fn apply_exact_mode(
             name,
             Some(&selected),
             None,
-            CDS_GLOBAL | CDS_UPDATEREGISTRY | CDS_NORESET,
+            if global {
+                CDS_GLOBAL | CDS_UPDATEREGISTRY | CDS_NORESET
+            } else {
+                CDS_UPDATEREGISTRY
+            },
             None,
         )
     };
@@ -741,7 +764,11 @@ fn apply_exact_mode(
             status: stage.0,
         });
     }
-    let apply = unsafe { ChangeDisplaySettingsExW(PCWSTR::null(), None, None, CDS_RESET, None) };
+    let apply = if global {
+        unsafe { ChangeDisplaySettingsExW(PCWSTR::null(), None, None, CDS_RESET, None) }
+    } else {
+        DISP_CHANGE_SUCCESSFUL
+    };
     if apply != DISP_CHANGE_SUCCESSFUL {
         return Err(DisplayTopologyError::Win32 {
             operation: "apply exact active CapyIO display mode",

@@ -6,14 +6,69 @@ fn main() {
 
 #[cfg(windows)]
 fn main() {
-    if let Err(error) = run() {
+    let stage = std::cell::Cell::new(
+        capyio_windows_service::display_worker_failure::DisplayWorkerStage::Handshake,
+    );
+    if let Err(error) = run(&stage) {
         eprintln!("ERROR {error}");
-        std::process::exit(1);
+        // Startup failures occur off the media callback. Keep one bounded local
+        // diagnostic beside the deployed worker; never serialize launch material.
+        if let Ok(exe) = std::env::current_exe() {
+            let detail: String = error.to_string().chars().take(1024).collect();
+            let now = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_millis();
+            let _ = std::fs::write(
+                exe.with_file_name("display-worker-start-error.txt"),
+                format!("timeMs={now} stage={} detail={detail}", stage.get() as i32),
+            );
+        }
+        std::process::exit(stage.get() as i32);
     }
 }
 
 #[cfg(windows)]
-fn run() -> Result<(), Box<dyn std::error::Error>> {
+fn enter_stage(
+    stage: &std::cell::Cell<capyio_windows_service::display_worker_failure::DisplayWorkerStage>,
+    next: capyio_windows_service::display_worker_failure::DisplayWorkerStage,
+) {
+    stage.set(next);
+    if let Ok(exe) = std::env::current_exe() {
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_millis();
+        let _ = std::fs::write(
+            exe.with_file_name("display-worker-stage.txt"),
+            format!(
+                "timeMs={now} pid={} stage={}",
+                std::process::id(),
+                next as i32
+            ),
+        );
+    }
+}
+
+#[cfg(windows)]
+fn record_binding_failure(error: &capyio_windows_display::DisplayOutputBindingError) {
+    if let Ok(exe) = std::env::current_exe() {
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_millis();
+        let _ = std::fs::write(
+            exe.with_file_name("display-worker-binding-error.txt"),
+            format!("timeMs={now} pid={} error={error}", std::process::id()),
+        );
+    }
+}
+
+#[cfg(windows)]
+fn run(
+    stage: &std::cell::Cell<capyio_windows_service::display_worker_failure::DisplayWorkerStage>,
+) -> Result<(), Box<dyn std::error::Error>> {
+    use capyio_windows_service::display_worker_failure::DisplayWorkerStage;
     use std::{
         thread,
         time::{Duration, Instant},
@@ -25,11 +80,12 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     };
     use capyio_windows_display::{
         DisplayOutputBindingError, IddMonitorConnectRequest, IddMonitorIdentity, IddMonitorMode,
-        SudoVdaMonitorLease, VerifiedWindowsDisplayOutput, activate_owned_windows_display_output,
+        SudoVdaMonitorLease, VerifiedWindowsDisplayOutput, configure_owned_windows_display_output,
         configure_process_display_dpi_awareness, verify_current_process_display_session,
         verify_owned_windows_display_output,
     };
 
+    enter_stage(stage, DisplayWorkerStage::Handshake);
     configure_process_display_dpi_awareness()?;
 
     let mut arguments = std::env::args().skip(1);
@@ -43,7 +99,9 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     }
     let prepared = connect_display_worker_start_client(&pipe)?;
     let (mut connection, lease, configuration, launch) = prepared.into_parts();
+    enter_stage(stage, DisplayWorkerStage::Session);
     let execution_session = verify_current_process_display_session(lease.windows_session_id)?;
+    enter_stage(stage, DisplayWorkerStage::EngineLoad);
     let mut library = DisplayEngineLibrary::load_verified(
         configuration.library_path(),
         configuration.expected_sha256(),
@@ -55,10 +113,12 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         height: request.mode.height,
         refresh_millihz: request.mode.refresh_millihertz,
     };
+    enter_stage(stage, DisplayWorkerStage::MonitorCreate);
     let mut display = SudoVdaMonitorLease::create(IddMonitorConnectRequest {
         identity,
         preferred_mode: mode,
     })?;
+    enter_stage(stage, DisplayWorkerStage::OutputBind);
     let monitor = display.monitor()?.as_idd_monitor();
     // SudoVDA returns its stable adapter/target identity before Windows has
     // necessarily committed the new target to the active desktop topology.
@@ -73,20 +133,28 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
             Ok(binding) => break binding,
             Err(
                 DisplayOutputBindingError::InactiveOwnedPath
-                | DisplayOutputBindingError::DesktopMonitorUnavailable,
+                | DisplayOutputBindingError::DesktopMonitorUnavailable
+                | DisplayOutputBindingError::ModeMismatch,
             ) if !activation_attempted => {
-                activate_owned_windows_display_output(monitor)?;
+                if let Err(error) = configure_owned_windows_display_output(monitor, mode) {
+                    record_binding_failure(&error);
+                    return Err(Box::new(error));
+                }
                 activation_attempted = true;
             }
             Err(_error) if Instant::now() < deadline => {
                 thread::sleep(Duration::from_millis(100));
             }
-            Err(error) => return Err(Box::new(error)),
+            Err(error) => {
+                record_binding_failure(&error);
+                return Err(Box::new(error));
+            }
         }
     };
     if !display.watchdog_healthy() {
         return Err("SudoVDA watchdog failed before display engine start".into());
     }
+    enter_stage(stage, DisplayWorkerStage::EngineStart);
     let mut session = library.start_verified_output_session(
         configuration.session(),
         &binding,
@@ -94,8 +162,32 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         launch,
     )?;
 
+    enter_stage(stage, DisplayWorkerStage::Streaming);
+    let mut next_output_check = Instant::now() + Duration::from_secs(1);
+    let mut output_missing_since = None;
+    let mut display_mode_changed = false;
     let connection_result = loop {
-        match connection.wait_for_control(&lease) {
+        match connection.wait_for_control_checked(&lease, || {
+            let now = Instant::now();
+            if now < next_output_check {
+                return true;
+            }
+            next_output_check = now + Duration::from_secs(1);
+            let verified = verify_owned_windows_display_output(monitor, mode);
+            if matches!(verified, Err(DisplayOutputBindingError::ModeMismatch)) {
+                display_mode_changed = true;
+                record_binding_failure(&DisplayOutputBindingError::ModeMismatch);
+                enter_stage(stage, DisplayWorkerStage::DisplayModeChanged);
+                return false;
+            }
+            if display.watchdog_healthy() && verified.is_ok_and(|current| current == binding) {
+                output_missing_since = None;
+                true
+            } else {
+                let since = *output_missing_since.get_or_insert(now);
+                now.duration_since(since) < Duration::from_secs(3)
+            }
+        }) {
             Ok(DisplayWorkerControlEvent::Disconnected) => break Ok(()),
             Ok(DisplayWorkerControlEvent::Command { command, record }) => match command {
                 DisplayWorkerControlCommand::RequestKeyFrame => {
@@ -111,6 +203,8 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
             Err(error) => break Err(error),
         }
     };
+    let failed_while_streaming = connection_result.is_err();
+    enter_stage(stage, DisplayWorkerStage::Cleanup);
     let shutdown_result = session.shutdown(5_000);
     drop(session);
     shutdown_result?;
@@ -125,6 +219,16 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     // perform the final monitor removal and captured-topology restoration.
     thread::sleep(Duration::from_secs(5));
     display.release()?;
+    if failed_while_streaming {
+        enter_stage(
+            stage,
+            if display_mode_changed {
+                DisplayWorkerStage::DisplayModeChanged
+            } else {
+                DisplayWorkerStage::Streaming
+            },
+        );
+    }
     connection_result?;
     Ok(())
 }

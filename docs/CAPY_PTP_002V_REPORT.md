@@ -49,7 +49,7 @@ explicitly gated receiver outside the sandbox completed all 44 frames.
 ## APK and device evidence
 
 - Device: `V2419A`, API 36, ABI `arm64-v8a` at wireless ADB endpoint
-  `100.66.157.119:40263`.
+  `<LAB_IPV4_03>:40263`.
 - Package: `dev.capyio.touchpad.lab`, version code 2.
 - Permission: only `android.permission.INTERNET`; it is granted.
 - Local and installed `base.apk` SHA-256:

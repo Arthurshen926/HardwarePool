@@ -280,8 +280,14 @@ def validate_android_audio_shell() -> None:
     missing_source = [token for token in source_required if token not in sources]
     if missing_source:
         fail(f"Android platform audio shell is incomplete: {missing_source}")
-    if "android.util.Log" in sources or "java.net." in sources:
-        fail("Android audio callbacks must not log or use a network API")
+    # Service orchestration may reserve Route sockets and report control errors.
+    # Adapter startup transfers those sockets to dedicated network workers; a
+    # type reference is not callback I/O. Reject direct payload I/O/logging in
+    # the audio adapters, including calls through an already-created socket.
+    for name in ("MicrophoneSourceAdapter", "SpeakerSinkAdapter"):
+        adapter = (ROOT / f"platform/android/app/src/main/java/dev/capyio/android/{name}.java").read_text(encoding="utf-8")
+        if re.search(r"android\.util\.Log|\.\s*(?:send|receive)\s*\(", adapter):
+            fail(f"Android audio adapter {name} must delegate network I/O and must not log")
     activity = (ROOT / "platform/android/app/src/main/java/dev/capyio/android/MainActivity.java").read_text(
         encoding="utf-8"
     )
@@ -1172,7 +1178,9 @@ def validate_android_camera_boundary() -> None:
         "static final int QUEUE_CAPACITY = 2",
         "accessUnits.offer(",
         "result.droppedOldest()",
-        "runConnection(sent)",
+        "runConnection()",
+        "sentAccessUnits++",
+        "route == null || route.isLive()",
         'endpoint.modeLabel() + " interrupted; retrying"',
         "LoopbackConnectRetryPolicy.MAX_ATTEMPTS",
         'new Thread(this::runWorker, "CapyIO-AVC-Lab-Export")',
@@ -1873,6 +1881,19 @@ def validate_hosted_ci_contract() -> None:
         fail("Tauri workflow does not label its non-Windows platform skip")
 
 
+def validate_system_components() -> None:
+    from system_components import load_model
+
+    model = load_model(ROOT / "release/system-components.json")
+    scope = json.loads((ROOT / "release/alpha-scope.json").read_text(encoding="utf-8"))
+    if model["releaseVersion"] != scope["version"]:
+        fail("component release version differs from Alpha scope")
+    for entry in model["compatibilityAdapters"]:
+        metadata = tomllib.loads((ROOT / entry["source"] / "Cargo.toml").read_text(encoding="utf-8"))["package"]["metadata"]["capyio"]
+        if not entry["compatibilityOnly"] or entry["packagedByDefault"] or not metadata["compatibility-only"] or metadata["packaged-by-default"]:
+            fail("compatibility Adapter policy differs from release model")
+
+
 def validate_current_foundation_labels() -> None:
     app = (ROOT / "apps/desktop/src/App.vue").read_text(encoding="utf-8")
     if "Mock Gate 2" in app or "Gate 2 · Generic mock vertical slices" in app:
@@ -1947,6 +1968,7 @@ def main() -> None:
     validate_windows_audio_provenance()
     validate_windows_audio_endpoint_contract()
     validate_hosted_ci_contract()
+    validate_system_components()
     validate_current_foundation_labels()
     validate_local_markdown_links()
     validate_no_obvious_secrets()

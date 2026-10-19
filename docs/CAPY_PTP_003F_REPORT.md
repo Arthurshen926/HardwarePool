@@ -19,7 +19,7 @@ Package directory:
 
 Signer: `CN=CapyIO Local Lab Driver Test 003F`
 
-Thumbprint: `6D771D01DFED85EE5F4473F7449C093182F0960D`
+Thumbprint: `<redacted-certificate-thumbprint>`
 
 | File | Bytes | SHA-256 |
 |---|---:|---|

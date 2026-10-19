@@ -61,10 +61,10 @@ realtime communications.
 
 ## Physical-device and Windows evidence
 
-The explicitly selected `V2419A` at `100.66.157.119:36275` accepted the updated
+The explicitly selected `V2419A` at `<LAB_IPV4_03>:36275` accepted the updated
 APK and retained its existing CAMERA and INTERNET grants. Two bounded streams
 were exercised through the authenticated ADB reverse tunnel and the temporary
-Session/CurrentUser `CapyIO Camera` registration on `DESKTOP-AT8EVE9`:
+Session/CurrentUser `CapyIO Camera` registration on `LAB-WINDOWS-HOST`:
 
 - stream `6524234dd159fc4013738498a8de0c77`: 3,600 access units decoded and
   published, last source sequence 3,799, distinct first/last checksums,

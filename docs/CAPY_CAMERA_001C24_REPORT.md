@@ -92,7 +92,7 @@ Historical reports retain the hashes of the packages they actually exercised.
 
 ## Physical evidence and cleanup
 
-The authorized C24 APK was installed on `100.66.157.119:46143`; the device-side
+The authorized C24 APK was installed on `<LAB_IPV4_03>:46143`; the device-side
 base APK hash matched the exact artifact above. No camera `tcp:38173` reverse
 mapping was created. A later unrelated `tcp:61000` reverse mapping was left
 untouched because it belongs outside this camera slice.

@@ -23,7 +23,7 @@ was not restarted.
 
 ## Exact inputs and gates
 
-- Android endpoint: `100.66.157.119:46143`, package/activity
+- Android endpoint: `<LAB_IPV4_03>:46143`, package/activity
   `dev.capyio.touchpad.lab/.TouchpadLabActivity`;
 - tunnel: device `tcp:61000` to Windows loopback `tcp:61000`;
 - receiver SHA-256:

@@ -198,6 +198,13 @@ impl MicrophoneQuickAction {
     }
 
     pub fn is_configured(&self) -> bool {
+        #[cfg(windows)]
+        if capyio_windows_service::BrokerServiceClient::default()
+            .native_microphone_status()
+            .is_ok()
+        {
+            return true;
+        }
         self.controller.is_some()
     }
 
@@ -228,6 +235,19 @@ impl MicrophoneQuickAction {
         if request.action_id != MICYOU_ACTION_ID {
             return Err("unknown Quick Action".to_owned());
         }
+        #[cfg(windows)]
+        {
+            let client = capyio_windows_service::BrokerServiceClient::default();
+            if client.native_microphone_status().is_ok() {
+                let snapshot = match request.operation {
+                    QuickActionOperation::Start | QuickActionOperation::Retry => {
+                        client.native_microphone_start()
+                    }
+                    QuickActionOperation::Stop => client.native_microphone_stop(),
+                }?;
+                return Ok(native_microphone_dto(snapshot));
+            }
+        }
         let controller = self
             .controller
             .as_mut()
@@ -243,6 +263,18 @@ impl MicrophoneQuickAction {
     }
 
     pub fn dto(&self, runtime: &NodeRuntime) -> Result<UiQuickAction, String> {
+        #[cfg(windows)]
+        if let Ok(snapshot) =
+            capyio_windows_service::BrokerServiceClient::default().native_microphone_status()
+        {
+            return Ok(native_microphone_dto(snapshot));
+        }
+        self.compatibility_dto(runtime)
+    }
+
+    // Pure compatibility projection: callers/tests supply their own Runtime.
+    // Only dto() probes the installed native service, outside this boundary.
+    fn compatibility_dto(&self, runtime: &NodeRuntime) -> Result<UiQuickAction, String> {
         let Some(controller) = self.controller.as_ref() else {
             return Ok(UiQuickAction {
                 schema_version: QUICK_ACTION_SCHEMA_VERSION,
@@ -271,14 +303,20 @@ impl MicrophoneQuickAction {
             id: MICYOU_ACTION_ID,
             kind: "route_control",
             title: "将手机麦克风用作电脑麦克风",
-            summary: "Android 麦克风 → CapyIO Microphone · MicYou 私有音频链路",
+            summary: if self.headless {
+                "Android 麦克风 → CapyIO Microphone · Windows 麦克风后台"
+            } else {
+                "Android 麦克风 → CapyIO Microphone · MicYou 兼容链路"
+            },
             status: action_status(status.route_state),
             simulated: false,
             route_id: Some(controller.route_id().to_string()),
             route_state: Some(route_state_label(status.route_state)),
             route_epoch: Some(status.route_epoch),
             available_operations: operations(status.route_state),
-            evidence_level: if status.route_state == RouteState::Active {
+            evidence_level: if status.route_state == RouteState::Active && self.headless {
+                "service_reported_phone_presence"
+            } else if status.route_state == RouteState::Active {
                 "stable_phone_tcp_presence"
             } else {
                 "process_and_route_state"
@@ -302,6 +340,51 @@ impl MicrophoneQuickAction {
     }
 }
 
+#[cfg(windows)]
+fn native_microphone_dto(snapshot: capyio_windows_service::BrokerServiceSnapshot) -> UiQuickAction {
+    use capyio_windows_service::BrokerServiceState;
+    let running = snapshot.state == BrokerServiceState::Active;
+    UiQuickAction {
+        schema_version: QUICK_ACTION_SCHEMA_VERSION,
+        id: MICYOU_ACTION_ID,
+        kind: "route_control",
+        title: "将手机麦克风用作电脑麦克风",
+        summary: "Android 麦克风 → CapyIO Microphone · 原生音频后台（独立启停）",
+        status: if running {
+            "active"
+        } else if snapshot.state == BrokerServiceState::Failed {
+            "failed"
+        } else {
+            "idle"
+        },
+        simulated: false,
+        route_id: None,
+        route_state: None,
+        route_epoch: None,
+        available_operations: if running { vec!["stop"] } else { vec!["start"] },
+        evidence_level: "native_receiver_process_ready_only",
+        connection_hint: Some(format!(
+            "原生麦克风接收端 {}，平板发送端 {}。后台就绪不代表已收到音频；本操作不启动扬声器。{}",
+            snapshot
+                .local_endpoint
+                .map(|value| value.to_string())
+                .unwrap_or_default(),
+            snapshot
+                .peer_endpoint
+                .map(|value| value.to_string())
+                .unwrap_or_default(),
+            match (snapshot.produced_frames, snapshot.consumed_frames) {
+                (Some(produced), Some(consumed)) => format!(
+                    " Windows 音频环累计写入 {produced} 帧、读取 {consumed} 帧（服务生命周期累计值，不代表当前正在接收）。"
+                ),
+                _ => " Windows 音频环计数暂不可读。".to_owned(),
+            },
+        )),
+        problem_code: snapshot.problem_code,
+        problem: None,
+    }
+}
+
 fn configured_host_process() -> Result<ConfiguredMicYouHost, String> {
     #[cfg(windows)]
     {
@@ -315,7 +398,7 @@ fn configured_host_process() -> Result<ConfiguredMicYouHost, String> {
                 process: MicYouHostProcess::Headless(HeadlessMicrophoneProcess {
                     client: Box::new(client),
                 }),
-                connection_hint: format!("在 Android MicYou 中连接 {}", snapshot.bind_address),
+                connection_hint: headless_connection_hint(snapshot.bind_address),
                 headless: true,
                 was_running,
             });
@@ -325,6 +408,15 @@ fn configured_host_process() -> Result<ConfiguredMicYouHost, String> {
         .map(|loaded| loaded.config)
         .map_err(|error| error.to_string())?;
     direct_host(loaded)
+}
+
+#[cfg(windows)]
+fn headless_connection_hint(address: std::net::SocketAddr) -> String {
+    // The service DTO does not identify its native/compatibility backend.
+    // Do not direct every service user to the standalone MicYou application.
+    format!(
+        "Windows 麦克风后台地址：{address}。原生音频请在 CapyIO 的麦克风连接设置中配置；兼容模式使用对应客户端。"
+    )
 }
 
 fn direct_host(config: TrustedMicYouHostConfig) -> Result<ConfiguredMicYouHost, String> {
@@ -375,7 +467,7 @@ mod tests {
             configuration_problem: Some("fixture host configuration missing".to_owned()),
             orchestration_problem: None,
         };
-        let dto = action.dto(&lab.runtime).expect("blocked DTO");
+        let dto = action.compatibility_dto(&lab.runtime).expect("blocked DTO");
         assert_eq!(dto.schema_version, QUICK_ACTION_SCHEMA_VERSION);
         assert_eq!(dto.id, MICYOU_ACTION_ID);
         assert_eq!(dto.status, "blocked");
@@ -442,8 +534,11 @@ mod tests {
         let session_id = lab.session_id;
         let action =
             MicrophoneQuickAction::install_with_config(&mut lab.runtime, session_id, Ok(host));
-        let dto = action.dto(&lab.runtime).expect("configured DTO");
+        let dto = action
+            .compatibility_dto(&lab.runtime)
+            .expect("configured DTO");
         assert_eq!(dto.status, "idle");
+        assert!(dto.summary.contains("MicYou 兼容链路"));
         assert_eq!(
             dto.connection_hint.as_deref(),
             Some("在 Android MicYou 中连接 100.64.0.10:8554")
@@ -491,6 +586,7 @@ mod tests {
             bind_address: "100.64.0.10:8554".parse().expect("address"),
             problem_code: None,
         };
+        let connection_hint = headless_connection_hint(snapshot.bind_address);
         let configured = ConfiguredMicYouHost {
             process: MicYouHostProcess::Headless(HeadlessMicrophoneProcess {
                 client: Box::new(FakeHeadlessControl {
@@ -498,7 +594,7 @@ mod tests {
                     stops: Arc::clone(&stops),
                 }),
             }),
-            connection_hint: "在 Android MicYou 中连接 100.64.0.10:8554".to_owned(),
+            connection_hint,
             headless: true,
             was_running: true,
         };
@@ -508,12 +604,23 @@ mod tests {
             MicrophoneQuickAction::install_with_host(&mut lab.runtime, session_id, Ok(configured));
         action.poll(&mut lab.runtime);
         action.poll(&mut lab.runtime);
-        assert_eq!(action.dto(&lab.runtime).expect("DTO").status, "active");
+        let dto = action.compatibility_dto(&lab.runtime).expect("DTO");
+        assert_eq!(dto.status, "active");
+        assert!(dto.summary.contains("Windows 麦克风后台"));
+        assert!(!dto.summary.contains("MicYou"));
+        assert_eq!(dto.evidence_level, "service_reported_phone_presence");
+        let hint = dto.connection_hint.expect("service address hint");
+        assert!(hint.contains("100.64.0.10:8554"));
+        assert!(hint.contains("CapyIO 的麦克风连接设置"));
+        assert!(!hint.contains("MicYou"));
 
         action.shutdown(&mut lab.runtime);
         assert_eq!(stops.load(Ordering::Acquire), 0);
         assert_eq!(
-            action.dto(&lab.runtime).expect("preserved DTO").status,
+            action
+                .compatibility_dto(&lab.runtime)
+                .expect("preserved DTO")
+                .status,
             "active"
         );
     }

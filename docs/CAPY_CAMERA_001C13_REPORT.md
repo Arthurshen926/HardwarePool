@@ -44,7 +44,7 @@ loopback-only transport, Windows projection, or background lifecycle.
 ## Physical evidence
 
 After exact hash/target authorization, the APK was installed on
-`V2419A / PD2419` at `100.66.157.119:42567` and ADB reverse mapped device
+`V2419A / PD2419` at `<LAB_IPV4_03>:42567` and ADB reverse mapped device
 loopback port 38173 to the Windows loopback receiver. The device-reported
 permissions remained CAMERA and INTERNET.
 

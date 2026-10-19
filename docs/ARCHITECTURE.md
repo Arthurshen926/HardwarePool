@@ -1,7 +1,84 @@
 # CapyIO Architecture
 
+ADR 1511 adds explicit service allocation for ordinary-user camera shared memory.
+The service handles allocation only; user processes retain media and camera lifetime.
+The ordinary-user path passed local-lab media validation on 2026-10-04 with the
+explicitly configured service (see ALPHA_GAP_CLOSEOUT_20261003.md). Previously
+packaged installers still require separate service deployment; this is not a
+clean-machine or production installation claim.
+
+ADR 1509 now separates Windows UI and Node Host processes. Normal launch creates
+only a Tauri command proxy; --node-host owns Runtime and platform workers without
+a Tauri app/WebView. Closing UI leaves Host running; reopening reconnects through
+a versioned, bounded, current-user/session named pipe. Explicit node exit joins
+API workers before Runtime teardown. The same binary provides both process modes.
+
+ADR 1509 records the current Alpha camera exception, explicitly selected by the
+user on 2026-10-02: the integrated Route uses direct projection from an elevated
+desktop. Automatic Broker launching described by ADR 1419 below is historical;
+its unused launcher is removed. Existing Broker IPC/adoption remains, and
+ordinary-user integrated projection is still an open acceptance gap.
+See CURRENT_ARCHITECTURE.md for the present implementation navigation.
+
+ADR 1507 adds native pending enrollment journals and explicit idempotent local
+recovery. The process/Service, not the WebView, persists preparation before the
+network worker acknowledges it. Only public peer metadata is journaled outside
+the existing platform-protected credential store.
+
+ADR 1506's opt-in fileless-enrollment implementation is outside deterministic
+Core and outside admitted control Sessions. A Windows process-owned worker and
+the Android Service own the expiring pairing lifecycle and native persistence;
+the shared Vue panel only submits typed actions and reads public state/PIN.
+First trust rejects replacement of an existing pin. Its Alpha interruption and
+single-active-Android-peer limitations are explicit in ADR 1506.
+
 > Version: 0.4-pre-alpha
 > Status: normative for the CapyIO foundation
+
+ADR 1473 adds service-owned Android touchpad data listeners and a Windows native
+Sink worker. Control negotiates the Route and endpoint; CPTR records travel on
+a separate pinned mTLS stream. Starting is not Active: the initial record must
+be acknowledged by the native receiver. The shared UI only requests lifecycle
+actions and renders consent/status; it owns no sockets or certificate material.
+
+ADR 1474 fixes Android waiting-node ownership: explicit Source publication owns
+the existing visible connected-device foreground Service even with no active
+Route. Unpublishing all Sources releases that waiting owner, not active hardware.
+An unshared, idle Node remains Activity-bound until a whole-node switch exists.
+
+ADR 1478 adds an explicit Android background-waiting choice independent of
+Source publication. The existing Service owns the visible connected-device
+notification while waiting for paired control connections, even when no
+hardware is shared. It does not start a Route or change peer authorization;
+At that slice, Windows/Android control initiation remained asymmetric.
+
+ADR 1479 exposes only sanitized Android paired-peer metadata through the
+shared UI API, so both platforms can show known peers. That view alone did
+not make its Node an outbound control dialer or project Windows' catalog.
+
+ADR 1480 removes the certificate-role obstacle for newly issued pairs: each
+Node's pinned control leaf now permits either TLS client or server use. This
+does not turn the current Android listener/Windows dialer into symmetric
+transport, nor migrate previously issued role-specific credentials.
+
+ADR 1481 adds a bounded, opt-in Windows accepted-control diagnostic using the
+same Node Runtime and paired trust boundary. It is not an always-on app
+listener. Accepted sockets have finite blocking I/O after a nonblocking
+accept loop; rejected handshakes cannot admit a Session.
+
+ADR 1482 adds the inverse Android Rust-host control dial boundary for one
+active paired peer. It returns a live authenticated catalog link; ADR 1483
+subsequently wired this boundary through JNI and the shared UI.
+
+ADRs 1483–1484 wire the Android outbound path through the Service and shared
+UI and add an explicitly started Windows inbound listener. Either side can
+initiate an authenticated control/catalog Session for a newly issued pair;
+Windows reuses its ordinary live control worker for either direction. This
+does not provide automatic rendezvous or resolve simultaneous dials.
+
+ADR 1485 permits an explicit, current-account-checked renewal of an old
+single-role pair. It keeps the existing Node ID but replaces its pinned leaf
+only after a deliberate local Settings action and Android invitation import.
 
 ## 1. Architecture objective
 
@@ -66,6 +143,12 @@ Protobuf, codecs, drivers or concrete network transport.
 
 ### Runtime
 
+ADR 1447 permits atomic complete local-catalog replacement with a stable local
+Node identity. It preserves existing peers and Sessions and reuses endpoint
+reconciliation to offline only dependent incompatible Routes. Android Service
+and JNI use this path for publication changes instead of reconstructing a
+disconnected Runtime; identical updates are no-ops.
+
 - owns the local catalog and peer catalogs;
 - accepts a complete peer catalog only through a Ready Session bound to that
   exact remote Node identity; the replacement and all dependent Route
@@ -77,6 +160,9 @@ Protobuf, codecs, drivers or concrete network transport.
 - sequences commands, operation completions and events;
 - owns Route/Adapter lifecycle orchestration;
 - applies bounded retention;
+- owns explicit local Port lease policies and claims; configured Ports require
+  a current Route/Session-bound claim before start, and expiry offlines only the
+  affected Route;
 - exposes snapshots to UI/CLI/management API.
 
 Asynchronous Adapter callbacks complete Route work through staged Runtime
@@ -88,6 +174,151 @@ retry always starts with a later epoch.
 
 Platform and child-process callbacks return typed completions through opaque
 operation IDs; they never mutate Core state from arbitrary threads.
+
+### Discovery candidate boundary
+
+`capyio-discovery` defines an exact fixed-size candidate announcement but opens
+no socket. A decoded Node ID, source-derived address, proposed control port and
+per-process nonce are untrusted hints only. They never register a peer, open a
+Session, admit a catalog or authorize a Route. Platform hosts own future network
+interface, rate and transport policy. The shared pure cache already enforces a
+64-candidate/15-second bound, source-address policy, self-filtering and stale
+observation handling. Authenticated control admission remains the mandatory
+boundary before Runtime catalog mutation. See ADR 1432.
+
+The platform receive loop must pass each datagram through `DiscoveryIngress`,
+which applies exact decoding and a 256-datagram monotonic one-second budget;
+malformed traffic consumes that budget. This bounds parser and candidate-cache
+work before a later socket implementation chooses interface policy.
+
+`capyio-discovery-udp` supplies that platform socket boundary without owning a
+thread: a wildcard IPv4 socket on dynamic/private port 54785 joins
+administratively scoped group `239.255.67.80` on one explicit caller-selected
+interface, uses TTL 1 and a 250 ms receive timeout, and feeds all datagrams into
+`DiscoveryIngress`. Cross-interface unicast reaching the fixed port is still an
+untrusted hint. Constructing the Runtime or UI opens no socket. See ADR 1439.
+
+Windows Desktop now owns an explicit, independently stoppable discovery receive
+worker. Its socket poll never holds the Runtime lock; it updates only the
+separate control-plane owner. The UI supplies a reviewed interface address and
+the worker does not advertise until a real authenticated control server port
+exists. See ADR 1440.
+
+ADR 1443 replaces manual discovery-address entry with a bounded read-only
+Windows IP Helper inventory. The shared UI defaults only a single available
+address, and the host rechecks membership before opening the listener. It does
+not infer peer identity or reachability from a local interface.
+
+ADR 1454 projects the host-owned paired-directory classification onto each
+fresh Windows discovery candidate as only `unpaired`, `paired` or `revoked`.
+The shared Remote page presents this separately from authenticated connection
+and catalog state. No credential material crosses the DTO, and `paired` remains
+a local metadata match rather than proof that the announcing endpoint owns the
+expected certificate.
+
+`capyio-pairing` classifies each fresh discovery candidate against a bounded
+post-pairing directory. Exact active Node matches yield only a control endpoint,
+TLS server name, certificate fingerprint and opaque platform credential handle;
+unpaired, expired and revoked candidates remain non-connectable. Private keys
+never enter this directory, and even a matched candidate must still complete
+the ADR 1436 mTLS binding. See ADR 1437.
+
+The paired-peer directory has a deterministic schema-1, 64-KiB persistence
+contract containing only non-secret metadata and opaque OS credential handles.
+Platform hosts still own atomic storage and secure credential access; ordinary
+JSON never carries key material. See ADR 1441.
+
+On Windows, bounded credential bundle bytes can cross the user-scoped DPAPI
+boundary in `capyio-windows-credential-protection`. It performs no storage or
+enrollment; the paired directory continues to retain only an opaque handle.
+See ADR 1442.
+
+`capyio-windows-pairing-store` composes that primitive with bounded reads and
+same-directory atomic replacement below one fixed current-user local-app-data
+root. The non-secret directory is replaced only after callers have stored newly
+referenced DPAPI blobs. Windows Desktop recovers the directory on startup and
+reports corruption as unavailable instead of silently creating new trust. This
+is storage readiness, not enrollment or an authenticated connection. See
+ADR 1449.
+
+On Android, `AndroidCredentialStore` maps a closed opaque handle to one
+non-exportable Android Keystore AES key and one bounded, versioned AES-GCM
+envelope in the app's no-backup directory. `AtomicFile` owns replacement;
+missing keys, malformed lengths and tag failures fail closed. It is not exposed
+to the WebView or started automatically, and it does not yet persist the paired
+directory or establish a connection. See ADR 1450.
+
+`AndroidPairingDirectoryStore` owns the matching no-backup `AtomicFile`, but
+delegates all trust-document interpretation through a byte-array JNI boundary
+to the shared Rust `capyio-pairing` decoder. An absent file is read-only empty;
+accepted writes are canonical schema-1 JSON. See ADR 1451.
+
+ADR 1452 makes `AudioNodeService` the read-only application owner of those
+canonical bytes. ADR 1459 strengthens startup admission: the Rust boundary
+projects only active credential handles, and the Service must recover and
+validate every referenced typed bundle before reporting the pairing store
+ready. Revoked records remain counted audit metadata but do not trigger secret
+recovery. Corruption or missing active credentials report failed while local
+hardware remains usable. No connection is opened merely because the store is
+ready.
+
+ADR 1453 closes the representation gap between those platform stores and
+control TLS. `capyio-control-credentials` carries an already-issued bounded
+certificate chain, private key and peer-specific CA in one exact binary form.
+Windows typed store methods protect/decode it through DPAPI; Android validates
+it through Rust JNI before Keystore mutation and again after decryption. TLS
+identity constructors consume the decoded parts while the exact expected peer
+leaf remains separately selected from the paired directory. This is a storage-
+to-TLS carrier, not certificate issuance, enrollment or connection ownership.
+
+ADR 1460 adds the Android Runtime composition immediately after an accepted mTLS
+channel. The Rust host admits the fresh Session, receives and applies the peer
+catalog first, then sends the publication-filtered Android catalog; failure
+closes and reconciles the admitted Session. Socket/listener ownership remains a
+separate JNI Service lifecycle concern.
+
+ADR 1461 supplies the corresponding Rust socket owner for exactly one active
+paired peer. It derives Node binding, exact peer pin and TLS identity only from
+the canonical directory plus typed credential, exposes the actual bound port,
+and delegates accepted catalog exchange to ADR 1460. The listener does not
+advertise itself; Service/JNI lifecycle must retain it before discovery starts.
+
+ADR 1462 attaches that owner to `AudioNodeService`. JNI binds an ephemeral
+all-interface socket, the Service polls it on a daemon worker, native state
+retains the successful link, and teardown reconciles the Session before Runtime
+destruction. The shared UI reflects authenticated/catalog-connected state, but
+the port is not yet published through discovery.
+
+ADR 1477 changes only the bind preference: Android first tries control TCP
+port 43193 and falls back to an ephemeral port if occupied. The actual port
+continues to be reported and announced. No peer trust or resource authority
+comes from the chosen port.
+
+ADR 1463 publishes that retained port through the existing one-hop IPv4
+multicast record every five seconds. Android uses a send-only ephemeral socket
+and the operating system's active route; Windows still treats the source address
+and record as an untrusted candidate until paired mTLS succeeds.
+
+ADR 1464 permits a known authenticated peer to open a fresh Session only after
+all of its earlier Sessions are closed. First admission, offline reconnect and
+concurrent-duplicate rejection share one transactional composition on both
+Windows and Android.
+
+ADR 1465 adds a Session-bound heartbeat primitive to protocol v1.2 and
+`CatalogControlLink`. Platform connection controllers, rather than UI snapshot
+calls or hardware callbacks, must own its periodic request/acknowledgement loop.
+
+ADR 1466 composes that loop for the current Windows-dials-Android topology.
+Desktop transfers each successfully exchanged link to a background controller;
+Android's Service worker receives and acknowledges the bound heartbeat. Failure
+closes and reconciles the exact Runtime Session, while UI snapshot calls remain
+bounded state observation only.
+
+ADR 1467 extends those socket owners with typed catalog dispatch. A local
+sharing-selection change marks or queues the latest complete publication; the
+next bounded connection turn sends it, and the peer atomically replaces only
+the authenticated Node's catalog. Heartbeat and catalog frames may interleave
+without moving socket I/O into UI or hardware callbacks.
 
 On Windows, the headless `CapyIOBroker` service selected by ADR 0033 owns the
 dedicated virtual-speaker Broker, privileged cross-session render mapping and
@@ -110,12 +341,60 @@ use explicit conversions.
 
 ### Control Host Composition
 
+`capyio-control-link` composes authenticated TLS channels and the admitted
+catalog host without moving sockets into Runtime. Publication preparation and
+catalog application are separate from network I/O; opaque work records bind
+the exact connection instance. Platform owners can release Runtime locks while
+waiting for peer traffic. This catalog-only link requires an already Ready,
+exactly bound Session and does not create trust or hardware grants. See ADR 1445.
+
+ADR 1456 adds a transactional first-connection admission path beside that
+existing-link constructor. It derives both Node IDs from the authenticated
+binding, clones Runtime, inserts only a resource-empty pending peer, opens the
+exact fresh Session and commits after link validation. Existing peers are
+rejected until reconnect reconciliation is defined, so admission cannot
+implicitly resume stale Sessions.
+
+The same composition drops the channel before closing its exact Runtime Session.
+Runtime closure is atomic and idempotent: live dependent Routes become Offline
+with fresh epochs, leases are released, and peer presence becomes Offline only
+after its last live Session closes. A failed or Stopped Route is not falsely
+restarted or rewritten by disconnect cleanup.
+
+ADR 1457 makes Windows Desktop the first application owner of an outbound common
+control link. A Node-ID-only Tauri command rechecks a fresh paired discovery
+candidate, resolves its typed DPAPI credential, performs pinned mTLS/fresh
+Session admission and completes the initial bidirectional filtered-catalog
+exchange before retaining the link. Disconnect and application shutdown invoke
+the exact Session cleanup. No WebView address or key becomes connection
+authority, and no inbound/Android listener is implied.
+
 `capyio-control-host` is the transport-agnostic seam between an already
 admitted peer connection, `capyio-protocol` decoding and `NodeRuntime` state.
-It binds one exact Session/peer tuple, applies only complete CatalogSnapshot
-messages and retains at most 256 recent message IDs for accidental duplicate
-suppression. Platform hosts still own authentication, cryptographic replay
-protection, deadlines, framing I/O and reconnect.
+It binds one exact Session/peer tuple, applies complete CatalogSnapshot messages
+and owner-local Port lease commands, and retains at most 256 recent message IDs
+across both for accidental duplicate suppression. Lease handling additionally
+requires a Ready Runtime Session, an existing Route on that Session, a local
+Port endpoint, prior Route authorization and an owner-selected policy. Platform
+hosts still own authentication, cryptographic replay protection, deadlines,
+framing I/O and reconnect.
+One unified dispatch method accepts only complete CatalogSnapshot and
+PortLeaseRequest payloads and returns either catalog admission or an encoded
+lease response. Other Envelope payloads fail closed until their authorization
+semantics are implemented.
+`capyio-control-tls` supplies the next outer boundary: mutually authenticated
+TLS 1.3 with the dedicated `capyio-control/1` ALPN, a fixed Session/server
+Node/client Node binding exchange, 100 ms through 30 second I/O deadlines and
+length-prefixed protocol Envelopes capped at the protocol's 1 MiB ceiling. It
+accepts caller-provided paired credentials but deliberately does not enroll,
+persist or rotate them. See ADR 1436.
+
+ADR 1455 adds a fresh-Session mode to that same fixed binding record. Only
+after mutual TLS and exact paired-leaf verification, the dialer proposes a new
+random Session ID with both preconfigured Node IDs and the listener acknowledges
+the exact record. The original exact-Session mode remains available. Platform
+owners must still reject active-ID reuse and transactionally admit the Session
+into Runtime; the transport does not grant any Capability or Route.
 Catalog bytes crossing this seam are independently bounded by both the 1 MiB
 Envelope ceiling and fixed descriptor, metadata and per-string limits before
 Core conversion. These parser bounds constrain host work but do not establish
@@ -144,6 +423,12 @@ accepts a launch path or endpoint identity from its local control client.
 
 ### UI
 
+The shared presentation now organizes tasks into local sharing, remote resources
+and settings, with existing Quick Actions and built-in Panels as detail pages.
+Technical Workspace remains under development diagnostics. This is a presentation
+change only: it does not add peer discovery, grants or occupancy authority.
+See `SHARED_UI_RESOURCE_NAVIGATION.md` for the delivered slice and pending work.
+
 Quick Actions select Route Templates. Workspace exposes the technical graph.
 The WebView sees narrow DTO commands only and has no arbitrary shell/filesystem
 power.
@@ -154,12 +439,16 @@ is consumed only to construct deterministic startup data; background audio,
 microphone, IMU and gamepad workers share the process-owned Runtime directly.
 This removes the test-fixture wrapper from the long-lived host ownership
 boundary so a later authenticated control connection can mutate the same
-Runtime. It does not itself create a connection or grant peer trust.
+Runtime. ADR 1457 now supplies one outbound paired-candidate owner; construction
+still grants no peer trust and opens no socket.
 
 ADR 1400 makes the Vue 3/TypeScript presentation shared across the Windows and
 future Android Tauri shells while keeping each platform's Runtime service,
-permissions, hardware APIs and real-time workers native. `UiSnapshot` schema 4
-projects local and peer Capability catalogs with explicit Port directions. The
+permissions, hardware APIs and real-time workers native. `UiSnapshot` schema 5
+projects local and peer Capability catalogs with explicit Port directions plus
+a schema-v1 control-plane readiness record. The record distinguishes discovery
+listener, pairing store, authenticated connection and catalog exchange state;
+zero or stopped state is not presented as an established connection. The
 UI separates the tasks “share local capabilities” and “use peer capabilities”
 without inventing global sender/receiver Node roles. A local Source checkbox is
 publication intent only; Session trust, Route authorization, permission and
@@ -167,8 +456,21 @@ worker lifecycle remain distinct host-owned operations. The current Tauri
 catalog is fixture-backed and must remain labeled simulated until an Adapter
 has actually enumerated the host.
 
+The Windows control-plane state owns a `DiscoveryIngress` and
+`PairedPeerDirectory` bound to the same local Node ID as its Runtime. Startup
+and demo reset recover the bounded non-secret directory from the current-user
+Windows store; an absent file remains an empty directory without a write.
+`UiSnapshot` counts and states are derived from this process-owned inventory.
+Construction alone opens no discovery socket or authenticated connection, and
+startup does not decrypt a credential. Only an explicit ADR 1457 connection
+attempt for a fresh actively paired candidate resolves the referenced handle.
+
 Before a local catalog is encoded for an admitted Session, the shared control
 host applies that publication intent as a complete-Capability projection.
+ADR 1504 adds Android speaker publication intent at the host projection boundary:
+an unselected speaker is omitted before entering this shared encoder. The local
+UI inventory retains it, and a one-time migration preserves prior publication.
+This does not change haptics publication, route authorization or active playback.
 Capabilities containing any Source Port are retained only when selected;
 Sink/Control-only Capabilities remain visible because the Source checkbox does
 not control them. Unknown, non-Source or Offline selections fail closed, and
@@ -744,13 +1046,24 @@ network settings remain administrator configuration. Closing the UI does not
 stop a service-owned Route; the legacy direct process path is a development
 fallback when the service boundary is absent.
 
+ADR 1501 adds a separate opt-in SID-scoped native audio Route handoff to the SCM
+host. Unlike the unchanged legacy pipe, this accepts a bounded directional
+Route/Session/media binding and literal endpoints from the configured principal's
+Node Runtime. It reuses the fixed native children without altering their legacy
+configuration. Microphone and speaker have independent ownership; finite grant
+and 15-second renewal deadlines terminate abandoned workers. The Runtime owns
+consent and leases and must stop on revocation/disconnect. This service-boundary
+slice now has desktop per-Route ownership and mono/stereo offer negotiation;
+paired Android deployment and physical media validation remain separate gates.
+
 The microphone projection now has two mutually exclusive producer modes. In
 compatibility mode, privileged `CapyIOBroker` owns only the fixed global
 capture ring while an ordinary-user `capyio-microphone-host` owns the MicYou
 process and ADR 0039 configuration. In native mode, the Broker owns that ring
 and supervises `capyio-native-virtual-microphone` beside the native speaker
-child. The service configuration, not the WebView, fixes both explicit peer
-endpoints. The ring remains single-producer/single-consumer: compatibility and
+child. The service configuration, not the WebView, fixes both legacy explicit peer
+endpoints; ADR 1501 permits per-launch endpoints only through its separate trusted
+principal handoff. The ring remains single-producer/single-consumer: compatibility and
 native capture producers must never run concurrently. Independent native
 microphone Route control and per-user compatibility-host installation remain
 future work.
@@ -823,7 +1136,7 @@ Android or expose Binder commands to JavaScript.
 ANDROID-A01C2 adds that local host without replacing the proven native audio
 controls. The Activity can reveal the packaged Vue workspace in a WebView and
 return to the native controls with Back. The shared API reports `android_node`,
-projects the service-owned schema-v1 catalog into shared `UiSnapshot` schema 4
+projects the service-owned schema-v1 catalog into shared `UiSnapshot` schema 5
 and does not fabricate a peer catalog or Routes. Later A01D/E slices add only
 closed local lifecycle, state and publication-intent methods. Service state
 notifications refresh the snapshot while platform services continue to own
@@ -869,6 +1182,8 @@ existing system permission flow remains platform-owned; Stop uses the existing
 Service commands. This slice changes no Manifest declaration and retains the
 native audio controls as a rollback fallback pending physical UI parity.
 
+The following Source-only Android baseline is extended for speaker publication
+by ADR 1504; other pure Sinks retain the baseline behavior.
 ANDROID-A01D5 makes the shared local-capability checkbox mutable on Android,
 but keeps its meaning narrow: it is session-local publication intent owned by
 the Node Service. Eligibility is derived from the current hardware-backed

@@ -81,7 +81,7 @@ merged again.
 
 ## Build evidence
 
-- target: Windows 11 build `26200`, x64, `DESKTOP-AT8EVE9`;
+- target: Windows 11 build `26200`, x64, `LAB-WINDOWS-HOST`;
 - Visual Studio Build Tools/MSBuild `17.14.51`;
 - Windows SDK/WDK `10.0.26100.0`, KMDF `1.15`;
 - Release APO and kernel builds: `/W4 /WX`, zero compiler warnings/errors;
@@ -102,11 +102,11 @@ For `21.66.0.1`, Release x64 compilation produced `CapyIOAudio.sys` and
 ApiValidator classified both binaries as Universal. Inf2Cat reported no errors
 or warnings. The staged SYS, DLL and catalog all have valid SHA-256 signatures
 from `CapyIO Driver Lab 4b2407a` (thumbprint
-`C439F114B8090E3F27192093455BDE6D0C7ED45A`).
+`<redacted-certificate-thumbprint>`).
 
 ## Deployment boundary
 
-Signed `21.65.0.1` is installed on `DESKTOP-AT8EVE9`; all five CapyIO devices
+Signed `21.65.0.1` is installed on `LAB-WINDOWS-HOST`; all five CapyIO devices
 and the three audio/Broker services are healthy. The staged signed package is
 retained under
 `artifacts/windows-audio/41ac16d-microphone-jack-isolation-signed`, and signed

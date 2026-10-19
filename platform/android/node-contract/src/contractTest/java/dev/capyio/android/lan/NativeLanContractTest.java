@@ -34,7 +34,73 @@ public final class NativeLanContractTest {
         speakerSessionConfigurationIsClosedAndLiteral();
         microphoneSessionConfigurationIsClosedAndLiteral();
         configurationIsLiteralAndBounded();
+        dynamicRouteBindingIsFiniteAndPreservesIdentity();
+        routeGuardIsOneShotAndClockRollbackCannotExtendIt();
+        guardedSenderStopsWithoutSendingRevokedQueue();
         System.out.println("Android native LAN contract: PASS (" + assertions + " assertions)");
+    }
+
+    private static void routeGuardIsOneShotAndClockRollbackCannotExtendIt() {
+        NativeLanPacketCodec.Binding ids = binding();
+        NativeLanRouteBinding route = new NativeLanRouteBinding(ids.sessionId, ids.routeId,
+                ids.streamId, ids.streamEpoch, 2000, 1000);
+        AtomicLong wall = new AtomicLong(1000);
+        AtomicLong monotonic = new AtomicLong(0);
+        NativeLanRouteGuard guard = new NativeLanRouteGuard(route, wall::get, monotonic::get);
+        check(guard.isLive());
+        wall.set(500); // A wall clock correction must not extend the original budget.
+        monotonic.set(999_000_000L);
+        check(guard.isLive());
+        monotonic.set(1_000_000_000L);
+        check(!guard.isLive());
+        wall.set(1000);
+        monotonic.set(0);
+        check(!guard.isLive());
+        NativeLanRouteGuard revoked = new NativeLanRouteGuard(route, wall::get, monotonic::get);
+        revoked.revoke();
+        check(!revoked.isLive());
+        NativeLanRouteGuard expired = new NativeLanRouteGuard(route, wall::get, monotonic::get);
+        wall.set(2000);
+        check(!expired.isLive());
+        wall.set(1000);
+        check(!expired.isLive());
+    }
+
+    private static void guardedSenderStopsWithoutSendingRevokedQueue() throws Exception {
+        NativeLanPacketCodec.Binding ids = binding();
+        NativeLanRouteBinding route = new NativeLanRouteBinding(ids.sessionId, ids.routeId,
+                ids.streamId, ids.streamEpoch, 2000, 1000);
+        for (boolean queued : new boolean[] {false, true}) {
+            AtomicLong wall = new AtomicLong(1000);
+            NativeLanRouteGuard guard = new NativeLanRouteGuard(route, wall::get, () -> 0);
+            InetAddress loopback = InetAddress.getLoopbackAddress();
+            try (DatagramSocket senderSocket = new DatagramSocket(new InetSocketAddress(loopback, 0));
+                    DatagramSocket receiverSocket = new DatagramSocket(new InetSocketAddress(loopback, 0))) {
+                NativeLanUdpEndpoint endpoint = new NativeLanUdpEndpoint(senderSocket,
+                        new InetSocketAddress(loopback, receiverSocket.getLocalPort()), ids, 50);
+                NativeLanPacketQueue queue = new NativeLanPacketQueue(ids, 4, 8000);
+                if (queued) {
+                    NativeLanPcmPacketizer packetizer = new NativeLanPcmPacketizer(
+                            ids, queue, 48000, 1, 2, 10000, 0, 0, 0);
+                    check(packetizer.push(new byte[960], 0, 960).emittedPackets == 1);
+                    guard.revoke();
+                }
+                CountDownLatch ended = new CountDownLatch(1);
+                AtomicReference<String> problem = new AtomicReference<>();
+                try (NativeLanSenderWorker sender = new NativeLanSenderWorker(endpoint, queue,
+                        code -> { problem.set(code); ended.countDown(); }, guard)) {
+                    sender.start();
+                    if (!queued) wall.set(2000); // Expiry also works with an empty capture queue.
+                    check(ended.await(2, TimeUnit.SECONDS));
+                    sender.stop();
+                    check(NativeLanSenderWorker.PROBLEM_ROUTE_ENDED.equals(problem.get()));
+                    check(!sender.isRunning());
+                    check(senderSocket.isClosed());
+                    check(endpoint.metrics().packetsSent == 0);
+                    check(!guard.isLive());
+                }
+            }
+        }
     }
 
     private static void goldenWireMatchesRustFixture() throws Exception {
@@ -375,8 +441,12 @@ public final class NativeLanContractTest {
             NativeLanPacketQueue sendQueue = new NativeLanPacketQueue(binding, 4, 8_000);
             NativeLanPacketQueue receiveQueue = new NativeLanPacketQueue(binding, 4, 8_000);
             AtomicReference<String> failure = new AtomicReference<>();
+            long now = System.currentTimeMillis();
+            NativeLanRouteGuard guard = new NativeLanRouteGuard(new NativeLanRouteBinding(
+                    binding.sessionId, binding.routeId, binding.streamId,
+                    binding.streamEpoch, now + 60_000, now));
             NativeLanSenderWorker sender =
-                    new NativeLanSenderWorker(senderEndpoint, sendQueue, failure::set);
+                    new NativeLanSenderWorker(senderEndpoint, sendQueue, failure::set, guard);
             NativeLanReceiverWorker receiver = new NativeLanReceiverWorker(
                     receiverEndpoint,
                     new NativeLanPacketReassembler(binding, 4),
@@ -428,6 +498,7 @@ public final class NativeLanContractTest {
             sender.stop();
             receiver.stop();
             check(!sender.isRunning() && !receiver.isRunning());
+            check(!guard.isLive());
             boolean restartRejected = false;
             try {
                 sender.start();
@@ -719,6 +790,46 @@ public final class NativeLanContractTest {
             }
             check(terminalStopRejectedStart);
         }
+    }
+
+    private static void dynamicRouteBindingIsFiniteAndPreservesIdentity() {
+        UUID session = UUID.randomUUID();
+        UUID route = UUID.randomUUID();
+        UUID stream = UUID.randomUUID();
+        NativeLanRouteBinding live = new NativeLanRouteBinding(session, route, stream, 42, 200, 100);
+        NativeLanMicrophoneSessionConfig microphone =
+                live.microphoneBaselineConfig("127.0.0.1", 40111, 40112, 199);
+        NativeLanSpeakerSessionConfig speaker =
+                live.speakerBaselineConfig("127.0.0.1", 40113, 40114, 199);
+        check(microphone.binding.matches(live.binding));
+        check(speaker.binding.matches(live.binding));
+        check(microphone.localAddress.getPort() == 40111);
+        check(speaker.peerAddress.getPort() == 40114);
+        check(live.binding.sessionId.equals(session));
+        check(live.binding.routeId.equals(route));
+        check(live.binding.streamId.equals(stream));
+        expectFailure(() -> live.microphoneBaselineConfig("127.0.0.1", 40111, 40112, 200));
+        expectFailure(() -> live.speakerBaselineConfig("127.0.0.1", 40113, 40114, 201));
+        expectFailure(() -> live.requireUnexpired(-1));
+        expectFailure(() -> live.requireUnexpired(Long.MAX_VALUE));
+        expectFailure(() -> live.microphoneBaselineConfig("0.0.0.0", 40111, 40112, 100));
+        expectFailure(() -> live.speakerBaselineConfig("127.0.0.1", 0, 40114, 100));
+        for (long epoch : new long[] {0, -1, 2_147_483_648L, Long.MAX_VALUE}) {
+            expectFailure(() -> new NativeLanRouteBinding(session, route, stream, epoch, 200, 100));
+        }
+        for (long expiry : new long[] {0, -1, 100, 99, Long.MAX_VALUE}) {
+            expectFailure(() -> new NativeLanRouteBinding(session, route, stream, 1, expiry, 100));
+        }
+        UUID nil = new UUID(0, 0);
+        expectFailure(() -> new NativeLanRouteBinding(nil, route, stream, 1, 200, 100));
+        expectFailure(() -> new NativeLanRouteBinding(session, nil, stream, 1, 200, 100));
+        expectFailure(() -> new NativeLanRouteBinding(session, route, nil, 1, 200, 100));
+        expectFailure(() -> new NativeLanRouteBinding(null, route, stream, 1, 200, 100));
+        NativeLanRouteBinding maximum = new NativeLanRouteBinding(session, route, stream,
+                Integer.MAX_VALUE, NativeLanRouteBinding.MAX_SAFE_TIMESTAMP_MS, 0);
+        check(maximum.binding.streamEpoch == Integer.MAX_VALUE);
+        maximum.requireUnexpired(NativeLanRouteBinding.MAX_SAFE_TIMESTAMP_MS - 1);
+        expectFailure(() -> maximum.requireUnexpired(NativeLanRouteBinding.MAX_SAFE_TIMESTAMP_MS));
     }
 
     private static NativeLanPacketCodec.Binding binding() {

@@ -73,7 +73,7 @@ tool invocation still requires explicit approval for the exact package.
   virtual cable or in-process MicYou protocol copy;
 - service-owned capture ABI, paired miniports and both real-time APO directions
   are source/build complete (`CAPY_MIC_001B_REPORT.md`);
-- signed `21.60.0.1` was deployed on the approved `DESKTOP-AT8EVE9` lab and all
+- signed `21.60.0.1` was deployed on the approved `LAB-WINDOWS-HOST` lab and all
   three endpoints enumerated with healthy PnP status, but both render endpoints
   inherited the same generic speaker bridge-pin name;
 - `21.61.0.1` assigns/registers independent bridge-pin names and repairs Release

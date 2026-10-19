@@ -51,7 +51,15 @@ mod windows_host {
         pub fn start(&mut self) -> Result<(), CameraProducerHostError> {
             let stream_id = self.stream_id;
             let stream_epoch = self.stream_epoch;
-            self.start_with(|| CameraSharedIngressProducer::create(stream_id, stream_epoch))
+            self.start_with(
+                || match CameraSharedIngressProducer::create(stream_id, stream_epoch) {
+                    Err(CameraSharedIngressError::Windows { code: 5 | 1314, .. }) => {
+                        capyio_windows_service::allocate_camera_producer(stream_id, stream_epoch)
+                            .map_err(CameraSharedIngressError::Service)
+                    }
+                    result => result,
+                },
+            )
         }
 
         /// Starts the exact-name, current-session mapping used by the explicit

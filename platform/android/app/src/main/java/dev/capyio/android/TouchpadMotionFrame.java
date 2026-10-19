@@ -74,6 +74,44 @@ final class TouchpadMotionFrame {
         return arrays(current.isEmpty() ? ACTION_CANCEL : ACTION_MOVE, 0, current);
     }
 
+    /** A complete snapshot can skip intermediate pointer-down frames under burst pressure. */
+    static List<TouchpadMotionFrame> sequence(
+            List<TouchpadContactSnapshot> previous,
+            List<TouchpadContactSnapshot> current) {
+        Map<Integer, TouchpadContactSnapshot> before = index(previous);
+        Map<Integer, TouchpadContactSnapshot> after = index(current);
+        ArrayList<Integer> added = new ArrayList<>();
+        ArrayList<Integer> removed = new ArrayList<>();
+        after.keySet().stream().filter(id -> !before.containsKey(id)).forEach(added::add);
+        before.keySet().stream().filter(id -> !after.containsKey(id)).forEach(removed::add);
+        added.sort(Integer::compareTo);
+        removed.sort(Integer::compareTo);
+        if (added.size() + removed.size() <= 1) {
+            return List.of(between(previous, current));
+        }
+        ArrayList<TouchpadMotionFrame> result = new ArrayList<>(1 + current.size());
+        ArrayList<TouchpadContactSnapshot> working = new ArrayList<>(previous);
+        if (!removed.isEmpty()) {
+            // A contact replacement cannot be represented by one Android action.
+            // Release the old gesture before rebuilding the complete snapshot.
+            result.add(arrays(ACTION_CANCEL, 0, List.of()));
+            working.clear();
+            added.clear();
+            for (TouchpadContactSnapshot contact : current) added.add(contact.contactId());
+        }
+        for (int id : added) {
+            ArrayList<TouchpadContactSnapshot> next = new ArrayList<>(working);
+            next.add(after.get(id));
+            next.sort((left, right) -> Integer.compare(left.contactId(), right.contactId()));
+            result.add(between(working, next));
+            working = next;
+        }
+        if (!working.equals(current) && !current.isEmpty()) {
+            result.add(arrays(ACTION_MOVE, 0, current));
+        }
+        return result;
+    }
+
     private static Map<Integer, TouchpadContactSnapshot> index(
             List<TouchpadContactSnapshot> contacts) {
         HashMap<Integer, TouchpadContactSnapshot> indexed = new HashMap<>();

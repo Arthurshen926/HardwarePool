@@ -391,7 +391,7 @@ the session; a fresh CAVC session encoder recovers at a later key frame.
 Exhaustion is explicit, Activity close
 interrupts retry, and the destination remains device loopback port 38173. Pure
 contract, offline assemble/lint and repository validation pass. The newly
-provided endpoint `100.66.157.119:40263` is verified as the same V2419A and is
+provided endpoint `<LAB_IPV4_03>:40263` is verified as the same V2419A and is
 clean. After exact authorization, the accepted whole-session retry kept Android
 capture active for three seconds with no Windows listener, then recovered a
 120-frame decoded stream at a later key frame with explicit discontinuity.
@@ -446,7 +446,7 @@ through its owning logical camera. Physical selection applies the same physical
 ID to the preview and encoder OutputConfigurations and otherwise preserves the
 single-stream CAVC/restart contract. Contract tests, offline APK assembly and
 strict lint pass with unchanged CAMERA/INTERNET permissions. The supplied
-`100.66.157.119:46143` endpoint timed out and failed a TCP probe, so no APK was
+`<LAB_IPV4_03>:46143` endpoint timed out and failed a TCP probe, so no APK was
 installed and physical source evidence remains open.
 
 The authorized C18 V2419A run later recovered the inventory and isolated the

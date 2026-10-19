@@ -1,0 +1,127 @@
+{
+  "schemaVersion": 1,
+  "publicationApproved": false,
+  "scope": "Context review only; not secret-scan completeness or license clearance.",
+  "decisions": [
+    {
+      "file": "apps/desktop/src/App.vue",
+      "line": 1603,
+      "category": "private-network-address",
+      "fileSha256": "622797e86602ff31ee41a7c0d3c75fb2bd16752d535ba29bdfe0700b8bdf96d8",
+      "disposition": "retain-explained",
+      "reason": "Display-only IPv4 placeholder; does not initialize connection state."
+    },
+    {
+      "file": "apps/desktop/src/App.vue",
+      "line": 1630,
+      "category": "private-network-address",
+      "fileSha256": "622797e86602ff31ee41a7c0d3c75fb2bd16752d535ba29bdfe0700b8bdf96d8",
+      "disposition": "retain-explained",
+      "reason": "Display-only IPv4 placeholder; does not initialize connection state."
+    },
+    {
+      "file": "apps/desktop/src/App.vue",
+      "line": 1641,
+      "category": "private-network-address",
+      "fileSha256": "622797e86602ff31ee41a7c0d3c75fb2bd16752d535ba29bdfe0700b8bdf96d8",
+      "disposition": "retain-explained",
+      "reason": "Display-only IPv4 placeholder; does not initialize connection state."
+    },
+    {
+      "file": "apps/desktop/src/App.vue",
+      "line": 1795,
+      "category": "private-network-address",
+      "fileSha256": "622797e86602ff31ee41a7c0d3c75fb2bd16752d535ba29bdfe0700b8bdf96d8",
+      "disposition": "retain-explained",
+      "reason": "Display-only IPv4 placeholder; does not initialize connection state."
+    },
+    {
+      "file": "apps/desktop/src/App.vue",
+      "line": 1922,
+      "category": "private-network-address",
+      "fileSha256": "622797e86602ff31ee41a7c0d3c75fb2bd16752d535ba29bdfe0700b8bdf96d8",
+      "disposition": "retain-explained",
+      "reason": "Display-only IPv4 placeholder; does not initialize connection state."
+    },
+    {
+      "file": "apps/desktop/src/components/AndroidAudioConnection.vue",
+      "line": 92,
+      "category": "private-network-address",
+      "fileSha256": "04fcebb913bc7b32f1a013806019ea0e98ecf67c83c04aa6d5ab2170853daf72",
+      "disposition": "retain-explained",
+      "reason": "Display-only IPv4 placeholder; user input supplies the endpoint."
+    },
+    {
+      "file": "platform/android/app/src/main/res/values-zh/strings.xml",
+      "line": 35,
+      "category": "private-network-address",
+      "fileSha256": "eee29ffdef7ba5966b32da2bb6fd6ff771ae8223b8e883fb70b3f31d9097c471",
+      "disposition": "retain-explained",
+      "reason": "CGNAT range description in translated camera transport messages."
+    },
+    {
+      "file": "platform/android/app/src/main/res/values-zh/strings.xml",
+      "line": 36,
+      "category": "private-network-address",
+      "fileSha256": "eee29ffdef7ba5966b32da2bb6fd6ff771ae8223b8e883fb70b3f31d9097c471",
+      "disposition": "retain-explained",
+      "reason": "CGNAT range description in translated camera transport messages."
+    },
+    {
+      "file": "platform/android/app/src/main/res/values/strings.xml",
+      "line": 35,
+      "category": "private-network-address",
+      "fileSha256": "883cf79558dd239ef13f8e0d1062411e089a53505726b534fe3d1a4ee2beacf0",
+      "disposition": "retain-explained",
+      "reason": "CGNAT range description in camera transport messages."
+    },
+    {
+      "file": "platform/android/app/src/main/res/values/strings.xml",
+      "line": 36,
+      "category": "private-network-address",
+      "fileSha256": "883cf79558dd239ef13f8e0d1062411e089a53505726b534fe3d1a4ee2beacf0",
+      "disposition": "retain-explained",
+      "reason": "CGNAT range description in camera transport messages."
+    },
+    {
+      "file": "platform/android/capyio-camera-app/app/src/main/res/values/strings.xml",
+      "line": 9,
+      "category": "private-network-address",
+      "fileSha256": "07f9ffbc078ceae122a76db348284c57260c06a8334aa56e4517ca459e8d8708",
+      "disposition": "retain-explained",
+      "reason": "CGNAT range description in camera lab transport messages."
+    },
+    {
+      "file": "platform/android/capyio-camera-app/app/src/main/res/values/strings.xml",
+      "line": 10,
+      "category": "private-network-address",
+      "fileSha256": "07f9ffbc078ceae122a76db348284c57260c06a8334aa56e4517ca459e8d8708",
+      "disposition": "retain-explained",
+      "reason": "CGNAT range description in camera lab transport messages."
+    },
+    {
+      "file": "platform/android/capyio-camera-app/camera-contract/src/main/java/io/capyio/camera/contract/CameraTransportEndpoint.java",
+      "line": 11,
+      "category": "private-network-address",
+      "fileSha256": "e220472aa6553570951a72165aadef1be18681fe3748bae468b38181be34ed46",
+      "disposition": "retain-explained",
+      "reason": "API comment describes the permitted CGNAT range, not a device endpoint."
+    },
+    {
+      "file": "platform/android/capyio-display-android/gamestream-launch.properties.example",
+      "line": 2,
+      "category": "private-network-address",
+      "fileSha256": "fe266f0c0866e49d63b140616f1972dd2c90e823263f0e67be9b19210d71d244",
+      "disposition": "retain-explained",
+      "reason": "Explicit example configuration with placeholder host and synthetic route identifiers; not a deployed configuration."
+    },
+    {
+      "file": "third_party/patches/moonlight-common-c-874ac954/0001-capyio-video-only-client.patch",
+      "line": 169,
+      "category": "private-network-address",
+      "fileSha256": "07badc78a5e6e0ec58627271b1fe4b55ef6dac7de1f41c39642e7a6e48191ff2",
+      "disposition": "retain-explained",
+      "reason": "Unmodified patch context comment illustrates RTSP Transport syntax; preserve upstream patch context."
+    }
+  ]
+}

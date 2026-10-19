@@ -33,6 +33,8 @@ final class SpeakerSinkAdapter implements AudioPlatformAdapter {
 
     private final Listener listener;
     private NativeLanSpeakerSessionConfig config;
+    private dev.capyio.android.lan.NativeLanRouteGuard routeGuard;
+    private java.net.DatagramSocket reservedRouteSocket;
 
     private volatile AudioTrack track;
     private NativeLanReceiverWorker receiverWorker;
@@ -104,11 +106,13 @@ final class SpeakerSinkAdapter implements AudioPlatformAdapter {
 
             NativeLanPacketQueue queue = new NativeLanPacketQueue(
                     config.binding, PACKET_QUEUE_CAPACITY, PACKET_QUEUE_BYTES);
-            NativeLanUdpEndpoint endpoint = NativeLanUdpEndpoint.bind(
+            java.net.DatagramSocket reserved = reservedRouteSocket;
+            reservedRouteSocket = null;
+            NativeLanUdpEndpoint endpoint = reserved == null ? NativeLanUdpEndpoint.bind(
                     config.localAddress,
                     config.peerAddress,
                     config.binding,
-                    SOCKET_TIMEOUT_MILLIS);
+                    SOCKET_TIMEOUT_MILLIS) : new NativeLanUdpEndpoint(reserved, config.peerAddress, config.binding, SOCKET_TIMEOUT_MILLIS);
             NativeLanReceiverWorker receiver = new NativeLanReceiverWorker(
                     endpoint,
                     new NativeLanPacketReassembler(config.binding, REASSEMBLY_CAPACITY),
@@ -122,6 +126,7 @@ final class SpeakerSinkAdapter implements AudioPlatformAdapter {
                     new NativeLanPcmSinkWorker.PcmSink() {
                         @Override
                         public int write(byte[] payload, int offset, int length) {
+                            if (routeGuard != null && !routeGuard.isLive()) return -1;
                             return renderTrack.write(
                                     payload,
                                     offset,
@@ -164,7 +169,22 @@ final class SpeakerSinkAdapter implements AudioPlatformAdapter {
     synchronized boolean configure(NativeLanSpeakerSessionConfig next, Runnable persist) {
         if (track != null || receiverWorker != null || sinkWorker != null) return false;
         persist.run();
+        if (routeGuard != null) routeGuard.revoke();
+        routeGuard = null;
+        if (reservedRouteSocket != null) reservedRouteSocket.close();
+        reservedRouteSocket = null;
         config = next;
+        return true;
+    }
+
+    synchronized boolean configureRoute(NativeLanSpeakerSessionConfig next,
+            dev.capyio.android.lan.NativeLanRouteGuard guard, java.net.DatagramSocket socket) {
+        if (track != null || receiverWorker != null || sinkWorker != null || !guard.isLive()
+                || !next.binding.matches(guard.route.binding)) return false;
+        if (routeGuard != null) routeGuard.revoke();
+        config = next;
+        routeGuard = guard;
+        reservedRouteSocket = socket;
         return true;
     }
 
@@ -174,6 +194,9 @@ final class SpeakerSinkAdapter implements AudioPlatformAdapter {
         NativeLanReceiverWorker receiver;
         NativeLanPcmSinkWorker writer;
         synchronized (this) {
+            if (routeGuard != null) routeGuard.revoke();
+            if (reservedRouteSocket != null) reservedRouteSocket.close();
+            reservedRouteSocket = null;
             current = track;
             receiver = receiverWorker;
             writer = sinkWorker;

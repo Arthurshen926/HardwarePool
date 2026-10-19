@@ -11,9 +11,9 @@ mod windows_host {
     };
 
     use capyio_windows_service::{
-        BrokerServiceRuntime, CaptureRingOwner, ControlledDisplayRuntime, DEFAULT_POLL_INTERVAL,
-        DEFAULT_STABLE_RECEIVER_POLLS, SERVICE_NAME, ServiceConfig, control_server_loop,
-        wake_control_server,
+        BrokerServiceRuntime, CaptureRingOwner, ControlledAudioRoutes, ControlledDisplayRuntime,
+        DEFAULT_POLL_INTERVAL, DEFAULT_STABLE_RECEIVER_POLLS, SERVICE_NAME, ServiceConfig,
+        control_server_loop, wake_control_server,
     };
     use windows_service::{
         define_windows_service,
@@ -48,6 +48,9 @@ mod windows_host {
             Some("status") => client.status()?,
             Some("start") => client.start()?,
             Some("stop") => client.stop()?,
+            Some("microphone-status") => client.native_microphone_status()?,
+            Some("microphone-start") => client.native_microphone_start()?,
+            Some("microphone-stop") => client.native_microphone_stop()?,
             _ => return Err("usage: capyio-windows-service --control status|start|stop".to_owned()),
         };
         println!(
@@ -91,6 +94,17 @@ mod windows_host {
             supervisor,
             DEFAULT_STABLE_RECEIVER_POLLS,
         )?));
+        // Separate administrator-selected principal; never broadens the old IU pipe.
+        let mut audio_routes = config
+            .audio_route_control_user_sid
+            .as_deref()
+            .map(|sid| ControlledAudioRoutes::open(Arc::clone(&runtime), sid))
+            .transpose()?;
+        let _camera_ingress = config
+            .camera_ingress_user_sid
+            .as_deref()
+            .map(capyio_windows_service::CameraIngressService::open)
+            .transpose()?;
         let control_runtime = Arc::clone(&runtime);
         let control_stop = Arc::clone(&stop);
         let control = thread::Builder::new()
@@ -119,6 +133,9 @@ mod windows_host {
             .map_err(|error| error.to_string())?;
         let mut display = start_display_host(&config);
         while !stop.load(Ordering::Acquire) {
+            if let Some(routes) = &mut audio_routes {
+                routes.poll();
+            }
             poll_display_host(&mut display);
             if let Ok(mut runtime) = runtime.lock() {
                 runtime.poll();
@@ -135,6 +152,9 @@ mod windows_host {
             .map_err(|error| error.to_string());
         if let Some(display) = &mut display {
             display.request_stop();
+        }
+        if let Some(routes) = &mut audio_routes {
+            routes.shutdown();
         }
         wake_control_server();
         let control_result = control

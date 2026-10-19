@@ -74,7 +74,7 @@ The current Codex process did not inherit newly installed tool locations. Until
 a fresh shell is opened, local validation prefixes:
 
 ```powershell
-$env:Path = 'C:\Users\arthu\.cargo\bin;C:\Program Files\nodejs;' + $env:Path
+$env:Path = (Join-Path $env:USERPROFILE '.cargo/bin') + ';' + (Join-Path $env:ProgramFiles 'nodejs') + ';' + $env:Path
 ```
 
 Use `corepack pnpm` so the root `packageManager` pin is honored. A populated

@@ -1,6 +1,9 @@
+use capyio_core::{RouteId, StreamId};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::{
     env,
-    io::{self, Read},
+    io::Read,
+    net::Ipv4Addr,
     path::{Path, PathBuf},
     process::{Child, Command, Stdio},
     sync::{Arc, Mutex, mpsc},
@@ -24,7 +27,6 @@ const CAMERA_PORT: u16 = 38_173;
 const STDERR_TAIL_LIMIT: usize = 4_096;
 const READY_LINE_LIMIT: usize = 512;
 const READY_TIMEOUT: Duration = Duration::from_secs(5);
-const BROKER_READY_TIMEOUT: Duration = Duration::from_secs(60);
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum ReceiverKind {
@@ -80,6 +82,7 @@ impl ReceiverKind {
             Self::Camera | Self::SystemCamera => Ok(vec![
                 "--max-access-units",
                 "7200",
+                "--continuous",
                 if self == Self::SystemCamera {
                     "--publish-shared"
                 } else {
@@ -94,15 +97,19 @@ impl ReceiverKind {
 
 struct ReceiverProcess {
     child: Child,
-    serial: String,
+    serial: Option<String>,
+    endpoint: String,
     projection: &'static str,
     stderr_tail: Arc<Mutex<Vec<u8>>>,
+    published_frames: Arc<AtomicU64>,
 }
 
 struct Receiver {
     kind: ReceiverKind,
     process: Option<ReceiverProcess>,
     problem: Option<String>,
+    camera_peer: Option<(Ipv4Addr, Ipv4Addr)>,
+    route_binding: Option<(StreamId, u64, u64)>,
 }
 
 impl Receiver {
@@ -111,6 +118,8 @@ impl Receiver {
             kind,
             process: None,
             problem: None,
+            camera_peer: None,
+            route_binding: None,
         }
     }
 
@@ -120,20 +129,52 @@ impl Receiver {
             return Ok(());
         }
         self.problem = None;
-        let adb = adb_path()?;
-        let serial = single_authorized_device(&adb)?;
+        let serial = if self.kind == ReceiverKind::Touchpad {
+            Some(single_authorized_device(&adb_path()?)?)
+        } else {
+            self.camera_peer
+                .ok_or("请先连接已配对的 Android 节点，再启动摄像头接收")?;
+            None
+        };
         let executable = sibling_executable(self.kind.executable())?;
-        let arguments = self.kind.arguments()?;
+        let mut arguments: Vec<String> = self
+            .kind
+            .arguments()?
+            .into_iter()
+            .map(str::to_owned)
+            .collect();
         let projection = if self.kind == ReceiverKind::SystemCamera {
             "NV12 shared frames → system camera"
         } else if self.kind == ReceiverKind::Camera {
             "AVC → NV12 decode"
-        } else if arguments.contains(&"--vhf") {
+        } else if arguments.iter().any(|value| value == "--vhf") {
             "installed VHF"
         } else {
             "user-mode synthetic"
         };
-        configure_reverse(&adb, &serial, self.kind.port())?;
+        if let Some((stream, epoch, expiry)) = self.route_binding {
+            arguments.extend([
+                "--route-stream".into(),
+                stream.to_string(),
+                "--route-epoch".into(),
+                epoch.to_string(),
+                "--route-expires-at-ms".into(),
+                expiry.to_string(),
+            ]);
+        }
+        let endpoint = if let Some(serial) = serial.as_deref() {
+            configure_reverse(&adb_path()?, serial, self.kind.port())?;
+            format!("ADB {serial} · 127.0.0.1:{}", self.kind.port())
+        } else {
+            let (bind, peer) = self.camera_peer.expect("camera peer was checked");
+            arguments.extend([
+                "--trusted-lan-bind".to_owned(),
+                bind.to_string(),
+                "--trusted-lan-peer".to_owned(),
+                peer.to_string(),
+            ]);
+            format!("{peer} → {bind}:{} · 直连网络", self.kind.port())
+        };
         let mut child = Command::new(&executable)
             .args(arguments)
             .stdin(Stdio::null())
@@ -141,7 +182,7 @@ impl Receiver {
             .stderr(Stdio::piped())
             .spawn()
             .map_err(|error| {
-                let _ = remove_reverse(&adb, &serial, self.kind.port());
+                cleanup_reverse(serial.as_deref(), self.kind.port());
                 format!("无法启动 {}: {error}", executable.display())
             })?;
         let stderr_tail = Arc::new(Mutex::new(Vec::with_capacity(STDERR_TAIL_LIMIT)));
@@ -151,16 +192,18 @@ impl Receiver {
         let Some(stdout) = child.stdout.take() else {
             let _ = child.kill();
             let _ = child.wait();
-            let _ = remove_reverse(&adb, &serial, self.kind.port());
+            cleanup_reverse(serial.as_deref(), self.kind.port());
             return Err("接收端就绪通道不可用".to_owned());
         };
         let (ready_sender, ready_receiver) = mpsc::sync_channel(1);
         let kind = self.kind;
+        let published_frames = Arc::new(AtomicU64::new(0));
+        let progress = published_frames.clone();
         thread::spawn(move || {
             let mut stdout = stdout;
             let result = read_receiver_ready(kind, &mut stdout);
             let _ = ready_sender.send(result);
-            let _ = io::copy(&mut stdout, &mut io::sink());
+            read_camera_progress(&mut stdout, &progress);
         });
         let ready = match ready_receiver.recv_timeout(READY_TIMEOUT) {
             Ok(result) => result,
@@ -170,7 +213,7 @@ impl Receiver {
         if let Err(error) = ready {
             let _ = child.kill();
             let _ = child.wait();
-            let _ = remove_reverse(&adb, &serial, self.kind.port());
+            cleanup_reverse(serial.as_deref(), self.kind.port());
             let detail = stderr_tail
                 .lock()
                 .map(|bytes| String::from_utf8_lossy(&bytes).trim().to_owned())
@@ -184,14 +227,15 @@ impl Receiver {
         self.process = Some(ReceiverProcess {
             child,
             serial,
+            endpoint,
             projection,
             stderr_tail,
+            published_frames,
         });
         Ok(())
     }
 
     fn stop(&mut self) -> Result<(), String> {
-        let adb = adb_path();
         if let Some(mut process) = self.process.take() {
             if process
                 .child
@@ -202,8 +246,8 @@ impl Receiver {
                 process.child.kill().map_err(|error| error.to_string())?;
                 process.child.wait().map_err(|error| error.to_string())?;
             }
-            if let Ok(adb) = adb {
-                remove_reverse(&adb, &process.serial, self.kind.port())?;
+            if let Some(serial) = process.serial.as_deref() {
+                remove_reverse(&adb_path()?, serial, self.kind.port())?;
             }
         }
         self.problem = None;
@@ -229,10 +273,8 @@ impl Receiver {
                 self.problem = Some(format!("无法读取接收端状态: {error}"));
             }
         }
-        if let Some(process) = self.process.take()
-            && let Ok(adb) = adb_path()
-        {
-            let _ = remove_reverse(&adb, &process.serial, self.kind.port());
+        if let Some(process) = self.process.take() {
+            cleanup_reverse(process.serial.as_deref(), self.kind.port());
         }
     }
 
@@ -262,20 +304,24 @@ impl Receiver {
             } else {
                 "not_started"
             },
-            connection_hint: self.process.as_ref().map(|process| {
-                format!(
-                    "ADB {} · 127.0.0.1:{} · {}",
-                    process.serial,
-                    self.kind.port(),
-                    process.projection
-                )
-            }),
+            connection_hint: self
+                .process
+                .as_ref()
+                .map(|process| format!("{} · {}", process.endpoint, process.projection)),
             problem_code: self
                 .problem
                 .as_ref()
                 .map(|problem| receiver_problem_code(self.kind, problem).to_owned()),
             problem: self.problem.clone(),
         }
+    }
+}
+
+fn cleanup_reverse(serial: Option<&str>, port: u16) {
+    if let Some(serial) = serial
+        && let Ok(adb) = adb_path()
+    {
+        let _ = remove_reverse(&adb, serial, port);
     }
 }
 
@@ -304,6 +350,31 @@ fn read_receiver_ready(kind: ReceiverKind, reader: &mut impl Read) -> Result<(),
         line.push(byte[0]);
     }
     Err("接收端就绪记录超出长度限制".to_owned())
+}
+
+fn read_camera_progress(reader: &mut impl Read, progress: &AtomicU64) {
+    let mut line = Vec::with_capacity(128);
+    let mut overflow = false;
+    let mut byte = [0];
+    while reader.read(&mut byte).ok() == Some(1) {
+        if byte[0] == b'\n' {
+            if !overflow
+                && let Ok(text) = std::str::from_utf8(&line)
+                && let Some(value) = text
+                    .trim()
+                    .strip_prefix("CAPYIO_AVC_ROUTE_FRAME published=")
+                && let Ok(value) = value.parse::<u64>()
+            {
+                progress.fetch_max(value, Ordering::Release);
+            }
+            line.clear();
+            overflow = false;
+        } else if line.len() < 512 {
+            line.push(byte[0]);
+        } else {
+            overflow = true;
+        }
+    }
 }
 
 fn select_touchpad_arguments(probe: VhfBrokerInterfaceProbe) -> Result<Vec<&'static str>, String> {
@@ -409,21 +480,41 @@ pub struct AndroidReceiverActions {
     camera: Receiver,
     system_camera: Receiver,
     camera_session: Option<crate::camera_session::CameraSession>,
+    camera_route: Option<RouteId>,
 }
 
 impl AndroidReceiverActions {
+    /// Only configures the peer selected by the authenticated Node connection.
+    /// Camera capture and reception still require their explicit user actions.
+    pub fn configure_camera_peer(&mut self, bind: Ipv4Addr, peer: Ipv4Addr) -> Result<(), String> {
+        let endpoint = Some((bind, peer));
+        for receiver in [&self.camera, &self.system_camera] {
+            if receiver.process.is_some() && receiver.camera_peer != endpoint {
+                return Err("请先停止当前摄像头，再切换连接设备".to_owned());
+            }
+        }
+        self.camera.camera_peer = endpoint;
+        self.system_camera.camera_peer = endpoint;
+        Ok(())
+    }
+
     pub const fn new() -> Self {
         Self {
             touchpad: Receiver::new(ReceiverKind::Touchpad),
             camera: Receiver::new(ReceiverKind::Camera),
             system_camera: Receiver::new(ReceiverKind::SystemCamera),
             camera_session: None,
+            camera_route: None,
         }
     }
 
     pub fn actions(&mut self) -> Vec<UiQuickAction> {
         self.poll_system_camera();
-        let broker = CameraBrokerClient::default().try_status().ok();
+        let broker = if self.system_camera.camera_peer.is_none() {
+            CameraBrokerClient::default().try_status().ok()
+        } else {
+            None
+        };
         let broker_available = broker.is_some();
         let mut system = broker.map(system_camera_broker_action).unwrap_or_else(|| {
             let mut action = self.system_camera.dto();
@@ -448,9 +539,21 @@ impl AndroidReceiverActions {
         operation: QuickActionOperation,
     ) -> Result<UiQuickAction, String> {
         self.poll_system_camera();
+        if self.camera_route.is_some()
+            && matches!(
+                action_id,
+                SYSTEM_CAMERA_ACTION_ID | CAMERA_RECEIVER_ACTION_ID
+            )
+        {
+            return Err("摄像头由远程资源 Route 使用中，请在该资源页停止；兼容入口不能接管".into());
+        }
         if action_id == SYSTEM_CAMERA_ACTION_ID {
-            if let Some(action) = self.invoke_camera_broker(operation)? {
-                return Ok(action);
+            if self.system_camera.camera_peer.is_none()
+                && !matches!(operation, QuickActionOperation::Stop)
+            {
+                return Err(
+                    "请先连接已配对的 Android 节点，再启动系统摄像头；不使用 ADB 转发".to_owned(),
+                );
             }
             let result = match operation {
                 QuickActionOperation::Start | QuickActionOperation::Retry => {
@@ -501,24 +604,15 @@ impl AndroidReceiverActions {
         if self.camera_session.is_some() {
             return Ok(());
         }
-        match crate::camera_session::process_is_elevated() {
-            Ok(true) => {}
-            Ok(false) => {
-                return Err(
-                    "当前原型需以管理员身份运行 CapyIO Windows 客户端，才能创建系统摄像头共享通道"
-                        .to_owned(),
-                );
-            }
-            Err(error) => return Err(error),
-        }
         self.camera.poll();
         if self.camera.process.is_some() {
             return Err("请先停止仅解码接收，再启动系统摄像头".to_owned());
         }
         // Resolve prerequisites before creating a camera session.
         sibling_executable(self.system_camera.kind.executable())?;
-        let adb = adb_path()?;
-        single_authorized_device(&adb)?;
+        self.system_camera
+            .camera_peer
+            .ok_or("请先连接已配对的 Android 节点，再启动系统摄像头")?;
         let mut session = crate::camera_session::CameraSession::start()?;
         if let Err(error) = self.system_camera.start() {
             let cleanup = session.stop();
@@ -528,45 +622,56 @@ impl AndroidReceiverActions {
         Ok(())
     }
 
-    fn invoke_camera_broker(
+    pub(crate) fn start_camera_route(
         &mut self,
-        operation: QuickActionOperation,
-    ) -> Result<Option<UiQuickAction>, String> {
-        let client = CameraBrokerClient::default();
-        let mut status = client.try_status();
-        if status.is_err()
-            && !matches!(operation, QuickActionOperation::Stop)
-            && !crate::camera_session::process_is_elevated()?
+        route: RouteId,
+        stream: StreamId,
+        epoch: u64,
+        expiry: u64,
+        bind: Ipv4Addr,
+        peer: Ipv4Addr,
+    ) -> Result<(), String> {
+        self.poll_system_camera();
+        if self.camera_route == Some(route) {
+            return Ok(());
+        }
+        if self.camera_route.is_some()
+            || self.camera_session.is_some()
+            || self.camera.process.is_some()
+            || self.system_camera.process.is_some()
         {
-            launch_elevated_camera_broker()?;
-            let deadline = std::time::Instant::now() + BROKER_READY_TIMEOUT;
-            while std::time::Instant::now() < deadline {
-                status = client.try_status();
-                if status.is_ok() {
-                    break;
-                }
-                thread::sleep(Duration::from_millis(25));
-            }
-            if status.is_err() {
-                return Err("摄像头 Broker 未在授权等待时间内就绪".to_owned());
-            }
+            return Err("系统摄像头已被其他操作占用".into());
         }
-        if status.is_err() {
-            return Ok(None);
+        self.configure_camera_peer(bind, peer)?;
+        self.system_camera.route_binding = Some((stream, epoch, expiry));
+        if let Err(error) = self.start_system_camera() {
+            self.system_camera.route_binding = None;
+            return Err(error);
         }
-        let result = match operation {
-            QuickActionOperation::Start | QuickActionOperation::Retry => client.start(),
-            QuickActionOperation::Stop => client.stop(),
-        };
-        let snapshot = match result {
-            Ok(snapshot) => snapshot,
-            Err(error) => client.status().unwrap_or(CameraBrokerSnapshot {
-                state: CameraBrokerState::Failed,
-                generation: 0,
-                problem_code: Some(error),
-            }),
-        };
-        Ok(Some(system_camera_broker_action(snapshot)))
+        self.camera_route = Some(route);
+        Ok(())
+    }
+    pub(crate) fn camera_route_progress(&mut self, route: RouteId) -> Result<u64, String> {
+        self.poll_system_camera();
+        if self.camera_route != Some(route) {
+            return Err("相机 Route 已结束".into());
+        }
+        let process = self.system_camera.process.as_ref().ok_or_else(|| {
+            self.system_camera
+                .problem
+                .clone()
+                .unwrap_or_else(|| "相机接收器已退出".into())
+        })?;
+        Ok(process.published_frames.load(Ordering::Acquire))
+    }
+    pub(crate) fn stop_camera_route(&mut self, route: RouteId) -> Result<(), String> {
+        if self.camera_route != Some(route) {
+            return Ok(());
+        }
+        let result = self.stop_system_camera();
+        self.camera_route = None;
+        self.system_camera.route_binding = None;
+        result
     }
 
     fn stop_system_camera(&mut self) -> Result<(), String> {
@@ -612,8 +717,9 @@ fn apply_system_camera_permission(action: &mut UiQuickAction, elevated: Result<b
     match elevated {
         Ok(true) => {}
         Ok(false) => {
-            action.connection_hint =
-                Some("启动时将请求 Windows 管理员确认；主界面保持普通权限".to_owned());
+            action.connection_hint = Some(
+                "普通权限摄像头需要安装并配置 CapyIO 相机共享服务；仅解码接收无需该服务".to_owned(),
+            );
         }
         Err(error) => {
             action.status = "blocked";
@@ -652,50 +758,6 @@ fn system_camera_broker_action(snapshot: CameraBrokerSnapshot) -> UiQuickAction 
         problem_code: snapshot.problem_code,
         problem,
     }
-}
-
-#[cfg(windows)]
-fn launch_elevated_camera_broker() -> Result<(), String> {
-    use std::{iter, ptr};
-    use windows_sys::Win32::UI::{Shell::ShellExecuteW, WindowsAndMessaging::SW_HIDE};
-
-    fn wide(value: &std::ffi::OsStr) -> Vec<u16> {
-        use std::os::windows::ffi::OsStrExt;
-        value.encode_wide().chain(iter::once(0)).collect()
-    }
-
-    let executable =
-        env::current_exe().map_err(|error| format!("无法定位摄像头 Broker 宿主: {error}"))?;
-    let verb = wide(std::ffi::OsStr::new("runas"));
-    let executable = wide(executable.as_os_str());
-    let user_sid = capyio_windows_service::current_process_user_sid()?;
-    let parameters = format!("--camera-broker-host {user_sid}");
-    let parameters = wide(std::ffi::OsStr::new(&parameters));
-    // SAFETY: all strings are immutable terminated UTF-16 for the duration of
-    // the call. The executable and command are fixed; the sole value is the
-    // Windows-validated SID of this ordinary process token.
-    let result = unsafe {
-        ShellExecuteW(
-            ptr::null_mut(),
-            verb.as_ptr(),
-            executable.as_ptr(),
-            parameters.as_ptr(),
-            ptr::null(),
-            SW_HIDE,
-        )
-    };
-    if result as usize <= 32 {
-        Err(format!(
-            "Windows 未启动摄像头 Broker（ShellExecute={result:p}）"
-        ))
-    } else {
-        Ok(())
-    }
-}
-
-#[cfg(not(windows))]
-fn launch_elevated_camera_broker() -> Result<(), String> {
-    Err("摄像头 Broker 仅支持 Windows".to_owned())
 }
 
 impl Drop for AndroidReceiverActions {
@@ -826,6 +888,17 @@ fn remove_reverse(adb: &Path, serial: &str, port: u16) -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn camera_progress_requires_actual_bounded_publication_record() {
+        let count = AtomicU64::new(0);
+        read_camera_progress(&mut &b"CAPYIO_AVC_LAB_READY\nCAPYIO_AVC_ROUTE_FRAME published=3\nCAPYIO_AVC_ROUTE_FRAME published=2\n"[..], &count);
+        assert_eq!(count.load(Ordering::Acquire), 3);
+        let mut oversized = vec![b'x'; 600];
+        oversized.extend_from_slice(b"CAPYIO_AVC_ROUTE_FRAME published=99\n");
+        read_camera_progress(&mut &oversized[..], &count);
+        assert_eq!(count.load(Ordering::Acquire), 3);
+    }
 
     #[test]
     fn parses_exactly_one_authorized_device() {
@@ -1147,7 +1220,7 @@ mod tests {
     }
 
     #[test]
-    fn system_camera_offers_broker_launch_without_elevating_the_ui() {
+    fn ordinary_system_camera_explains_service_requirement() {
         let mut action = Receiver::new(ReceiverKind::SystemCamera).dto();
         apply_system_camera_permission(&mut action, Ok(false));
         assert_eq!(action.status, "idle");
@@ -1157,7 +1230,7 @@ mod tests {
             action
                 .connection_hint
                 .unwrap()
-                .contains("主界面保持普通权限")
+                .contains("普通权限摄像头需要安装并配置 CapyIO 相机共享服务")
         );
     }
 

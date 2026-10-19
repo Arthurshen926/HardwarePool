@@ -40,7 +40,7 @@ fixed package is documented next to the narrow lint suppression.
 ## Physical evidence on 2026-09-01
 
 The approved C30 APK was installed on the V2419A at
-`100.66.157.119:35491`. A fresh Activity start opened camera ID 0 from a
+`<LAB_IPV4_03>:35491`. A fresh Activity start opened camera ID 0 from a
 camera-typed foreground service. The approved elevated Windows lab accepted a
 trusted-LAN session at 1280x720, 30 fps and 4 Mbit/s, created the production
 Global mapping, and enumerated exactly one CapyIO virtual camera.

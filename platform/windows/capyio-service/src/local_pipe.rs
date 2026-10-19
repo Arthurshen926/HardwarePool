@@ -55,8 +55,8 @@ fn invoke_with_open_timeout<Request: Serialize, Response: DeserializeOwned>(
 ) -> Result<Response, String> {
     let payload = serde_json::to_vec(request).map_err(|_| "encode local control request")?;
     let mut pipe = open_client_pipe(pipe_name, open_timeout)?;
-    write_frame(&mut pipe, &payload)?;
-    let response_payload = read_frame(&mut pipe)?;
+    write_frame(&mut pipe, &payload, MAX_CONTROL_BYTES)?;
+    let response_payload = read_frame(&mut pipe, MAX_CONTROL_BYTES, CLIENT_RESPONSE_DEADLINE)?;
     serde_json::from_slice(&response_payload)
         .map_err(|_| "invalid local control response".to_owned())
 }
@@ -86,8 +86,12 @@ fn open_client_pipe(pipe_name: &str, open_timeout: Duration) -> Result<std::fs::
     }
 }
 
-fn write_frame(stream: &mut impl std::io::Write, payload: &[u8]) -> Result<(), String> {
-    if payload.is_empty() || payload.len() > MAX_CONTROL_BYTES {
+fn write_frame(
+    stream: &mut impl std::io::Write,
+    payload: &[u8],
+    max_bytes: usize,
+) -> Result<(), String> {
+    if payload.is_empty() || payload.len() > max_bytes {
         return Err("local control message is outside bounds".to_owned());
     }
     let length = u32::try_from(payload.len()).map_err(|_| "control message length overflow")?;
@@ -97,21 +101,29 @@ fn write_frame(stream: &mut impl std::io::Write, payload: &[u8]) -> Result<(), S
         .map_err(|_| "write local control message".to_owned())
 }
 
-fn read_frame(stream: &mut std::fs::File) -> Result<Vec<u8>, String> {
+fn read_frame(
+    stream: &mut std::fs::File,
+    max_bytes: usize,
+    timeout: Duration,
+) -> Result<Vec<u8>, String> {
     let mut length = [0_u8; 4];
-    read_client_exact(stream, &mut length)?;
+    read_client_exact(stream, &mut length, timeout)?;
     let length = usize::try_from(u32::from_le_bytes(length))
         .map_err(|_| "local control response length overflow".to_owned())?;
-    if length == 0 || length > MAX_CONTROL_BYTES {
+    if length == 0 || length > max_bytes {
         return Err("local control response is outside bounds".to_owned());
     }
     let mut payload = vec![0_u8; length];
-    read_client_exact(stream, &mut payload)?;
+    read_client_exact(stream, &mut payload, timeout)?;
     Ok(payload)
 }
 
-fn read_client_exact(stream: &std::fs::File, buffer: &mut [u8]) -> Result<(), String> {
-    let deadline = Instant::now() + CLIENT_RESPONSE_DEADLINE;
+fn read_client_exact(
+    stream: &std::fs::File,
+    buffer: &mut [u8],
+    timeout: Duration,
+) -> Result<(), String> {
+    let deadline = Instant::now() + timeout;
     let handle = stream.as_raw_handle() as HANDLE;
     let mut offset = 0;
     while offset < buffer.len() && Instant::now() < deadline {
@@ -147,20 +159,48 @@ fn read_client_exact(stream: &std::fs::File, buffer: &mut [u8]) -> Result<(), St
         .ok_or_else(|| "local control response timed out".to_owned())
 }
 
-pub(crate) struct NamedPipe {
+pub struct NamedPipe {
     handle: HANDLE,
+    max_bytes: usize,
 }
 
 impl NamedPipe {
     pub(crate) fn create(pipe_name: &str, pipe_sddl: &str) -> Result<Self, String> {
-        Self::create_with_flags(pipe_name, pipe_sddl, 0)
+        Self::create_with_flags(pipe_name, pipe_sddl, 0, MAX_CONTROL_BYTES, 1)
     }
 
     pub(crate) fn create_exclusive(pipe_name: &str, pipe_sddl: &str) -> Result<Self, String> {
-        Self::create_with_flags(pipe_name, pipe_sddl, FILE_FLAG_FIRST_PIPE_INSTANCE)
+        Self::create_with_flags(
+            pipe_name,
+            pipe_sddl,
+            FILE_FLAG_FIRST_PIPE_INSTANCE,
+            MAX_CONTROL_BYTES,
+            1,
+        )
     }
 
-    fn create_with_flags(pipe_name: &str, pipe_sddl: &str, flags: u32) -> Result<Self, String> {
+    /// User-host control only; existing service endpoints retain their 4 KiB limit.
+    pub fn create_node_api(pipe_name: &str, pipe_sddl: &str, first: bool) -> Result<Self, String> {
+        Self::create_with_flags(
+            pipe_name,
+            pipe_sddl,
+            if first {
+                FILE_FLAG_FIRST_PIPE_INSTANCE
+            } else {
+                0
+            },
+            NODE_API_BYTES,
+            4,
+        )
+    }
+
+    fn create_with_flags(
+        pipe_name: &str,
+        pipe_sddl: &str,
+        flags: u32,
+        max_bytes: usize,
+        instances: u32,
+    ) -> Result<Self, String> {
         let mut descriptor = SecurityDescriptor::new(pipe_sddl)?;
         let attributes = SECURITY_ATTRIBUTES {
             nLength: u32::try_from(mem::size_of::<SECURITY_ATTRIBUTES>())
@@ -178,15 +218,15 @@ impl NamedPipe {
                     name.as_ptr(),
                     PIPE_ACCESS_DUPLEX | flags,
                     PIPE_TYPE_BYTE | PIPE_READMODE_BYTE | PIPE_NOWAIT | PIPE_REJECT_REMOTE_CLIENTS,
-                    1,
-                    MAX_CONTROL_BYTES as u32 + 4,
-                    MAX_CONTROL_BYTES as u32 + 4,
+                    instances,
+                    max_bytes as u32 + 4,
+                    max_bytes as u32 + 4,
                     0,
                     &attributes,
                 )
             };
             if handle != INVALID_HANDLE_VALUE {
-                return Ok(Self { handle });
+                return Ok(Self { handle, max_bytes });
             }
             // SAFETY: GetLastError immediately follows CreateNamedPipeW.
             if unsafe { GetLastError() } == ERROR_PIPE_BUSY && Instant::now() < deadline {
@@ -197,7 +237,7 @@ impl NamedPipe {
         }
     }
 
-    pub(crate) fn wait_for_client(&self, stop: &AtomicBool) -> Result<bool, String> {
+    pub fn wait_for_client(&self, stop: &AtomicBool) -> Result<bool, String> {
         while !stop.load(Ordering::Acquire) {
             // SAFETY: handle is a live named-pipe handle and no OVERLAPPED
             // structure is used in non-blocking mode.
@@ -218,19 +258,19 @@ impl NamedPipe {
         Ok(false)
     }
 
-    pub(crate) fn disconnect(&self) {
+    pub fn disconnect(&self) {
         // SAFETY: handle is a live pipe instance. A raced disconnect is benign.
         unsafe {
             DisconnectNamedPipe(self.handle);
         }
     }
 
-    pub(crate) fn read_json<T: DeserializeOwned>(&self) -> Result<T, String> {
+    pub fn read_json<T: DeserializeOwned>(&self) -> Result<T, String> {
         let mut length = [0_u8; 4];
         self.read_exact(&mut length)?;
         let length = usize::try_from(u32::from_le_bytes(length))
             .map_err(|_| "local control request length overflow".to_owned())?;
-        if length == 0 || length > MAX_CONTROL_BYTES {
+        if length == 0 || length > self.max_bytes {
             return Err("local control request outside bounds".to_owned());
         }
         let mut payload = vec![0_u8; length];
@@ -239,17 +279,33 @@ impl NamedPipe {
     }
 
     pub(crate) fn write_json<T: Serialize>(&self, response: &T) -> Result<(), String> {
+        self.write_response(response)?;
+        // Existing service transport retains its delivery semantics.
+        if unsafe { FlushFileBuffers(self.handle) } == 0 {
+            return Err("flush local control response".to_owned());
+        }
+        Ok(())
+    }
+
+    /// Bounded acknowledgement avoids an unbounded FlushFileBuffers wait on UI exit.
+    pub fn write_node_response<T: Serialize>(&self, response: &T) -> Result<(), String> {
+        self.write_response(response)?;
+        let mut ack = [0u8];
+        self.read_exact(&mut ack)?;
+        if ack != [1] {
+            return Err("invalid node response acknowledgement".into());
+        }
+        Ok(())
+    }
+
+    fn write_response<T: Serialize>(&self, response: &T) -> Result<(), String> {
         let payload = serde_json::to_vec(response).map_err(|_| "encode local control response")?;
-        if payload.is_empty() || payload.len() > MAX_CONTROL_BYTES {
+        if payload.is_empty() || payload.len() > self.max_bytes {
             return Err("local control response outside bounds".to_owned());
         }
         let length = u32::try_from(payload.len()).map_err(|_| "control response overflow")?;
         self.write_all(&length.to_le_bytes())?;
         self.write_all(&payload)?;
-        // SAFETY: the handle is connected and the bounded client is waiting.
-        if unsafe { FlushFileBuffers(self.handle) } == 0 {
-            return Err("flush local control response".to_owned());
-        }
         Ok(())
     }
 
@@ -370,4 +426,141 @@ impl Drop for SecurityDescriptor {
 
 fn wide(value: &str) -> Vec<u16> {
     value.encode_utf16().chain(Some(0)).collect()
+}
+
+const NODE_API_BYTES: usize = 1024 * 1024;
+
+/// Current-user node command transport. No media payloads use this endpoint.
+pub fn invoke_node<Request: Serialize, Response: DeserializeOwned>(
+    pipe_name: &str,
+    request: &Request,
+) -> Result<Response, String> {
+    use std::io::Write;
+    let payload = serde_json::to_vec(request).map_err(|_| "encode node request")?;
+    let mut pipe = open_client_pipe(pipe_name, IO_DEADLINE)?;
+    verify_node_server(&pipe)?;
+    let mode = PIPE_READMODE_BYTE | PIPE_NOWAIT;
+    if unsafe {
+        windows_sys::Win32::System::Pipes::SetNamedPipeHandleState(
+            pipe.as_raw_handle() as HANDLE,
+            &mode,
+            ptr::null(),
+            ptr::null(),
+        )
+    } == 0
+    {
+        return Err("configure bounded node API I/O".into());
+    }
+    write_frame(&mut pipe, &payload, NODE_API_BYTES)?;
+    let response = read_frame(&mut pipe, NODE_API_BYTES, Duration::from_secs(60))?;
+    pipe.write_all(&[1])
+        .map_err(|_| "acknowledge node response")?;
+    serde_json::from_slice(&response).map_err(|_| "invalid node response".into())
+}
+
+// The client only sends commands to this installed executable, under the pipe's
+// current-user ACL. Do not send enrollment PINs to an arbitrary endpoint owner.
+fn verify_node_server(pipe: &std::fs::File) -> Result<(), String> {
+    use windows_sys::Win32::System::{
+        Pipes::GetNamedPipeServerProcessId,
+        Threading::{OpenProcess, PROCESS_QUERY_LIMITED_INFORMATION, QueryFullProcessImageNameW},
+    };
+    let mut pid = 0;
+    if unsafe { GetNamedPipeServerProcessId(pipe.as_raw_handle() as HANDLE, &mut pid) } == 0 {
+        return Err("identify node API host".into());
+    }
+    let process = unsafe { OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, 0, pid) };
+    if process.is_null() {
+        return Err("inspect node API host".into());
+    }
+    let mut image = vec![0u16; 32768];
+    let mut length = image.len() as u32;
+    let result = unsafe { QueryFullProcessImageNameW(process, 0, image.as_mut_ptr(), &mut length) };
+    unsafe {
+        CloseHandle(process);
+    }
+    if result == 0 {
+        return Err("read node API host identity".into());
+    }
+    let actual = std::path::PathBuf::from(String::from_utf16_lossy(&image[..length as usize]));
+    let expected = std::env::current_exe().map_err(|_| "locate node executable")?;
+    let actual = actual.canonicalize().map_err(|_| "resolve node API host")?;
+    let expected = expected
+        .canonicalize()
+        .map_err(|_| "resolve node executable")?;
+    if !actual
+        .to_string_lossy()
+        .eq_ignore_ascii_case(&expected.to_string_lossy())
+    {
+        return Err("node API host executable mismatch; exit the old node before upgrading".into());
+    }
+    Ok(())
+}
+
+/// Keeps a service reservation alive until the client has opened the shared object.
+pub(crate) fn invoke_service_handoff<T>(
+    pipe_name: &str,
+    request: &impl Serialize,
+    acquire: impl FnOnce() -> Result<T, String>,
+) -> Result<T, String> {
+    use std::io::Write;
+    use windows_sys::Win32::System::{
+        Pipes::{GetNamedPipeServerProcessId, SetNamedPipeHandleState},
+        Services::{
+            CloseServiceHandle, OpenSCManagerW, OpenServiceW, QueryServiceStatusEx,
+            SC_MANAGER_CONNECT, SC_STATUS_PROCESS_INFO, SERVICE_QUERY_STATUS,
+            SERVICE_STATUS_PROCESS,
+        },
+    };
+    let mut pipe = open_client_pipe(pipe_name, IO_DEADLINE)?;
+    let mut pid = 0;
+    if unsafe { GetNamedPipeServerProcessId(pipe.as_raw_handle() as HANDLE, &mut pid) } == 0 {
+        return Err("identify camera allocation service".into());
+    }
+    let manager = unsafe { OpenSCManagerW(ptr::null(), ptr::null(), SC_MANAGER_CONNECT) };
+    if manager.is_null() {
+        return Err("inspect service manager".into());
+    }
+    let name = wide(crate::SERVICE_NAME);
+    let service = unsafe { OpenServiceW(manager, name.as_ptr(), SERVICE_QUERY_STATUS) };
+    unsafe { CloseServiceHandle(manager) };
+    if service.is_null() {
+        return Err("CapyIO Broker is not installed".into());
+    }
+    let mut status: SERVICE_STATUS_PROCESS = unsafe { mem::zeroed() };
+    let mut needed = 0;
+    let queried = unsafe {
+        QueryServiceStatusEx(
+            service,
+            SC_STATUS_PROCESS_INFO,
+            (&raw mut status).cast(),
+            mem::size_of_val(&status) as u32,
+            &mut needed,
+        )
+    };
+    unsafe { CloseServiceHandle(service) };
+    if queried == 0 || pid == 0 || pid != status.dwProcessId {
+        return Err("camera allocation endpoint does not belong to CapyIO Broker".into());
+    }
+    let mode = PIPE_READMODE_BYTE | PIPE_NOWAIT;
+    if unsafe {
+        SetNamedPipeHandleState(
+            pipe.as_raw_handle() as HANDLE,
+            &mode,
+            ptr::null(),
+            ptr::null(),
+        )
+    } == 0
+    {
+        return Err("configure camera allocation deadline".into());
+    }
+    let payload = serde_json::to_vec(request).map_err(|_| "encode camera allocation request")?;
+    write_frame(&mut pipe, &payload, MAX_CONTROL_BYTES)?;
+    let bytes = read_frame(&mut pipe, MAX_CONTROL_BYTES, IO_DEADLINE)?;
+    let reply: Result<(), String> =
+        serde_json::from_slice(&bytes).map_err(|_| "invalid camera allocation response")?;
+    let result = reply.and_then(|()| acquire());
+    pipe.write_all(&[1])
+        .map_err(|_| "acknowledge camera allocation")?;
+    result
 }

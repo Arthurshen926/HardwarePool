@@ -28,7 +28,7 @@ and silence on underflow.
 
 ## Build evidence
 
-- target/build host: `DESKTOP-AT8EVE9`, AMD64;
+- target/build host: `LAB-WINDOWS-HOST`, AMD64;
 - Visual Studio Build Tools 2022 `17.14.51`;
 - Windows SDK `10.0.26100.0`;
 - WDK `10.0.26100.6584`;

@@ -241,6 +241,40 @@ pub fn activate_owned_windows_display_output(
     }
 }
 
+/// Applies the requested mode to the exact target returned by the owned
+/// SudoVDA lease. Preferred EDID mode alone does not override Windows' cached
+/// mode for a returning monitor identity.
+pub fn configure_owned_windows_display_output(
+    monitor: IddConnectedMonitor,
+    mode: IddMonitorMode,
+) -> Result<(), DisplayOutputBindingError> {
+    mode.validate()
+        .map_err(|_| DisplayOutputBindingError::InvalidMode)?;
+    if !mode.refresh_millihz.is_multiple_of(1000) {
+        return Err(DisplayOutputBindingError::InvalidMode);
+    }
+    activate_owned_windows_display_output(monitor)?;
+    let snapshots = query_path_snapshots(monitor)?;
+    let active = snapshots
+        .iter()
+        .filter(|p| p.active && p.target_available)
+        .collect::<Vec<_>>();
+    if active.len() != 1 {
+        return Err(DisplayOutputBindingError::AmbiguousOwnedPath);
+    }
+    let path = active[0];
+    if path.mode != Some(mode) {
+        super::display_config::apply_owned_exact_mode(
+            &path.gdi_device_name,
+            mode.width,
+            mode.height,
+            mode.refresh_millihz / 1000,
+        )
+        .map_err(map_topology_error)?;
+    }
+    ensure_independent_desktop_position(&path.gdi_device_name, monitor)
+}
+
 #[derive(Clone, Copy)]
 struct DesktopRect {
     left: i32,

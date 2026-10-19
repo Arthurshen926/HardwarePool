@@ -71,6 +71,11 @@ Route states are `Draft`, `Prepared`, `Starting`, `Active`, `Stopping`,
 `Stopped`, `Failed`, and `Offline`. State transitions are deterministic and
 independent per Route.
 
+An owner may renew an unexpired finite authorization on a Starting or Active
+Route (ADR 1505). Renewal strictly extends its expiry without changing its epoch,
+does not renew Port leases, and cannot revive a stopped, denied or expired Route.
+An authenticated peer request is not itself local authorization to renew.
+
 Route creation validates both endpoint Adapters as well as the Ports. Each
 endpoint Adapter must own its Capability and advertise the selected backend.
 The foundation applies these minimum backend/interoperability rules:
@@ -104,6 +109,28 @@ A Session is the trust, catalog and control relationship between two Nodes. It
 does not own a magical duplex stream and does not authorize every Port. Two
 opposite Routes may reference one Session while keeping separate authorization,
 format, QoS, state, statistics and failure.
+
+A paired peer record is pre-Session trust metadata, not a Session or Capability
+grant. It binds one peer Node ID to a TLS server name, certificate fingerprint
+and opaque platform secure-storage handle. Discovery may locate that Node, but
+only mTLS authentication and the exact Session/Node binding can admit control.
+Revocation prevents a discovery candidate from becoming connectable.
+
+## Port lease
+
+A Port lease is owner-authoritative, Route-scoped usage state, separate from
+catalog availability and Route authorization. An explicitly configured local
+Port may be exclusive or shared up to a fixed Route count. Claims bind Port,
+Route, Session and finite expiry; they cannot exceed Route authorization. A
+configured Port cannot start a Route without a current claim. Stop, Offline,
+catalog invalidation, peer loss or expiry releases only affected claims. A Node
+cannot authoritatively report leases owned by another Node.
+
+An authenticated peer may request acquire, renew or release over the control
+protocol, but that request is not authorization or policy. It is accepted only
+on the Route's existing Ready Session and only by the Runtime that owns the
+named Port. Lease duration is relative and bounded; the owner computes expiry
+with its own clock.
 
 ## Problem
 

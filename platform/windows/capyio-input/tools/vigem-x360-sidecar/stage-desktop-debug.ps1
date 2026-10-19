@@ -15,7 +15,7 @@ $buildSidecar = Join-Path $PSScriptRoot 'build.ps1'
 
 Push-Location $repositoryRoot
 try {
-    & cargo build -p capyio-desktop
+    & cargo build -p capyio-desktop --features tauri/custom-protocol
     if ($LASTEXITCODE -ne 0) {
         throw "Desktop build failed with exit code $LASTEXITCODE"
     }

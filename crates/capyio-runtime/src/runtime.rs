@@ -8,9 +8,9 @@ use capyio_core::{
 };
 
 use crate::{
-    HostOperation, HostOperationCompletion, OperationId, OperationRecord, OperationRegistry,
-    OperationStatus, OperationUpdate, RuntimeError, RuntimeEvent, RuntimeEventKind,
-    RuntimeSnapshot,
+    HostOperation, HostOperationCompletion, LeaseClaimOutcome, OperationId, OperationRecord,
+    OperationRegistry, OperationStatus, OperationUpdate, PortLeaseClaim, PortLeasePolicy,
+    PortLeaseRegistry, RuntimeError, RuntimeEvent, RuntimeEventKind, RuntimeSnapshot,
 };
 
 const MAX_RETAINED_EVENTS: usize = 256;
@@ -22,6 +22,7 @@ pub struct NodeRuntime {
     peers: BTreeMap<NodeId, NodeDescriptor>,
     sessions: BTreeMap<SessionId, Session>,
     routes: BTreeMap<RouteId, Route>,
+    port_leases: PortLeaseRegistry,
     operations: OperationRegistry,
     problems: VecDeque<Problem>,
     events: VecDeque<RuntimeEvent>,
@@ -32,11 +33,13 @@ impl NodeRuntime {
     pub fn new(mut local_node: NodeDescriptor) -> Result<Self, RuntimeError> {
         local_node.online_state = OnlineState::Online;
         local_node.validate()?;
+        let local_node_id = local_node.id;
         Ok(Self {
             local_node,
             peers: BTreeMap::new(),
             sessions: BTreeMap::new(),
             routes: BTreeMap::new(),
+            port_leases: PortLeaseRegistry::new(local_node_id),
             operations: OperationRegistry::default(),
             problems: VecDeque::new(),
             events: VecDeque::new(),
@@ -118,6 +121,16 @@ impl NodeRuntime {
         Ok(session_id)
     }
 
+    /// Atomically closes one control Session, invalidates its live Routes and
+    /// releases every lease they own. Repeated close of an already-closed
+    /// Session is idempotent.
+    pub fn close_session(&mut self, session_id: SessionId) -> Result<(), RuntimeError> {
+        let mut candidate = self.clone();
+        candidate.close_session_inner(session_id)?;
+        *self = candidate;
+        Ok(())
+    }
+
     /// Atomically accepts a complete peer catalog through one already-ready
     /// Session. Transport authentication and envelope decoding remain caller
     /// responsibilities; this boundary prevents a valid catalog from being
@@ -129,6 +142,31 @@ impl NodeRuntime {
     ) -> Result<(), RuntimeError> {
         let mut candidate = self.clone();
         candidate.accept_peer_catalog_inner(session_id, descriptor)?;
+        *self = candidate;
+        Ok(())
+    }
+
+    /// Atomically replaces the host-owned local inventory without discarding
+    /// peers, Sessions or Routes. Only incompatible dependent Routes go Offline.
+    /// An identical replacement is idempotent and emits no duplicate event.
+    pub fn replace_local_catalog(
+        &mut self,
+        mut descriptor: NodeDescriptor,
+    ) -> Result<(), RuntimeError> {
+        descriptor.validate()?;
+        if descriptor.id != self.local_node.id {
+            return Err(RuntimeError::LocalCatalogNodeMismatch);
+        }
+        descriptor.online_state = self.local_node.online_state;
+        if descriptor == self.local_node {
+            return Ok(());
+        }
+        let mut candidate = self.clone();
+        let previous = std::mem::replace(&mut candidate.local_node, descriptor);
+        candidate.reconcile_node_catalog_change(previous.id, &previous)?;
+        candidate.emit(RuntimeEventKind::LocalCatalogReplaced {
+            node_id: previous.id,
+        });
         *self = candidate;
         Ok(())
     }
@@ -267,6 +305,9 @@ impl NodeRuntime {
         }
         let state = route.state;
         self.emit(RuntimeEventKind::RouteChanged { route_id, state });
+        if !active {
+            self.release_route_leases(route_id);
+        }
         Ok(())
     }
 
@@ -285,6 +326,184 @@ impl NodeRuntime {
         };
         self.emit(RuntimeEventKind::RouteChanged { route_id, state });
         Ok(())
+    }
+
+    /// Local consent owner renews an ongoing finite authorization. This does
+    /// not renew a port lease or authorize another Route, and keeps the epoch.
+    pub fn renew_route_authorization(
+        &mut self,
+        route_id: RouteId,
+        expires_at_ms: u64,
+        now_ms: u64,
+    ) -> Result<(), RuntimeError> {
+        let route = self
+            .routes
+            .get_mut(&route_id)
+            .ok_or(RuntimeError::UnknownRoute(route_id))?;
+        route.renew_authorization(expires_at_ms, now_ms)?;
+        let state = route.state;
+        self.emit(RuntimeEventKind::RouteChanged { route_id, state });
+        Ok(())
+    }
+
+    /// Reject a still-pending request. Repeated rejection is idempotent; an
+    /// active/previously authorized Route requires a separate revocation path.
+    pub fn deny_pending_route(&mut self, route_id: RouteId) -> Result<(), RuntimeError> {
+        let route = self
+            .routes
+            .get_mut(&route_id)
+            .ok_or(RuntimeError::UnknownRoute(route_id))?;
+        if route.authorization == AuthorizationState::Denied {
+            return Ok(());
+        }
+        if route.authorization != AuthorizationState::Pending || route.state != RouteState::Draft {
+            return Err(CoreError::InvalidAuthorizationTransition.into());
+        }
+        route.authorization = AuthorizationState::Denied;
+        self.emit(RuntimeEventKind::RouteChanged {
+            route_id,
+            state: RouteState::Draft,
+        });
+        Ok(())
+    }
+
+    pub fn set_local_port_lease_policy(
+        &mut self,
+        port: PortRef,
+        policy: PortLeasePolicy,
+    ) -> Result<(), RuntimeError> {
+        if port.node_id != self.local_node.id {
+            return Err(crate::PortLeaseError::NotLocalPort(port).into());
+        }
+        self.resolve_route_endpoint(port)?;
+        self.port_leases.set_policy(port, policy)?;
+        Ok(())
+    }
+
+    pub fn acquire_route_port_lease(
+        &mut self,
+        route_id: RouteId,
+        port: PortRef,
+        expires_at_ms: u64,
+        now_ms: u64,
+    ) -> Result<LeaseClaimOutcome, RuntimeError> {
+        let route = self
+            .routes
+            .get(&route_id)
+            .ok_or(RuntimeError::UnknownRoute(route_id))?;
+        if port.node_id != self.local_node.id || (route.source != port && route.sink != port) {
+            return Err(RuntimeError::LeasePortNotOnRoute { route_id, port });
+        }
+        let session = self
+            .sessions
+            .get(&route.session_id)
+            .ok_or(RuntimeError::UnknownSession(route.session_id))?;
+        if session.state != SessionState::Ready {
+            return Err(RuntimeError::LeaseAuthorizationRequired(route_id));
+        }
+        match route.authorization {
+            AuthorizationState::Authorized {
+                expires_at_ms: Some(authorization_expiry),
+            } => {
+                if authorization_expiry <= now_ms {
+                    return Err(RuntimeError::LeaseAuthorizationRequired(route_id));
+                }
+                if expires_at_ms > authorization_expiry {
+                    return Err(RuntimeError::LeaseExceedsAuthorization { route_id });
+                }
+            }
+            AuthorizationState::Authorized {
+                expires_at_ms: None,
+            } => {}
+            _ => return Err(RuntimeError::LeaseAuthorizationRequired(route_id)),
+        }
+        let outcome = self.port_leases.claim(
+            PortLeaseClaim {
+                port,
+                route_id,
+                session_id: route.session_id,
+                expires_at_ms,
+            },
+            now_ms,
+        )?;
+        self.emit(RuntimeEventKind::PortLeaseChanged {
+            port,
+            route_id,
+            active: true,
+        });
+        Ok(outcome)
+    }
+
+    #[must_use]
+    pub fn route_port_lease_claim(
+        &self,
+        route_id: RouteId,
+        port: PortRef,
+    ) -> Option<&PortLeaseClaim> {
+        self.port_leases.claim_for(port, route_id)
+    }
+
+    pub fn release_route_port_lease(
+        &mut self,
+        route_id: RouteId,
+        port: PortRef,
+        session_id: SessionId,
+    ) -> Result<bool, RuntimeError> {
+        let route = self
+            .routes
+            .get(&route_id)
+            .ok_or(RuntimeError::UnknownRoute(route_id))?;
+        if route.session_id != session_id {
+            return Err(RuntimeError::LeaseSessionMismatch {
+                route_id,
+                expected: route.session_id,
+                actual: session_id,
+            });
+        }
+        if port.node_id != self.local_node.id || (route.source != port && route.sink != port) {
+            return Err(RuntimeError::LeasePortNotOnRoute { route_id, port });
+        }
+        let released = self.port_leases.release(port, route_id, session_id)?;
+        if released {
+            self.emit(RuntimeEventKind::PortLeaseChanged {
+                port,
+                route_id,
+                active: false,
+            });
+        }
+        Ok(released)
+    }
+
+    pub fn expire_port_leases(&mut self, now_ms: u64) -> usize {
+        let expired = self
+            .port_leases
+            .claims()
+            .filter(|claim| claim.expires_at_ms <= now_ms)
+            .copied()
+            .collect::<Vec<_>>();
+        let count = self.port_leases.expire(now_ms);
+        for claim in expired {
+            self.emit(RuntimeEventKind::PortLeaseChanged {
+                port: claim.port,
+                route_id: claim.route_id,
+                active: false,
+            });
+            if let Some(route) = self.routes.get_mut(&claim.route_id)
+                && !matches!(
+                    route.state,
+                    RouteState::Stopped | RouteState::Failed | RouteState::Offline
+                )
+            {
+                route
+                    .mark_offline()
+                    .expect("eligible Route can become Offline");
+                self.emit(RuntimeEventKind::RouteChanged {
+                    route_id: claim.route_id,
+                    state: RouteState::Offline,
+                });
+            }
+        }
+        count
     }
 
     pub fn prepare_route(
@@ -313,6 +532,7 @@ impl NodeRuntime {
         now_ms: u64,
     ) -> Result<(), RuntimeError> {
         self.reconcile_route_before_activation(route_id)?;
+        self.require_route_leases(route_id, now_ms)?;
         let route = self
             .routes
             .get_mut(&route_id)
@@ -361,6 +581,7 @@ impl NodeRuntime {
             route_id,
             state: RouteState::Stopped,
         });
+        self.release_route_leases(route_id);
         Ok(())
     }
 
@@ -400,6 +621,7 @@ impl NodeRuntime {
             route_id,
             state: RouteState::Offline,
         });
+        self.release_route_leases(route_id);
         Ok(())
     }
 
@@ -462,6 +684,7 @@ impl NodeRuntime {
                     route_id,
                     state: RouteState::Offline,
                 });
+                self.release_route_leases(route_id);
             }
         }
         self.emit(RuntimeEventKind::PeerOnlineChanged { peer_id, online });
@@ -607,6 +830,7 @@ impl NodeRuntime {
             peers: self.peers.values().cloned().collect(),
             sessions: self.sessions.values().cloned().collect(),
             routes: self.routes.values().cloned().collect(),
+            port_leases: self.port_leases.claims().copied().collect(),
             operations: self.operations.records().cloned().collect(),
             problems: self.problems.iter().cloned().collect(),
             events: self.events.iter().cloned().collect(),
@@ -728,6 +952,84 @@ impl NodeRuntime {
         descriptor.validate()?;
         self.peers.insert(peer_id, descriptor);
 
+        self.reconcile_node_catalog_change(peer_id, &previous)?;
+        self.emit(RuntimeEventKind::PeerCatalogAccepted {
+            session_id,
+            peer_id,
+        });
+        Ok(())
+    }
+
+    fn close_session_inner(&mut self, session_id: SessionId) -> Result<(), RuntimeError> {
+        let (peer_id, state) = self
+            .sessions
+            .get(&session_id)
+            .map(|session| (session.remote_node_id, session.state))
+            .ok_or(RuntimeError::UnknownSession(session_id))?;
+        if state == SessionState::Closed {
+            return Ok(());
+        }
+        self.sessions
+            .get_mut(&session_id)
+            .expect("checked Session")
+            .begin_close()?;
+        self.emit(RuntimeEventKind::SessionStateChanged {
+            session_id,
+            state: SessionState::Closing,
+        });
+
+        let route_ids = self
+            .routes
+            .values()
+            .filter(|route| route.session_id == session_id)
+            .map(|route| route.id)
+            .collect::<Vec<_>>();
+        for route_id in route_ids {
+            let state = self.routes.get(&route_id).expect("collected Route").state;
+            if !matches!(
+                state,
+                RouteState::Stopped | RouteState::Failed | RouteState::Offline
+            ) {
+                self.routes
+                    .get_mut(&route_id)
+                    .expect("collected Route")
+                    .mark_offline()?;
+                self.emit(RuntimeEventKind::RouteChanged {
+                    route_id,
+                    state: RouteState::Offline,
+                });
+            }
+            self.release_route_leases(route_id);
+        }
+
+        self.sessions
+            .get_mut(&session_id)
+            .expect("checked Session")
+            .mark_closed()?;
+        self.emit(RuntimeEventKind::SessionStateChanged {
+            session_id,
+            state: SessionState::Closed,
+        });
+
+        let peer_has_live_session = self.sessions.values().any(|session| {
+            session.id != session_id
+                && session.remote_node_id == peer_id
+                && matches!(
+                    session.state,
+                    SessionState::Opening | SessionState::Ready | SessionState::Suspended
+                )
+        });
+        if !peer_has_live_session {
+            self.set_peer_online(peer_id, false)?;
+        }
+        Ok(())
+    }
+
+    fn reconcile_node_catalog_change(
+        &mut self,
+        peer_id: NodeId,
+        previous: &NodeDescriptor,
+    ) -> Result<(), RuntimeError> {
         let affected = self
             .routes
             .values()
@@ -774,10 +1076,6 @@ impl NodeRuntime {
                 self.invalidate_route_for_catalog(route_id, peer_id, adapter_id, issue)?;
             }
         }
-        self.emit(RuntimeEventKind::PeerCatalogAccepted {
-            session_id,
-            peer_id,
-        });
         Ok(())
     }
 
@@ -826,7 +1124,41 @@ impl NodeRuntime {
             route_id,
             state: RouteState::Offline,
         });
+        self.release_route_leases(route_id);
         Ok(())
+    }
+
+    fn require_route_leases(&self, route_id: RouteId, now_ms: u64) -> Result<(), RuntimeError> {
+        let route = self
+            .routes
+            .get(&route_id)
+            .ok_or(RuntimeError::UnknownRoute(route_id))?;
+        for port in [route.source, route.sink] {
+            if port.node_id == self.local_node.id
+                && self.port_leases.policy(port).is_some()
+                && !self.port_leases.has_current_claim(port, route_id, now_ms)
+            {
+                return Err(RuntimeError::LeaseClaimRequired { route_id, port });
+            }
+        }
+        Ok(())
+    }
+
+    fn release_route_leases(&mut self, route_id: RouteId) {
+        let released = self
+            .port_leases
+            .claims()
+            .filter(|claim| claim.route_id == route_id)
+            .copied()
+            .collect::<Vec<_>>();
+        self.port_leases.release_route(route_id);
+        for claim in released {
+            self.emit(RuntimeEventKind::PortLeaseChanged {
+                port: claim.port,
+                route_id,
+                active: false,
+            });
+        }
     }
 
     fn node(&self, id: NodeId) -> Result<&NodeDescriptor, RuntimeError> {

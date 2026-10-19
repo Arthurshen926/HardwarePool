@@ -29,7 +29,7 @@ The initial command ran inside the ordinary Codex filesystem/process sandbox:
 cargo run -p capyio-windows-input --bin capyio-ptp-inject -- --gesture one-finger-motion --inject --acknowledge-desktop-input
 ```
 
-The process identity was `DESKTOP-AT8EVE9\CodexSandboxOffline`, at medium
+The process identity was `LAB-WINDOWS-HOST\CodexSandboxOffline`, at medium
 integrity. Device creation succeeded, but the first native submission returned:
 
 ```text

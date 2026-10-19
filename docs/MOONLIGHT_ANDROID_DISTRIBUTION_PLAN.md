@@ -15,6 +15,15 @@ ADR 1425 adds an opt-in unified debug build using the rebuilt stage:
 ```
 
 The archive cache must contain the four pinned downloads before offline staging.
+
+For a complete integrated local debug APK after the stage exists, use
+`./scripts/build_integrated_android_debug.ps1`. This entrypoint requires the
+display stage and verifies both the unified Runtime/UI APK entries and the
+packaged display native library/notices. Plain `assembleDebug` remains a
+non-display-capable build when the stage property is absent; do not use that
+artifact to replace a complete integrated installation. The script does not
+install an APK or change Release integration/distribution policy.
+
 The generated manifest and compile database are checked before packaging; the
 packaged ARM64 library must byte-match its recorded hash. Optional native code
 is debug-only: Release prebuild fails deliberately. This does not close the

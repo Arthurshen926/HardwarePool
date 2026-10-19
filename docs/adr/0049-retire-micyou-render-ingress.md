@@ -58,7 +58,7 @@ and one capture endpoint, `CapyIO Microphone`.
 
 ## Controlled-host result
 
-The signed 21.83 package was installed on `DESKTOP-AT8EVE9` and exposes one
+The signed 21.83 package was installed on `LAB-WINDOWS-HOST` and exposes one
 active CapyIO render endpoint and one active CapyIO capture endpoint. A
 subsequent 21.84 float-pin experiment was rejected and rolled back to 21.83
 without reboot. Interactive-session probes opened the restored microphone for

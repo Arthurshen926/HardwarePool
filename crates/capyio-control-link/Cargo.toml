@@ -1,0 +1,20 @@
+[package]
+name = "capyio-control-link"
+description = "Authenticated catalog exchange composition for CapyIO platform hosts."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish = false
+
+[dependencies]
+capyio-core = { path = "../capyio-core" }
+capyio-protocol = { path = "../capyio-protocol" }
+capyio-runtime = { path = "../capyio-runtime" }
+capyio-control-host = { path = "../capyio-control-host" }
+capyio-control-tls = { path = "../capyio-control-tls" }
+thiserror.workspace = true
+
+[dev-dependencies]
+capyio-testkit = { path = "../capyio-testkit" }
+rcgen = { version = "=0.14.5", default-features = false, features = ["ring"] }

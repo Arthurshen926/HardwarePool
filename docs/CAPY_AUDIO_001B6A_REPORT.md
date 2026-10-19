@@ -2,7 +2,7 @@
 
 Date: 2026-08-28
 
-Target: `DESKTOP-AT8EVE9` controlled local lab permitted by ADR 0029
+Target: `LAB-WINDOWS-HOST` controlled local lab permitted by ADR 0029
 
 Commit under test: `23f55f33d54bb8b9b011616a03c3713979ddb31b`
 
@@ -18,7 +18,7 @@ Commit under test: `23f55f33d54bb8b9b011616a03c3713979ddb31b`
 - account: `LocalSystem`;
 - start type: manual/demand start;
 - trusted launch configuration: explicit local Broker path,
-  `100.66.231.100` and port `65530`.
+  `<LAB_IPV4_04>` and port `65530`.
 
 No driver package, boot configuration, Secure Boot, BitLocker or Driver
 Verifier setting changed during this run.

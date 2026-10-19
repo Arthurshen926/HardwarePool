@@ -1,5 +1,6 @@
 using System;
 using System.IO;
+using System.Threading;
 using Nefarius.ViGEm.Client;
 using Nefarius.ViGEm.Client.Targets;
 
@@ -35,10 +36,36 @@ internal static class Program
             IXbox360Controller controller = client.CreateXbox360Controller();
             controller.AutoSubmitReport = false;
             controller.Connect();
+            // The driver callback only replaces a fixed-size mailbox. Pipe I/O
+            // belongs to the worker, never the feedback callback.
+            int pendingFeedback = -1;
+            int running = 1;
+            Thread feedbackWriter = null;
+            Xbox360FeedbackReceivedEventHandler feedback = (sender, report) =>
+                Interlocked.Exchange(ref pendingFeedback, report.SmallMotor | (report.LargeMotor << 8));
             try
             {
                 Console.Out.WriteLine("CAPYIO_VIGEM_X360_SIDECAR_READY");
                 Console.Out.Flush();
+                Stream output = Console.OpenStandardOutput();
+                feedbackWriter = new Thread(() => {
+                    byte[] motors = new byte[2];
+                    try {
+                        while (Volatile.Read(ref running) != 0) {
+                            int value = Interlocked.Exchange(ref pendingFeedback, -1);
+                            if (value >= 0) {
+                                motors[0] = (byte)value;
+                                motors[1] = (byte)(value >> 8);
+                                output.Write(motors, 0, motors.Length);
+                                output.Flush();
+                            }
+                            Thread.Sleep(4);
+                        }
+                    } catch (IOException) { /* Parent closed its feedback pipe. */ }
+                });
+                feedbackWriter.IsBackground = true;
+                feedbackWriter.Start();
+                controller.FeedbackReceived += feedback;
 
                 Stream input = Console.OpenStandardInput();
                 byte[] frame = new byte[FrameBytes];
@@ -49,6 +76,9 @@ internal static class Program
             }
             finally
             {
+                controller.FeedbackReceived -= feedback;
+                Interlocked.Exchange(ref running, 0);
+                if (feedbackWriter != null) feedbackWriter.Join(100);
                 controller.ResetReport();
                 controller.SubmitReport();
                 controller.Disconnect();

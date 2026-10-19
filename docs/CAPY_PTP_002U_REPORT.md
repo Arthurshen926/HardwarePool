@@ -31,7 +31,7 @@ no Activity, service, receiver, transport or permission.
 - `libcapyio_android_jni.so` built for `arm64-v8a`;
 - release AAR assembled with `classes.jar`, manifest and
   `jni/arm64-v8a/libcapyio_android_jni.so`;
-- wireless ADB connected at `100.66.157.119:40263`; read-only properties report
+- wireless ADB connected at `<LAB_IPV4_03>:40263`; read-only properties report
   model `V2419A`, ABI `arm64-v8a`, API 36.
 
 No APK was created or installed, and the device was not modified.

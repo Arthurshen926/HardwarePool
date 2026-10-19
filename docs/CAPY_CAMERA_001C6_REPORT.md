@@ -46,7 +46,7 @@ reported:
 
 ```text
 CAPYIO_CAMERA_SHARED_PROBE_OPEN scope=local-lab
-stream=00010203-0405-0607-0809-0a0b0c0d0e0f epoch=2
+stream=<LAB_ID_02> epoch=2
 ```
 
 The probe then correctly timed out with zero frames, and the receiver rejected
@@ -65,7 +65,7 @@ service must own it under a separate authorization and recovery plan.
 
 ## Live physical Local evidence
 
-The explicitly selected wireless endpoint `100.66.157.119:36275` reported the
+The explicitly selected wireless endpoint `<LAB_IPV4_03>:36275` reported the
 same authorized `V2419A` / `PD2419` device. The installed lab application retained
 its CAMERA and INTERNET grants; no APK installation or permission mutation was
 performed. An exact `adb reverse tcp:38173 tcp:38173` carried the Camera2 /
@@ -81,8 +81,8 @@ While the producer remained live, the separately launched read-only process
 reported:
 
 ```text
-CAPYIO_CAMERA_SHARED_PROBE_OPEN scope=local-lab stream=303db070-b6c3-223a-14cb-c9a26b1f78dd epoch=8095040389746
-CAPYIO_CAMERA_SHARED_PROBE_OK scope=local-lab stream=303db070-b6c3-223a-14cb-c9a26b1f78dd epoch=8095040389746 observed_frames=30 discontinuities=4 first_sequence=28 last_sequence=112 first_checksum=e6cbbef51d37c0a9 last_checksum=a36484d4d874d600
+CAPYIO_CAMERA_SHARED_PROBE_OPEN scope=local-lab stream=<LAB_ID_07> epoch=8095040389746
+CAPYIO_CAMERA_SHARED_PROBE_OK scope=local-lab stream=<LAB_ID_07> epoch=8095040389746 observed_frames=30 discontinuities=4 first_sequence=28 last_sequence=112 first_checksum=e6cbbef51d37c0a9 last_checksum=a36484d4d874d600
 ```
 
 This proves phone AVC capture reaches Windows, is decoded to NV12, is published

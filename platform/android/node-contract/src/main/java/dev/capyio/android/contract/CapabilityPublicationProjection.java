@@ -8,6 +8,18 @@ import java.util.Set;
 public final class CapabilityPublicationProjection {
     private CapabilityPublicationProjection() {}
 
+    public static CapabilityCatalogSnapshot projectWithSpeakerSelection(
+            CapabilityCatalogSnapshot catalog, Set<String> selectedSources, boolean speakerSelected) {
+        CapabilityCatalogSnapshot publication = project(catalog, selectedSources);
+        List<CapabilitySnapshot> selected = new ArrayList<>();
+        for (CapabilitySnapshot capability : publication.capabilities()) {
+            if (capability.kind() != CapabilityKind.SPEAKER || speakerSelected) {
+                selected.add(capability);
+            }
+        }
+        return new CapabilityCatalogSnapshot(publication.nodeId(), publication.moduleCount(), selected);
+    }
+
     public static CapabilityCatalogSnapshot project(
             CapabilityCatalogSnapshot catalog,
             Set<String> selectedSourceCapabilityIds) {

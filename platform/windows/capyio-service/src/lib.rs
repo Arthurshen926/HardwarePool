@@ -14,11 +14,24 @@ use capyio_native_audio_lan::{
 use serde::{Deserialize, Serialize};
 
 #[cfg(windows)]
+mod audio_route_control;
+#[cfg(windows)]
+pub use audio_route_control::{
+    AudioRouteDirection, AudioRouteKey, AudioRouteOperation, AudioRouteServiceClient,
+    AudioRouteSnapshot, AudioRouteStart, ControlledAudioRoutes,
+};
+
+#[cfg(windows)]
+mod camera_ingress;
+#[cfg(windows)]
+pub use camera_ingress::{CameraIngressService, allocate_camera_producer};
+#[cfg(windows)]
 mod camera_control;
 #[cfg(windows)]
 mod control;
+pub mod display_worker_failure;
 #[cfg(windows)]
-mod local_pipe;
+pub mod local_pipe;
 mod microphone;
 #[cfg(windows)]
 mod microphone_control;
@@ -38,6 +51,8 @@ pub use display_host::android_gamestream_properties_from_single_display_config;
 #[cfg(windows)]
 pub use display_runtime::{DisplayExecutionSnapshot, DisplayExecutionState, DisplayServiceRuntime};
 #[cfg(windows)]
+pub use display_runtime::{DisplayPeerLaunchPrepared, DisplayPeerLaunchRequest};
+#[cfg(windows)]
 mod display_route;
 #[cfg(windows)]
 mod display_session;
@@ -46,9 +61,10 @@ mod display_worker;
 
 #[cfg(windows)]
 pub use display_host::{
-    DisplayServiceHost, LoadedDisplayServiceConfig, LoadedSingleDisplayServiceConfig,
-    SingleDisplayServiceHost, SingleDisplaySnapshot, SingleDisplayState, SingleDisplayStatusHandle,
-    load_display_service_config, load_single_display_service_config,
+    DisplayServiceHost, DisplaySessionSettings, LoadedDisplayServiceConfig,
+    LoadedSingleDisplayServiceConfig, SingleDisplayServiceHost, SingleDisplaySnapshot,
+    SingleDisplayState, SingleDisplayStatusHandle, load_display_service_config,
+    load_single_display_service_config,
 };
 #[cfg(windows)]
 pub use display_route::{
@@ -117,6 +133,8 @@ pub struct ServiceConfig {
     pub console_run_for: Option<Duration>,
     pub single_display_config: Option<PathBuf>,
     pub display_control_user_sid: Option<String>,
+    pub audio_route_control_user_sid: Option<String>,
+    pub camera_ingress_user_sid: Option<String>,
 }
 
 impl ServiceConfig {
@@ -142,9 +160,40 @@ impl ServiceConfig {
         let mut console_run_for = None;
         let mut single_display_config = None;
         let mut display_control_user_sid = None;
+        let mut audio_route_control_user_sid = None;
+        let mut camera_ingress_user_sid = None;
 
         while let Some(argument) = arguments.next() {
             match argument.as_str() {
+                "--camera-ingress-user-sid" => {
+                    let sid = next_value(&mut arguments, "--camera-ingress-user-sid")?;
+                    if camera_ingress_user_sid.is_some()
+                        || sid.len() > 184
+                        || !sid.starts_with("S-1-")
+                        || !sid
+                            .bytes()
+                            .all(|b| b == b'S' || b == b'-' || b.is_ascii_digit())
+                    {
+                        return Err(ConfigError::InvalidMode);
+                    }
+                    camera_ingress_user_sid = Some(sid);
+                }
+                "--audio-route-control-user-sid" => {
+                    let sid = next_value(&mut arguments, "--audio-route-control-user-sid")?;
+                    if camera_ingress_user_sid.is_some() && console {
+                        return Err(ConfigError::InvalidMode);
+                    }
+                    if audio_route_control_user_sid.is_some()
+                        || sid.len() > 184
+                        || !sid.starts_with("S-1-")
+                        || !sid
+                            .bytes()
+                            .all(|b| b == b'S' || b == b'-' || b.is_ascii_digit())
+                    {
+                        return Err(ConfigError::InvalidMode);
+                    }
+                    audio_route_control_user_sid = Some(sid);
+                }
                 "--display-control-user-sid" => {
                     let sid = next_value(&mut arguments, "--display-control-user-sid")?;
                     if display_control_user_sid.is_some()
@@ -252,7 +301,7 @@ impl ServiceConfig {
             return Err(ConfigError::MissingBroker);
         }
         let bind_ip = bind_ip.ok_or(ConfigError::MissingBindIp)?;
-        if bind_ip.is_unspecified() {
+        if !is_concrete_unicast(bind_ip) {
             return Err(ConfigError::InvalidBindIp);
         }
         let port = port
@@ -325,7 +374,25 @@ impl ServiceConfig {
                 if bind_ip == peer && Some(port) == peer_port {
                     return Err(ConfigError::DuplicateNativeEndpoint);
                 }
+                if let Some(microphone) = &native_microphone {
+                    let speaker_local = SocketAddrV4::new(bind_ip, port);
+                    let speaker_peer =
+                        SocketAddrV4::new(peer, peer_port.expect("validated native peer port"));
+                    // Each native direction owns a separate explicit-peer UDP socket.
+                    // Reject shared endpoints before starting either broker child.
+                    if speaker_local == microphone.local {
+                        return Err(ConfigError::ConflictingNativeLocalEndpoints);
+                    }
+                    if speaker_peer == microphone.peer {
+                        return Err(ConfigError::ConflictingNativePeerEndpoints);
+                    }
+                }
             }
+        }
+        if audio_route_control_user_sid.is_some()
+            && (mode != ServiceBrokerMode::NativeSpeaker || native_microphone.is_none() || console)
+        {
+            return Err(ConfigError::InvalidMode);
         }
         Ok(Self {
             mode,
@@ -338,6 +405,8 @@ impl ServiceConfig {
             console_run_for,
             single_display_config,
             display_control_user_sid,
+            audio_route_control_user_sid,
+            camera_ingress_user_sid,
         })
     }
 
@@ -375,6 +444,11 @@ impl ServiceConfig {
                     Ok(ServiceBrokerProcess::NativeAudio(NativeAudioSupervisor {
                         speaker,
                         microphone,
+                        microphone_local: self.native_microphone.as_ref().unwrap().local,
+                        microphone_peer: self.native_microphone.as_ref().unwrap().peer,
+                        microphone_generation: 0,
+                        microphone_problem: None,
+                        route_owned: [false; 2],
                     }))
                 } else {
                     Ok(ServiceBrokerProcess::NativeSpeaker(speaker))
@@ -418,6 +492,8 @@ pub enum ConfigError {
     InvalidMicrophonePeerPort,
     DuplicateMicrophoneEndpoint,
     DuplicateNativeEndpoint,
+    ConflictingNativeLocalEndpoints,
+    ConflictingNativePeerEndpoints,
     InvalidRunFor,
     ConsoleRunPairRequired,
 }
@@ -434,7 +510,7 @@ impl std::fmt::Display for ConfigError {
             Self::MissingBroker => formatter.write_str("--broker is required"),
             Self::MissingBindIp => formatter.write_str("--bind-ip is required"),
             Self::InvalidBindIp => {
-                formatter.write_str("--bind-ip must be a non-unspecified IPv4 literal")
+                formatter.write_str("--bind-ip must be a concrete unicast IPv4 literal")
             }
             Self::InvalidPort => formatter.write_str("--port must be a non-zero u16"),
             Self::MissingPeerIp => {
@@ -468,6 +544,12 @@ impl std::fmt::Display for ConfigError {
             Self::DuplicateNativeEndpoint => {
                 formatter.write_str("native local and peer endpoints must differ")
             }
+            Self::ConflictingNativeLocalEndpoints => formatter.write_str(
+                "native speaker and microphone must use distinct local UDP endpoints; check --bind-ip/--port and --microphone-bind-ip/--microphone-port",
+            ),
+            Self::ConflictingNativePeerEndpoints => formatter.write_str(
+                "native speaker and microphone must use distinct peer UDP endpoints; check --peer-ip/--peer-port and --microphone-peer-ip/--microphone-peer-port",
+            ),
             Self::InvalidRunFor => formatter.write_str("--run-for-ms must be between 1 and 600000"),
             Self::ConsoleRunPairRequired => {
                 formatter.write_str("--console and --run-for-ms must be supplied together")
@@ -496,9 +578,20 @@ pub struct BrokerServiceSnapshot {
     pub generation: u64,
     pub receiver_present: bool,
     pub problem_code: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub local_endpoint: Option<SocketAddrV4>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub peer_endpoint: Option<SocketAddrV4>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub produced_frames: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub consumed_frames: Option<u64>,
 }
 
 pub trait BrokerProcess {
+    fn native_microphone(&mut self, _start: Option<bool>) -> Result<BrokerServiceSnapshot, String> {
+        Err("CAPY.WINDOWS_SERVICE.NATIVE_MICROPHONE_UNAVAILABLE".to_owned())
+    }
     fn start(&mut self) -> Result<(), &'static str>;
     fn running(&mut self) -> Result<bool, String>;
     fn activation_ready(&mut self) -> Result<bool, String> {
@@ -550,15 +643,24 @@ pub enum ServiceBrokerProcess {
 pub struct NativeAudioSupervisor {
     speaker: NativeSpeakerSupervisor,
     microphone: NativeMicrophoneSupervisor,
+    microphone_local: SocketAddrV4,
+    microphone_peer: SocketAddrV4,
+    microphone_generation: u64,
+    microphone_problem: Option<String>,
+    // Mic, speaker. The old IU pipe cannot start/stop a SID-owned Route worker.
+    route_owned: [bool; 2],
 }
 
 trait NativeStartChild {
+    #[cfg(test)]
     fn start_child(&mut self) -> Result<(), NativeSpeakerSupervisorError>;
     fn running_child(&mut self) -> Result<bool, NativeSpeakerSupervisorError>;
+    #[cfg(test)]
     fn stop_child(&mut self) -> Result<(), NativeSpeakerSupervisorError>;
 }
 
 impl NativeStartChild for NativeSpeakerSupervisor {
+    #[cfg(test)]
     fn start_child(&mut self) -> Result<(), NativeSpeakerSupervisorError> {
         self.start().map(|_| ())
     }
@@ -568,12 +670,14 @@ impl NativeStartChild for NativeSpeakerSupervisor {
             .map(|status| matches!(status, NativeSpeakerSupervisorStatus::Running { .. }))
     }
 
+    #[cfg(test)]
     fn stop_child(&mut self) -> Result<(), NativeSpeakerSupervisorError> {
         self.stop()
     }
 }
 
 impl NativeStartChild for NativeMicrophoneSupervisor {
+    #[cfg(test)]
     fn start_child(&mut self) -> Result<(), NativeSpeakerSupervisorError> {
         self.start().map(|_| ())
     }
@@ -583,17 +687,20 @@ impl NativeStartChild for NativeMicrophoneSupervisor {
             .map(|status| matches!(status, NativeSpeakerSupervisorStatus::Running { .. }))
     }
 
+    #[cfg(test)]
     fn stop_child(&mut self) -> Result<(), NativeSpeakerSupervisorError> {
         self.stop()
     }
 }
 
+#[cfg(test)]
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 struct NativePairHealth {
     speaker_running: bool,
     microphone_running: bool,
 }
 
+#[cfg(test)]
 impl NativePairHealth {
     fn any_running(self) -> bool {
         self.speaker_running || self.microphone_running
@@ -604,6 +711,7 @@ impl NativePairHealth {
     }
 }
 
+#[cfg(test)]
 fn native_pair_health(
     speaker: &mut impl NativeStartChild,
     microphone: &mut impl NativeStartChild,
@@ -616,6 +724,7 @@ fn native_pair_health(
     })
 }
 
+#[cfg(test)]
 fn start_native_pair(
     speaker: &mut impl NativeStartChild,
     microphone: &mut impl NativeStartChild,
@@ -630,28 +739,93 @@ fn start_native_pair(
 
 impl NativeAudioSupervisor {
     fn start(&mut self) -> Result<(), NativeSpeakerSupervisorError> {
-        start_native_pair(&mut self.speaker, &mut self.microphone)
+        self.speaker.start().map(|_| ())
     }
 
     fn running_any(&mut self) -> Result<bool, NativeSpeakerSupervisorError> {
-        native_pair_health(&mut self.speaker, &mut self.microphone)
-            .map(NativePairHealth::any_running)
+        self.speaker.running_child()
     }
 
     fn all_running(&mut self) -> Result<bool, NativeSpeakerSupervisorError> {
-        native_pair_health(&mut self.speaker, &mut self.microphone)
-            .map(NativePairHealth::all_running)
+        self.speaker.running_child()
     }
 
     fn stop(&mut self) -> Result<(), NativeSpeakerSupervisorError> {
-        let microphone = self.microphone.stop();
-        let speaker = self.speaker.stop();
-        microphone.and(speaker)
+        self.speaker.stop()
     }
 }
 
 impl BrokerProcess for ServiceBrokerProcess {
+    fn native_microphone(&mut self, start: Option<bool>) -> Result<BrokerServiceSnapshot, String> {
+        let Self::NativeAudio(process) = self else {
+            return Err("CAPY.WINDOWS_SERVICE.NATIVE_MICROPHONE_UNAVAILABLE".to_owned());
+        };
+        if start.is_some() && process.route_owned[0] {
+            return Err("CAPY.AUDIO_ROUTE.OWNED".into());
+        }
+        if let Some(start) = start {
+            if start {
+                if !process
+                    .microphone
+                    .running_child()
+                    .map_err(|error| error.to_string())?
+                {
+                    process.microphone_generation = process
+                        .microphone_generation
+                        .checked_add(1)
+                        .ok_or_else(|| "CAPY.WINDOWS_SERVICE.GENERATION_EXHAUSTED".to_owned())?;
+                    process.microphone_problem = None;
+                    if let Err(code) = map_native_start(process.microphone.start().map(|_| ())) {
+                        process.microphone_problem = Some(code.to_owned());
+                        return Err(code.to_owned());
+                    }
+                }
+            } else {
+                process
+                    .microphone
+                    .stop()
+                    .map_err(|error| error.to_string())?;
+                process.microphone_problem = None;
+            }
+        }
+        let status = process
+            .microphone
+            .status()
+            .map_err(|error| error.to_string())?;
+        if matches!(status, NativeSpeakerSupervisorStatus::Exited { .. })
+            && process.microphone_problem.is_none()
+        {
+            process.microphone_problem =
+                Some("CAPY.WINDOWS_SERVICE.NATIVE_MICROPHONE_EXITED".to_owned());
+        }
+        #[cfg(windows)]
+        let metrics = capyio_windows_capture_ring::CaptureRingObserver::attach()
+            .ok()
+            .map(|observer| observer.metrics());
+        #[cfg(not(windows))]
+        let metrics: Option<capyio_windows_capture_ring::CaptureRingMetrics> = None;
+        Ok(BrokerServiceSnapshot {
+            schema_version: 1,
+            state: match status {
+                NativeSpeakerSupervisorStatus::Running { .. } => BrokerServiceState::Active,
+                NativeSpeakerSupervisorStatus::Stopped if process.microphone_problem.is_none() => {
+                    BrokerServiceState::Stopped
+                }
+                _ => BrokerServiceState::Failed,
+            },
+            generation: process.microphone_generation,
+            receiver_present: false,
+            problem_code: process.microphone_problem.clone(),
+            local_endpoint: Some(process.microphone_local),
+            peer_endpoint: Some(process.microphone_peer),
+            produced_frames: metrics.as_ref().map(|value| value.produced_frames),
+            consumed_frames: metrics.as_ref().map(|value| value.consumed_frames),
+        })
+    }
     fn start(&mut self) -> Result<(), &'static str> {
+        if matches!(self, Self::NativeAudio(process) if process.route_owned[1]) {
+            return Err("CAPY.AUDIO_ROUTE.OWNED");
+        }
         match self {
             Self::AudioShareCompatibility(process) => BrokerProcess::start(process),
             Self::NativeSpeaker(process) => map_native_start(process.start().map(|_| ())),
@@ -693,6 +867,9 @@ impl BrokerProcess for ServiceBrokerProcess {
     }
 
     fn stop(&mut self) -> Result<(), String> {
+        if matches!(self, Self::NativeAudio(process) if process.route_owned[1]) {
+            return Err("CAPY.AUDIO_ROUTE.OWNED".into());
+        }
         match self {
             Self::AudioShareCompatibility(process) => BrokerProcess::stop(process),
             Self::NativeSpeaker(process) => process.stop().map_err(|error| error.to_string()),
@@ -874,6 +1051,10 @@ impl<P: BrokerProcess> BrokerServiceRuntime<P> {
             generation: self.generation,
             receiver_present: self.receiver_present,
             problem_code: self.problem_code.map(str::to_owned),
+            local_endpoint: None,
+            peer_endpoint: None,
+            produced_frames: None,
+            consumed_frames: None,
         }
     }
 
@@ -966,6 +1147,31 @@ mod tests {
             self.stops += 1;
             Ok(())
         }
+    }
+
+    #[test]
+    fn camera_allocator_requires_explicit_sid_and_service_mode() {
+        let base = [
+            "service",
+            "--broker",
+            "worker.exe",
+            "--bind-ip",
+            "127.0.0.1",
+            "--port",
+            "40101",
+        ];
+        let valid = ["--camera-ingress-user-sid", "S-1-5-21-1-2-3-1001"];
+        let config = ServiceConfig::parse(base.into_iter().chain(valid)).unwrap();
+        assert_eq!(config.camera_ingress_user_sid.as_deref(), Some(valid[1]));
+        assert!(ServiceConfig::parse(base.into_iter().chain(valid).chain(["--console"])).is_err());
+        assert!(ServiceConfig::parse(base.into_iter().chain(valid).chain(valid)).is_err());
+        assert!(
+            ServiceConfig::parse(
+                base.into_iter()
+                    .chain(["--camera-ingress-user-sid", "S-1-5-18)(A;;GA;;;WD"])
+            )
+            .is_err()
+        );
     }
 
     #[test]
@@ -1142,6 +1348,100 @@ mod tests {
             ]),
             Err(ConfigError::UnexpectedMicrophoneConfig)
         ));
+    }
+
+    fn native_audio_config(endpoints: [&str; 4]) -> Result<ServiceConfig, ConfigError> {
+        let [
+            speaker_local,
+            speaker_peer,
+            microphone_local,
+            microphone_peer,
+        ] = endpoints.map(|endpoint| endpoint.parse::<SocketAddrV4>().expect("test endpoint"));
+        ServiceConfig::parse([
+            "service".to_owned(),
+            "--mode".to_owned(),
+            "native-speaker".to_owned(),
+            "--broker".to_owned(),
+            "speaker.exe".to_owned(),
+            "--bind-ip".to_owned(),
+            speaker_local.ip().to_string(),
+            "--port".to_owned(),
+            speaker_local.port().to_string(),
+            "--peer-ip".to_owned(),
+            speaker_peer.ip().to_string(),
+            "--peer-port".to_owned(),
+            speaker_peer.port().to_string(),
+            "--microphone-broker".to_owned(),
+            "microphone.exe".to_owned(),
+            "--microphone-bind-ip".to_owned(),
+            microphone_local.ip().to_string(),
+            "--microphone-port".to_owned(),
+            microphone_local.port().to_string(),
+            "--microphone-peer-ip".to_owned(),
+            microphone_peer.ip().to_string(),
+            "--microphone-peer-port".to_owned(),
+            microphone_peer.port().to_string(),
+        ])
+    }
+
+    #[test]
+    fn native_audio_rejects_a_shared_local_udp_endpoint_before_starting_brokers() {
+        let error = native_audio_config([
+            "100.64.0.1:46001",
+            "100.64.0.2:46000",
+            "100.64.0.1:46001",
+            "100.64.0.2:46010",
+        ])
+        .expect_err("two broker children cannot bind the same local socket");
+        assert_eq!(error, ConfigError::ConflictingNativeLocalEndpoints);
+        assert!(error.to_string().contains("--microphone-port"));
+    }
+
+    #[test]
+    fn native_audio_rejects_a_shared_peer_udp_endpoint() {
+        let error = native_audio_config([
+            "100.64.0.1:46001",
+            "100.64.0.2:46000",
+            "100.64.0.1:46011",
+            "100.64.0.2:46000",
+        ])
+        .expect_err("Android directions own distinct explicit-peer sockets");
+        assert_eq!(error, ConfigError::ConflictingNativePeerEndpoints);
+        assert!(error.to_string().contains("--microphone-peer-port"));
+    }
+
+    #[test]
+    fn native_audio_allows_equal_ports_on_distinct_ip_addresses() {
+        native_audio_config([
+            "100.64.0.1:46001",
+            "100.64.0.2:46000",
+            "100.64.0.3:46001",
+            "100.64.0.4:46000",
+        ])
+        .expect("socket identity includes the address, not just the port");
+    }
+
+    #[test]
+    fn service_config_rejects_non_unicast_bind_addresses() {
+        for mode in ["audio-share-compatibility", "native-speaker"] {
+            for bind_ip in ["0.0.0.0", "239.1.2.3", "255.255.255.255"] {
+                let result = ServiceConfig::parse([
+                    "service",
+                    "--mode",
+                    mode,
+                    "--broker",
+                    "broker.exe",
+                    "--bind-ip",
+                    bind_ip,
+                    "--port",
+                    "46001",
+                ]);
+                assert_eq!(
+                    result.expect_err("bind IP must be unicast"),
+                    ConfigError::InvalidBindIp
+                );
+            }
+        }
     }
 
     #[test]

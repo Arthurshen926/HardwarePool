@@ -67,8 +67,8 @@ pub use display_session::{
 #[cfg(windows)]
 pub use engine_output::{
     DisplayOutputBindingError, VerifiedWindowsDisplayOutput, activate_owned_windows_display_output,
-    configure_process_display_dpi_awareness, verify_owned_windows_display_output,
-    verify_static_capyio_display_output,
+    configure_owned_windows_display_output, configure_process_display_dpi_awareness,
+    verify_owned_windows_display_output, verify_static_capyio_display_output,
 };
 pub use error::WindowsDisplayError;
 pub use idd_control::{

@@ -32,7 +32,7 @@ frame metadata and a checksum; it does not retain pixels or video.
 
 ## Evidence
 
-On the approved `DESKTOP-AT8EVE9` / unified Android 0.5.6 lab, the elevated
+On the approved `LAB-WINDOWS-HOST` / unified Android 0.5.6 lab, the elevated
 gate received decoded phone frame sequence 3, timestamp 66,666,000 ns,
 1,382,400 NV12 bytes and checksum 112,335,401. The separate Media Foundation
 consumer passed while the composed action was active. Stop left no Android

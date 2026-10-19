@@ -1,6 +1,6 @@
 use capyio_core::{
-    AdapterHealth, AdapterInstanceId, AdapterState, NodeId, ProblemId, RouteId, RouteState,
-    SessionId, SessionState,
+    AdapterHealth, AdapterInstanceId, AdapterState, NodeId, PortRef, ProblemId, RouteId,
+    RouteState, SessionId, SessionState,
 };
 use serde::{Deserialize, Serialize};
 
@@ -15,6 +15,9 @@ pub struct RuntimeEvent {
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum RuntimeEventKind {
+    LocalCatalogReplaced {
+        node_id: NodeId,
+    },
     PeerRegistered {
         peer_id: NodeId,
     },
@@ -47,6 +50,11 @@ pub enum RuntimeEventKind {
     RouteChanged {
         route_id: RouteId,
         state: RouteState,
+    },
+    PortLeaseChanged {
+        port: PortRef,
+        route_id: RouteId,
+        active: bool,
     },
     ProblemReported {
         problem_id: ProblemId,

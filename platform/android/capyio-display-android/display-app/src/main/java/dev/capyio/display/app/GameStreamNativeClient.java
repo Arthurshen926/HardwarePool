@@ -30,6 +30,9 @@ final class GameStreamNativeClient {
         byte[] host = expected.hostIpv4();
         String hostText = (host[0] & 0xff) + "." + (host[1] & 0xff) + "."
                 + (host[2] & 0xff) + "." + (host[3] & 0xff);
+        android.util.Log.i("CapyIODisplay", "Receiver target="+hostText+":"+(expected.portBase()+21)
+                +" mode="+expected.width()+"x"+expected.height()+"@"+expected.refreshMillihertz()
+                +" bitrateKbps="+expected.bitrateKbps()+" codec="+expected.codec());
         return nativeRun(hostText, expected.portBase(), expected.width(), expected.height(),
                 expected.refreshMillihertz(), expected.codec(), expected.dynamicRange(),
                 expected.bitrateKbps(), key, keyId);
@@ -49,16 +52,20 @@ final class GameStreamNativeClient {
 
     @SuppressWarnings("unused") // Called from JNI.
     private void onNativeStage(String stage) {
+        // Native stage messages are closed, bounded stage names/codes; never RTSP payloads.
+        android.util.Log.i("CapyIODisplay", stage);
         statusListener.onStatus(stage);
     }
 
     @SuppressWarnings("unused") // Called from JNI.
     private void onNativeConnected() {
+        android.util.Log.i("CapyIODisplay", "GameStream video connected");
         statusListener.onStatus("GameStream video connected");
     }
 
     @SuppressWarnings("unused") // Called from JNI.
     private void onNativeTerminated(int errorCode) {
+        android.util.Log.w("CapyIODisplay", "GameStream terminated code="+errorCode);
         statusListener.onStatus("GameStream terminated (" + errorCode + ")");
     }
 

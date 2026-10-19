@@ -31,7 +31,7 @@ Display is excluded until its feature branch is complete.
 ## Ordered slices
 
 1. **A01A — catalog/UI contract (complete):** project local and peer Capability
-   catalogs through `UiSnapshot` schema 4; show Source/Sink/Control directions;
+   catalogs through `UiSnapshot` schema 5; show Source/Sink/Control directions;
    allow only local Source publication selection; keep fixture state labeled.
 2. **A01B — native module registry (IMU and gamepad state attached):** A01B1 adds the
    bounded schema-v1 Android-local DTO and service-owned registry, attaches the

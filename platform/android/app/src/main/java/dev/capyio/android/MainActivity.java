@@ -3,20 +3,29 @@ package dev.capyio.android;
 import android.Manifest;
 import android.annotation.SuppressLint;
 import android.app.Activity;
+import android.app.AlertDialog;
 import android.content.ComponentName;
 import android.content.Context;
 import android.content.Intent;
 import android.content.ServiceConnection;
 import android.content.pm.PackageManager;
+import android.content.res.Configuration;
 import android.os.Build;
 import android.os.Bundle;
 import android.os.Handler;
 import android.os.IBinder;
 import android.os.Looper;
+import android.os.VibrationEffect;
+import android.os.Vibrator;
+import android.os.VibratorManager;
 import android.webkit.JavascriptInterface;
 import android.webkit.WebView;
+import android.graphics.Rect;
+import android.view.MotionEvent;
 import android.view.View;
 import android.view.WindowInsets;
+import android.view.WindowInsetsController;
+import android.view.WindowManager;
 import android.widget.Button;
 import android.widget.TextView;
 import android.widget.Toast;
@@ -41,7 +50,10 @@ public final class MainActivity extends Activity {
     private static final int REQUEST_CAMERA_PERMISSIONS = 8102;
     private static final int REQUEST_CONNECTED_DEVICE_NOTIFICATION = 8103;
     private static final int REQUEST_DISPLAY_PROVISIONING = 8104;
+    private static final int REQUEST_PAIRING_INVITATION = 8105;
     private static final long REFRESH_INTERVAL_MILLIS = 250;
+    private static final String TOUCHPAD_HAPTIC_PREFS = "touchpad_haptics";
+    private static final String TOUCHPAD_HAPTIC_STRENGTH = "strength";
     private static final String SHARED_UI_URL = AndroidAssetWebViewClient.ORIGIN
             + "/capyio-ui/index.html?view=quick";
 
@@ -88,6 +100,25 @@ public final class MainActivity extends Activity {
     private View nativeControls;
     private WebView sharedUi;
     private boolean sharedUiLoaded;
+    private boolean touchpadImmersive;
+    private AndroidPairingImportPlan pendingPairingImport;
+    private AlertDialog pairingImportDialog;
+    private volatile int touchpadRawDowns;
+    private volatile int touchpadRawPointerDowns;
+    private volatile int touchpadRawCancels;
+    private volatile int touchpadRawMaxPointers;
+
+    @Override
+    public boolean dispatchTouchEvent(MotionEvent event) {
+        if (touchpadImmersive) {
+            int action = event.getActionMasked();
+            if (action == MotionEvent.ACTION_DOWN) touchpadRawDowns++;
+            else if (action == MotionEvent.ACTION_POINTER_DOWN) touchpadRawPointerDowns++;
+            else if (action == MotionEvent.ACTION_CANCEL) touchpadRawCancels++;
+            touchpadRawMaxPointers = Math.max(touchpadRawMaxPointers, event.getPointerCount());
+        }
+        return super.dispatchTouchEvent(event);
+    }
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -128,10 +159,31 @@ public final class MainActivity extends Activity {
         showSharedUi();
     }
 
+    @Override
+    public void onConfigurationChanged(Configuration configuration) {
+        super.onConfigurationChanged(configuration);
+        // Keep the existing WebView, input surface and service binding on rotation.
+        // Release controls whose pointer coordinates belonged to the previous size.
+        AudioNodeService.NodeBinder current = binder;
+        if (current != null) current.releaseUiInputs();
+        sharedUi.post(() -> {
+            if (isDestroyed() || isFinishing()) return;
+            if (touchpadImmersive) {
+                sharedUi.setSystemGestureExclusionRects(List.of(
+                        new Rect(0, 0, sharedUi.getWidth(), sharedUi.getHeight())));
+            }
+            findViewById(R.id.activity_root).requestApplyInsets();
+        });
+    }
+
     @SuppressWarnings("deprecation")
     private void configureSystemBarInsets() {
         View root = findViewById(R.id.activity_root);
         root.setOnApplyWindowInsetsListener((view, windowInsets) -> {
+            if (touchpadImmersive) {
+                view.setPadding(0, 0, 0, 0);
+                return windowInsets;
+            }
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
                 android.graphics.Insets bars = windowInsets.getInsets(
                         WindowInsets.Type.systemBars() | WindowInsets.Type.displayCutout());
@@ -184,11 +236,18 @@ public final class MainActivity extends Activity {
     private void hideSharedUi() {
         sharedUi.setVisibility(View.GONE);
         nativeControls.setVisibility(View.VISIBLE);
+        scheduleRefresh(0);
     }
 
     @Override
     protected void onStart() {
         super.onStart();
+        try {
+            AudioNodeService.restoreBackgroundWaiting(this);
+        } catch (RuntimeException unavailable) {
+            // Android may reject a foreground start; the next explicit toggle
+            // will show failure rather than claiming the Node is online.
+        }
         bound = bindService(
                 new Intent(this, AudioNodeService.class),
                 serviceConnection,
@@ -213,6 +272,7 @@ public final class MainActivity extends Activity {
 
     @Override
     protected void onStop() {
+        cancelPairingImport();
         handler.removeCallbacks(refreshTask);
         refreshQueued.set(false);
         if (binder != null) {
@@ -228,6 +288,7 @@ public final class MainActivity extends Activity {
 
     @Override
     protected void onDestroy() {
+        cancelPairingImport();
         sharedUi.removeJavascriptInterface("CapyIOAndroid");
         sharedUi.destroy();
         super.onDestroy();
@@ -279,6 +340,22 @@ public final class MainActivity extends Activity {
     @Override
     protected void onActivityResult(int requestCode, int resultCode, Intent data) {
         super.onActivityResult(requestCode, resultCode, data);
+        if (requestCode == REQUEST_PAIRING_INVITATION) {
+            if (resultCode != RESULT_OK || data == null || data.getData() == null) {
+                Toast.makeText(this, "未导入配对邀请", Toast.LENGTH_SHORT).show();
+                return;
+            }
+            cancelPairingImport();
+            try (java.io.InputStream input = getContentResolver().openInputStream(data.getData())) {
+                showPairingImportPreview(AndroidPairingInvitationInstaller.prepare(this, input));
+            } catch (AndroidPairingImportPlan.RejectedException rejected) {
+                Toast.makeText(this, rejected.getMessage(), Toast.LENGTH_LONG).show();
+            } catch (java.io.IOException | RuntimeException invalid) {
+                Toast.makeText(this, "配对邀请无效或不属于本设备", Toast.LENGTH_LONG).show();
+            }
+            dispatchSharedUiState();
+            return;
+        }
         if (requestCode != REQUEST_DISPLAY_PROVISIONING) return;
         if (resultCode != RESULT_OK || data == null || data.getData() == null) {
             Toast.makeText(this, "未导入显示连接包", Toast.LENGTH_SHORT).show();
@@ -292,6 +369,83 @@ public final class MainActivity extends Activity {
             Toast.makeText(this, "显示连接包导入失败，请刷新确认当前配置", Toast.LENGTH_LONG).show();
         }
         dispatchSharedUiState();
+    }
+
+    private void showPairingImportPreview(AndroidPairingImportPlan plan) {
+        if (isDestroyed() || isFinishing()) {
+            plan.close();
+            return;
+        }
+        pendingPairingImport = plan;
+        AndroidPairingImportPlan.Peer previous = plan.previous();
+        AndroidPairingImportPlan.Peer incoming = plan.incoming();
+        String message = previous == null
+                ? "即将配对：" + pairingPeerLabel(incoming)
+                : "当前保存：" + pairingPeerLabel(previous)
+                        + "\n\n即将导入：" + pairingPeerLabel(incoming);
+        if (previous != null) {
+            message += "\n\n确认后将更新此节点的配对并中断现有连接。请核对 Windows 显示的配对批次。";
+            if (incoming.pairedAtMs() < previous.pairedAtMs()) {
+                message += "\n这份邀请比当前配对更旧，请确认它确实来自要连接的 Windows 账号。";
+            }
+        } else {
+            message += "\n\n请确认邀请来自你要连接的设备。配对不代表允许使用全部硬件。";
+        }
+        pairingImportDialog = new AlertDialog.Builder(this)
+                .setTitle(previous == null ? "确认导入配对" : "确认更新配对")
+                .setMessage(message)
+                .setNegativeButton("取消", (dialog, which) -> {})
+                .setPositiveButton(previous == null ? "导入配对" : "确认更新", (dialog, which) -> {
+                    if (pendingPairingImport != plan) return;
+                    try {
+                        AndroidPairingInvitationInstaller.confirm(this, plan);
+                        boolean reloaded;
+                        try { reloaded = binder != null && binder.reloadControlPairing(); }
+                        catch (RuntimeException unavailable) { reloaded = false; }
+                        Toast.makeText(this,
+                                reloaded ? "配对已保存；请重新连接"
+                                        : "配对已保存，请重新打开应用",
+                                Toast.LENGTH_LONG).show();
+                    } catch (AndroidPairingImportPlan.RejectedException rejected) {
+                        Toast.makeText(this, rejected.getMessage(), Toast.LENGTH_LONG).show();
+                    } catch (java.io.IOException | RuntimeException failed) {
+                        Toast.makeText(this, "配对未能导入，请检查本机配对状态后重试", Toast.LENGTH_LONG).show();
+                    } finally {
+                        plan.close();
+                        dispatchSharedUiState();
+                    }
+                })
+                .create();
+        pairingImportDialog.setOnDismissListener(dialog -> {
+            plan.close();
+            if (pendingPairingImport == plan) {
+                pendingPairingImport = null;
+                pairingImportDialog = null;
+            }
+        });
+        try { pairingImportDialog.show(); }
+        catch (RuntimeException unavailable) {
+            cancelPairingImport();
+            throw unavailable;
+        }
+    }
+
+    private static String pairingPeerLabel(AndroidPairingImportPlan.Peer peer) {
+        java.text.SimpleDateFormat dateFormat = new java.text.SimpleDateFormat(
+                "yyyy-MM-dd HH:mm:ss.SSS 'UTC'", java.util.Locale.ROOT);
+        dateFormat.setTimeZone(java.util.TimeZone.getTimeZone("UTC"));
+        return peer.displayName().replace('\n', ' ').replace('\r', ' ')
+                + "\n配对批次：" + dateFormat.format(new java.util.Date(peer.pairedAtMs()))
+                + (peer.active() ? "" : "（当前已撤销）");
+    }
+
+    private void cancelPairingImport() {
+        AndroidPairingImportPlan plan = pendingPairingImport;
+        AlertDialog dialog = pairingImportDialog;
+        pendingPairingImport = null;
+        pairingImportDialog = null;
+        if (plan != null) plan.close();
+        if (dialog != null) dialog.dismiss();
     }
 
     private void requestStart(AudioCapabilityKind kind) {
@@ -389,6 +543,12 @@ public final class MainActivity extends Activity {
         if (binder == null) {
             return;
         }
+        // The WebView owns its visible-panel polling. Do not render the hidden
+        // legacy audio page or sustain a second 250 ms metrics loop behind it.
+        if (nativeControls.getVisibility() != View.VISIBLE) {
+            dispatchSharedUiState();
+            return;
+        }
         AudioNodeSnapshot snapshot = binder.snapshot();
         nodeIdView.setText(getString(R.string.node_id_format, snapshot.nodeId()));
         renderCapability(microphoneViews, snapshot.microphone());
@@ -479,17 +639,245 @@ public final class MainActivity extends Activity {
         if (isDestroyed() || isFinishing()) {
             return;
         }
-        if (sharedUiLoaded) {
+        if (sharedUiLoaded && sharedUi.getVisibility() == View.VISIBLE) {
             sharedUi.evaluateJavascript(
                     "window.dispatchEvent(new Event('capyio-native-state'))",
                     null);
         }
     }
 
+    @SuppressWarnings("deprecation")
+    private void setTouchpadImmersive(boolean active) {
+        if (touchpadImmersive == active || isDestroyed() || isFinishing()) {
+            return;
+        }
+        touchpadImmersive = active;
+        if (active) {
+            touchpadRawDowns = 0;
+            touchpadRawPointerDowns = 0;
+            touchpadRawCancels = 0;
+            touchpadRawMaxPointers = 0;
+        }
+        View root = findViewById(R.id.activity_root);
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+            WindowInsetsController controller = getWindow().getInsetsController();
+            if (controller != null) {
+                if (active) {
+                    controller.hide(WindowInsets.Type.systemBars());
+                    controller.setSystemBarsBehavior(
+                            WindowInsetsController.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE);
+                } else {
+                    controller.show(WindowInsets.Type.systemBars());
+                }
+            }
+        } else if (active) {
+            getWindow().getDecorView().setSystemUiVisibility(
+                    View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY
+                            | View.SYSTEM_UI_FLAG_FULLSCREEN
+                            | View.SYSTEM_UI_FLAG_HIDE_NAVIGATION
+                            | View.SYSTEM_UI_FLAG_LAYOUT_FULLSCREEN
+                            | View.SYSTEM_UI_FLAG_LAYOUT_HIDE_NAVIGATION
+                            | View.SYSTEM_UI_FLAG_LAYOUT_STABLE);
+        } else {
+            getWindow().getDecorView().setSystemUiVisibility(View.SYSTEM_UI_FLAG_LAYOUT_STABLE);
+        }
+        if (active) {
+            getWindow().addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
+            root.setPadding(0, 0, 0, 0);
+            sharedUi.post(() -> sharedUi.setSystemGestureExclusionRects(List.of(
+                    new Rect(0, 0, sharedUi.getWidth(), sharedUi.getHeight()))));
+        } else {
+            getWindow().clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
+            sharedUi.setSystemGestureExclusionRects(List.of());
+            root.requestApplyInsets();
+        }
+    }
+
+    @SuppressWarnings("deprecation")
+    private boolean performTouchpadHaptic(String effect) {
+        if (!touchpadImmersive || !("tap".equals(effect) || "drag".equals(effect))) {
+            return false;
+        }
+        Vibrator vibrator;
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+            VibratorManager manager = getSystemService(VibratorManager.class);
+            vibrator = manager == null ? null : manager.getDefaultVibrator();
+        } else {
+            vibrator = (Vibrator) getSystemService(Context.VIBRATOR_SERVICE);
+        }
+        if (vibrator == null || !vibrator.hasVibrator()) {
+            return false;
+        }
+        int strength = getTouchpadHapticStrength();
+        if (strength == 0) {
+            return true;
+        }
+        boolean drag = "drag".equals(effect);
+        int amplitude = vibrator.hasAmplitudeControl()
+                ? Math.max(1, Math.min(255, Math.round(strength * (drag ? 3.6f : 2.54f))))
+                : VibrationEffect.DEFAULT_AMPLITUDE;
+        vibrator.vibrate(VibrationEffect.createOneShot(drag ? 20L : 12L, amplitude));
+        return true;
+    }
+
+    private int getTouchpadHapticStrength() {
+        int stored = getSharedPreferences(TOUCHPAD_HAPTIC_PREFS, MODE_PRIVATE)
+                .getInt(TOUCHPAD_HAPTIC_STRENGTH, 50);
+        return Math.max(0, Math.min(100, stored));
+    }
+
+    private boolean setTouchpadHapticStrength(int strength) {
+        if (strength < 0 || strength > 100) {
+            return false;
+        }
+        getSharedPreferences(TOUCHPAD_HAPTIC_PREFS, MODE_PRIVATE).edit()
+                .putInt(TOUCHPAD_HAPTIC_STRENGTH, strength).apply();
+        return true;
+    }
+
     private final class ObserverBridge {
+        @JavascriptInterface
+        public String getTouchpadInputDiagnosticsJson() {
+            // Counts only; no coordinates, pointer identities or content leave the UI.
+            return "{\"downs\":" + touchpadRawDowns
+                    + ",\"pointerDowns\":" + touchpadRawPointerDowns
+                    + ",\"cancels\":" + touchpadRawCancels
+                    + ",\"maxPointers\":" + touchpadRawMaxPointers + "}";
+        }
+
+        @JavascriptInterface
+        public boolean setTouchpadImmersive(boolean active) {
+            handler.post(() -> MainActivity.this.setTouchpadImmersive(active));
+            return true;
+        }
+
+        @JavascriptInterface
+        public boolean performTouchpadHaptic(String effect) {
+            return MainActivity.this.performTouchpadHaptic(effect);
+        }
+
+        @JavascriptInterface
+        public int getTouchpadHapticStrength() {
+            return MainActivity.this.getTouchpadHapticStrength();
+        }
+
+        @JavascriptInterface
+        public boolean setTouchpadHapticStrength(int strength) {
+            return MainActivity.this.setTouchpadHapticStrength(strength);
+        }
+
+        @JavascriptInterface
+        public String getGamepadLayout() {
+            return getSharedPreferences("capyio-gamepad-layout", MODE_PRIVATE)
+                    .getString("v1", "null");
+        }
+
+        @JavascriptInterface
+        public String getGamepadMotionSettings() {
+            AudioNodeService.NodeBinder current = binder;
+            if (current == null) return "null";
+            return "{\"enabled\":" + current.gamepadMotionEnabled()
+                    + ",\"available\":" + current.gamepadMotionAvailable()
+                    + ",\"independentActive\":"
+                    + (current.imuLifecycle().state() == dev.capyio.android.contract.CapabilityLifecycleState.ACTIVE)
+                    + "}";
+        }
+
+        @JavascriptInterface
+        public boolean setGamepadMotionEnabled(boolean enabled) {
+            AudioNodeService.NodeBinder current = binder;
+            return current != null && current.setGamepadMotionEnabled(enabled);
+        }
+
+        @JavascriptInterface
+        public boolean setControllerMode(String mode) {
+            AudioNodeService.NodeBinder current = binder;
+            return current != null && current.setControllerMode(mode);
+        }
+
+        @JavascriptInterface
+        public String getControllerUseJson() {
+            AudioNodeService.NodeBinder current = binder;
+            return current == null ? "null" : current.getControllerUseJson();
+        }
+
+        @JavascriptInterface
+        public String getControllerPeersJson() {
+            AudioNodeService.NodeBinder current = binder;
+            return current == null ? "[]" : current.getControllerPeersJson();
+        }
+
+        @JavascriptInterface
+        public String getAudioPeersJson() { AudioNodeService.NodeBinder current=binder;return current==null?"[]":current.getAudioPeersJson(); }
+        @JavascriptInterface
+        public String getCameraPeersJson() { AudioNodeService.NodeBinder current=binder;return current==null?"[]":current.getCameraPeersJson(); }
+        @JavascriptInterface
+        public String getCameraUseJson() { AudioNodeService.NodeBinder current=binder;return current==null?"{\"status\":\"idle\"}":current.getCameraUseJson(); }
+        @JavascriptInterface
+        public String getDisplayPeersJson() {AudioNodeService.NodeBinder current=binder;return current==null?"[]":current.getDisplayPeersJson();}
+        @JavascriptInterface
+        public String getDisplayUseJson() {AudioNodeService.NodeBinder current=binder;return current==null?"null":current.getDisplayUseJson();}
+        @JavascriptInterface
+        public boolean startDisplayUse(String peer,int width,int height,int refreshMillihertz,int bitrateKbps,boolean automatic) {AudioNodeService.NodeBinder current=binder;return current!=null&&current.startDisplayUse(peer,width,height,refreshMillihertz,bitrateKbps,automatic);}
+        @JavascriptInterface
+        public boolean stopDisplayUse() {AudioNodeService.NodeBinder current=binder;return current!=null&&current.stopDisplayUse();}
+        @JavascriptInterface
+        public boolean startCameraUse(String peer) {AudioNodeService.NodeBinder current=binder;return current!=null&&current.startCameraUse(peer);}
+        @JavascriptInterface
+        public boolean stopCameraUse() {AudioNodeService.NodeBinder current=binder;return current!=null&&current.stopCameraUse();}
+        @JavascriptInterface
+        public String getAudioUsesJson() { AudioNodeService.NodeBinder current=binder;return current==null?"[]":current.getAudioUsesJson(); }
+        @JavascriptInterface
+        public boolean startAudioUse(String peer,String direction) { AudioNodeService.NodeBinder current=binder;return current!=null&&current.startAudioUse(peer,direction); }
+        @JavascriptInterface
+        public boolean stopAudioUse(String direction) { AudioNodeService.NodeBinder current=binder;return current!=null&&current.stopAudioUse(direction); }
+
+        @JavascriptInterface
+        public boolean startControllerUse(String peerNodeId, String mode) {
+            AudioNodeService.NodeBinder current = binder;
+            return current != null && current.startControllerUse(peerNodeId, mode);
+        }
+
+        @JavascriptInterface
+        public boolean stopControllerUse() {
+            AudioNodeService.NodeBinder current = binder;
+            return current != null && current.stopControllerUse();
+        }
+
+        @JavascriptInterface
+        public String getHapticsSettings() {
+            AudioNodeService.NodeBinder current = binder;
+            if (current == null) return "null";
+            return "{\"strength\":" + current.hapticsStrength()
+                    + ",\"available\":" + current.hapticsAvailable()
+                    + ",\"executedFrames\":" + current.hapticsExecutedFrames()
+                    + ",\"networkActive\":" + current.hapticsNetworkActive() + "}";
+        }
+
+        @JavascriptInterface
+        public boolean setHapticsStrength(int percent) {
+            AudioNodeService.NodeBinder current = binder;
+            return current != null && current.setHapticsStrength(percent);
+        }
+
+        @JavascriptInterface
+        public boolean saveGamepadLayout(String layout) {
+            if (layout == null || layout.length() > 2048) return false;
+            // A single private presentation preference, never a path or command.
+            return getSharedPreferences("capyio-gamepad-layout", MODE_PRIVATE)
+                    .edit().putString("v1", layout).commit();
+        }
+
         @JavascriptInterface
         public String getDisplayStateJson() {
             return dev.capyio.display.app.DisplayNodeFacade.stateJson(MainActivity.this);
+        }
+
+        @JavascriptInterface
+        public boolean configureDisplayViewing(boolean fullscreen, boolean keepAwake, boolean showStatistics) {
+            return getSharedPreferences("capyio-display-viewing", MODE_PRIVATE).edit()
+                    .putBoolean("fullscreen", fullscreen).putBoolean("keepAwake", keepAwake)
+                    .putBoolean("showStatistics", showStatistics).commit();
         }
 
         @JavascriptInterface
@@ -512,6 +900,22 @@ public final class MainActivity extends Activity {
                         .setType("application/zip");
                 try {
                     startActivityForResult(picker, REQUEST_DISPLAY_PROVISIONING);
+                } catch (RuntimeException unavailable) {
+                    Toast.makeText(MainActivity.this, "系统文件选择器不可用", Toast.LENGTH_LONG).show();
+                }
+            });
+            return true;
+        }
+
+        @JavascriptInterface
+        public boolean importPairingInvitation() {
+            handler.post(() -> {
+                if (isDestroyed() || isFinishing()) return;
+                Intent picker = new Intent(Intent.ACTION_OPEN_DOCUMENT)
+                        .addCategory(Intent.CATEGORY_OPENABLE)
+                        .setType("application/octet-stream");
+                try {
+                    startActivityForResult(picker, REQUEST_PAIRING_INVITATION);
                 } catch (RuntimeException unavailable) {
                     Toast.makeText(MainActivity.this, "系统文件选择器不可用", Toast.LENGTH_LONG).show();
                 }
@@ -559,13 +963,109 @@ public final class MainActivity extends Activity {
                     current.capabilityCatalog(),
                     Build.VERSION.RELEASE,
                     BuildConfig.VERSION_NAME,
-                    current.selectedSharedCapabilityIds());
+                    current.selectedSharedCapabilityIds(),
+                    current.pairingStoreState(),
+                    current.pairedPeerCount(),
+                    current.discoveryAnnouncing(),
+                    current.authenticatedCatalogConnected(),
+                    current.controlListenPort());
+        }
+
+        @JavascriptInterface
+        public String getRemoteCatalogJson() {
+            AudioNodeService.NodeBinder current = binder;
+            return current == null ? "{\"nodes\":[],\"capabilities\":[]}" : current.getRemoteCatalogJson();
+        }
+
+        @JavascriptInterface
+        public String getResourceRequestsJson() {
+            AudioNodeService.NodeBinder current = binder;
+            return current == null ? "[]" : current.touchpadRequestsJson();
+        }
+
+        @JavascriptInterface
+        public String getPairedPeersJson() {
+            AudioNodeService.NodeBinder current = binder;
+            return current == null ? "[]" : current.pairedPeerMetadataJson();
+        }
+
+        @JavascriptInterface
+        public String getEnrollmentStatusJson() {
+            AudioNodeService.NodeBinder current = binder;
+            return current == null ? "{\"phase\":\"idle\",\"message\":\"节点服务尚未就绪\"}" : current.enrollmentStatusJson();
+        }
+
+        @JavascriptInterface
+        public String getEnrollmentAddressesJson() {
+            org.json.JSONArray addresses = new org.json.JSONArray();
+            try {
+                java.util.Enumeration<java.net.NetworkInterface> interfaces = java.net.NetworkInterface.getNetworkInterfaces();
+                while (interfaces != null && interfaces.hasMoreElements() && addresses.length() < 32) {
+                    java.net.NetworkInterface item = interfaces.nextElement();
+                    if (!item.isUp()) continue;
+                    java.util.Enumeration<java.net.InetAddress> values = item.getInetAddresses();
+                    while (values.hasMoreElements() && addresses.length() < 32) {
+                        java.net.InetAddress address = values.nextElement();
+                        if (address instanceof java.net.Inet4Address && !address.isLoopbackAddress()) addresses.put(address.getHostAddress());
+                    }
+                }
+            } catch (java.net.SocketException unavailable) { }
+            return addresses.toString();
+        }
+
+        @JavascriptInterface
+        public String enrollmentActionJson(String request) {
+            AudioNodeService.NodeBinder current = binder;
+            return current == null ? AndroidFilelessPairing.errorStatus("节点服务尚未就绪") : current.enrollmentActionJson(request);
+        }
+
+        @JavascriptInterface
+        public boolean connectPairedPeerAt(String host, int port) {
+            AudioNodeService.NodeBinder current = binder;
+            return current != null && current.connectPairedPeerAt(host, port);
+        }
+
+        @JavascriptInterface
+        public String getControlConnectionFailure() {
+            AudioNodeService.NodeBinder current = binder;
+            return current == null ? "节点服务未就绪" : current.controlConnectionFailure();
+        }
+
+        @JavascriptInterface
+        public boolean resolveResourceRequest(String routeId, boolean allow) {
+            AudioNodeService.NodeBinder current = binder;
+            return current != null && routeId != null && routeId.length() == 36
+                    && current.resolveTouchpadRequest(routeId, allow);
+        }
+
+        @JavascriptInterface
+        public boolean resolveResourceRequestRemembered(String routeId, boolean allow, boolean remember) {
+            AudioNodeService.NodeBinder current = binder;
+            return current != null && routeId != null && routeId.length() == 36
+                    && current.resolveTouchpadRequestRemembered(routeId, allow, remember);
+        }
+
+        @JavascriptInterface
+        public boolean clearRememberedResourcePermissions() {
+            AudioNodeService.NodeBinder current = binder;
+            return current != null && current.clearRememberedTouchpadPermissions();
         }
 
         @JavascriptInterface
         public boolean setLocalCapabilityShared(String capabilityId, boolean selected) {
             AudioNodeService.NodeBinder current = binder;
             return current != null && current.setLocalCapabilityShared(capabilityId, selected);
+        }
+
+        @JavascriptInterface
+        public boolean getBackgroundWaitingEnabled() {
+            return AudioNodeService.backgroundWaitingPreference(MainActivity.this);
+        }
+
+        @JavascriptInterface
+        public boolean setBackgroundWaitingEnabled(boolean enabled) {
+            AudioNodeService.NodeBinder current = binder;
+            return current != null && current.setBackgroundWaitingEnabled(enabled);
         }
 
         @JavascriptInterface
@@ -604,6 +1104,12 @@ public final class MainActivity extends Activity {
             AudioNodeService.NodeBinder current = binder;
             return current != null && current.configureAudioPeer(
                     direction, host, localPort, peerPort, trustedLabConfirmed);
+        }
+
+        @JavascriptInterface
+        public String getAudioPeerSettingsJson(String direction) {
+            AudioNodeService.NodeBinder current = binder;
+            return current == null ? "" : current.audioPeerSettingsJson(direction);
         }
 
         @JavascriptInterface
@@ -668,7 +1174,9 @@ public final class MainActivity extends Activity {
             }
             CapabilityLifecycleSnapshot lifecycle = current.gamepadLifecycle();
             if (lifecycle.state() != CapabilityLifecycleState.ACTIVE) {
-                return false;
+                // Stopping the Route already neutralized controls. A view-unmount
+                // reset is idempotent, not a failed attempt to send new input.
+                return "reset".equals(kind);
             }
             GamepadControlsSnapshot next = AndroidGamepadUiCommand.apply(
                     kind, target, x, y, pressed, current.gamepadControls());
@@ -762,6 +1270,16 @@ public final class MainActivity extends Activity {
             } else {
                 return false;
             }
+            if ("capyio.quick-action.android-touchpad".equals(actionId)) {
+                if (!"stop".equals(operation)
+                        || (lifecycle.state() != CapabilityLifecycleState.ACTIVE
+                        && lifecycle.state() != CapabilityLifecycleState.STARTING
+                        && lifecycle.state() != CapabilityLifecycleState.FAILED)) {
+                    return false;
+                }
+                current.stopTouchpad();
+                return true;
+            }
             AndroidCapabilityCommand command = AndroidCapabilityCommand.parse(
                     actionId,
                     operation,
@@ -784,13 +1302,7 @@ public final class MainActivity extends Activity {
                         handler.post(() -> requestStartConnectedDevice(command.target()));
                     }
                 }
-                case TOUCHPAD -> {
-                    if (command.operation() == AndroidCapabilityCommand.Operation.STOP) {
-                        current.stopTouchpad();
-                    } else {
-                        handler.post(() -> requestStartConnectedDevice(command.target()));
-                    }
-                }
+                case TOUCHPAD -> { return false; }
                 case HAPTICS -> {
                     if (command.operation() == AndroidCapabilityCommand.Operation.STOP) {
                         current.stopHaptics();

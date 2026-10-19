@@ -45,10 +45,27 @@ impl std::fmt::Display for AudioShareStartError {
     }
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum AudioShareReadiness {
+    ReceiverTcp(ReceiverTcpPresence),
+    /// The native service is ready to send; UDP does not prove a remote receiver exists.
+    ServiceTransportReady,
+}
+
+#[derive(Clone, Copy, Eq, PartialEq)]
+enum ActivationEvidence {
+    ReceiverTcp,
+    ServiceTransport,
+}
+
 pub trait AudioShareProcessBoundary {
     fn start(&mut self) -> Result<(), AudioShareStartError>;
     fn status(&mut self) -> Result<SupervisorStatus, String>;
     fn receiver_presence(&mut self) -> Result<ReceiverTcpPresence, String>;
+    fn readiness(&mut self) -> Result<AudioShareReadiness, String> {
+        self.receiver_presence()
+            .map(AudioShareReadiness::ReceiverTcp)
+    }
     fn stop(&mut self) -> Result<(), String>;
 }
 
@@ -87,6 +104,7 @@ pub struct AudioShareRouteStatus {
     pub route_state: RouteState,
     pub route_epoch: u64,
     pub stable_receiver_polls: u8,
+    pub receiver_verified: bool,
 }
 
 pub struct AudioShareRouteController<P> {
@@ -96,6 +114,7 @@ pub struct AudioShareRouteController<P> {
     stable_receiver_polls: u8,
     required_receiver_wait_polls: u16,
     receiver_wait_polls: u16,
+    activation_evidence: Option<ActivationEvidence>,
 }
 
 impl<P: AudioShareProcessBoundary> AudioShareRouteController<P> {
@@ -121,6 +140,7 @@ impl<P: AudioShareProcessBoundary> AudioShareRouteController<P> {
             stable_receiver_polls: 0,
             required_receiver_wait_polls,
             receiver_wait_polls: 0,
+            activation_evidence: None,
         })
     }
 
@@ -223,6 +243,8 @@ impl<P: AudioShareProcessBoundary> AudioShareRouteController<P> {
             route_state: self.route.state(runtime)?,
             route_epoch: self.route.epoch(runtime)?,
             stable_receiver_polls: self.stable_receiver_polls,
+            receiver_verified: self.activation_evidence == Some(ActivationEvidence::ReceiverTcp)
+                && self.stable_receiver_polls == self.required_receiver_polls,
         })
     }
 
@@ -235,26 +257,22 @@ impl<P: AudioShareProcessBoundary> AudioShareRouteController<P> {
     }
 
     fn poll_running(&mut self, runtime: &mut NodeRuntime) -> Result<(), String> {
-        match self.process.receiver_presence() {
-            Ok(ReceiverTcpPresence::Established { connection_count }) if connection_count > 0 => {
-                self.stable_receiver_polls = self
-                    .stable_receiver_polls
-                    .saturating_add(1)
-                    .min(self.required_receiver_polls);
-                if self.stable_receiver_polls == self.required_receiver_polls
-                    && self.route.state(runtime)? == RouteState::Starting
-                {
-                    self.route.activate(runtime)?;
-                    self.receiver_wait_polls = 0;
-                }
+        match self.process.readiness() {
+            Ok(AudioShareReadiness::ReceiverTcp(ReceiverTcpPresence::Established {
+                connection_count,
+            })) if connection_count > 0 => {
+                self.observe_readiness(runtime, ActivationEvidence::ReceiverTcp)?;
             }
-            Ok(ReceiverTcpPresence::Disconnected) => {
+            Ok(AudioShareReadiness::ServiceTransportReady) => {
+                self.observe_readiness(runtime, ActivationEvidence::ServiceTransport)?;
+            }
+            Ok(AudioShareReadiness::ReceiverTcp(ReceiverTcpPresence::Disconnected)) => {
                 self.receiver_absent(runtime, "the receiver TCP connection is absent")?;
             }
-            Ok(ReceiverTcpPresence::SupervisorNotRunning) => {
+            Ok(AudioShareReadiness::ReceiverTcp(ReceiverTcpPresence::SupervisorNotRunning)) => {
                 self.receiver_absent(runtime, "the supervisor stopped during receiver polling")?;
             }
-            Ok(ReceiverTcpPresence::UnsupportedPlatform) => {
+            Ok(AudioShareReadiness::ReceiverTcp(ReceiverTcpPresence::UnsupportedPlatform)) => {
                 self.stable_receiver_polls = 0;
                 self.receiver_wait_polls = 0;
                 self.route.report_offline(
@@ -274,7 +292,7 @@ impl<P: AudioShareProcessBoundary> AudioShareRouteController<P> {
                     detail,
                 )?;
             }
-            Ok(ReceiverTcpPresence::Established { .. }) => {
+            Ok(AudioShareReadiness::ReceiverTcp(ReceiverTcpPresence::Established { .. })) => {
                 self.receiver_absent(runtime, "the receiver connection count is zero")?;
             }
         }
@@ -283,6 +301,28 @@ impl<P: AudioShareProcessBoundary> AudioShareRouteController<P> {
             if self.receiver_wait_polls >= self.required_receiver_wait_polls {
                 self.receiver_wait_exhausted(runtime)?;
             }
+        }
+        Ok(())
+    }
+
+    fn observe_readiness(
+        &mut self,
+        runtime: &mut NodeRuntime,
+        evidence: ActivationEvidence,
+    ) -> Result<(), String> {
+        if self.activation_evidence != Some(evidence) {
+            self.stable_receiver_polls = 0;
+        }
+        self.activation_evidence = Some(evidence);
+        self.stable_receiver_polls = self
+            .stable_receiver_polls
+            .saturating_add(1)
+            .min(self.required_receiver_polls);
+        if self.stable_receiver_polls == self.required_receiver_polls
+            && self.route.state(runtime)? == RouteState::Starting
+        {
+            self.route.activate(runtime)?;
+            self.receiver_wait_polls = 0;
         }
         Ok(())
     }
@@ -586,6 +626,7 @@ mod tests {
     struct FakeProcess {
         running: bool,
         presences: VecDeque<ReceiverTcpPresence>,
+        readinesses: VecDeque<AudioShareReadiness>,
         exit: Option<ProcessExitReport>,
         start_error: Option<AudioShareStartError>,
         starts: u32,
@@ -629,6 +670,16 @@ mod tests {
                 .unwrap_or(ReceiverTcpPresence::Disconnected))
         }
 
+        fn readiness(&mut self) -> Result<AudioShareReadiness, String> {
+            self.readinesses.pop_front().map_or_else(
+                || {
+                    self.receiver_presence()
+                        .map(AudioShareReadiness::ReceiverTcp)
+                },
+                Ok,
+            )
+        }
+
         fn stop(&mut self) -> Result<(), String> {
             self.running = false;
             self.stops += 1;
@@ -639,6 +690,71 @@ mod tests {
     fn established() -> ReceiverTcpPresence {
         ReceiverTcpPresence::Established {
             connection_count: 1,
+        }
+    }
+
+    #[test]
+    fn native_transport_readiness_activates_and_stops_without_claiming_a_receiver() {
+        let mut lab = DemoLab::new().expect("demo Runtime");
+        let session_id = lab.session_id;
+        let process = FakeProcess {
+            readinesses: [AudioShareReadiness::ServiceTransportReady; 3].into(),
+            ..FakeProcess::default()
+        };
+        let mut controller = AudioShareRouteController::install(
+            &mut lab.runtime,
+            session_id,
+            process,
+            3,
+            DEFAULT_RECEIVER_WAIT_POLLS,
+        )
+        .expect("install Route");
+        controller.start(&mut lab.runtime, 1).expect("start");
+        for state in [
+            RouteState::Starting,
+            RouteState::Starting,
+            RouteState::Active,
+        ] {
+            let status = controller.poll(&mut lab.runtime).expect("native readiness");
+            assert_eq!(status.route_state, state);
+            assert!(!status.receiver_verified);
+        }
+        controller.stop(&mut lab.runtime).expect("stop transport");
+        let stopped = controller.status(&lab.runtime).expect("stopped");
+        assert_eq!(stopped.route_state, RouteState::Stopped);
+        assert!(!stopped.receiver_verified);
+        assert_eq!(controller.process.stops, 1);
+    }
+
+    #[test]
+    fn native_transport_polls_do_not_count_toward_stable_tcp_receiver_evidence() {
+        let mut lab = DemoLab::new().expect("demo Runtime");
+        let session_id = lab.session_id;
+        let process = FakeProcess {
+            readinesses: [
+                AudioShareReadiness::ServiceTransportReady,
+                AudioShareReadiness::ServiceTransportReady,
+                AudioShareReadiness::ServiceTransportReady,
+                AudioShareReadiness::ReceiverTcp(established()),
+                AudioShareReadiness::ReceiverTcp(established()),
+                AudioShareReadiness::ReceiverTcp(established()),
+                AudioShareReadiness::ServiceTransportReady,
+            ]
+            .into(),
+            ..FakeProcess::default()
+        };
+        let mut controller = AudioShareRouteController::install(
+            &mut lab.runtime,
+            session_id,
+            process,
+            3,
+            DEFAULT_RECEIVER_WAIT_POLLS,
+        )
+        .expect("install Route");
+        controller.start(&mut lab.runtime, 1).expect("start");
+        for verified in [false, false, false, false, false, true, false] {
+            let status = controller.poll(&mut lab.runtime).expect("poll evidence");
+            assert_eq!(status.receiver_verified, verified);
         }
     }
 

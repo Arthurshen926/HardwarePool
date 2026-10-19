@@ -257,7 +257,7 @@ evidence alongside `004`:
   and install it on the explicitly connected vivo lab phone;
 - the no-USB/IP-operation boundary applied through `005B`; the operator later
   authorized `006A` to install the exact signed usbip-win2 v0.9.7.7 package on
-  `DESKTOP-AT8EVE9`, with no automatic restart;
+  `LAB-WINDOWS-HOST`, with no automatic restart;
 - restart, first attachment, driver removal and every boot/security-policy
   change remain separately authorized operations; `006B` performs only a
   read-only real `list` before restart, and `006C` makes only that fixed probe

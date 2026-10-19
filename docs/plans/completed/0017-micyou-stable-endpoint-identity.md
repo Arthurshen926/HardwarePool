@@ -64,8 +64,8 @@ commit, push or pull request.
   rejection.
 - The ignored real-CLI probe accepts the separately built pinned MicYou CLI
   exposing `device-stable-id-v1`.
-- On `DESKTOP-AT8EVE9`, endpoint ID
-  `{0.0.0.00000000}.{c7e4cce3-d84e-4985-bca2-bed51be21971}` resolved to the
+- On `LAB-WINDOWS-HOST`, endpoint ID
+  `{0.0.0.00000000}.{<LAB_ID_15>}` resolved to the
   current one-based index 5. Passing that ID with index 6 failed before server
   startup; the correct tuple started normally.
 - Physical Android audio produced 47,520 captured samples with RMS

@@ -13,7 +13,7 @@ the Controller surface and gamepad projection ownership together. Touchpad and
 camera platform crates remain available without importing either into Core.
 
 The first cross-platform UI integration slice upgrades the Browser Mock and
-Tauri host to `UiSnapshot` schema 4. The same Vue/TypeScript component displays
+Tauri host to `UiSnapshot` schema 5. The same Vue/TypeScript component displays
 the Runtime's local and peer Capability catalogs, including the newly catalogued
 touchpad Source/Sink. Only a local Capability with at least one Source Port can
 be selected for sharing. Peer entries and local Sink-only entries are read-only,
@@ -259,13 +259,88 @@ Camera Service to open ID 1. Active mutation was rejected and Stop released it.
   is not invalidated, but this host regression remains open and this run does
   not claim a fresh capture-ring pass.
 
+## Unified touchpad parity follow-up (2026-09-19)
+
+The authenticated touchpad Route now preempts the obsolete loopback worker,
+uses bounded/coalescing Android delivery under normal input pressure, and uses
+the production VHF ClickPad sink with the standalone lab's double-tap-drag
+latch. The Android shared UI switches an active touchpad Route into a dedicated
+full-screen surface with no navigation controls, keeps the display awake,
+excludes system-edge gestures, and emits distinct tap/drag haptic feedback.
+Cancellation and multi-contact input do not produce false tap vibration.
+
+The installed Lenovo Y700 debug APK SHA-256 is
+`03758C2508B5F62E2A2C2C852CD528F3477D531D05ADE5B7DF5C4FD5317A70FB`.
+Its shared UI rendered after cold start and retained the paired Node identity.
+Android composition passed 283 assertions; the remote-touchpad latch tests and
+83 desktop unit tests passed. A direct, separately authorized VHF fixture was
+acknowledged by the installed driver but did not move the current Windows
+cursor. PnP inspection reports the CapyIO parent, VHF lower filter, and HID
+Precision Touchpad child all started with problem code zero. The current
+interactive session is `rdp-tcp#0`, whose visible pointer uses the separate
+Remote Desktop input device rather than the host Precision Touchpad stack. The
+desktop preflight now fails explicitly in that topology instead of claiming a
+usable VHF projection. A subsequent GameViewer-backed `console` session reran
+the exact hash-pinned four-frame acceptance: all frames were acknowledged, but
+the cursor remained `(720,450)` with delta `(0,0)`. `SPI_GETTOUCHPADPARAMETERS`
+reported the device present, enabled and active with five contacts, tap,
+tap-and-drag, pan and zoom enabled; PnP still reported no problem. RDP was
+therefore a separate invalid observation surface, not the sole failure cause.
+With explicit approval, only the exact existing
+`ROOT\SYSTEM\0001` CapyIO VHF device was restarted; no package was installed,
+removed or replaced. The fixed four-frame acceptance then moved the cursor from
+`(725,455)` to `(1092,667)`, confirming that the prior zero-delta result was a
+stale VHF device state rather than an Android frame-format defect.
+
+The product Route was then exercised end to end rather than through the fixture.
+The hash-pinned desktop CLI exposed its exact pending Route ID, the lab script
+approved only that Route through the Android bridge, and the authenticated mTLS
+touchpad stream switched the shared Android UI to its dedicated immersive
+surface. The final bounded run approved Route
+`<LAB_ID_11>`, advanced the Android touch sequence to
+20, and moved the Windows cursor from `(1106,270)` to `(1153,270)`. The CLI
+emitted `CAPYIO_TOUCHPAD_DATA_PASSED` and the outer acceptance exited zero.
+After disconnect, Android reported `idle`, no contacts, no pending consent and
+no immersive surface, providing explicit stuck-contact cleanup evidence. This
+automation proves one-contact pointer delivery; physical two-to-five-finger
+Windows gestures and perceived haptic feedback still require a manual human
+pass.
+
+## Touchpad high-rate regression follow-up (2026-09-19)
+
+The first human GameViewer trial could move the pointer and scroll with two
+fingers, but both felt laggy; the tablet then returned from the immersive
+surface to the main UI. Android remained alive, so this was a touchpad
+Capability/Route exit, not an OS process crash. A later read showed
+`CAPY.ANDROID.TOUCHPAD_RECEIVER_UNAVAILABLE`, which is the local-lab retry
+failure and does not establish the original secure Route's failure cause.
+
+Source inspection found a concrete high-rate UI amplification: every accepted
+touch frame dispatched a WebView native-state event and caused the shared UI
+to reread the full Node snapshot plus other hardware panels. Per-frame full-
+state dispatch was removed; lifecycle changes still notify the UI. While the
+immersive surface is active, the 500 ms poll reads only touchpad lifecycle.
+The hidden second touchpad component is also unmounted during immersive input.
+
+The replacement unified debug APK SHA-256 is
+`0A3FEA0DCACAE397540BDB303E35209DB09C82F6EA3ECE5887763FF46CE56EFD`.
+On the same Y700, the final eight-swipe alternating-direction Gate entered the
+actual immersive surface and moved the Windows pointer on every swipe (per-
+swipe Manhattan travel 424–542 px, total 3747 px). The authenticated mTLS
+Route remained active for the bounded 15-second Gate, exited cleanly, and the
+outer acceptance returned zero. Android `capyioCheck` passed, including 283
+composition assertions and Lint. This is burst-stability evidence, not a
+claim that multi-minute human use or native two-finger scroll is now smooth;
+those still need repeat manual verification.
+
 ## Explicit exclusions
 
 - no push, pull request, package publication or production signing;
-- no APK installation or Android permission/service change except the explicitly
-  authorized A01E/A01H/A01E2/0.5.4/0.5.5 unified debug APK runs and their already-
-  declared normal audio, camera, notification and VIBRATE behavior;
-- no Windows driver install/removal, restart or boot/security-policy change;
+- no Android permission/service change, production signing or other-device APK
+  installation; only explicitly authorized unified debug APK updates were
+  installed on the identified lab devices;
+- no Windows driver install/removal/replacement or boot/security-policy change;
+  the exact existing CapyIO VHF device was restarted once with explicit approval;
 - no Display merge or Display worktree modification;
 - no claim that the Tauri schema-4 fixture catalog is real hardware discovery;
 - no claim that Android publication selection has reached a remote peer;

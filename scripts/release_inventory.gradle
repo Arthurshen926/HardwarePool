@@ -1,0 +1,21 @@
+// Read-only resolved Android runtime inventory; no APK build or signing.
+gradle.projectsEvaluated {
+    rootProject.tasks.register('capyioReleaseInventory') {
+        doLast {
+            def app = rootProject.project(':app')
+            def configuration = app.configurations.getByName('debugRuntimeClasspath')
+            def modules = configuration.incoming.resolutionResult.allComponents.collect { component ->
+                def version = component.moduleVersion
+                [id: component.id.displayName, group: version?.group,
+                 name: version?.name, version: version?.version]
+            }.sort { it.id }
+            def output = new File(rootProject.projectDir, '../../target/release-evidence/android-runtime.json')
+            output.parentFile.mkdirs()
+            output.text = groovy.json.JsonOutput.prettyPrint(groovy.json.JsonOutput.toJson([
+                configuration: 'debugRuntimeClasspath', components: modules,
+                excludes: ['Android platform/SDK', 'Gradle plugins/build tools', 'JNI native transitive dependencies']
+            ]))
+            println "Android runtime inventory: ${output}"
+        }
+    }
+}

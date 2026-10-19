@@ -6,7 +6,7 @@ Status: Android physical path and disconnect-to-silence proven; release qualific
 
 ## Outcome
 
-The approved `DESKTOP-AT8EVE9` lab now has a usable application-facing
+The approved `LAB-WINDOWS-HOST` lab now has a usable application-facing
 `CapyIO Microphone` endpoint and a proven local data path from the dedicated
 render ingress through `Global\\CapyIO.CaptureRing.v1` into an ordinary CPAL
 capture client.
@@ -22,7 +22,7 @@ The investigation also corrected a false negative in the earlier evidence.
 Capture clients launched by the Codex filesystem sandbox run as a separate
 medium-integrity account and returned `0x80070057` for every tested capture
 device, including a physical USB microphone. The same probes launched in the
-interactive high-integrity `arthu` session opened both the physical microphone
+interactive high-integrity `local-user` session opened both the physical microphone
 and `CapyIO Microphone` successfully. Driver acceptance therefore uses the
 interactive-session result and treats sandbox capture failures as a harness
 permission limitation, not a device result.
@@ -81,7 +81,7 @@ index only as a freshly resolved, double-validated launch coordinate.
 ## Physical Android evidence
 
 The authorized Android target remained paired at
-`100.66.157.119:36087`. Package `com.lanrhyme.micyou` version `2.0.1`
+`<LAB_IPV4_03>:36087`. Package `com.lanrhyme.micyou` version `2.0.1`
 (`versionCode 25`) was installed from the locally built pinned source. Its APK
 SHA-256 is
 `3E9491CA3F0AF88B8D26F30E01577F6123EB2EABDE77BBA7361D1A434BE2950F`.
@@ -90,7 +90,7 @@ The user granted microphone and notification permissions through Android.
 After the Windows audio-service reload, the two indistinguishable CapyIO
 render names exchanged enumeration order. The adapter probe detected the live
 private ingress at one-based index 5 rather than assuming the earlier index 6.
-MicYou connected from `100.66.157.119`, negotiated TCP control on 8554 and UDP
+MicYou connected from `<LAB_IPV4_03>`, negotiated TCP control on 8554 and UDP
 audio on 8555, emitted changing microphone levels, and began each new session
 with `0.00%` loss. Observed steady-state loss remained a bounded fraction near
 `0.2%` to `0.3%`, rather than the earlier value that had accidentally been
@@ -142,7 +142,7 @@ The local MicYou build has two additional reviewed lab-only corrections:
 The retained signed package is
 `artifacts/windows-audio/21.82-microphone-fresh-attach-signed`. Its signing
 certificate thumbprint is
-`7353E729B92ACD148BB0046FB254E976A4762FEF`; the catalog SHA-256 is
+`<redacted-certificate-thumbprint>`; the catalog SHA-256 is
 `3218C5210BFA853735B1E09401C248AF06CE0BED97998CBCCAF4F6408B89A827`
 and the APO DLL SHA-256 is
 `8101F12D084540F24FE1E0EA31AE4DD046E118A423699BC8AB726A791B56F6EA`.

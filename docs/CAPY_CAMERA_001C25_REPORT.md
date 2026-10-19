@@ -65,7 +65,7 @@ was built; the clean-package preflight passed afterward.
 ## Authorized physical evidence
 
 - The exact C25 APK above was installed on the authorized V2419A at
-  `100.66.157.119:46143`; the installed `base.apk` SHA-256 matched the approved
+  `<LAB_IPV4_03>:46143`; the installed `base.apk` SHA-256 matched the approved
   hash. No camera `adb reverse tcp:38173` mapping was created.
 - Android rotation history recorded `ROTATION_0 -> ROTATION_90` at
   `03:25:37.141` and `ROTATION_90 -> ROTATION_0` at `03:26:17.745`. The same

@@ -43,9 +43,11 @@ final class LoopbackAvcSender implements AutoCloseable {
             new BoundedAvcAccessUnitQueue(QUEUE_CAPACITY);
     private final AtomicReference<AvcCodecConfig> codecConfig = new AtomicReference<>();
     private final AtomicLong droppedAccessUnits = new AtomicLong();
+    private long sentAccessUnits;
     private final AvcWireRecordEncoder.StreamKey streamKey;
     private final AvcEncoderConfig encoderConfig;
     private final CameraTransportEndpoint endpoint;
+    private final CameraRouteBinding route;
 
     private volatile boolean running;
     private volatile Socket socket;
@@ -55,12 +57,22 @@ final class LoopbackAvcSender implements AutoCloseable {
             CameraTransportEndpoint endpoint,
             AvcEncoderConfig encoderConfig,
             Listener listener) {
+        this(endpoint,encoderConfig,listener,null);
+    }
+
+    LoopbackAvcSender(CameraTransportEndpoint endpoint, AvcEncoderConfig encoderConfig,
+            Listener listener, CameraRouteBinding route) {
+        this.route = route;
         this.listener = Objects.requireNonNull(listener, "listener");
         this.endpoint = Objects.requireNonNull(endpoint, "endpoint");
-        byte[] streamId = new byte[16];
-        new SecureRandom().nextBytes(streamId);
-        long epoch = Math.max(1, SystemClock.elapsedRealtimeNanos());
-        streamKey = new AvcWireRecordEncoder.StreamKey(streamId, epoch);
+        if (route == null) {
+            byte[] streamId = new byte[16];
+            new SecureRandom().nextBytes(streamId);
+            streamKey = new AvcWireRecordEncoder.StreamKey(streamId,
+                    Math.max(1, SystemClock.elapsedRealtimeNanos()));
+        } else {
+            streamKey = route.streamKey();
+        }
         this.encoderConfig = Objects.requireNonNull(encoderConfig, "encoderConfig");
     }
 
@@ -90,50 +102,52 @@ final class LoopbackAvcSender implements AutoCloseable {
     }
 
     private void runWorker() {
-        long sent = 0;
         IOException lastFailure = null;
         try {
             for (int attempt = 1;
-                    running && LoopbackConnectRetryPolicy.mayAttempt(attempt);
-                    attempt++) {
+                    running && (route == null || route.isLive()) && (endpoint.mode() == CameraTransportEndpoint.Mode.TRUSTED_LAN
+                            || LoopbackConnectRetryPolicy.mayAttempt(attempt));
+                    attempt = Math.min(attempt + 1, LoopbackConnectRetryPolicy.MAX_ATTEMPTS + 1)) {
                 notifyStatus(
                         "waiting for "
                                 + endpoint.modeLabel()
                                 + " "
                                 + attempt
-                                + "/"
-                                + LoopbackConnectRetryPolicy.MAX_ATTEMPTS,
-                        sent);
+                                + (endpoint.mode() == CameraTransportEndpoint.Mode.TRUSTED_LAN
+                                        ? " (capture remains enabled)"
+                                        : "/" + LoopbackConnectRetryPolicy.MAX_ATTEMPTS),
+                        sentAccessUnits);
                 try {
-                    sent = runConnection(sent);
+                    runConnection();
                     break;
                 } catch (IOException error) {
                     lastFailure = error;
-                    if (!running
-                            || !LoopbackConnectRetryPolicy.shouldRetryAfterFailure(attempt)) {
+                    if (!running || (endpoint.mode() != CameraTransportEndpoint.Mode.TRUSTED_LAN
+                            && !LoopbackConnectRetryPolicy.shouldRetryAfterFailure(attempt))) {
                         break;
                     }
-                    notifyStatus(endpoint.modeLabel() + " interrupted; retrying", sent);
-                    TimeUnit.MILLISECONDS.sleep(LoopbackConnectRetryPolicy.RETRY_DELAY_MILLIS);
+                    notifyStatus(endpoint.modeLabel() + " interrupted; retrying", sentAccessUnits);
+                    TimeUnit.MILLISECONDS.sleep(endpoint.mode() == CameraTransportEndpoint.Mode.TRUSTED_LAN
+                            ? 1000 : LoopbackConnectRetryPolicy.RETRY_DELAY_MILLIS);
                 }
             }
             if (running && lastFailure != null) {
-                notifyStatus("export stopped: " + lastFailure.getClass().getSimpleName(), sent);
+                notifyStatus("export stopped: " + lastFailure.getClass().getSimpleName(), sentAccessUnits);
             }
         } catch (InterruptedException error) {
             Thread.currentThread().interrupt();
         } catch (RuntimeException error) {
             if (running) {
-                notifyStatus("export stopped: " + error.getClass().getSimpleName(), sent);
+                notifyStatus("export stopped: " + error.getClass().getSimpleName(), sentAccessUnits);
             }
         } finally {
             socket = null;
             running = false;
-            notifyStatus("export stopped", sent);
+            notifyStatus("export stopped", sentAccessUnits);
         }
     }
 
-    private long runConnection(long sent) throws IOException, InterruptedException {
+    private void runConnection() throws IOException, InterruptedException {
         try (Socket connected = new Socket()) {
             socket = connected;
             connected.connect(
@@ -142,13 +156,13 @@ final class LoopbackAvcSender implements AutoCloseable {
                             endpoint.port()),
                     LoopbackConnectRetryPolicy.CONNECT_TIMEOUT_MILLIS);
             connected.setTcpNoDelay(true);
-            notifyStatus(endpoint.modeLabel() + " connected", sent);
+            notifyStatus(endpoint.modeLabel() + " connected", sentAccessUnits);
             try (BufferedOutputStream output =
                     new BufferedOutputStream(connected.getOutputStream(), 64 * 1024)) {
                 AvcWireSessionEncoder sessionEncoder =
                         new AvcWireSessionEncoder(streamKey, encoderConfig);
                 AvcCodecConfig appliedConfig = null;
-                while (running) {
+                while (running && (route == null || route.isLive())) {
                     AvcCodecConfig latestConfig = codecConfig.get();
                     if (latestConfig != null && latestConfig != appliedConfig) {
                         sessionEncoder.setCodecConfig(latestConfig);
@@ -167,15 +181,14 @@ final class LoopbackAvcSender implements AutoCloseable {
                     if (!records.isEmpty()) {
                         output.flush();
                         if (!unit.codecConfig() && !unit.endOfStream()) {
-                            sent++;
+                            sentAccessUnits++;
                         }
-                        if (sent == 1 || unit.keyFrame() || sent % 30 == 0) {
-                            notifyStatus("sending through " + endpoint.modeLabel(), sent);
+                        if (sentAccessUnits == 1 || unit.keyFrame() || sentAccessUnits % 30 == 0) {
+                            notifyStatus("sending through " + endpoint.modeLabel(), sentAccessUnits);
                         }
                     }
                 }
             }
-            return sent;
         } finally {
             socket = null;
         }

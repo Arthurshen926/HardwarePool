@@ -12,6 +12,7 @@ final class AuthenticatedGameStreamReceiver implements AutoCloseable {
     }
 
     private final ProvisionedDisplayConfiguration.GameStreamLaunch provisioning;
+    private NodeDisplaySession nodeSession;
     private final Surface surface;
     private final StatusListener statusListener;
     private final AtomicBoolean closed = new AtomicBoolean();
@@ -27,6 +28,10 @@ final class AuthenticatedGameStreamReceiver implements AutoCloseable {
         this.statusListener = Objects.requireNonNull(statusListener, "statusListener");
     }
 
+    AuthenticatedGameStreamReceiver(NodeDisplaySession session, Surface surface, StatusListener listener) {
+        provisioning = null; nodeSession = session; this.surface = surface; statusListener = listener;
+    }
+
     synchronized void start() {
         if (worker != null || closed.get()) {
             throw new IllegalStateException("GameStream receiver already started or closed");
@@ -37,6 +42,7 @@ final class AuthenticatedGameStreamReceiver implements AutoCloseable {
     }
 
     private void run() {
+        if (nodeSession != null) { runNodeSession(); return; }
         int reconnectAttempt = 0;
         while (!closed.get()) {
             statusListener.onStatus(reconnectAttempt == 0
@@ -100,6 +106,35 @@ final class AuthenticatedGameStreamReceiver implements AutoCloseable {
                     return;
                 }
             }
+        }
+    }
+
+    private void runNodeSession() {
+        String failure = "";
+        try (GameStreamLaunchRecord launch = nodeSession.takeLaunch()) {
+            byte[] key=launch.keyCopy();
+            GameStreamNativeClient client=null;
+            try {
+                client=new GameStreamNativeClient(surface,statusListener::onStatus);
+                setActiveNativeClient(client);
+                if(!closed.get()) {
+                    int result=client.run(nodeSession.expected,key,launch.keyId());
+                    if(!closed.get()) {
+                        failure="receiver_ended_"+result;
+                        android.util.Log.w("CapyIODisplay","Node receiver returned code="+result);
+                    }
+                }
+            } finally {
+                Arrays.fill(key,(byte)0);
+                if(client!=null){clearActiveNativeClient(client);client.close();}
+            }
+        } catch(Exception | LinkageError error) {
+            if(!closed.get()) {
+                failure="receiver_failed_"+error.getClass().getSimpleName();
+                android.util.Log.w("CapyIODisplay","Node receiver exception="+error.getClass().getSimpleName());
+            }
+        } finally {
+            nodeSession.close(failure);
         }
     }
 

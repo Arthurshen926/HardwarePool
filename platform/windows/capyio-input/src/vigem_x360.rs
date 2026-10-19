@@ -1,9 +1,9 @@
 use std::error::Error;
 use std::fmt::{self, Display, Formatter};
-use std::io::{self, BufRead, BufReader, Write};
+use std::io::{self, BufRead, BufReader, Read, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Child, ChildStdin, Command, Stdio};
-use std::sync::mpsc;
+use std::sync::{Arc, Mutex, mpsc};
 use std::time::{Duration, Instant};
 
 use capyio_input::{GamepadButton, GamepadControls};
@@ -79,18 +79,25 @@ impl Error for VigemX360Error {}
 /// Owns one fixed Xbox 360 ViGEm target in a separate user-mode process.
 ///
 /// Complete controls cross stdin as the existing fixed 20-byte Xbox 360 state
-/// contract. Stdout is reserved for the one readiness control message; the
-/// sidecar emits failures to stderr. IMU remains on the independent DS4/DSU
+/// contract. After its readiness line, stdout carries fixed two-byte motor
+/// feedback records (small, large); failures go to stderr. IMU remains on DS4/DSU
 /// Routes and is never collapsed into this compatibility projection.
 pub struct VigemX360Companion {
     child: Child,
     input: Option<ChildStdin>,
     stop_timeout: Duration,
+    feedback: Arc<Mutex<Option<[u8; 2]>>>,
 }
 
 impl VigemX360Companion {
     pub fn start(config: VigemX360SidecarConfig) -> Result<Self, VigemX360Error> {
-        let mut child = Command::new(&config.executable)
+        let mut command = Command::new(&config.executable);
+        #[cfg(target_os = "windows")]
+        {
+            use std::os::windows::process::CommandExt;
+            command.creation_flags(0x0800_0000); // CREATE_NO_WINDOW
+        }
+        let mut child = command
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::inherit())
@@ -105,12 +112,26 @@ impl VigemX360Companion {
             .take()
             .ok_or(VigemX360Error::MissingPipe("stdout"))?;
         let (sender, receiver) = mpsc::sync_channel(1);
+        let feedback = Arc::new(Mutex::new(None));
+        let feedback_writer = Arc::clone(&feedback);
         std::thread::spawn(move || {
+            let mut output = BufReader::new(output);
             let mut line = String::new();
-            let result = BufReader::new(output)
+            let result = output
+                .by_ref()
+                .take(128)
                 .read_line(&mut line)
                 .map(|_| line.trim().to_owned());
+            let ready = result.as_ref().is_ok_and(|line| line == READY_LINE);
             let _ = sender.send(result);
+            if ready {
+                let mut motors = [0_u8; 2];
+                while output.read_exact(&mut motors).is_ok() {
+                    if let Ok(mut latest) = feedback_writer.lock() {
+                        *latest = Some(motors);
+                    }
+                }
+            }
         });
         let readiness = match receiver.recv_timeout(config.start_timeout) {
             Ok(Ok(line)) => line,
@@ -134,9 +155,14 @@ impl VigemX360Companion {
             child,
             input: Some(input),
             stop_timeout: config.stop_timeout,
+            feedback,
         };
         companion.submit(GamepadControls::neutral())?;
         Ok(companion)
+    }
+
+    pub fn take_feedback(&self) -> Option<[u8; 2]> {
+        self.feedback.lock().ok()?.take()
     }
 
     pub fn submit(&mut self, controls: GamepadControls) -> Result<(), VigemX360Error> {
@@ -174,6 +200,16 @@ impl VigemX360Companion {
                     )));
                 }
             }
+        }
+    }
+}
+
+impl Drop for VigemX360Companion {
+    fn drop(&mut self) {
+        self.input.take();
+        if !matches!(self.child.try_wait(), Ok(Some(_))) {
+            let _ = self.child.kill();
+            let _ = self.child.wait();
         }
     }
 }

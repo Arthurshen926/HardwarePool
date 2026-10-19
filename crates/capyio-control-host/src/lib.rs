@@ -7,10 +7,13 @@ use std::collections::{BTreeSet, VecDeque};
 
 use capyio_core::{
     Availability, CapabilityId, CoreError, MessageId, NodeDescriptor, NodeId, PortDirection,
-    SessionId,
+    SessionId, SessionState,
 };
-use capyio_protocol::{ProtocolError, decode_catalog_snapshot, encode_catalog_snapshot};
-use capyio_runtime::{NodeRuntime, RuntimeError};
+use capyio_protocol::{
+    PortLeaseAction, PortLeaseOutcome, ProtocolError, decode_catalog_snapshot, decode_envelope,
+    decode_port_lease_request, encode_catalog_snapshot, encode_port_lease_response, v1,
+};
+use capyio_runtime::{LeaseClaimOutcome, NodeRuntime, PortLeaseError, RuntimeError};
 use thiserror::Error;
 
 /// Fixed duplicate-retention bound for one admitted control connection.
@@ -89,13 +92,24 @@ impl AdmittedPeerBinding {
     }
 }
 
-/// Applies decoded catalog messages to Runtime while retaining a bounded set
-/// of recent IDs for accidental duplicate suppression. A production transport
-/// still requires cryptographic replay protection outside this object.
+/// Applies decoded peer control messages to Runtime while retaining a bounded
+/// set of recent IDs for accidental duplicate suppression. A production
+/// transport still requires cryptographic replay protection outside this object.
 #[derive(Clone, Debug)]
 pub struct PeerCatalogControlHost {
     binding: AdmittedPeerBinding,
     recent_message_ids: VecDeque<MessageId>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum ControlMessageOutcome {
+    CatalogAdmitted {
+        message_id: MessageId,
+    },
+    Response {
+        request_message_id: MessageId,
+        bytes: Vec<u8>,
+    },
 }
 
 impl PeerCatalogControlHost {
@@ -104,6 +118,33 @@ impl PeerCatalogControlHost {
         Self {
             binding,
             recent_message_ids: VecDeque::new(),
+        }
+    }
+
+    /// Dispatches one complete control envelope after transport framing and
+    /// authentication. Continuous data and unsupported control payloads are
+    /// never accepted through this boundary.
+    pub fn handle_control_message(
+        &mut self,
+        runtime: &mut NodeRuntime,
+        bytes: &[u8],
+        now_ms: u64,
+    ) -> Result<ControlMessageOutcome, ControlHostError> {
+        let envelope = decode_envelope(bytes)?;
+        match envelope.payload {
+            Some(v1::envelope::Payload::CatalogSnapshot(_)) => {
+                let message_id = self.admit_catalog(runtime, bytes)?;
+                Ok(ControlMessageOutcome::CatalogAdmitted { message_id })
+            }
+            Some(v1::envelope::Payload::PortLeaseRequest(_)) => {
+                let request = decode_port_lease_request(bytes)?;
+                let response = self.handle_port_lease_request(runtime, bytes, now_ms)?;
+                Ok(ControlMessageOutcome::Response {
+                    request_message_id: request.message_id,
+                    bytes: response,
+                })
+            }
+            _ => Err(ControlHostError::UnsupportedInboundPayload),
         }
     }
 
@@ -130,11 +171,129 @@ impl PeerCatalogControlHost {
         }
 
         runtime.accept_peer_catalog(catalog.session_id, catalog.node)?;
-        self.recent_message_ids.push_back(catalog.message_id);
-        while self.recent_message_ids.len() > MAX_RECENT_CONTROL_MESSAGE_IDS {
-            self.recent_message_ids.pop_front();
-        }
+        self.remember_message(catalog.message_id);
         Ok(catalog.message_id)
+    }
+
+    /// Handles one owner-authoritative Port lease request. The caller must
+    /// supply monotonically non-decreasing host time and an authenticated
+    /// connection represented by this host's fixed binding.
+    pub fn handle_port_lease_request(
+        &mut self,
+        runtime: &mut NodeRuntime,
+        bytes: &[u8],
+        now_ms: u64,
+    ) -> Result<Vec<u8>, ControlHostError> {
+        let request = decode_port_lease_request(bytes)?;
+        if request.session_id != self.binding.session_id {
+            return Err(ControlHostError::SessionMismatch {
+                expected: self.binding.session_id,
+                actual: request.session_id,
+            });
+        }
+        if self.recent_message_ids.contains(&request.message_id) {
+            return Err(ControlHostError::DuplicateMessage(request.message_id));
+        }
+
+        let session = runtime.session(self.binding.session_id)?;
+        if session.remote_node_id != self.binding.peer_node_id {
+            return Err(ControlHostError::PeerMismatch {
+                expected: self.binding.peer_node_id,
+                actual: session.remote_node_id,
+            });
+        }
+        if session.state != SessionState::Ready {
+            return Err(ControlHostError::SessionNotReady(self.binding.session_id));
+        }
+        let route = runtime.route(request.route_id)?;
+        if route.session_id != self.binding.session_id {
+            return Err(ControlHostError::RouteSessionMismatch {
+                route_id: request.route_id,
+                expected: self.binding.session_id,
+                actual: route.session_id,
+            });
+        }
+
+        let expires_at_ms = match request.action {
+            PortLeaseAction::Acquire | PortLeaseAction::Renew => {
+                now_ms.checked_add(request.requested_ttl_ms)
+            }
+            PortLeaseAction::Release => None,
+        };
+        let (outcome, response_expiry) = if request.port.node_id != session.local_node_id
+            || expires_at_ms.is_none() && !matches!(request.action, PortLeaseAction::Release)
+        {
+            (PortLeaseOutcome::Denied, None)
+        } else {
+            match request.action {
+                PortLeaseAction::Acquire => {
+                    let expiry = expires_at_ms.expect("checked non-release expiry");
+                    match runtime.acquire_route_port_lease(
+                        request.route_id,
+                        request.port,
+                        expiry,
+                        now_ms,
+                    ) {
+                        Ok(LeaseClaimOutcome::Acquired) => {
+                            (PortLeaseOutcome::Acquired, Some(expiry))
+                        }
+                        Ok(LeaseClaimOutcome::Refreshed) => {
+                            (PortLeaseOutcome::Renewed, Some(expiry))
+                        }
+                        Err(RuntimeError::Lease(PortLeaseError::Conflict(_))) => {
+                            (PortLeaseOutcome::Conflict, None)
+                        }
+                        Err(_) => (PortLeaseOutcome::Denied, None),
+                    }
+                }
+                PortLeaseAction::Renew => {
+                    let expiry = expires_at_ms.expect("checked non-release expiry");
+                    let has_current_claim = runtime
+                        .route_port_lease_claim(request.route_id, request.port)
+                        .is_some_and(|claim| {
+                            claim.session_id == self.binding.session_id
+                                && claim.expires_at_ms > now_ms
+                        });
+                    if !has_current_claim {
+                        (PortLeaseOutcome::Denied, None)
+                    } else {
+                        match runtime.acquire_route_port_lease(
+                            request.route_id,
+                            request.port,
+                            expiry,
+                            now_ms,
+                        ) {
+                            Ok(LeaseClaimOutcome::Refreshed) => {
+                                (PortLeaseOutcome::Renewed, Some(expiry))
+                            }
+                            Ok(LeaseClaimOutcome::Acquired) | Err(_) => {
+                                (PortLeaseOutcome::Denied, None)
+                            }
+                        }
+                    }
+                }
+                PortLeaseAction::Release => {
+                    match runtime.release_route_port_lease(
+                        request.route_id,
+                        request.port,
+                        self.binding.session_id,
+                    ) {
+                        Ok(true) => (PortLeaseOutcome::Released, None),
+                        Ok(false) | Err(_) => (PortLeaseOutcome::Denied, None),
+                    }
+                }
+            }
+        };
+        let response = encode_port_lease_response(
+            self.binding.session_id,
+            request.message_id,
+            request.route_id,
+            request.port,
+            outcome,
+            response_expiry,
+        )?;
+        self.remember_message(request.message_id);
+        Ok(response)
     }
 
     /// Projects and encodes the local catalog on this host's already-admitted
@@ -156,6 +315,13 @@ impl PeerCatalogControlHost {
     pub fn retained_message_count(&self) -> usize {
         self.recent_message_ids.len()
     }
+
+    fn remember_message(&mut self, message_id: MessageId) {
+        self.recent_message_ids.push_back(message_id);
+        while self.recent_message_ids.len() > MAX_RECENT_CONTROL_MESSAGE_IDS {
+            self.recent_message_ids.pop_front();
+        }
+    }
 }
 
 #[derive(Debug, Error)]
@@ -173,6 +339,16 @@ pub enum ControlHostError {
     PeerMismatch { expected: NodeId, actual: NodeId },
     #[error("recent control message {0} is a duplicate")]
     DuplicateMessage(MessageId),
+    #[error("control Session {0} is not ready")]
+    SessionNotReady(SessionId),
+    #[error("Route {route_id} belongs to Session {actual}, not admitted Session {expected}")]
+    RouteSessionMismatch {
+        route_id: capyio_core::RouteId,
+        expected: SessionId,
+        actual: SessionId,
+    },
+    #[error("control payload is not accepted by the admitted peer host")]
+    UnsupportedInboundPayload,
 }
 
 #[derive(Debug, Error)]
@@ -191,7 +367,11 @@ pub enum PublicationError {
 
 #[cfg(test)]
 mod tests {
-    use capyio_protocol::{decode_catalog_snapshot, encode_envelope, new_envelope, v1};
+    use capyio_protocol::{
+        MIN_PORT_LEASE_TTL_MS, decode_catalog_snapshot, decode_port_lease_response,
+        encode_envelope, encode_port_lease_request, new_envelope, v1,
+    };
+    use capyio_runtime::PortLeasePolicy;
     use capyio_testkit::{ANDROID_NODE_ID, DemoLab, android_node, windows_node};
 
     use super::*;
@@ -445,5 +625,301 @@ mod tests {
         ));
         assert_eq!(lab.runtime.snapshot(), before);
         assert_eq!(host.retained_message_count(), 0);
+    }
+
+    #[test]
+    fn admitted_peer_can_acquire_renew_and_release_only_its_bound_route_lease() {
+        let mut lab = DemoLab::new().expect("demo lab");
+        let route_id = lab.routes.phone_microphone_to_windows;
+        let local_port = lab.runtime.route(route_id).expect("Route").sink;
+        lab.runtime
+            .set_local_port_lease_policy(local_port, PortLeasePolicy::Exclusive)
+            .expect("policy");
+        lab.runtime
+            .authorize_route(route_id, None)
+            .expect("authorize Route");
+        let mut host = host_for(&lab);
+
+        let acquire = encode_port_lease_request(
+            lab.session_id,
+            route_id,
+            local_port,
+            PortLeaseAction::Acquire,
+            MIN_PORT_LEASE_TTL_MS,
+        )
+        .expect("acquire request");
+        let acquired = decode_port_lease_response(
+            &host
+                .handle_port_lease_request(&mut lab.runtime, &acquire, 10)
+                .expect("acquire response"),
+        )
+        .expect("decode acquired");
+        assert_eq!(acquired.outcome, PortLeaseOutcome::Acquired);
+        assert_eq!(acquired.expires_at_ms, Some(10 + MIN_PORT_LEASE_TTL_MS));
+
+        let renew = encode_port_lease_request(
+            lab.session_id,
+            route_id,
+            local_port,
+            PortLeaseAction::Renew,
+            MIN_PORT_LEASE_TTL_MS,
+        )
+        .expect("renew request");
+        let renewed = decode_port_lease_response(
+            &host
+                .handle_port_lease_request(&mut lab.runtime, &renew, 20)
+                .expect("renew response"),
+        )
+        .expect("decode renewed");
+        assert_eq!(renewed.outcome, PortLeaseOutcome::Renewed);
+        assert_eq!(renewed.expires_at_ms, Some(20 + MIN_PORT_LEASE_TTL_MS));
+
+        let release = encode_port_lease_request(
+            lab.session_id,
+            route_id,
+            local_port,
+            PortLeaseAction::Release,
+            0,
+        )
+        .expect("release request");
+        let released = decode_port_lease_response(
+            &host
+                .handle_port_lease_request(&mut lab.runtime, &release, 30)
+                .expect("release response"),
+        )
+        .expect("decode released");
+        assert_eq!(released.outcome, PortLeaseOutcome::Released);
+        assert!(
+            lab.runtime
+                .route_port_lease_claim(route_id, local_port)
+                .is_none()
+        );
+        assert_eq!(host.retained_message_count(), 3);
+    }
+
+    #[test]
+    fn renewal_rejects_expired_claim_before_and_after_expiry_sweep() {
+        for swept in [false, true] {
+            for after_expiry_ms in [0, 1] {
+                let mut lab = DemoLab::new().expect("demo lab");
+                let route_id = lab.routes.phone_microphone_to_windows;
+                let port = lab.runtime.route(route_id).expect("Route").sink;
+                lab.runtime
+                    .set_local_port_lease_policy(port, PortLeasePolicy::Exclusive)
+                    .expect("policy");
+                lab.runtime
+                    .authorize_route(route_id, Some(10_000))
+                    .expect("finite authorization");
+                let expiry = 10 + MIN_PORT_LEASE_TTL_MS;
+                lab.runtime
+                    .acquire_route_port_lease(route_id, port, expiry, 10)
+                    .expect("initial claim");
+                lab.runtime
+                    .set_route_active(route_id, true, 10)
+                    .expect("active Route");
+                let now = expiry + after_expiry_ms;
+                if swept {
+                    assert_eq!(lab.runtime.expire_port_leases(now), 1);
+                }
+                let before = lab.runtime.snapshot();
+                let mut host = host_for(&lab);
+                let request = encode_port_lease_request(
+                    lab.session_id,
+                    route_id,
+                    port,
+                    PortLeaseAction::Renew,
+                    MIN_PORT_LEASE_TTL_MS,
+                )
+                .expect("renew request");
+                let response = decode_port_lease_response(
+                    &host
+                        .handle_port_lease_request(&mut lab.runtime, &request, now)
+                        .expect("bounded renewal denial"),
+                )
+                .expect("decode denial");
+                assert_eq!(response.outcome, PortLeaseOutcome::Denied);
+                assert_eq!(response.expires_at_ms, None);
+                // Without a sweep the old, expired claim can still be present;
+                // Renew must neither replace it nor resume an Offline Route.
+                assert_eq!(lab.runtime.snapshot(), before);
+            }
+        }
+    }
+
+    #[test]
+    fn renewal_rejects_a_released_claim_without_reacquiring_it() {
+        let mut lab = DemoLab::new().expect("demo lab");
+        let route_id = lab.routes.phone_microphone_to_windows;
+        let port = lab.runtime.route(route_id).expect("Route").sink;
+        lab.runtime
+            .set_local_port_lease_policy(port, PortLeasePolicy::Exclusive)
+            .expect("policy");
+        lab.runtime
+            .authorize_route(route_id, Some(10_000))
+            .expect("finite authorization");
+        lab.runtime
+            .acquire_route_port_lease(route_id, port, 2_000, 10)
+            .expect("initial claim");
+        let mut host = host_for(&lab);
+        let release =
+            encode_port_lease_request(lab.session_id, route_id, port, PortLeaseAction::Release, 0)
+                .expect("release request");
+        let released = decode_port_lease_response(
+            &host
+                .handle_port_lease_request(&mut lab.runtime, &release, 20)
+                .expect("release response"),
+        )
+        .expect("decode release");
+        assert_eq!(released.outcome, PortLeaseOutcome::Released);
+        assert!(lab.runtime.route_port_lease_claim(route_id, port).is_none());
+        let before = lab.runtime.snapshot();
+        let renew = encode_port_lease_request(
+            lab.session_id,
+            route_id,
+            port,
+            PortLeaseAction::Renew,
+            MIN_PORT_LEASE_TTL_MS,
+        )
+        .expect("renew request");
+        let denied = decode_port_lease_response(
+            &host
+                .handle_port_lease_request(&mut lab.runtime, &renew, 21)
+                .expect("bounded renewal denial"),
+        )
+        .expect("decode denial");
+        assert_eq!(denied.outcome, PortLeaseOutcome::Denied);
+        assert_eq!(denied.expires_at_ms, None);
+        assert_eq!(lab.runtime.snapshot(), before);
+    }
+
+    #[test]
+    fn renewal_rejects_a_stopped_route_without_resuming_it() {
+        let mut lab = DemoLab::new().expect("demo lab");
+        let route_id = lab.routes.phone_microphone_to_windows;
+        let port = lab.runtime.route(route_id).expect("Route").sink;
+        lab.runtime
+            .set_local_port_lease_policy(port, PortLeasePolicy::Exclusive)
+            .expect("policy");
+        lab.runtime
+            .authorize_route(route_id, Some(10_000))
+            .expect("finite authorization");
+        lab.runtime
+            .acquire_route_port_lease(route_id, port, 2_000, 10)
+            .expect("initial claim");
+        lab.runtime
+            .set_route_active(route_id, true, 10)
+            .expect("active Route");
+        lab.runtime
+            .set_route_active(route_id, false, 20)
+            .expect("stop releases its claim");
+        assert!(lab.runtime.route_port_lease_claim(route_id, port).is_none());
+        assert_eq!(
+            lab.runtime.route(route_id).expect("Route").state,
+            capyio_core::RouteState::Stopped
+        );
+        let before = lab.runtime.snapshot();
+        let mut host = host_for(&lab);
+        let renew = encode_port_lease_request(
+            lab.session_id,
+            route_id,
+            port,
+            PortLeaseAction::Renew,
+            MIN_PORT_LEASE_TTL_MS,
+        )
+        .expect("renew request");
+        let denied = decode_port_lease_response(
+            &host
+                .handle_port_lease_request(&mut lab.runtime, &renew, 21)
+                .expect("bounded renewal denial"),
+        )
+        .expect("decode denial");
+        assert_eq!(denied.outcome, PortLeaseOutcome::Denied);
+        assert_eq!(denied.expires_at_ms, None);
+        assert_eq!(lab.runtime.snapshot(), before);
+    }
+
+    #[test]
+    fn lease_request_replay_and_non_local_port_fail_closed() {
+        let mut lab = DemoLab::new().expect("demo lab");
+        let route_id = lab.routes.phone_microphone_to_windows;
+        let route = lab.runtime.route(route_id).expect("Route").clone();
+        lab.runtime
+            .authorize_route(route_id, None)
+            .expect("authorize Route");
+        let mut host = host_for(&lab);
+        let request = encode_port_lease_request(
+            lab.session_id,
+            route_id,
+            route.source,
+            PortLeaseAction::Acquire,
+            MIN_PORT_LEASE_TTL_MS,
+        )
+        .expect("remote Port request");
+
+        let denied = decode_port_lease_response(
+            &host
+                .handle_port_lease_request(&mut lab.runtime, &request, 10)
+                .expect("bounded denial"),
+        )
+        .expect("decode denial");
+        assert_eq!(denied.outcome, PortLeaseOutcome::Denied);
+        assert!(matches!(
+            host.handle_port_lease_request(&mut lab.runtime, &request, 11),
+            Err(ControlHostError::DuplicateMessage(_))
+        ));
+        assert!(lab.runtime.snapshot().port_leases.is_empty());
+    }
+
+    #[test]
+    fn unified_dispatch_accepts_only_catalog_and_lease_requests() {
+        let mut lab = DemoLab::new().expect("demo lab");
+        let mut host = host_for(&lab);
+        let catalog = catalog_bytes(lab.session_id, &android_node());
+        assert!(matches!(
+            host.handle_control_message(&mut lab.runtime, &catalog, 0),
+            Ok(ControlMessageOutcome::CatalogAdmitted { .. })
+        ));
+
+        let route_id = lab.routes.phone_microphone_to_windows;
+        let local_port = lab.runtime.route(route_id).expect("Route").sink;
+        lab.runtime
+            .set_local_port_lease_policy(local_port, PortLeasePolicy::Exclusive)
+            .expect("policy");
+        lab.runtime
+            .authorize_route(route_id, None)
+            .expect("authorize Route");
+        let lease = encode_port_lease_request(
+            lab.session_id,
+            route_id,
+            local_port,
+            PortLeaseAction::Acquire,
+            MIN_PORT_LEASE_TTL_MS,
+        )
+        .expect("lease request");
+        let outcome = host
+            .handle_control_message(&mut lab.runtime, &lease, 10)
+            .expect("lease dispatch");
+        let ControlMessageOutcome::Response {
+            request_message_id,
+            bytes,
+        } = outcome
+        else {
+            panic!("expected response");
+        };
+        let response = decode_port_lease_response(&bytes).expect("lease response");
+        assert_eq!(response.request_message_id, request_message_id);
+        assert_eq!(response.outcome, PortLeaseOutcome::Acquired);
+
+        let unsupported = new_envelope(
+            Some(lab.session_id),
+            v1::envelope::Payload::RouteCommand(v1::RouteCommand {
+                route_id: route_id.to_string(),
+                action: v1::RouteCommandAction::Start as i32,
+            }),
+        );
+        assert!(matches!(
+            host.handle_control_message(&mut lab.runtime, &encode_envelope(&unsupported), 20),
+            Err(ControlHostError::UnsupportedInboundPayload)
+        ));
     }
 }

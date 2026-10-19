@@ -323,13 +323,36 @@ impl BoundDisplayWorkerChannel {
         &mut self,
         timeout: Duration,
     ) -> Result<(), DisplayWorkerChannelError> {
-        self.exchange_control(DisplayWorkerControlCommand::RequestKeyFrame, timeout)
+        self.exchange_control(
+            DisplayWorkerControlCommand::RequestKeyFrame,
+            timeout,
+            MAX_WORKER_PIPE_EXCHANGE_TIMEOUT,
+        )
+    }
+
+    /// The start-record ACK acknowledges secret receipt, not native readiness.
+    /// The worker cannot consume this lease-bound control command until it has
+    /// created its monitor and successfully started the engine. Its exact ACK
+    /// is therefore a readiness barrier, without changing the wire protocol.
+    pub fn wait_engine_ready(
+        &mut self,
+        timeout: Duration,
+    ) -> Result<(), DisplayWorkerChannelError> {
+        self.exchange_control(
+            DisplayWorkerControlCommand::RequestKeyFrame,
+            timeout,
+            Duration::from_secs(30),
+        )
     }
 
     /// Stops the native engine while the authenticated service channel still
     /// exists and waits for the worker's post-quiescence acknowledgement.
     pub fn graceful_stop(&mut self, timeout: Duration) -> Result<(), DisplayWorkerChannelError> {
-        self.exchange_control(DisplayWorkerControlCommand::GracefulStop, timeout)?;
+        self.exchange_control(
+            DisplayWorkerControlCommand::GracefulStop,
+            timeout,
+            MAX_WORKER_PIPE_EXCHANGE_TIMEOUT,
+        )?;
         self.state = DisplayWorkerChannelState::StopAcknowledged;
         Ok(())
     }
@@ -338,6 +361,7 @@ impl BoundDisplayWorkerChannel {
         &mut self,
         command: DisplayWorkerControlCommand,
         timeout: Duration,
+        maximum_timeout: Duration,
     ) -> Result<(), DisplayWorkerChannelError> {
         let DisplayWorkerChannelState::StartAcknowledged {
             lease,
@@ -351,7 +375,7 @@ impl BoundDisplayWorkerChannel {
         let following_sequence = next_control_sequence
             .checked_add(1)
             .ok_or(DisplayWorkerChannelError::ControlSequenceExhausted)?;
-        let deadline = bounded_deadline(timeout, MAX_WORKER_PIPE_EXCHANGE_TIMEOUT)?;
+        let deadline = bounded_deadline(timeout, maximum_timeout)?;
 
         // From this point, any I/O error is ambiguous. Do not permit a replay.
         self.state = DisplayWorkerChannelState::ControlExchangeFaulted;
@@ -408,6 +432,23 @@ impl BoundDisplayWorkerChannel {
     #[must_use]
     pub const fn process_id(&self) -> u32 {
         self.peer.process_id()
+    }
+
+    pub fn exit_code(&self) -> Result<u32, DisplayWorkerChannelError> {
+        let mut code = 0;
+        // SAFETY: the channel owns this exact child process handle.
+        if unsafe {
+            windows_sys::Win32::System::Threading::GetExitCodeProcess(
+                self.worker.process_handle,
+                &mut code,
+            )
+        } == 0
+        {
+            return Err(DisplayWorkerChannelError::Launch(
+                DisplayWorkerLaunchError::QueryProcessState(io::Error::last_os_error()),
+            ));
+        }
+        Ok(code)
     }
 
     pub fn is_running(&self) -> Result<bool, DisplayWorkerChannelError> {
@@ -1755,7 +1796,7 @@ mod tests {
             channel.exchange_start(repeated, Duration::from_secs(2)),
             Err(DisplayWorkerChannelError::InvalidExchangeState)
         ));
-        channel.request_key_frame(Duration::from_secs(2)).unwrap();
+        channel.wait_engine_ready(Duration::from_secs(25)).unwrap();
         channel.request_key_frame(Duration::from_secs(2)).unwrap();
         channel.graceful_stop(Duration::from_secs(2)).unwrap();
         assert!(matches!(

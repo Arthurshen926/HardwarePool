@@ -2,7 +2,7 @@
 
 Date: 2026-08-28
 
-Target: `DESKTOP-AT8EVE9` controlled local lab permitted by ADR 0029
+Target: `LAB-WINDOWS-HOST` controlled local lab permitted by ADR 0029
 
 Base commit under test: `b21d103e8400c547dd0a281a560899da521c38c4`
 
@@ -14,7 +14,7 @@ Base commit under test: `b21d103e8400c547dd0a281a560899da521c38c4`
   SHA-256 `0ED5D96EC3B2A896920198BF5C36632B8CD2A413DA8F439F598D1C52AE8CA12D`;
 - service name/account/start type: `CapyIOBroker`, LocalSystem, Automatic;
 - fixed launch configuration: repository Broker path,
-  `100.66.231.100:65530`;
+  `<LAB_IPV4_04>:65530`;
 - control pipe: `\\.\pipe\CapyIO.Broker.Control.v1`.
 
 No driver package, signing certificate, boot configuration, Secure Boot,
@@ -37,7 +37,7 @@ BitLocker or Driver Verifier setting changed in this slice.
 4. The already paired Android device was reconnected over ADB and its installed
    Audio Share receiver was launched. Eight consecutive snapshots reported
    `active`, generation 3 and `receiverPresent=true`; the established TCP peer
-   was `100.66.157.119`.
+   was `<LAB_IPV4_03>`.
 5. The lab playback tool submitted five seconds of stereo 48 kHz audio to the
    default `CapyIO Speaker with Render Bridge`. Playback completed and the
    service still reported `active` with the receiver present. The operator had

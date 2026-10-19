@@ -1,5 +1,9 @@
 # CapyIO Build Status
 
+> Historical snapshot. For current status and verification, start with
+> [CURRENT_STATUS.md](CURRENT_STATUS.md). The dated evidence below is retained
+> and does not describe all capabilities implemented after 2026-09-17.
+
 > Updated: 2026-09-17 for unified Android/Windows Display E2E.
 
 Version 0.5.11-dev (23) imports a closed, bounded Display connection bundle
@@ -61,7 +65,7 @@ Status/Start/Active/Stop and exact process/reverse cleanup. No service is
 installed. After manual phone unlock, the unified Android camera action became
 Active and an independent elevated-account Media Foundation consumer read one
 1,382,400-byte NV12 sample through the Broker route. The final rerun then used
-the actual ordinary `arthu` Explorer context for both Broker control and an
+the actual ordinary `local-user` Explorer context for both Broker control and an
 independent Media Foundation consumer. It read a 1,382,400-byte NV12 sample
 with 333,333-tick duration and delta; Stop removed the Android camera client,
 ADB reverse and all Broker-owned processes. The Codex sandbox account remains
@@ -281,7 +285,7 @@ does not expose a virtual-desktop GUID, so the four-finger destination desktop
 was not independently identified. No test installed/removed a package or
 restarted Windows. Authenticated production transport, least-privilege Broker
 hosting and live Runtime task/transport wiring remain open. The Android endpoint
-`100.66.157.119:46143` is connected again; the separately gated loopback `--vhf`
+`<LAB_IPV4_03>:46143` is connected again; the separately gated loopback `--vhf`
 mode first carried one physical `0 -> 1 -> 0` phone gesture as 80 acknowledged
 VHF frames and closed cleanly. `CAPY-PTP-003P` subsequently carried 830 physical
 frames, reached both three and four contacts, submitted every accepted frame to
@@ -600,12 +604,12 @@ and user-mode Broker. Networking remains outside both the driver and APO.
 Microsoft Windows-driver-samples is pinned at revision
 `717778a20ba4dd2440fe609f69153a1f8a64f597`; its repository license is MS-PL.
 No upstream source has been imported. The identified local host is
-`DESKTOP-AT8EVE9`, AMD64 Windows build 26200.9168, with Visual Studio Build
+`LAB-WINDOWS-HOST`, AMD64 Windows build 26200.9168, with Visual Studio Build
 Tools 17.14, Windows SDK 10.0.26100.0 and WDK 10.0.26100.6584. WDK MSBuild and
 x64 InfVerif execute locally. The pinned SysVAD `EndpointsCommon` target and a
 v142/WIL x64 Release `SwapAPO.dll` compile baseline succeeded. No driver
 installation or signing action has been performed.
-The refreshed `arthu` token now includes `Hyper-V Administrators`. An exact
+The refreshed `local-user` token now includes `Hyper-V Administrators`. An exact
 Generation 2 target named `CapyIO-DriverLab` has been created on `F:` with
 Secure Boot, vTPM, 8 vCPU, 4–16 GiB dynamic memory and a 96 GiB dynamic disk.
 Its Windows 11 Enterprise 25H2 Evaluation ZH-CN installer hash matches
@@ -1106,7 +1110,7 @@ non-neutral controls and finite IMU). Android speaker playback processed
 exactly 240,000 frames from the five-second Windows tone. A six-second
 microphone run processed 291,840 frames on Android with no reported sender
 queue loss, while the service-owned Windows receiver held
-`100.66.231.100:40011`; the Tailscale adapter increased by 636 unicast packets
+`<LAB_IPV4_04>:40011`; the Tailscale adapter increased by 636 unicast packets
 and 650,049 bytes. This proves phone-to-Windows arrival and an owned receive
 socket, but not the final protected capture-ring write: its DACL correctly
 rejected the normal-user read-only probe with Win32 error 5. A service-owned

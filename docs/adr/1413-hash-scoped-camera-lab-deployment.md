@@ -20,7 +20,7 @@ directory is accepted. Existing deployment overwrite remains prohibited.
 The 2026-09-16 candidate was built offline from the integrated branch using
 `cargo build --offline --release -p capyio-windows-camera-mf --lib`.
 SHA-256: `E03BAA67CC9E5D080C282AE9B54E1F54D73E8B70993800EDFCEA4B9643D5A46D`.
-Target: approved local lab host `DESKTOP-AT8EVE9`, fixed
+Target: approved local lab host `LAB-WINDOWS-HOST`, fixed
 `C:\ProgramData\CapyIO\Lab\Camera\capyio_windows_camera_mf.dll`, CLSID
 `{35754be3-54b6-4133-a1c7-1716395c6f1c}`. Preflight found no existing file or
 registration. No driver or boot policy is part of this deployment.

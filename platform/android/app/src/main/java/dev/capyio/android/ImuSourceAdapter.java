@@ -4,6 +4,7 @@ import android.hardware.Sensor;
 import android.hardware.SensorEvent;
 import android.hardware.SensorEventListener;
 import android.hardware.SensorManager;
+import android.os.SystemClock;
 
 /** Service-owned accelerometer and gyroscope registration boundary. */
 final class ImuSourceAdapter implements SensorEventListener {
@@ -34,6 +35,9 @@ final class ImuSourceAdapter implements SensorEventListener {
     private final Listener listener;
 
     private volatile long activeGeneration;
+    private final ImuSamplingUsers users = new ImuSamplingUsers();
+    private volatile long samplingStartedNanos;
+    private volatile String problemCode;
     private volatile long accelerationTimestampNanos;
     private volatile float accelerationX;
     private volatile float accelerationY;
@@ -60,40 +64,87 @@ final class ImuSourceAdapter implements SensorEventListener {
         gyroscope = gyroscopeCandidate;
     }
 
-    void start(long generation) {
-        if (sensorManager == null || accelerometer == null || gyroscope == null) {
-            listener.onFailed(generation, PROBLEM_HARDWARE);
-            return;
+    synchronized void start(long generation) {
+        if (ensureSampling()) {
+            users.acquireIndependent();
+            listener.onStarted(generation);
+        } else {
+            listener.onFailed(generation, problemCode);
         }
-        if (activeGeneration != 0) {
-            listener.onFailed(generation, PROBLEM_START);
-            return;
+    }
+
+    synchronized boolean startForGamepad() {
+        if (!ensureSampling()) return false;
+        users.acquireGamepad();
+        return true;
+    }
+
+    synchronized void stopForGamepad() {
+        users.releaseGamepad();
+        stopIfUnused();
+    }
+
+    String problemCode() { return problemCode; }
+
+    private boolean ensureSampling() {
+        if (activeGeneration != 0) return true;
+        if (sensorManager == null || accelerometer == null || gyroscope == null) {
+            problemCode = PROBLEM_HARDWARE;
+            return false;
         }
         try {
+            clearSample();
+            samplingStartedNanos = SystemClock.elapsedRealtimeNanos();
+            activeGeneration = 1;
             boolean accelerationRegistered = sensorManager.registerListener(
                     this, accelerometer, SensorManager.SENSOR_DELAY_GAME);
             boolean gyroscopeRegistered = sensorManager.registerListener(
                     this, gyroscope, SensorManager.SENSOR_DELAY_GAME);
             if (!accelerationRegistered || !gyroscopeRegistered) {
+                activeGeneration = 0;
                 unregisterSafely();
-                listener.onFailed(generation, PROBLEM_START);
-                return;
+                clearSample();
+                problemCode = PROBLEM_START;
+                return false;
             }
-            activeGeneration = generation;
-            listener.onStarted(generation);
+            problemCode = null;
+            return true;
         } catch (RuntimeException unavailable) {
+            activeGeneration = 0;
             unregisterSafely();
-            listener.onFailed(generation, PROBLEM_START);
+            clearSample();
+            problemCode = PROBLEM_START;
+            return false;
         }
     }
 
-    void stop(long generation) {
-        activeGeneration = 0;
-        unregisterSafely();
+    synchronized void stop(long generation) {
+        users.releaseIndependent();
+        stopIfUnused();
         listener.onStopped(generation);
     }
 
+    private void stopIfUnused() {
+        if (users.inUse()) return;
+        activeGeneration = 0;
+        unregisterSafely();
+        clearSample();
+    }
+
+    private void clearSample() {
+        accelerationTimestampNanos = angularVelocityTimestampNanos = 0;
+        accelerationX = accelerationY = accelerationZ = 0;
+        angularVelocityX = angularVelocityY = angularVelocityZ = 0;
+    }
+
     SampleSnapshot latestSample() {
+        long now = SystemClock.elapsedRealtimeNanos();
+        if (activeGeneration == 0 || accelerationTimestampNanos < samplingStartedNanos
+                || angularVelocityTimestampNanos < samplingStartedNanos
+                || now - accelerationTimestampNanos > 350_000_000L
+                || now - angularVelocityTimestampNanos > 350_000_000L) {
+            return new SampleSnapshot(0, 0, 0, 0, 0, 0, 0, 0);
+        }
         return new SampleSnapshot(
                 accelerationTimestampNanos,
                 accelerationX,
@@ -107,7 +158,7 @@ final class ImuSourceAdapter implements SensorEventListener {
 
     @Override
     public void onSensorChanged(SensorEvent event) {
-        if (activeGeneration == 0 || event.values.length < 3) {
+        if (activeGeneration == 0 || event.timestamp < samplingStartedNanos || event.values.length < 3) {
             return;
         }
         if (event.sensor.getType() == Sensor.TYPE_ACCELEROMETER) {

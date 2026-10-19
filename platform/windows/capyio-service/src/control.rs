@@ -20,6 +20,9 @@ enum ControlOperation {
     Status,
     Start,
     Stop,
+    NativeMicrophoneStatus,
+    NativeMicrophoneStart,
+    NativeMicrophoneStop,
 }
 
 #[derive(Debug, Deserialize, Serialize)]
@@ -53,6 +56,17 @@ impl Default for BrokerServiceClient {
 }
 
 impl BrokerServiceClient {
+    pub fn native_microphone_status(&self) -> Result<BrokerServiceSnapshot, String> {
+        self.invoke(ControlOperation::NativeMicrophoneStatus)
+    }
+
+    pub fn native_microphone_start(&self) -> Result<BrokerServiceSnapshot, String> {
+        self.invoke(ControlOperation::NativeMicrophoneStart)
+    }
+
+    pub fn native_microphone_stop(&self) -> Result<BrokerServiceSnapshot, String> {
+        self.invoke(ControlOperation::NativeMicrophoneStop)
+    }
     pub fn status(&self) -> Result<BrokerServiceSnapshot, String> {
         self.invoke(ControlOperation::Status)
     }
@@ -138,6 +152,9 @@ fn dispatch_request<P: BrokerProcess>(
         ControlOperation::Status => Ok(runtime.snapshot()),
         ControlOperation::Start => runtime.ensure_started(),
         ControlOperation::Stop => runtime.ensure_stopped(),
+        ControlOperation::NativeMicrophoneStatus => runtime.process.native_microphone(None),
+        ControlOperation::NativeMicrophoneStart => runtime.process.native_microphone(Some(true)),
+        ControlOperation::NativeMicrophoneStop => runtime.process.native_microphone(Some(false)),
     };
     match result {
         Ok(snapshot) => ControlResponse {
@@ -147,11 +164,11 @@ fn dispatch_request<P: BrokerProcess>(
             snapshot: Some(snapshot),
             problem_code: None,
         },
-        Err(_) => failed_response(request.request_id, "CAPY.WINDOWS_SERVICE.CONTROL_FAILED"),
+        Err(problem) => failed_response(request.request_id, &problem),
     }
 }
 
-fn failed_response(request_id: u64, problem_code: &'static str) -> ControlResponse {
+fn failed_response(request_id: u64, problem_code: &str) -> ControlResponse {
     ControlResponse {
         schema_version: CONTROL_SCHEMA_VERSION,
         request_id,

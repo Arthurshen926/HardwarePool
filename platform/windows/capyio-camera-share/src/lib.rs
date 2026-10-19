@@ -99,6 +99,54 @@ struct SharedIngressSlotHeader {
 const _: () =
     assert!(size_of::<SharedIngressSlotHeader>() == CAMERA_SHARED_INGRESS_SLOT_HEADER_BYTES);
 
+fn create_mapping(mapping_name: &str, sddl: &str) -> Result<HANDLE, CameraSharedIngressError> {
+    let mapping_name = wide_null(mapping_name);
+    let mapping_sddl = wide_null(sddl);
+    let mut security_descriptor: PSECURITY_DESCRIPTOR = ptr::null_mut();
+    if unsafe {
+        ConvertStringSecurityDescriptorToSecurityDescriptorW(
+            mapping_sddl.as_ptr(),
+            SDDL_REVISION_1,
+            &mut security_descriptor,
+            ptr::null_mut(),
+        )
+    } == 0
+    {
+        return Err(last_error(
+            "ConvertStringSecurityDescriptorToSecurityDescriptorW",
+        ));
+    }
+    let security_attributes = SECURITY_ATTRIBUTES {
+        nLength: size_of::<SECURITY_ATTRIBUTES>() as u32,
+        lpSecurityDescriptor: security_descriptor,
+        bInheritHandle: 0,
+    };
+    let mapping = unsafe {
+        CreateFileMappingW(
+            INVALID_HANDLE_VALUE,
+            &security_attributes,
+            PAGE_READWRITE,
+            0,
+            u32::try_from(CAMERA_SHARED_INGRESS_MAPPING_BYTES).expect("the fixed mapping fits u32"),
+            mapping_name.as_ptr(),
+        )
+    };
+    let mapping_error = unsafe { GetLastError() };
+    unsafe { LocalFree(security_descriptor) };
+    if mapping.is_null() {
+        return Err(CameraSharedIngressError::Windows {
+            operation: "CreateFileMappingW",
+            code: mapping_error,
+        });
+    }
+    if mapping_error == ERROR_ALREADY_EXISTS {
+        unsafe { CloseHandle(mapping) };
+        return Err(CameraSharedIngressError::AlreadyOwned);
+    }
+
+    Ok(mapping)
+}
+
 pub struct CameraSharedIngressProducer {
     mapping: HANDLE,
     view: NonNull<u8>,
@@ -140,52 +188,87 @@ impl CameraSharedIngressProducer {
         stream_id: StreamId,
         stream_epoch: u64,
     ) -> Result<Self, CameraSharedIngressError> {
-        let validator = ExternalNv12FrameIngress::new(stream_id, stream_epoch, 1)?;
-        let mapping_name = wide_null(mapping_name);
-        let mapping_sddl = wide_null(CAMERA_SHARED_INGRESS_SDDL);
-        let mut security_descriptor: PSECURITY_DESCRIPTOR = ptr::null_mut();
-        if unsafe {
-            ConvertStringSecurityDescriptorToSecurityDescriptorW(
-                mapping_sddl.as_ptr(),
-                SDDL_REVISION_1,
-                &mut security_descriptor,
-                ptr::null_mut(),
-            )
-        } == 0
-        {
-            return Err(last_error(
-                "ConvertStringSecurityDescriptorToSecurityDescriptorW",
-            ));
-        }
-        let security_attributes = SECURITY_ATTRIBUTES {
-            nLength: size_of::<SECURITY_ATTRIBUTES>() as u32,
-            lpSecurityDescriptor: security_descriptor,
-            bInheritHandle: 0,
-        };
-        let mapping = unsafe {
-            CreateFileMappingW(
-                INVALID_HANDLE_VALUE,
-                &security_attributes,
-                PAGE_READWRITE,
-                0,
-                u32::try_from(CAMERA_SHARED_INGRESS_MAPPING_BYTES)
-                    .expect("the fixed mapping fits u32"),
-                mapping_name.as_ptr(),
-            )
-        };
-        let mapping_error = unsafe { GetLastError() };
-        unsafe { LocalFree(security_descriptor) };
-        if mapping.is_null() {
-            return Err(CameraSharedIngressError::Windows {
-                operation: "CreateFileMappingW",
-                code: mapping_error,
-            });
-        }
-        if mapping_error == ERROR_ALREADY_EXISTS {
-            unsafe { CloseHandle(mapping) };
-            return Err(CameraSharedIngressError::AlreadyOwned);
-        }
+        let mapping = create_mapping(mapping_name, CAMERA_SHARED_INGRESS_SDDL)?;
+        Self::initialize(mapping, stream_id, stream_epoch)
+    }
 
+    /// Creates a fully initialized empty producer before the service handoff.
+    pub fn reserve_for_user(
+        stream_id: StreamId,
+        stream_epoch: u64,
+        sddl: &str,
+    ) -> Result<Self, CameraSharedIngressError> {
+        let mapping = create_mapping(CAMERA_SHARED_INGRESS_MAPPING_NAME, sddl)?;
+        Self::initialize(mapping, stream_id, stream_epoch)
+    }
+
+    /// Called only while the authenticated service holds its exclusive reservation.
+    /// Never rewrites headers visible to Frame Server readers.
+    pub fn open_reserved(
+        stream_id: StreamId,
+        stream_epoch: u64,
+    ) -> Result<Self, CameraSharedIngressError> {
+        Self::open_reserved_named(CAMERA_SHARED_INGRESS_MAPPING_NAME, stream_id, stream_epoch)
+    }
+
+    fn open_reserved_named(
+        mapping_name: &str,
+        stream_id: StreamId,
+        stream_epoch: u64,
+    ) -> Result<Self, CameraSharedIngressError> {
+        let validator = ExternalNv12FrameIngress::new(stream_id, stream_epoch, 1)?;
+        let name = wide_null(mapping_name);
+        let mapping = unsafe { OpenFileMappingW(FILE_MAP_ALL_ACCESS, 0, name.as_ptr()) };
+        if mapping.is_null() {
+            return Err(last_error("OpenFileMappingW"));
+        }
+        let mapped = unsafe {
+            MapViewOfFile(
+                mapping,
+                FILE_MAP_ALL_ACCESS,
+                0,
+                0,
+                CAMERA_SHARED_INGRESS_MAPPING_BYTES,
+            )
+        };
+        let Some(view) = NonNull::new(mapped.Value.cast::<u8>()) else {
+            let error = last_error("MapViewOfFile");
+            unsafe { CloseHandle(mapping) };
+            return Err(error);
+        };
+        let header = unsafe { &*view.as_ptr().cast::<SharedIngressHeader>() };
+        let generation = header.generation;
+        if !valid_header(header, stream_id, stream_epoch, generation)
+            || header.published_sequence.load(Ordering::Acquire) != 0
+        {
+            unsafe {
+                UnmapViewOfFile(mapped);
+                CloseHandle(mapping);
+            }
+            return Err(CameraSharedIngressError::InvalidLayout);
+        }
+        Ok(Self {
+            mapping,
+            view,
+            stream_id,
+            stream_epoch,
+            generation,
+            validator,
+        })
+    }
+
+    fn initialize(
+        mapping: HANDLE,
+        stream_id: StreamId,
+        stream_epoch: u64,
+    ) -> Result<Self, CameraSharedIngressError> {
+        let validator = match ExternalNv12FrameIngress::new(stream_id, stream_epoch, 1) {
+            Ok(validator) => validator,
+            Err(error) => {
+                unsafe { CloseHandle(mapping) };
+                return Err(error.into());
+            }
+        };
         let mapped = unsafe {
             MapViewOfFile(
                 mapping,
@@ -567,6 +650,7 @@ impl Drop for CameraSharedIngressConsumer {
 
 #[derive(Debug)]
 pub enum CameraSharedIngressError {
+    Service(String),
     AlreadyOwned,
     InvalidMappingName,
     InvalidLayout,
@@ -578,6 +662,7 @@ pub enum CameraSharedIngressError {
 impl fmt::Display for CameraSharedIngressError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
+            Self::Service(message) => formatter.write_str(message),
             Self::AlreadyOwned => {
                 formatter.write_str("the camera ingress mapping already has an owner")
             }
@@ -710,6 +795,29 @@ mod tests {
 
     fn source() -> DeterministicNv12Source {
         DeterministicNv12Source::new(test_stream_id(), 23, 9_000_000_000).expect("valid source")
+    }
+
+    #[test]
+    fn reserved_handoff_preserves_header_and_mapping_lifetime() {
+        let name = format!(
+            "Local\\CapyIO.CameraIngress.v1.test.{}",
+            uuid::Uuid::new_v4()
+        );
+        let reservation =
+            CameraSharedIngressProducer::create_named(&name, test_stream_id(), 23).unwrap();
+        let generation = reservation.generation;
+        let producer =
+            CameraSharedIngressProducer::open_reserved_named(&name, test_stream_id(), 23).unwrap();
+        assert_eq!(producer.generation, generation);
+        drop(reservation);
+        let reader = CameraSharedIngressConsumer::open_named(&name, test_stream_id(), 23).unwrap();
+        assert_eq!(reader.generation, generation);
+        assert!(
+            CameraSharedIngressProducer::open_reserved_named(&name, test_stream_id(), 24).is_err()
+        );
+        drop(reader);
+        drop(producer);
+        assert!(CameraSharedIngressProducer::create_named(&name, test_stream_id(), 24).is_ok());
     }
 
     #[test]

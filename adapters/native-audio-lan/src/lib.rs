@@ -10,7 +10,9 @@ mod codec;
 mod endpoint;
 mod error;
 mod lab;
+mod microphone_launch;
 mod reassembly;
+mod route_binding;
 mod supervisor;
 
 use capyio_audio::{
@@ -35,10 +37,12 @@ pub use lab::{
     NATIVE_SPEAKER_LAB_ROUTE_ID, NATIVE_SPEAKER_LAB_SESSION_ID, NATIVE_SPEAKER_LAB_STREAM_EPOCH,
     NATIVE_SPEAKER_LAB_STREAM_ID, microphone_lab_binding, speaker_lab_binding,
 };
+pub use microphone_launch::NativeMicrophoneLaunch;
 pub use reassembly::{
     MAX_NATIVE_LAN_INFLIGHT_PACKETS, NativeLanReassembler, NativeLanReassemblyOutcome,
     NativeLanReassemblyStats,
 };
+pub use route_binding::NativeLanRouteBinding;
 pub use supervisor::{
     NativeMicrophoneSupervisor, NativeSpeakerSupervisor, NativeSpeakerSupervisorError,
     NativeSpeakerSupervisorLimits, NativeSpeakerSupervisorStatus,

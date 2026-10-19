@@ -46,12 +46,16 @@ function route(
 ): UiRoute {
   return {
     id,
+    sourceCapabilityId: null,
+    sinkCapabilityId: null,
     title: `${source.capabilityName} → ${sink.capabilityName}`,
     summary: `${source.nodeName} → ${sink.nodeName}`,
     profile,
     backend,
     state: "draft",
     active: false,
+    authorization: "pending",
+    authorizationExpiresAtMs: null,
     source,
     sink,
     formatSummary,
@@ -126,8 +130,20 @@ function initialCapabilities(): UiCapability[] {
 function initialSnapshot(): UiSnapshot {
   return {
     backendMode: "browser_mock",
-    schemaVersion: 4,
+    schemaVersion: 5,
     projectVersion: "0.1.0",
+    controlPlane: {
+      schemaVersion: 1,
+      simulated: true,
+      discoveryState: "simulated",
+      pairingState: "simulated",
+      transportState: "simulated",
+      catalogExchangeState: "simulated",
+      discoveredCandidateCount: 1,
+      pairedPeerCount: 1,
+      authenticatedConnectionCount: 1,
+      listenPort: null,
+    },
     nodes: [
       { id: WINDOWS_ID, displayName: WINDOWS, platform: "windows", platformVersion: "Windows fixture", online: true, local: true, capabilityCount: 7 },
       { id: PHONE_ID, displayName: PHONE, platform: "android", platformVersion: "Android fixture", online: true, local: false, capabilityCount: 7 },
@@ -171,6 +187,40 @@ function initialSnapshot(): UiSnapshot {
 }
 
 export class BrowserMockCapyIOApi implements CapyIOApi {
+  async getGamepadMotionSettings() { return null; }
+  async getHapticsSettings() { return null; }
+  async setHapticsStrength(_percent: number): Promise<void> { throw new Error('模拟页面不配置真实振动器'); }
+  async setGamepadMotionEnabled(_enabled: boolean): Promise<void> { throw new Error('模拟页面不配置真实传感器'); }
+  async setAndroidControllerMode(_mode: 'touch' | 'motion' | 'stopped'): Promise<void> { throw new Error('模拟页面不启动真实硬件'); }
+  async getRemoteControllerSettings(_nodeId: string) { return null; }
+  async getControllerUse() { return null; }
+  async getCameraPeers() { return []; }
+  async getCameraUse() { return null; }
+  async startCameraUse(): Promise<void> { throw new Error('模拟页面不启动真实相机'); }
+  async stopCameraUse(): Promise<void> { throw new Error('模拟页面没有真实相机会话'); }
+  async getAudioPeers() { return []; }
+  async getAudioUses() { return []; }
+  async startAudioUse(): Promise<void> { throw new Error('模拟页面不启动真实音频'); }
+  async stopAudioUse(): Promise<void> { throw new Error('模拟页面没有真实音频会话'); }
+  async getControllerPeers() { return []; }
+  async startControllerUse(_peerNodeId: string, _mode: import('./types').ControllerUseMode): Promise<void> { throw new Error('模拟页面不启动跨设备手柄'); }
+  async stopControllerUse(): Promise<void> { throw new Error('模拟页面没有真实手柄会话'); }
+  async setRemoteControllerSettings(_nodeId: string, _expectedRevision: number, _motionEnabled: boolean, _hapticsStrength: number): Promise<void> { throw new Error('模拟页面不修改远端硬件设置'); }
+  async getGamepadLayout(): Promise<string | null> { return localStorage.getItem('capyio.gamepad-layout.v1'); }
+  async saveGamepadLayout(layout: string): Promise<void> { localStorage.setItem('capyio.gamepad-layout.v1', layout); }
+  async setGamepadImmersive(_active: boolean): Promise<void> {}
+  async getBackgroundWaitingEnabled(): Promise<boolean> { return false; }
+  async setBackgroundWaitingEnabled(): Promise<void> { throw new Error("模拟模式不提供后台节点等待。"); }
+  async getResourceRequests() { return []; }
+  async resolveResourceRequest(): Promise<void> { throw new Error("演示目录没有真实授权请求"); }
+  async getPairedPeers() { return []; }
+  async getEnrollmentStatus() { return { phase: 'unavailable', message: '浏览器模拟模式不提供真实配对。' }; }
+  async getEnrollmentAddresses(): Promise<string[]> { return []; }
+  async enrollmentAction(): Promise<import('./types').UiEnrollmentStatus> { throw new Error('浏览器模拟模式不提供真实配对。'); }
+  async getDisplayPeers() { return []; }
+  async getDisplayUse() { return null; }
+  async startDisplayUse(): Promise<void> { throw new Error('模拟界面不启动真实显示共享。'); }
+  async stopDisplayUse(): Promise<void> { throw new Error('模拟界面不控制真实显示共享。'); }
   async getDisplaySenderState(): Promise<import("./types").UiDisplaySenderState | null> { return null; }
   async startDisplaySender(): Promise<import("./types").UiDisplaySenderState | null> { throw new Error("模拟界面不启动真实显示共享。"); }
   async stopDisplaySender(): Promise<import("./types").UiDisplaySenderState | null> { throw new Error("模拟界面不控制真实显示共享。"); }
@@ -184,6 +234,19 @@ export class BrowserMockCapyIOApi implements CapyIOApi {
   async getSnapshot(): Promise<UiSnapshot> {
     return structuredClone(this.snapshot);
   }
+
+  async getDiscoveryInterfaces() { return []; }
+  async getDiscoveryCandidates() { return []; }
+  connectDiscoveredPeer(): Promise<void> { return Promise.reject(new Error("模拟界面不建立认证连接。")); }
+  connectPairedPeerAt(): Promise<void> { return Promise.reject(new Error("模拟界面不建立认证连接。")); }
+  checkPairedCredential(): Promise<void> { return Promise.reject(new Error("模拟界面没有真实配对凭据。")); }
+  async getControlConnectionFailure(): Promise<string | null> { return null; }
+  startPairedListener(): Promise<number> { return Promise.reject(new Error("模拟界面不监听认证连接。")); }
+  stopPairedListener(): Promise<void> { return Promise.reject(new Error("模拟界面没有认证监听。")); }
+  async getPairedListenerStatus(): Promise<null> { return null; }
+  disconnectPeer(): Promise<void> { return Promise.reject(new Error("模拟界面没有真实认证连接。")); }
+  startDiscovery(): Promise<UiSnapshot> { return Promise.reject(new Error("模拟界面不打开网络监听。")); }
+  stopDiscovery(): Promise<UiSnapshot> { return Promise.reject(new Error("模拟界面没有真实发现监听。")); }
 
   async setRoute(routeId: string, active: boolean): Promise<UiSnapshot> {
     const target = this.snapshot.routes.find((item) => item.id === routeId);
@@ -213,6 +276,10 @@ export class BrowserMockCapyIOApi implements CapyIOApi {
     target.selectedForSharing = selected;
     this.pushEvent(`${target.displayName}: ${selected ? "selected for sharing" : "not shared"}`);
     return structuredClone(this.snapshot);
+  }
+
+  async setRemoteCapabilityUse(_capabilityId: string, _active: boolean): Promise<UiSnapshot> {
+    throw new Error("Browser mock has no authenticated remote control connection");
   }
 
   async resetDemo(): Promise<UiSnapshot> {
@@ -246,8 +313,17 @@ export class BrowserMockCapyIOApi implements CapyIOApi {
     return structuredClone(this.gamepad);
   }
 
-  async startWindowsGamepadProjection(_enableXinputCompanion: boolean): Promise<UiGamepadState> {
+  async startWindowsGamepadProjection(_controllerKind: "xbox360" | "dualshock4"): Promise<UiGamepadState> {
     throw new Error("Windows DS4 projection requires the Tauri desktop backend.");
+  }
+
+  async startControllerHost(_controllerKind: "xbox360" | "dualshock4", _port: number): Promise<UiGamepadState> {
+    throw new Error("Controller host requires the Tauri desktop backend; mock does not start hardware.");
+  }
+
+  async stopControllerHost(): Promise<UiGamepadState> {
+    await this.stopAndroidGamepad();
+    return this.stopWindowsGamepadProjection();
   }
 
   async stopWindowsGamepadProjection(): Promise<UiGamepadState> {
@@ -349,7 +425,10 @@ export class BrowserMockCapyIOApi implements CapyIOApi {
   }
   async getDisplayReceiverState(): Promise<import("./types").UiDisplayReceiverState | null> { return null; }
   async importDisplayProvisioning(): Promise<void> { throw new Error("模拟界面不导入真实显示连接包。"); }
+  async createPairingInvitation(): Promise<string> { throw new Error("模拟界面不签发真实配对凭据。"); }
+  async importPairingInvitation(): Promise<void> { throw new Error("模拟界面不导入真实配对邀请。"); }
   async openDisplayReceiver(): Promise<void> { throw new Error("模拟界面不启动真实显示接收。"); }
+  async getAndroidAudioPeerSettings() { return null; }
   async configureAndroidAudioPeer(): Promise<void> {
     throw new Error("浏览器模拟不配置真实 Android 音频连接。");
   }

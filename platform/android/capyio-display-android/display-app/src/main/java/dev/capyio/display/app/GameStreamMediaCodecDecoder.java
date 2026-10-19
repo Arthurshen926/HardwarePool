@@ -10,7 +10,7 @@ import java.io.IOException;
 import java.nio.ByteBuffer;
 import java.util.Objects;
 
-/** Synchronous low-latency Surface decoder for Moonlight Common C decode units. */
+/** Bounded input submission with independent Surface-output draining. */
 final class GameStreamMediaCodecDecoder implements AutoCloseable {
     static final int DR_OK = 0;
     static final int DR_NEED_IDR = -1;
@@ -22,6 +22,7 @@ final class GameStreamMediaCodecDecoder implements AutoCloseable {
     private MediaCodec codec;
     private boolean started;
     private long presentedFrames;
+    private Thread outputThread;
 
     GameStreamMediaCodecDecoder(Surface surface) {
         this.surface = Objects.requireNonNull(surface, "surface");
@@ -68,6 +69,9 @@ final class GameStreamMediaCodecDecoder implements AutoCloseable {
         try {
             codec.start();
             started = true;
+            outputThread = new Thread(this::drainLoop, "capyio-display-output");
+            outputThread.setDaemon(true);
+            outputThread.start();
         } catch (RuntimeException error) {
             releaseCodec();
         }
@@ -82,7 +86,6 @@ final class GameStreamMediaCodecDecoder implements AutoCloseable {
             return DR_NEED_IDR;
         }
         try {
-            presentedFrames = Math.addExact(presentedFrames, drainOutput(codec));
             int inputIndex = codec.dequeueInputBuffer(INPUT_TIMEOUT_MICROS);
             if (inputIndex < 0) {
                 return DR_NEED_IDR;
@@ -96,7 +99,6 @@ final class GameStreamMediaCodecDecoder implements AutoCloseable {
             int codecFlags = bufferType == BUFFER_TYPE_PICDATA
                     ? 0 : MediaCodec.BUFFER_FLAG_CODEC_CONFIG;
             codec.queueInputBuffer(inputIndex, 0, length, presentationTimeUs, codecFlags);
-            presentedFrames = Math.addExact(presentedFrames, drainOutput(codec));
             return DR_OK;
         } catch (RuntimeException error) {
             releaseCodec();
@@ -109,6 +111,7 @@ final class GameStreamMediaCodecDecoder implements AutoCloseable {
     }
 
     synchronized void stop() {
+        stopOutputThread();
         if (!started || codec == null) {
             return;
         }
@@ -127,12 +130,13 @@ final class GameStreamMediaCodecDecoder implements AutoCloseable {
 
     private int drainOutput(MediaCodec active) {
         int presented = 0;
-        while (true) {
+        // A bounded batch releases the lifecycle lock even on a busy decoder.
+        for (int batch = 0; batch < 16; batch++) {
             int outputIndex = active.dequeueOutputBuffer(outputInfo, 0);
             if (outputIndex >= 0) {
                 boolean videoFrame = (outputInfo.flags & MediaCodec.BUFFER_FLAG_CODEC_CONFIG) == 0
                         && (outputInfo.flags & MediaCodec.BUFFER_FLAG_END_OF_STREAM) == 0;
-                active.releaseOutputBuffer(outputIndex, true);
+                active.releaseOutputBuffer(outputIndex, videoFrame);
                 if (videoFrame) {
                     presented++;
                 }
@@ -143,9 +147,35 @@ final class GameStreamMediaCodecDecoder implements AutoCloseable {
                 return presented;
             }
         }
+        return presented;
+    }
+
+    private void drainLoop() {
+        while (!Thread.currentThread().isInterrupted()) {
+            synchronized (this) {
+                if (!started || codec == null || Thread.currentThread() != outputThread) return;
+                try {
+                    presentedFrames = Math.addExact(presentedFrames, drainOutput(codec));
+                } catch (RuntimeException failed) {
+                    releaseCodec();
+                    return;
+                }
+            }
+            try { Thread.sleep(4); }
+            catch (InterruptedException stopped) { Thread.currentThread().interrupt(); return; }
+        }
+    }
+
+    private void stopOutputThread() {
+        Thread old = outputThread;
+        outputThread = null;
+        if (old != null) old.interrupt();
+        // No join while holding the decoder monitor. The old worker checks its
+        // identity before touching the codec, including after a new Start.
     }
 
     private void releaseCodec() {
+        stopOutputThread();
         MediaCodec active = codec;
         codec = null;
         if (active == null) {

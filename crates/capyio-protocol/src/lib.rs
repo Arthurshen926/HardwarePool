@@ -2,6 +2,13 @@
 
 //! CapyIO v1 Protobuf control-plane types and explicit Core conversions.
 
+mod audio_offer;
+mod camera_offer;
+mod display_settings;
+pub use camera_offer::CameraDataOffer;
+pub use codec::encode_route_status_with_camera_data;
+pub use display_settings::negotiate_display_settings;
+pub use display_settings::validate_display_session_control;
 mod codec;
 mod conversion;
 mod error;
@@ -11,14 +18,24 @@ pub mod v1 {
     include!(concat!(env!("OUT_DIR"), "/capyio.v1.rs"));
 }
 
+pub use audio_offer::{NativeAudioDataOffer, NativeAudioEndpoint, NativeAudioPreset};
+pub use codec::encode_route_status_with_native_audio_data;
+pub use codec::{HapticsDataOffer, encode_route_status_with_haptics_data};
 pub use codec::{
     MAX_CATALOG_ADAPTERS, MAX_CATALOG_CAPABILITIES, MAX_CATALOG_FORMATS_PER_PORT,
     MAX_CATALOG_METADATA_ENTRIES, MAX_CATALOG_PORTS_PER_CAPABILITY, MAX_CATALOG_PROTOCOL_VERSIONS,
-    MAX_CATALOG_STRING_BYTES, MAX_CONTROL_ENVELOPE_BYTES, ValidatedCatalogSnapshot,
-    decode_catalog_snapshot, decode_envelope, encode_catalog_snapshot, encode_envelope,
-    encode_envelope_checked, new_envelope, validate_envelope, validate_envelope_version,
+    MAX_CATALOG_STRING_BYTES, MAX_CONTROL_ENVELOPE_BYTES, MAX_PORT_LEASE_TTL_MS,
+    MIN_PORT_LEASE_TTL_MS, PortLeaseAction, PortLeaseOutcome, RouteCommandAction,
+    ValidatedCatalogSnapshot, ValidatedControlHeartbeat, ValidatedPortLeaseRequest,
+    ValidatedPortLeaseResponse, ValidatedRouteCommand, ValidatedRouteStatus,
+    decode_catalog_snapshot, decode_control_heartbeat, decode_envelope, decode_port_lease_request,
+    decode_port_lease_response, decode_route_command, decode_route_status, encode_catalog_snapshot,
+    encode_control_heartbeat, encode_envelope, encode_envelope_checked, encode_port_lease_request,
+    encode_port_lease_response, encode_route_command, encode_route_status, new_envelope,
+    validate_envelope, validate_envelope_version,
 };
+pub use codec::{TouchpadDataOffer, encode_route_status_with_touchpad_data};
 pub use error::ProtocolError;
 
 pub const PROTOCOL_MAJOR: u32 = 1;
-pub const PROTOCOL_MINOR: u32 = 0;
+pub const PROTOCOL_MINOR: u32 = 7;

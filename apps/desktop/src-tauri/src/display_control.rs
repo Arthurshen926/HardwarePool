@@ -67,15 +67,12 @@ async fn execute(operation: Operation) -> Result<Option<UiDisplaySenderState>, S
     }
 }
 
-#[tauri::command]
 pub async fn get_display_sender_state() -> Result<Option<UiDisplaySenderState>, String> {
     execute(Operation::Status).await
 }
-#[tauri::command]
 pub async fn start_display_sender() -> Result<Option<UiDisplaySenderState>, String> {
     execute(Operation::Start).await
 }
-#[tauri::command]
 pub async fn stop_display_sender() -> Result<Option<UiDisplaySenderState>, String> {
     execute(Operation::Stop).await
 }

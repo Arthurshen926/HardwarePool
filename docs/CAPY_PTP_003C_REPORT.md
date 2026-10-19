@@ -57,7 +57,7 @@ cargo run -p capyio-windows-input --bin capyio-ptp-probe -- --vhf-interface
 ```
 
 The renewed Android wireless-debug endpoint was recorded as
-`100.66.157.119:46143`. A direct ADB connection attempt returned WinSock 10060
+`<LAB_IPV4_03>:46143`. A direct ADB connection attempt returned WinSock 10060
 and `adb devices -l` remained empty. A TCP probe also failed. No APK or device
 state was changed. The phone endpoint/IP or wireless-debug availability must be
 reconfirmed before the next physical Android run.

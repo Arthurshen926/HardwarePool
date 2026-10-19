@@ -45,7 +45,7 @@ changing the Windows input contract.
   version code 20 / version 1.10 with SHA-256
   `C80E7718D342C919959C2D45DB4F482DAD1444B35A25E43F1FDDFBEDF1BAA474`.
 - Version 1.10 was installed through the explicitly authorized wireless ADB
-  endpoint `100.66.157.119:44801`; its permissions remain exactly `INTERNET`
+  endpoint `<LAB_IPV4_03>:44801`; its permissions remain exactly `INTERNET`
   and `VIBRATE`. The VHF session is connected and the Activity is top-resumed.
 - Initial UI evidence at
   `target/lab-evidence/CAPY-PTP-0042-android-pressure-ui.png` shows 675 samples

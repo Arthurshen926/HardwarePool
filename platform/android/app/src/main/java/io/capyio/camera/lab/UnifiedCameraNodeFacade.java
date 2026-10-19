@@ -21,6 +21,15 @@ public final class UnifiedCameraNodeFacade {
     private static AvcQualityPreset preferredQuality = AvcQualityPreset.BALANCED;
     private static List<CameraSourceSelection> availableSources = List.of();
     private static String inventoryProblemCode;
+    private static CameraTransportEndpoint peerEndpoint;
+    private static volatile String transportProblemCode;
+    private static CameraRouteBinding routeBinding;
+
+    public static synchronized boolean configureRoute(String host, String stream, long epoch, long expiry) {
+        if (isRunning() || !configurePeer(host)) return false;
+        routeBinding = new CameraRouteBinding(stream,epoch,expiry);
+        return true;
+    }
 
     public record Snapshot(
             String state,
@@ -41,7 +50,30 @@ public final class UnifiedCameraNodeFacade {
 
     private UnifiedCameraNodeFacade() {}
 
+    /** Called by the Node service with the address received over authenticated control. */
+    public static synchronized boolean configurePeer(String host) {
+        if (host == null || host.isEmpty()) {
+            peerEndpoint = null;
+            return true;
+        }
+        try {
+            CameraTransportEndpoint endpoint = CameraTransportEndpoint.fromUserInput(host);
+            if (endpoint.mode() != CameraTransportEndpoint.Mode.TRUSTED_LAN) return false;
+            if (isRunning() && !endpoint.equals(peerEndpoint)) return false;
+            peerEndpoint = endpoint;
+            transportProblemCode = null;
+            return true;
+        } catch (IllegalArgumentException rejected) {
+            return false;
+        }
+    }
+
     public static synchronized void start(Context context) {
+        if (peerEndpoint == null) {
+            transportProblemCode = "CAPY.ANDROID.CAMERA_AUTHENTICATED_PEER_REQUIRED";
+            return;
+        }
+        transportProblemCode = null;
         FrameObservation.LensFacing facing = preferredSource == null
                 ? FrameObservation.LensFacing.BACK
                 : mapFacing(preferredSource.facing());
@@ -50,17 +82,19 @@ public final class UnifiedCameraNodeFacade {
                 facing,
                 preferredSource,
                 preferredQuality,
-                CameraTransportEndpoint.adbReverse());
+                peerEndpoint, routeBinding);
     }
 
-    public static void stop(Context context) {
+    public static synchronized void stop(Context context) {
+        routeBinding = null;
+        transportProblemCode = null;
         CameraCaptureService.stop(context);
     }
 
     public static Snapshot snapshot() {
         CameraCaptureService.Snapshot source = CameraCaptureService.snapshot();
         return new Snapshot(
-                switch (source.phase()) {
+                transportProblemCode != null ? "failed" : switch (source.phase()) {
                     case STOPPED -> "stopped";
                     case STARTING -> "starting";
                     case STREAMING -> "active";
@@ -79,7 +113,7 @@ public final class UnifiedCameraNodeFacade {
                 source.sentAccessUnits(),
                 source.exportDroppedAccessUnits(),
                 source.encoderStatus(),
-                source.phase() == CameraCaptureService.Phase.ERROR
+                transportProblemCode != null ? transportProblemCode : source.phase() == CameraCaptureService.Phase.ERROR
                         ? "CAPY.ANDROID.CAMERA_CAPTURE_FAILED"
                         : null);
     }
@@ -140,12 +174,17 @@ public final class UnifiedCameraNodeFacade {
                     .put("schemaVersion", 1)
                     .put("state", lifecycle.state())
                     .put("generation", lifecycle.generation())
+                    .put("transportStatus", lifecycle.transportStatus())
+                    .put("capturedFrames", lifecycle.capturedFrames())
+                    .put("encodedAccessUnits", lifecycle.encodedAccessUnits())
+                    .put("sentAccessUnits", lifecycle.sentAccessUnits())
+                    .put("exportDroppedAccessUnits", lifecycle.exportDroppedAccessUnits())
                     .put("permissionReady", permissionReady)
                     .put("selectedSourceKey", preferredSource == null
                             ? JSONObject.NULL : preferredSource.key())
                     .put("quality", preferredQuality.name().toLowerCase(Locale.ROOT))
-                    .put("problemCode", inventoryProblemCode == null
-                            ? JSONObject.NULL : inventoryProblemCode);
+                    .put("problemCode", lifecycle.problemCode() != null ? lifecycle.problemCode()
+                            : inventoryProblemCode == null ? JSONObject.NULL : inventoryProblemCode);
             JSONArray sources = new JSONArray();
             for (CameraSourceSelection source : availableSources) {
                 sources.put(new JSONObject()

@@ -2,9 +2,6 @@ package dev.capyio.android;
 
 import android.Manifest;
 import android.app.Notification;
-import android.app.NotificationChannel;
-import android.app.NotificationManager;
-import android.app.PendingIntent;
 import android.app.Service;
 import android.content.Context;
 import android.content.Intent;
@@ -42,6 +39,7 @@ import io.capyio.camera.lab.UnifiedCameraNodeFacade;
 
 /** Owns Android Node hardware resources independently of the Activity implementation. */
 public final class AudioNodeService extends Service {
+    private static final String ACTION_CONTROLLER_MODE = "dev.capyio.android.action.CONTROLLER_MODE";
     private static final String ACTION_START_MICROPHONE =
             "dev.capyio.android.action.START_MICROPHONE";
     private static final String ACTION_STOP_MICROPHONE =
@@ -68,9 +66,18 @@ public final class AudioNodeService extends Service {
             "dev.capyio.android.action.STOP_HAPTICS";
     private static final String ACTION_STOP_ALL =
             "dev.capyio.android.action.STOP_ALL";
+    private static final String ACTION_REFRESH_PUBLICATION =
+            "dev.capyio.android.action.REFRESH_PUBLICATION";
+    private static final String ACTION_ENABLE_BACKGROUND_WAITING =
+            "dev.capyio.android.action.ENABLE_BACKGROUND_WAITING";
+    private static final String ACTION_DISABLE_BACKGROUND_WAITING =
+            "dev.capyio.android.action.DISABLE_BACKGROUND_WAITING";
+    private static final String NODE_PREFERENCES = "capyio-node-connectivity-v1";
+    private static final String BACKGROUND_WAITING_KEY = "background-waiting-enabled";
+    private volatile boolean publicationForeground;
+    private volatile boolean backgroundWaitingForeground;
 
-    private static final String NOTIFICATION_CHANNEL_ID = "capyio-audio-node-v1";
-    private static final int NOTIFICATION_ID = 4101;
+    private AndroidNodeNotification nodeNotification;
     private static final String PROBLEM_FOREGROUND = "CAPY.ANDROID.FOREGROUND_DENIED";
     private static final String PROBLEM_PERMISSION = "CAPY.ANDROID.MIC_PERMISSION_DENIED";
 
@@ -83,22 +90,191 @@ public final class AudioNodeService extends Service {
     private final TouchpadNodeController touchpadController = new TouchpadNodeController();
     private final CapabilityLifecycleController hapticsController =
             new CapabilityLifecycleController();
-    private final AndroidSharingSelection sharingSelection = new AndroidSharingSelection();
+    private AndroidCatalogModule catalogModule;
 
     private CapabilityModuleRegistry capabilityRegistry;
     private MicrophoneSourceAdapter microphoneAdapter;
     private SpeakerSinkAdapter speakerAdapter;
     private ImuSourceAdapter imuAdapter;
+    private volatile boolean gamepadMotionEnabled;
+    private long controllerSettingsRevision;
+    private long controllerSettingsRequestId;
+    private String controllerSettingsError = "";
     private ControllerRouteAdapter controllerRouteAdapter;
     private TouchpadRouteAdapter touchpadAdapter;
     private AndroidHapticsSinkAdapter hapticsAdapter;
+    private HapticsDataWorker hapticsDataWorker;
     private AndroidNativeCatalogRuntime catalogRuntime;
+    private final AndroidResourceConsentModule resourceConsent = new AndroidResourceConsentModule(this);
+    private long nextRememberedConsentCheck;
+    // The remote settings acknowledgement must follow durable storage; rollback
+    // also uses commit so a failed revision is not acknowledged as persisted.
+    @android.annotation.SuppressLint("ApplySharedPref")
+    private boolean applyControllerPreferences(boolean enabled, int strength) {
+        if (strength < 0 || strength > 100) return false;
+        if (enabled == gamepadMotionEnabled && strength == hapticsAdapter.strengthPercent()) return true;
+        boolean startedMotion = enabled && !gamepadMotionEnabled
+                && gamepadController.lifecycle().state() == CapabilityLifecycleState.ACTIVE;
+        if (startedMotion && !imuAdapter.startForGamepad()) return false;
+        int previousStrength = hapticsAdapter.strengthPercent();
+        try { hapticsAdapter.setStrengthPercent(strength); }
+        catch (RuntimeException unavailable) {
+            if (startedMotion) imuAdapter.stopForGamepad();
+            return false;
+        }
+        long revision = controllerSettingsRevision + 1;
+        boolean saved = getSharedPreferences("capyio-gamepad", MODE_PRIVATE).edit()
+                .putBoolean("motion-enabled", enabled).putInt("haptics-strength", strength)
+                .putLong("settings-revision", revision).commit();
+        if (!saved) {
+            hapticsAdapter.setStrengthPercent(previousStrength);
+            if (startedMotion) imuAdapter.stopForGamepad();
+            getSharedPreferences("capyio-gamepad", MODE_PRIVATE).edit()
+                    .putBoolean("motion-enabled", gamepadMotionEnabled).putInt("haptics-strength", previousStrength)
+                    .putLong("settings-revision", controllerSettingsRevision).commit();
+            return false;
+        }
+        gamepadMotionEnabled = enabled;
+        if (!enabled) imuAdapter.stopForGamepad();
+        controllerSettingsRevision = revision;
+        // Preserve the last completed remote acknowledgement across a local edit:
+        // the control worker may not have sent that result yet.
+        notifyStateListener();
+        return true;
+    }
+
+    // Only called on the main service poll while holding the service monitor.
+    // A settings edit does not create a Route, grant vibration, or start a controller.
+    private void synchronizeControllerSettings() {
+        try {
+            String pending = catalogRuntime.controllerSettings(controllerSettingsRevision,
+                    gamepadMotionEnabled, hapticsAdapter.strengthPercent(),
+                    controllerSettingsRequestId, controllerSettingsError);
+            if ("null".equals(pending)) return;
+            org.json.JSONObject request = new org.json.JSONObject(pending);
+            long id = request.getLong("requestId");
+            String error = "";
+            if (request.getLong("expectedRevision") != controllerSettingsRevision) {
+                error = "settings_revision_conflict";
+            } else {
+                boolean enabled = request.getBoolean("motionEnabled");
+                int strength = request.getInt("hapticsStrength");
+                // Reject the complete edit if enabling an already-running controller's
+                // motion source fails, leaving the previous strength unchanged.
+                if (!applyControllerPreferences(enabled, strength)) error = "settings_apply_failed";
+            }
+            controllerSettingsRequestId = id;
+            controllerSettingsError = error;
+            // Publish actual applied values; the next poll handles any subsequent request.
+        } catch (org.json.JSONException invalid) {
+            controllerSettingsError = "invalid_settings_request";
+        }
+    }
+
+    private String authenticatedControllerReceiver = "null";
+    private AndroidControllerUseModule controllerUse;
+    private AndroidAudioUseModule audioUse;
+    private final AndroidCameraUseModule cameraUse = new AndroidCameraUseModule(this);
+    private final AndroidDisplayUseModule displayUse = new AndroidDisplayUseModule(this, this);
+    private final Runnable secureTouchpadPoll = new Runnable() {
+        @Override public void run() {
+            synchronized (AudioNodeService.this) {
+                if (destroying || catalogRuntime == null) return;
+                synchronizeControllerSettings();
+                controllerUse.synchronize(catalogRuntime);
+                audioUse.synchronize(catalogRuntime);
+                cameraUse.synchronize(catalogRuntime);
+                displayUse.synchronize(catalogRuntime);
+                long now = android.os.SystemClock.elapsedRealtime();
+                if (now >= nextRememberedConsentCheck) {
+                    nextRememberedConsentCheck = now + 1000;
+                    resourceConsent.approveRemembered(catalogRuntime, control.state(), control.directory());
+                    configureAuthenticatedControllerReceiver();
+                }
+                long hapticsJob = AndroidNativeHapticsData.nativePending(catalogRuntime.nativeHandle());
+                if (hapticsJob > 0 && (hapticsDataWorker == null || !hapticsDataWorker.isAlive())) {
+                    long generation = hapticsAdapter.beginRemote();
+                    if (generation > 0 && refreshForegroundSafely()) {
+                        hapticsDataWorker = new HapticsDataWorker(hapticsJob, generation, hapticsAdapter);
+                        hapticsDataWorker.start();
+                    } else {
+                        if (generation > 0) hapticsAdapter.endRemote(generation);
+                        AndroidNativeHapticsData.nativeClose(hapticsJob);
+                    }
+                }
+                long job = AndroidNativeTouchpadData.nativePending(catalogRuntime.nativeHandle());
+                if (job != 0) {
+                    CapabilityLifecycleSnapshot lifecycle = touchpadController.lifecycle();
+                    if (lifecycle.state() == CapabilityLifecycleState.ACTIVE
+                            || lifecycle.state() == CapabilityLifecycleState.STARTING) {
+                        // A user may have opened the old local-lab touchpad before a real
+                        // authenticated Route arrived. Stop that worker, retain the pending
+                        // secure listener, and let the next poll start the requested Route.
+                        TransitionToken stop = touchpadController.beginStop();
+                        if (stop.accepted()) touchpadAdapter.stop(stop.generation());
+                    } else if (lifecycle.state() != CapabilityLifecycleState.STOPPING) {
+                        TransitionToken transition = touchpadController.beginStart();
+                        if (transition.accepted()
+                                && touchSurfacePresence == HardwarePresence.PRESENT
+                                && refreshForegroundSafely()) {
+                            touchpadAdapter.startSecure(transition.generation(), job);
+                        } else {
+                            AndroidNativeTouchpadData.nativeStop(job);
+                            if (transition.accepted()) touchpadController.fail(
+                                    transition.generation(), TouchpadRouteAdapter.PROBLEM_TRANSPORT);
+                        }
+                    }
+                    notifyStateListener();
+                }
+            }
+            mainHandler.postDelayed(this, 100);
+        }
+    };
+    private AndroidControlModule control;
+    private AndroidFilelessPairing filelessPairing;
     private String nativeCatalogJson;
     private String nodeId;
     private HardwarePresence touchSurfacePresence;
     private boolean foreground;
     private boolean destroying;
     private Runnable stateListener;
+
+    private void stopHapticsData() {
+        if (hapticsDataWorker != null) hapticsDataWorker.stopData();
+        hapticsAdapter.stop();
+    }
+
+    private void configureAuthenticatedControllerReceiver() {
+        String current = catalogRuntime.controllerReceiverJson();
+        if (current.equals(authenticatedControllerReceiver)) return;
+        if (controllerUse.ownsRoute()) {
+            // The authorized Route owner configured this exact session's endpoint.
+            // A repeated advertisement must not restart its live sender.
+            authenticatedControllerReceiver = current;
+            return;
+        }
+        controllerRouteAdapter.stop();
+        controllerRouteAdapter.clearEndpoint();
+        authenticatedControllerReceiver = current;
+        if (!"null".equals(current)) {
+            try {
+                org.json.JSONObject offer = new org.json.JSONObject(current);
+                UnifiedCameraNodeFacade.configurePeer(offer.getString("host"));
+                if (offer.getInt("port") != 0 && controllerRouteAdapter.configure(offer.getString("host"),
+                        offer.getInt("port"), offer.getString("token"))) {
+                    // Receiving an offer does not start sensors or touch controls.
+                    // Only an already explicitly active local Source may publish.
+                    startControllerRouteIfNeeded();
+                }
+            } catch (org.json.JSONException invalid) {
+                controllerRouteAdapter.clearEndpoint();
+            }
+        } else {
+            UnifiedCameraNodeFacade.stop(AudioNodeService.this);
+            UnifiedCameraNodeFacade.configurePeer(null);
+        }
+        notifyStateListener();
+    }
 
     public static void startMicrophone(Context context) {
         startForegroundAction(context, ACTION_START_MICROPHONE);
@@ -159,10 +335,40 @@ public final class AudioNodeService extends Service {
         context.startForegroundService(intent);
     }
 
+    static boolean backgroundWaitingPreference(Context context) {
+        return context.getSharedPreferences(NODE_PREFERENCES, Context.MODE_PRIVATE)
+                .getBoolean(BACKGROUND_WAITING_KEY, false);
+    }
+
+    static void restoreBackgroundWaiting(Context context) {
+        if (backgroundWaitingPreference(context)) {
+            startForegroundAction(context, ACTION_ENABLE_BACKGROUND_WAITING);
+        } else if (!context.getSharedPreferences(NODE_PREFERENCES, Context.MODE_PRIVATE)
+                .getStringSet("shared-capabilities", java.util.Set.of()).isEmpty()) {
+            // Restore publication intent, not capture/input workers or Route grants.
+            startForegroundAction(context, ACTION_REFRESH_PUBLICATION);
+        }
+    }
+
+    private void setBackgroundWaitingPreference(boolean enabled) {
+        getSharedPreferences(NODE_PREFERENCES, Context.MODE_PRIVATE)
+                .edit().putBoolean(BACKGROUND_WAITING_KEY, enabled).apply();
+    }
+
     @Override
     public void onCreate() {
         super.onCreate();
         nodeId = NodeIdentityStore.loadOrCreate(this);
+        filelessPairing = new AndroidFilelessPairing(this, () -> mainHandler.post(() -> {
+            boolean ready = reloadControlPairing();
+            int port = 0;
+            if (ready && control.listener() != null) {
+                try { port = control.listener().port(); } catch (RuntimeException unavailable) { }
+            }
+            if (filelessPairing != null) filelessPairing.controlReady(port);
+        }));
+        control = new AndroidControlModule(this, nodeId);
+        byte[] pendingControlCredential = control.loadCredentials();
         AndroidHardwareInventory inventory = AndroidHardwareInventory.probe(this);
         touchSurfacePresence = inventory.touchSurfacePresence();
         capabilityRegistry = AndroidCapabilityModules.createRegistry(
@@ -211,10 +417,22 @@ public final class AudioNodeService extends Service {
                         notifyStateListener();
                     }
                 });
+        gamepadMotionEnabled = getSharedPreferences("capyio-gamepad", MODE_PRIVATE)
+                .getBoolean("motion-enabled", true);
+        controllerSettingsRevision = Math.max(1L, getSharedPreferences("capyio-gamepad", MODE_PRIVATE)
+                .getLong("settings-revision", 1L));
         controllerRouteAdapter = new ControllerRouteAdapter(
-                gamepadController::controls, imuAdapter::latestSample);
+                gamepadController::controls, imuAdapter::latestSample,
+                () -> imuController.snapshot().state() == CapabilityLifecycleState.ACTIVE
+                        || (gamepadMotionEnabled
+                        && gamepadController.lifecycle().state() == CapabilityLifecycleState.ACTIVE));
+        controllerUse = new AndroidControllerUseModule(controllerRouteAdapter,
+                mode -> { if ("dsu".equals(mode)) beginImu(); else beginGamepad(); },
+                () -> { endGamepad(); endImu(); }, this::notifyStateListener);
         hapticsAdapter = new AndroidHapticsSinkAdapter(
                 getSystemService(Vibrator.class), hapticsController, this::postStateChanged);
+        hapticsAdapter.setStrengthPercent(getSharedPreferences("capyio-gamepad", MODE_PRIVATE)
+                .getInt("haptics-strength", 70));
         touchpadAdapter = new TouchpadRouteAdapter(new TouchpadRouteAdapter.Listener() {
             @Override
             public void onStarted(long generation) {
@@ -231,7 +449,9 @@ public final class AudioNodeService extends Service {
                 failTouchpad(generation, problemCode);
             }
         });
-        createNotificationChannel();
+        nodeNotification = new AndroidNodeNotification(this,
+                new Intent(this, AudioNodeService.class).setAction(ACTION_STOP_ALL));
+        nodeNotification.createChannel();
         NativeLanMicrophoneSessionConfig microphoneConfig;
         try {
             microphoneConfig = NativeMicrophoneConfigLoader.load(this);
@@ -248,14 +468,38 @@ public final class AudioNodeService extends Service {
         }
         speakerAdapter = new SpeakerSinkAdapter(
                 listenerFor(AudioCapabilityKind.SPEAKER_SINK), speakerConfig);
+        audioUse = new AndroidAudioUseModule(this, microphoneAdapter, speakerAdapter,
+                this::snapshot, this::startCapability, this::stopCapability);
+        catalogModule = new AndroidCatalogModule(getSharedPreferences(NODE_PREFERENCES, MODE_PRIVATE));
+        catalogModule.restore(capabilityCatalogSnapshot());
+        publicationForeground = !catalogModule.selectedIds().isEmpty();
         nativeCatalogJson = publicationCatalogJson();
         catalogRuntime = new AndroidNativeCatalogRuntime(nativeCatalogJson);
+        control.attach(catalogRuntime, pendingControlCredential);
+        mainHandler.post(secureTouchpadPoll);
     }
 
     @Override
     public int onStartCommand(Intent intent, int flags, int startId) {
         String action = intent == null ? null : intent.getAction();
-        if (ACTION_START_MICROPHONE.equals(action)) {
+        if (ACTION_REFRESH_PUBLICATION.equals(action)) {
+            publicationForeground = !catalogModule.selectedIds().isEmpty();
+            refreshForegroundSafely();
+        } else if (ACTION_ENABLE_BACKGROUND_WAITING.equals(action)) {
+            backgroundWaitingForeground = controlListenerAvailable();
+            if (refreshForegroundSafely() && backgroundWaitingForeground) {
+                setBackgroundWaitingPreference(true);
+            } else {
+                backgroundWaitingForeground = false;
+                setBackgroundWaitingPreference(false);
+            }
+            notifyStateListener();
+        } else if (ACTION_DISABLE_BACKGROUND_WAITING.equals(action)) {
+            backgroundWaitingForeground = false;
+            setBackgroundWaitingPreference(false);
+            refreshForegroundSafely();
+            notifyStateListener();
+        } else if (ACTION_START_MICROPHONE.equals(action)) {
             if (checkSelfPermission(Manifest.permission.RECORD_AUDIO)
                     != PackageManager.PERMISSION_GRANTED) {
                 recordPermissionFailure();
@@ -269,6 +513,21 @@ public final class AudioNodeService extends Service {
             startCapability(AudioCapabilityKind.SPEAKER_SINK);
         } else if (ACTION_STOP_SPEAKER.equals(action)) {
             stopCapability(AudioCapabilityKind.SPEAKER_SINK);
+        } else if (ACTION_CONTROLLER_MODE.equals(action)) {
+            String mode = intent.getStringExtra("controllerMode");
+            if ("touch".equals(mode)) {
+                endImu();
+                beginGamepad();
+            } else if ("motion".equals(mode)) {
+                endGamepad();
+                stopHapticsData();
+                beginImu();
+            } else if ("stopped".equals(mode)) {
+                endGamepad();
+                endImu();
+                stopHapticsData();
+                refreshForegroundSafely();
+            }
         } else if (ACTION_START_IMU.equals(action)) {
             beginImu();
         } else if (ACTION_STOP_IMU.equals(action)) {
@@ -285,15 +544,18 @@ public final class AudioNodeService extends Service {
             hapticsAdapter.start();
             refreshForegroundSafely();
         } else if (ACTION_STOP_HAPTICS.equals(action)) {
-            hapticsAdapter.stop();
+            stopHapticsData();
             refreshForegroundSafely();
         } else if (ACTION_STOP_ALL.equals(action)) {
+            publicationForeground = false;
+            backgroundWaitingForeground = false;
+            setBackgroundWaitingPreference(false);
             stopCapability(AudioCapabilityKind.MICROPHONE_SOURCE);
             stopCapability(AudioCapabilityKind.SPEAKER_SINK);
             endImu();
             endGamepad();
             endTouchpad();
-            hapticsAdapter.stop();
+            stopHapticsData();
             UnifiedCameraNodeFacade.stop(this);
             refreshForegroundSafely();
         }
@@ -308,6 +570,11 @@ public final class AudioNodeService extends Service {
     @Override
     public synchronized void onDestroy() {
         destroying = true;
+        if (filelessPairing != null) filelessPairing.close();
+        displayUse.close();
+        cameraUse.close();
+        audioUse.close();
+        mainHandler.removeCallbacks(secureTouchpadPoll);
         TransitionToken microphone = controller.beginStop(AudioCapabilityKind.MICROPHONE_SOURCE);
         if (microphone.accepted()) {
             microphoneAdapter.stop(microphone.generation());
@@ -321,6 +588,7 @@ public final class AudioNodeService extends Service {
             imuAdapter.stop(imu.generation());
         }
         TransitionToken gamepad = gamepadController.beginStop();
+        imuAdapter.stopForGamepad();
         if (gamepad.accepted()) {
             gamepadController.completeStop(gamepad.generation());
         }
@@ -328,13 +596,15 @@ public final class AudioNodeService extends Service {
         if (touchpad.accepted()) {
             touchpadAdapter.stop(touchpad.generation());
         }
-        hapticsAdapter.stop();
+        stopHapticsData();
         controllerRouteAdapter.stop();
+        control.stopListener();
         if (catalogRuntime != null) {
             catalogRuntime.close();
             catalogRuntime = null;
             nativeCatalogJson = null;
         }
+        control.clearState();
         stateListener = null;
         super.onDestroy();
     }
@@ -366,6 +636,13 @@ public final class AudioNodeService extends Service {
         refreshForegroundSafely();
         adapter(kind).stop(transition.generation());
         notifyStateListener();
+    }
+
+    private synchronized boolean reloadControlPairing() {
+        if (control == null || catalogRuntime == null || destroying) return false;
+        boolean ready = control.reload(catalogRuntime);
+        notifyStateListener();
+        return ready;
     }
 
     private AudioPlatformAdapter adapter(AudioCapabilityKind kind) {
@@ -401,6 +678,12 @@ public final class AudioNodeService extends Service {
                 return;
             }
             if (touchSurfacePresence == HardwarePresence.PRESENT) {
+                if (gamepadMotionEnabled && !imuAdapter.startForGamepad()) {
+                    gamepadController.fail(transition.generation(), imuAdapter.problemCode());
+                    refreshForegroundSafely();
+                    notifyStateListener();
+                    return;
+                }
                 gamepadController.completeStart(transition.generation());
                 startControllerRouteIfNeeded();
             } else {
@@ -415,6 +698,10 @@ public final class AudioNodeService extends Service {
     private synchronized void endGamepad() {
         TransitionToken transition = gamepadController.beginStop();
         if (transition.accepted()) {
+            // The IMU may keep the shared publisher alive. Drop pending touch
+            // frames so the next sample uses the controller's neutral state.
+            controllerRouteAdapter.discardControls();
+            imuAdapter.stopForGamepad();
             gamepadController.completeStop(transition.generation());
             stopControllerRouteIfUnused();
         }
@@ -430,6 +717,7 @@ public final class AudioNodeService extends Service {
                 () -> {
                     gamepadController.fail(
                             generation, ControllerRouteAdapter.PROBLEM_BACKPRESSURE);
+                    imuAdapter.stopForGamepad();
                     controllerRouteAdapter.discardControls();
                     stopControllerRouteIfUnused();
                     notifyStateListener();
@@ -491,9 +779,10 @@ public final class AudioNodeService extends Service {
                     touchpadAdapter.stop(generation);
                     notifyStateListener();
                 });
-        if (accepted) {
-            notifyPresentationListener();
-        }
+        // The initiating WebView call reads this input state directly, while
+        // lifecycle changes still dispatch. A full native-state event on every
+        // touch frame queued Snapshot/Catalog reads onto the UI thread and
+        // delayed both rendering and the subsequent input frames.
         return accepted;
     }
 
@@ -520,7 +809,9 @@ public final class AudioNodeService extends Service {
     }
 
     private synchronized void completeTouchpadStop(long generation) {
-        touchpadController.completeStop(generation);
+        if (!touchpadController.completeStop(generation)) {
+            touchpadController.completeRemoteStop(generation);
+        }
         postStateChanged();
     }
 
@@ -587,6 +878,9 @@ public final class AudioNodeService extends Service {
     }
 
     private void failForegroundOwnedCapabilities() {
+        publicationForeground = false;
+        backgroundWaitingForeground = false;
+        setBackgroundWaitingPreference(false);
         AudioNodeSnapshot snapshot = snapshot();
         failForegroundCapability(snapshot.microphone());
         failForegroundCapability(snapshot.speaker());
@@ -598,6 +892,7 @@ public final class AudioNodeService extends Service {
         CapabilityLifecycleSnapshot gamepad = gamepadController.lifecycle();
         if (gamepad.state().ownsAdapterLifecycle()) {
             gamepadController.fail(gamepad.generation(), PROBLEM_FOREGROUND);
+            imuAdapter.stopForGamepad();
             controllerRouteAdapter.discardControls();
             stopControllerRouteIfUnused();
         }
@@ -636,7 +931,8 @@ public final class AudioNodeService extends Service {
             return;
         }
 
-        Notification notification = buildNotification(microphone, speaker, connectedDevice);
+        Notification notification = nodeNotification.build(microphone, speaker, connectedDevice,
+                publicationForeground, backgroundWaitingForeground);
         int serviceTypes = 0;
         if (microphone && Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
             serviceTypes |= ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE;
@@ -647,66 +943,26 @@ public final class AudioNodeService extends Service {
         if (connectedDevice) {
             serviceTypes |= ServiceInfo.FOREGROUND_SERVICE_TYPE_CONNECTED_DEVICE;
         }
-        startForeground(NOTIFICATION_ID, notification, serviceTypes);
+        startForeground(AndroidNodeNotification.ID, notification, serviceTypes);
         foreground = true;
     }
 
     private boolean ownsConnectedDeviceLifecycle() {
         return AndroidForegroundOwnership.connectedDevice(
+                publicationForeground,
+                backgroundWaitingForeground,
                 imuController.snapshot().state(),
                 gamepadController.lifecycle().state(),
                 touchpadController.lifecycle().state(),
                 hapticsController.snapshot().state());
     }
 
-    private Notification buildNotification(
-            boolean microphone, boolean speaker, boolean connectedDevice) {
-        Intent openIntent = new Intent(this, MainActivity.class)
-                .addFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP);
-        PendingIntent openPendingIntent = PendingIntent.getActivity(
-                this,
-                0,
-                openIntent,
-                PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE);
-        PendingIntent stopPendingIntent = PendingIntent.getService(
-                this,
-                1,
-                new Intent(this, AudioNodeService.class).setAction(ACTION_STOP_ALL),
-                PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE);
-
-        java.util.List<String> details = new java.util.ArrayList<>(3);
-        if (microphone) {
-            details.add(getString(R.string.notification_microphone));
+    private boolean controlListenerAvailable() {
+        try {
+            return control.listener() != null && control.listener().port() > 0;
+        } catch (RuntimeException unavailable) {
+            return false;
         }
-        if (speaker) {
-            details.add(getString(R.string.notification_speaker));
-        }
-        if (connectedDevice) {
-            details.add(getString(R.string.notification_connected_device));
-        }
-        return new Notification.Builder(this, NOTIFICATION_CHANNEL_ID)
-                .setSmallIcon(R.drawable.ic_capyio)
-                .setContentTitle(getString(R.string.notification_title))
-                .setContentText(String.join(" · ", details))
-                .setContentIntent(openPendingIntent)
-                .setOngoing(true)
-                .setOnlyAlertOnce(true)
-                .setCategory(Notification.CATEGORY_SERVICE)
-                .addAction(new Notification.Action.Builder(
-                        null,
-                        getString(R.string.notification_stop_all),
-                        stopPendingIntent).build())
-                .build();
-    }
-
-    private void createNotificationChannel() {
-        NotificationChannel channel = new NotificationChannel(
-                NOTIFICATION_CHANNEL_ID,
-                getString(R.string.notification_channel_name),
-                NotificationManager.IMPORTANCE_LOW);
-        channel.setDescription(getString(R.string.notification_channel_description));
-        NotificationManager manager = getSystemService(NotificationManager.class);
-        manager.createNotificationChannel(channel);
     }
 
     private AudioNodeSnapshot snapshot() {
@@ -718,25 +974,19 @@ public final class AudioNodeService extends Service {
     }
 
     private String publicationCatalogJson() {
-        return encodeCoreCatalog(
-                sharingSelection.publicationCatalog(capabilityCatalogSnapshot()));
-    }
-
-    private static String encodeCoreCatalog(CapabilityCatalogSnapshot publication) {
-        return AndroidCoreCatalogJson.encode(
-                publication, Build.VERSION.RELEASE, BuildConfig.VERSION_NAME);
+        return catalogModule.publicationJson(capabilityCatalogSnapshot());
     }
 
     private void refreshNativeCatalog(CapabilityCatalogSnapshot catalog) {
-        replaceNativePublication(sharingSelection.publicationCatalog(catalog));
+        replaceNativePublication(catalogModule.publication(catalog));
     }
 
     private synchronized void replaceNativePublication(CapabilityCatalogSnapshot publication) {
-        String candidate = encodeCoreCatalog(publication);
+        String candidate = AndroidCatalogModule.encode(publication);
         if (candidate.equals(nativeCatalogJson)) {
             return;
         }
-        catalogRuntime.replaceDisconnectedCatalog(candidate);
+        catalogRuntime.replaceCatalog(candidate);
         nativeCatalogJson = candidate;
     }
 
@@ -771,6 +1021,139 @@ public final class AudioNodeService extends Service {
     }
 
     public final class NodeBinder extends Binder {
+        public String getRemoteCatalogJson(){synchronized(AudioNodeService.this){return catalogRuntime.remoteCatalogJson();}}
+        public String getCameraPeersJson(){synchronized(AudioNodeService.this){return catalogRuntime.cameraUse("peers","");}}
+        public String getDisplayPeersJson(){synchronized(AudioNodeService.this){return catalogRuntime.displayUse("peers","");}}
+        public String getDisplayUseJson() {
+            synchronized (AudioNodeService.this) {
+                return displayUse.publicStateJson();
+            }
+        }
+
+        public boolean startDisplayUse(String peer, int width, int height, int refresh,
+                int bitrate, boolean automatic) {
+            synchronized (AudioNodeService.this) {
+                try {
+                    displayUse.start(catalogRuntime, peer, width, height, refresh, bitrate, automatic);
+                    return true;
+                } catch (RuntimeException | org.json.JSONException failure) { return false; }
+            }
+        }
+
+        public boolean stopDisplayUse() {
+            synchronized (AudioNodeService.this) {
+                try {
+                    displayUse.stop(catalogRuntime);
+                    return true;
+                } catch (RuntimeException failure) { return false; }
+            }
+        }
+
+        public String getCameraUseJson() {
+            synchronized (AudioNodeService.this) {
+                return cameraUse.publicStateJson();
+            }
+        }
+
+        public boolean startCameraUse(String peer) {
+            synchronized (AudioNodeService.this) {
+                try {
+                    if (!setLocalCapabilityShared(nodeId + ":android.camera", true)) return false;
+                    cameraUse.start(catalogRuntime, peer);
+                    return true;
+                } catch (RuntimeException failed) { return false; }
+            }
+        }
+
+        public boolean stopCameraUse() {
+            synchronized (AudioNodeService.this) {
+                try {
+                    cameraUse.stop(catalogRuntime);
+                    return true;
+                } catch (RuntimeException failed) { return false; }
+            }
+        }
+        public String getAudioPeersJson() { synchronized(AudioNodeService.this) { return catalogRuntime.audioUse("peers","","","",0); } }
+        public String getAudioUsesJson() {
+            synchronized (AudioNodeService.this) {
+                return audioUse.publicStateJson();
+            }
+        }
+
+        public boolean startAudioUse(String peer, String direction) {
+            synchronized (AudioNodeService.this) {
+                try {
+                    if ("microphone".equals(direction)
+                            && !setLocalCapabilityShared(nodeId + ":android.microphone", true)) return false;
+                    audioUse.start(catalogRuntime, peer, direction);
+                    return true;
+                } catch (RuntimeException failed) { return false; }
+            }
+        }
+
+        public boolean stopAudioUse(String direction) {
+            synchronized (AudioNodeService.this) {
+                try {
+                    audioUse.stop(catalogRuntime, direction);
+                    return true;
+                } catch (RuntimeException failed) { return false; }
+            }
+        }
+
+        public String getControllerPeersJson() {
+            synchronized (AudioNodeService.this) {
+                try { return catalogRuntime.controllerUse("peers", "", "", "", false); }
+                catch (RuntimeException unavailable) { return "[]"; }
+            }
+        }
+        public String getControllerUseJson() {
+            synchronized (AudioNodeService.this) {
+                return controllerUse.publicStateJson();
+            }
+        }
+
+        public boolean startControllerUse(String peerNodeId, String mode) {
+            synchronized (AudioNodeService.this) {
+                try {
+                    if (!setLocalCapabilityShared(nodeId + ":android.gamepad", true)) return false;
+                    controllerUse.start(catalogRuntime, peerNodeId, mode);
+                    return true;
+                } catch (RuntimeException unavailable) { return false; }
+            }
+        }
+
+        public boolean stopControllerUse() {
+            synchronized (AudioNodeService.this) {
+                try {
+                    controllerUse.stop(catalogRuntime);
+                    return true;
+                } catch (RuntimeException unavailable) { return false; }
+            }
+        }
+
+        public boolean setControllerMode(String mode) {
+            if (!"touch".equals(mode) && !"motion".equals(mode) && !"stopped".equals(mode)) return false;
+            if ("stopped".equals(mode)) stopControllerUse();
+            Intent intent = new Intent(AudioNodeService.this, AudioNodeService.class)
+                    .setAction(ACTION_CONTROLLER_MODE).putExtra("controllerMode", mode);
+            try {
+                if ("stopped".equals(mode)) startService(intent);
+                else startForegroundService(intent);
+                return true;
+            } catch (RuntimeException unavailable) { return false; }
+        }
+        public String audioPeerSettingsJson(String direction) {
+            synchronized (AudioNodeService.this) {
+                if (!"microphone".equals(direction) && !"speaker".equals(direction)) return "";
+                try {
+                    return AndroidAudioPeer.savedSettingsJson(direction,
+                            AndroidAudioPeerStore.load(AudioNodeService.this, direction));
+                } catch (RuntimeException invalidSettings) {
+                    return "";
+                }
+            }
+        }
+
         public boolean configureAudioPeer(String direction, String host, int localPort, int peerPort,
                 boolean trustedLabConfirmed) {
             synchronized (AudioNodeService.this) {
@@ -820,11 +1203,83 @@ public final class AudioNodeService extends Service {
         }
 
         public java.util.Set<String> selectedSharedCapabilityIds() {
-            return sharingSelection.snapshot();
+            return catalogModule.selectedIds();
+        }
+
+        public String pairingStoreState() {
+            return control.state();
+        }
+
+        public int pairedPeerCount() {
+            return control.peerCount();
+        }
+
+        public String pairedPeerMetadataJson() {
+            synchronized (AudioNodeService.this) {
+                return control.peerMetadataJson();
+            }
+        }
+
+        public boolean authenticatedCatalogConnected() {
+            return control.listener() != null && control.listener().connected();
+        }
+
+        public String controlConnectionFailure() {
+            if (control.listener() == null) return "控制监听未就绪";
+            String failure = control.listener().failure();
+            return failure == null ? "" : failure.substring(0, Math.min(failure.length(), 512));
+        }
+
+        public boolean connectPairedPeerAt(String host, int port) {
+            synchronized (AudioNodeService.this) {
+                return control.connect(host, port);
+            }
+        }
+
+        public boolean discoveryAnnouncing() {
+            return control.listener() != null && control.listener().discoveryAnnouncing();
+        }
+
+        public boolean setBackgroundWaitingEnabled(boolean enabled) {
+            if (enabled && !controlListenerAvailable()) return false;
+            try {
+                if (enabled) {
+                    startForegroundAction(AudioNodeService.this, ACTION_ENABLE_BACKGROUND_WAITING);
+                } else {
+                    startServiceAction(AudioNodeService.this, ACTION_DISABLE_BACKGROUND_WAITING);
+                }
+                return true;
+            } catch (RuntimeException unavailable) {
+                return false;
+            }
+        }
+
+        public int controlListenPort() {
+            if (control.listener() == null) return 0;
+            try {
+                return control.listener().port();
+            } catch (RuntimeException unavailable) {
+                return 0;
+            }
+        }
+
+        public boolean reloadControlPairing() {
+            return AudioNodeService.this.reloadControlPairing();
+        }
+
+        public String enrollmentStatusJson() {
+            return filelessPairing == null ? "{\"phase\":\"idle\",\"message\":\"节点服务尚未就绪\"}" : filelessPairing.status();
+        }
+
+        public String enrollmentActionJson(String request) {
+            try {
+                if (filelessPairing == null) throw new IllegalStateException("节点服务尚未就绪");
+                return filelessPairing.action(request);
+            } catch (RuntimeException error) { return AndroidFilelessPairing.errorStatus(error.getMessage()); }
         }
 
         public CapabilityCatalogSnapshot publicationCatalog() {
-            return sharingSelection.publicationCatalog(
+            return catalogModule.publication(
                     AudioNodeService.this.capabilityCatalogSnapshot());
         }
 
@@ -834,12 +1289,19 @@ public final class AudioNodeService extends Service {
 
         public boolean setLocalCapabilityShared(String capabilityId, boolean selected) {
             CapabilityCatalogSnapshot catalog = AudioNodeService.this.capabilityCatalogSnapshot();
-            boolean accepted = sharingSelection.update(
+            boolean accepted = catalogModule.select(
                     catalog,
                     capabilityId,
                     selected,
                     AudioNodeService.this::replaceNativePublication);
             if (accepted) {
+                // A started Service, not merely a bound foreground Service, owns
+                // the waiting listener when the Activity leaves the foreground.
+                if (!catalogModule.selectedIds().isEmpty()) {
+                    startForegroundAction(AudioNodeService.this, ACTION_REFRESH_PUBLICATION);
+                } else {
+                    startServiceAction(AudioNodeService.this, ACTION_REFRESH_PUBLICATION);
+                }
                 notifyStateListener();
             }
             return accepted;
@@ -867,6 +1329,32 @@ public final class AudioNodeService extends Service {
 
         public void startGamepad() {
             AudioNodeService.startGamepad(AudioNodeService.this);
+        }
+
+        public boolean gamepadMotionEnabled() { return gamepadMotionEnabled; }
+
+        public int hapticsStrength() { return hapticsAdapter.strengthPercent(); }
+        public long hapticsExecutedFrames() { return hapticsDataWorker == null ? 0 : hapticsDataWorker.executedFrames(); }
+        public boolean hapticsNetworkActive() { return hapticsDataWorker != null && hapticsDataWorker.isAlive(); }
+
+        public boolean hapticsAvailable() { return hapticsAdapter.available(); }
+
+        public boolean setHapticsStrength(int percent) {
+            synchronized (AudioNodeService.this) {
+                return applyControllerPreferences(gamepadMotionEnabled, percent);
+            }
+        }
+
+        public boolean gamepadMotionAvailable() {
+            return gamepadMotionEnabled
+                    && gamepadController.lifecycle().state() == CapabilityLifecycleState.ACTIVE
+                    && imuAdapter.latestSample().accelerationTimestampNanos() > 0;
+        }
+
+        public boolean setGamepadMotionEnabled(boolean enabled) {
+            synchronized (AudioNodeService.this) {
+                return applyControllerPreferences(enabled, hapticsAdapter.strengthPercent());
+            }
         }
 
         public boolean configureControllerRoute(String host, int port, String token) {
@@ -902,6 +1390,28 @@ public final class AudioNodeService extends Service {
 
         public CapabilityLifecycleSnapshot touchpadLifecycle() {
             return touchpadController.lifecycle();
+        }
+
+        public String touchpadRequestsJson() {
+            return catalogRuntime == null ? "[]" : catalogRuntime.touchpadRequestsJson();
+        }
+
+        public boolean resolveTouchpadRequest(String routeId, boolean allow) {
+            return catalogRuntime != null && catalogRuntime.resolveTouchpadRequest(routeId, allow);
+        }
+
+        public boolean resolveTouchpadRequestRemembered(String routeId, boolean allow, boolean remember) {
+            synchronized (AudioNodeService.this) {
+                return resourceConsent.resolve(catalogRuntime, control.state(),
+                        control.directory(), routeId, allow, remember);
+            }
+        }
+
+        public boolean clearRememberedTouchpadPermissions() {
+            synchronized (AudioNodeService.this) {
+                resourceConsent.clear();
+                return true;
+            }
         }
 
         public TouchpadControlsSnapshot touchpadControls() {

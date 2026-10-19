@@ -23,10 +23,15 @@ The unified `AudioNodeService` owns both input senders.
 - Touchpad start opens only `127.0.0.1:61000`, through the operator-created ADB
   reverse mapping. The APK reuses the existing ARM64 record JNI entrypoints,
   exact Route/Session identities, Hello/Data/Ack/Close framing and post-Sink ACK
-  sequence validation. A bounded eight-frame queue rejects overflow.
+  sequence validation. A bounded eight-frame queue coalesces same-contact
+  motion. If transition pressure fills it, it sends an explicit empty reset
+  followed by the latest complete snapshot rather than dropping a newly added
+  finger; a final release always wins.
 - Complete shared-UI contact frames are deterministically converted back into
-  Android down/move/up/pointer/cancel transitions. Ambiguous multi-contact
-  discontinuities fail safe as `ACTION_CANCEL`.
+  Android down/move/up/pointer/cancel transitions. A frame that adds several
+  fingers is expanded into ordered down/pointer-down records. Contact
+  replacement or multi-contact release first cancels the old gesture before
+  rebuilding a non-empty latest snapshot.
 - Gamepad and standalone IMU share the existing bounded Controller Lab UDP JSON
   contract. The Android UI accepts the Windows IPv4, port and freshly displayed
   hexadecimal token before either capability starts. One 8 ms worker publishes

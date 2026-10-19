@@ -1,4 +1,28 @@
 export type BackendMode = "android_node" | "browser_mock" | "tauri_demo";
+export interface UiEnrollmentStatus {
+  discoveryState?: string;
+  discoveryMessage?: string;
+  candidates?: Array<{ nodeId: string; name: string; host: string; port: number }>;
+  phase: string;
+  pin?: string | null;
+  endpoint?: string | null;
+  peerNodeId?: string | null;
+  peerName?: string | null;
+  peerControlHost?: string | null;
+  peerControlPort?: number | null;
+  message: string;
+}
+export interface UiEnrollmentRequest {
+  action: 'welcome' | 'join' | 'approve' | 'cancel' | 'recover' | 'discover';
+  host?: string;
+  port?: number;
+  pin?: string;
+}
+export interface UiAndroidAudioPeerSettings {
+  schemaVersion: 1;
+  direction: "microphone" | "speaker";
+  savedPeer: { host: string; localPort: number; peerPort: number } | null;
+}
 
 export type RouteState =
   | "draft"
@@ -27,17 +51,22 @@ export interface UiPort {
 
 export interface UiRoute {
   id: string;
+  sourceCapabilityId: string | null;
+  sinkCapabilityId: string | null;
   title: string;
   summary: string;
   profile: string;
   backend: string;
   state: RouteState;
   active: boolean;
+  authorization: "pending" | "authorized" | "denied" | "revoked" | "unknown";
+  authorizationExpiresAtMs: number | null;
   source: UiPort;
   sink: UiPort;
   formatSummary: string | null;
   qosModes: string[];
   projectionNote: string;
+  error?: string | null;
   metrics: UiMetricSet;
 }
 
@@ -71,7 +100,7 @@ export interface UiCapability {
   local: boolean;
   availability: CapabilityAvailability;
   permissionRequirement: PermissionRequirement;
-  inventorySource: "android_node_catalog" | "runtime_catalog";
+  inventorySource: "android_node_catalog" | "runtime_catalog" | "authenticated_peer_catalog" | "host_adapter_catalog";
   simulated: boolean;
   selectableForSharing: boolean;
   selectedForSharing: boolean;
@@ -240,6 +269,9 @@ export interface UiWindowsGamepadProjection {
   inputPackets: number;
   nonNeutralPackets: number;
   ds4RejectedPackets: number;
+  feedbackPackets?: number;
+  feedbackSmallMotor?: number;
+  feedbackLargeMotor?: number;
   xinputPackets: number;
   inputOfflineEvents: number;
   lastRemoteSequence: number | null;
@@ -290,7 +322,7 @@ export interface UiQuickAction {
   routeState: RouteState | null;
   routeEpoch: number | null;
   availableOperations: QuickActionOperation[];
-  evidenceLevel: "not_started" | "process_and_route_state" | "stable_tcp_receiver_presence" | "stable_phone_tcp_presence";
+  evidenceLevel: "not_started" | "process_and_route_state" | "stable_tcp_receiver_presence" | "stable_phone_tcp_presence" | "native_receiver_process_ready_only";
   connectionHint: string | null;
   problemCode: string | null;
   problem: string | null;
@@ -346,6 +378,11 @@ export interface UiAndroidCameraSettings {
   schemaVersion: 1;
   state: "stopped" | "starting" | "active" | "failed";
   generation: number;
+  transportStatus?: string;
+  capturedFrames?: number;
+  encodedAccessUnits?: number;
+  sentAccessUnits?: number;
+  exportDroppedAccessUnits?: number;
   permissionReady: boolean;
   selectedSourceKey: string | null;
   quality: "economy" | "balanced" | "clear";
@@ -353,17 +390,43 @@ export interface UiAndroidCameraSettings {
   sources: UiAndroidCameraSource[];
 }
 
+export interface UiControlPlaneStatus {
+  schemaVersion: 1;
+  simulated: boolean;
+  discoveryState: "not_started" | "listening" | "simulated";
+  pairingState: "not_configured" | "ready" | "failed" | "simulated";
+  transportState: "not_connected" | "connected" | "simulated";
+  catalogExchangeState: "not_connected" | "active" | "simulated";
+  discoveredCandidateCount: number;
+  pairedPeerCount: number;
+  authenticatedConnectionCount: number;
+  listenPort: number | null;
+  pairingStorePath?: string | null;
+  processUserSid?: string | null;
+}
+
 export interface UiSnapshot {
   backendMode: BackendMode;
-  schemaVersion: 4;
+  schemaVersion: 5;
   projectVersion: string;
+  controlPlane: UiControlPlaneStatus;
   nodes: UiNode[];
   capabilities: UiCapability[];
   routes: UiRoute[];
+  portLeases?: UiPortLease[];
   adapters: UiAdapter[];
   events: UiEvent[];
   warnings: string[];
   imuFixture: UiImuFixture | null;
+}
+
+export interface UiPortLease {
+  nodeId: string;
+  capabilityId: string;
+  portId: string;
+  routeId: string;
+  sessionId: string;
+  expiresAtMs: number;
 }
 
 export interface UiDiagnostics {
@@ -374,14 +437,36 @@ export interface UiDiagnostics {
   checks: { label: string; detail: string }[];
 }
 
+export interface UiDisplayViewingOptions {
+  fullscreen: boolean;
+  keepAwake: boolean;
+  showStatistics: boolean;
+}
+
 export interface UiDisplayReceiverState {
   schemaVersion: 1;
+  viewingOptions?: UiDisplayViewingOptions;
   transport: "unconfigured" | "cpd1" | "gamestream";
   configurationPresent: boolean;
   nativeClientAvailable: boolean;
   canOpen: boolean;
   problemCode: string;
 }
+
+export interface UiDisplaySelection {
+  automatic?: boolean;
+  width: number;
+  height: number;
+  refreshMillihertz: number;
+  bitrateKbps: number;
+}
+export interface UiDisplayUse extends UiDisplaySelection {
+  peerNodeId: string;
+  status: 'awaiting_consent' | 'starting' | 'active' | 'stopping' | 'failed';
+  error?: string | null;
+  presentedFrames?: number;
+}
+export interface UiDisplayPeer { nodeId: string; displayName: string; displayAvailable?: boolean; }
 
 export interface UiDisplaySenderState {
   schemaVersion: 1;
@@ -391,24 +476,100 @@ export interface UiDisplaySenderState {
   problemCode: string | null;
 }
 
+export type ControllerUseMode = 'dualshock4' | 'xbox360' | 'dsu';
+export interface UiControllerPeer { nodeId: string; displayName: string; }
+export interface UiCameraUse {
+  peerNodeId: string;
+  status: 'idle' | 'awaiting_consent' | 'starting' | 'active' | 'stopping' | 'failed';
+  error?: string | null;
+}
+export type AudioUseDirection = 'microphone' | 'speaker';
+export interface UiAudioPeer { nodeId: string; displayName: string; directions: AudioUseDirection[]; }
+export interface UiAudioUse {
+  peerNodeId: string;
+  direction: AudioUseDirection;
+  status: 'idle' | 'awaiting_consent' | 'starting' | 'active' | 'stopping' | 'failed';
+  waitingMedia?: boolean;
+  message?: string;
+  error?: string | null;
+}
+export interface UiControllerUse {
+  peerNodeId: string;
+  mode: ControllerUseMode;
+  status: 'idle' | 'awaiting_consent' | 'starting' | 'active' | 'stopping' | 'failed';
+  error?: string | null;
+}
+
 export interface CapyIOApi {
+  getCameraPeers(): Promise<UiControllerPeer[]>;
+  getCameraUse(): Promise<UiCameraUse | null>;
+  startCameraUse(peerNodeId: string): Promise<void>;
+  stopCameraUse(): Promise<void>;
+  getAudioPeers(): Promise<UiAudioPeer[]>;
+  getAudioUses(): Promise<UiAudioUse[]>;
+  startAudioUse(peerNodeId: string, direction: AudioUseDirection): Promise<void>;
+  stopAudioUse(direction: AudioUseDirection): Promise<void>;
+  getControllerPeers(): Promise<UiControllerPeer[]>;
+  getControllerUse(): Promise<UiControllerUse | null>;
+  startControllerUse(peerNodeId: string, mode: ControllerUseMode): Promise<void>;
+  stopControllerUse(): Promise<void>;
+  getGamepadMotionSettings(): Promise<{ enabled: boolean; available: boolean; independentActive: boolean } | null>;
+  setGamepadMotionEnabled(enabled: boolean): Promise<void>;
+  setAndroidControllerMode(mode: 'touch' | 'motion' | 'stopped'): Promise<void>;
+  getRemoteControllerSettings(nodeId: string): Promise<{nodeId: string; revision: number; motionEnabled: boolean; hapticsStrength: number; pending: boolean; error?: string | null} | null>;
+  setRemoteControllerSettings(nodeId: string, expectedRevision: number, motionEnabled: boolean, hapticsStrength: number): Promise<void>;
+  getHapticsSettings(): Promise<{ strength: number; available: boolean; executedFrames?: number; networkActive?: boolean } | null>;
+  setHapticsStrength(percent: number): Promise<void>;
+  setGamepadImmersive(active: boolean): Promise<void>;
+  getGamepadLayout(): Promise<string | null>;
+  saveGamepadLayout(layout: string): Promise<void>;
+  getResourceRequests(): Promise<UiResourceRequest[]>;
+  resolveResourceRequest(routeId: string, allow: boolean, remember?: boolean): Promise<void>;
+  clearRememberedResourcePermissions?(): Promise<void>;
+  getPairedPeers(): Promise<UiPairedPeer[]>;
+  getEnrollmentStatus(): Promise<UiEnrollmentStatus>;
+  getEnrollmentAddresses(): Promise<string[]>;
+  enrollmentAction(request: UiEnrollmentRequest): Promise<UiEnrollmentStatus>;
+  checkPairedCredential(nodeId: string): Promise<void>;
+  getDiscoveryCandidates(): Promise<UiDiscoveryCandidate[]>;
+  getDiscoveryInterfaces(): Promise<UiDiscoveryInterface[]>;
+  connectDiscoveredPeer(nodeId: string): Promise<void>;
+  connectPairedPeerAt(nodeId: string, host: string, port: number): Promise<void>;
+  getControlConnectionFailure(): Promise<string | null>;
+  startPairedListener(nodeId: string, bindHost: string, port: number): Promise<number>;
+  stopPairedListener(): Promise<void>;
+  getPairedListenerStatus(): Promise<{nodeId: string; bindHost: string; port: number} | null>;
+  disconnectPeer(nodeId: string): Promise<void>;
+  createPairingInvitation(nodeId: string, displayName: string, renewExisting?: boolean): Promise<string>;
+  importPairingInvitation(): Promise<void>;
+  getDisplayPeers(): Promise<UiDisplayPeer[]>;
+  getDisplayUse(): Promise<UiDisplayUse | null>;
+  startDisplayUse(peerNodeId: string, selection: UiDisplaySelection): Promise<void>;
+  stopDisplayUse(): Promise<void>;
   getDisplaySenderState(): Promise<UiDisplaySenderState | null>;
   startDisplaySender(): Promise<UiDisplaySenderState | null>;
   stopDisplaySender(): Promise<UiDisplaySenderState | null>;
   getDisplayReceiverState(): Promise<UiDisplayReceiverState | null>;
   importDisplayProvisioning(): Promise<void>;
-  openDisplayReceiver(): Promise<void>;
+  openDisplayReceiver(options?: UiDisplayViewingOptions): Promise<void>;
   getDiagnostics(): Promise<UiDiagnostics>;
   getSnapshot(): Promise<UiSnapshot>;
+  startDiscovery(interfaceIpv4: string): Promise<UiSnapshot>;
+  stopDiscovery(): Promise<UiSnapshot>;
   setRoute(routeId: string, active: boolean): Promise<UiSnapshot>;
   setLocalCapabilityShared(capabilityId: string, selected: boolean): Promise<UiSnapshot>;
+  getBackgroundWaitingEnabled(): Promise<boolean>;
+  setBackgroundWaitingEnabled(enabled: boolean): Promise<void>;
+  setRemoteCapabilityUse(capabilityId: string, active: boolean): Promise<UiSnapshot>;
   resetDemo(): Promise<UiSnapshot>;
   getLiveImu(): Promise<UiLiveImu | null>;
   startLiveImu(ip: string, port: number): Promise<UiLiveImu>;
   stopLiveImu(): Promise<UiLiveImu>;
   getGamepadState(): Promise<UiGamepadState | null>;
   refreshWindowsGamepadPreflight(controllerKind: WindowsControllerKind): Promise<UiGamepadState>;
-  startWindowsGamepadProjection(enableXinputCompanion: boolean): Promise<UiGamepadState>;
+  startWindowsGamepadProjection(controllerKind: WindowsControllerKind): Promise<UiGamepadState>;
+  startControllerHost(controllerKind: WindowsControllerKind, port: number): Promise<UiGamepadState>;
+  stopControllerHost(): Promise<UiGamepadState>;
   stopWindowsGamepadProjection(): Promise<UiGamepadState>;
   updateGamepadState(update: GamepadControlUpdate): Promise<UiGamepadState>;
   getTouchpadState(): Promise<UiTouchpadState | null>;
@@ -423,9 +584,42 @@ export interface CapyIOApi {
   getAudioEndpoints(): Promise<UiAudioEndpointCatalog | null>;
   getAndroidAudioState(): Promise<UiAndroidAudioState | null>;
   configureAndroidAudioPeer(direction: "microphone" | "speaker", host: string, localPort: number, peerPort: number, trustedLabConfirmed: boolean): Promise<void>;
+  getAndroidAudioPeerSettings(direction: "microphone" | "speaker"): Promise<UiAndroidAudioPeerSettings | null>;
   getAndroidCameraSettings(): Promise<UiAndroidCameraSettings | null>;
   refreshAndroidCameraSources(): Promise<UiAndroidCameraSettings>;
   selectAndroidCameraSource(sourceKey: string): Promise<UiAndroidCameraSettings>;
   selectAndroidCameraQuality(quality: UiAndroidCameraSettings["quality"]): Promise<UiAndroidCameraSettings>;
   selectAudioEndpoint(actionId: string, selectionToken: string): Promise<UiQuickAction>;
+}
+
+export interface UiDiscoveryInterface {
+  ipv4: string;
+  interfaceIndex: number;
+}
+
+/** Non-secret pairing metadata, not proof of a live authenticated connection. */
+export interface UiPairedPeer {
+  nodeId: string;
+  displayName: string;
+  revoked: boolean;
+  /** Invitation issuance time; absent on older hosts, never a credential. */
+  pairedAtMs?: number;
+}
+
+export interface UiResourceRequest {
+  capabilityId?: string;
+  resourceKind?: "touchpad" | "haptics" | "gamepad" | "microphone" | "speaker" | "camera" | "display";
+  routeId: string;
+  peerNodeId: string;
+  peerName: string;
+  capabilityName: string;
+  expiresAtMs: number;
+}
+
+export interface UiDiscoveryCandidate {
+  nodeId: string;
+  host: string;
+  controlPort: number;
+  lastSeenAgeMs: number;
+  pairingState: "unpaired" | "paired" | "revoked";
 }

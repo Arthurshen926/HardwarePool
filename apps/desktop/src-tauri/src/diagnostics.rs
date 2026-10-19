@@ -16,8 +16,7 @@ pub(crate) struct Check {
     detail: String,
 }
 
-#[tauri::command]
-pub(crate) fn get_diagnostics() -> Diagnostics {
+pub(crate) fn get_diagnostics(state: &super::HostState) -> Diagnostics {
     let mut checks = Vec::new();
     for (label, result) in [
         ("ADB 程序", crate::android_receivers::adb_path()),
@@ -43,9 +42,24 @@ pub(crate) fn get_diagnostics() -> Diagnostics {
     }
     checks.push(Check {
         label: "验收范围",
-        detail: "本页仅检查程序文件。音频服务、驱动权限、手机连接和系统摄像头投影尚需单独验证。"
+        detail: "本页检查程序文件和 Route 最近媒体观测，不代表实时速率或实机验收。音频服务、驱动权限、手机连接和系统摄像头投影尚需单独验证。"
             .to_owned(),
     });
+    match state.0.media_observations() {
+        Ok(observations) => {
+            for observation in observations {
+                checks.push(Check {
+                    label: "Route 最近媒体观测（非实时速率）",
+                    detail: serde_json::to_string(&observation)
+                        .unwrap_or_else(|error| error.to_string()),
+                });
+            }
+        }
+        Err(error) => checks.push(Check {
+            label: "Route 媒体观测",
+            detail: error,
+        }),
+    }
     Diagnostics {
         backend: "Windows Tauri",
         version: env!("CARGO_PKG_VERSION"),

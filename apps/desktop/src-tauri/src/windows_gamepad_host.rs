@@ -6,7 +6,7 @@ use std::sync::{
 
 use crate::android_gamepad::AndroidProjectionEvent;
 use capyio_data_plane::{DataEnvelope, ImuSampleV1};
-use capyio_input::GamepadState;
+use capyio_input::{GamepadControls, GamepadState};
 use capyio_runtime::NodeRuntime;
 
 #[cfg(target_os = "windows")]
@@ -96,6 +96,9 @@ pub(crate) struct UiWindowsGamepadProjection {
     pub(crate) input_packets: u64,
     pub(crate) non_neutral_packets: u64,
     pub(crate) ds4_rejected_packets: u64,
+    pub(crate) feedback_packets: u64,
+    pub(crate) feedback_small_motor: u8,
+    pub(crate) feedback_large_motor: u8,
     pub(crate) xinput_packets: u64,
     pub(crate) input_offline_events: u64,
     pub(crate) last_remote_sequence: Option<u64>,
@@ -123,6 +126,57 @@ struct WindowsInputIngress {
 }
 
 impl WindowsGamepadHost {
+    pub(crate) fn bind_authorized_combined_route(
+        &mut self,
+        runtime: &NodeRuntime,
+        route: capyio_core::RouteId,
+        sink: capyio_core::PortRef,
+        now_ms: u64,
+    ) -> Result<(), String> {
+        if self.is_active() {
+            return Err("stop the current projection before rebinding".into());
+        }
+        #[cfg(target_os = "windows")]
+        {
+            let viiper = ViiperLoopbackClient::new(
+                ViiperLoopbackConfig::new(
+                    SocketAddr::from((Ipv4Addr::LOCALHOST, 3242)),
+                    Duration::from_secs(2),
+                    Duration::from_secs(2),
+                    MAX_VIIPER_MANAGEMENT_RESPONSE_BYTES,
+                )
+                .map_err(|e| e.to_string())?,
+            );
+            let usbip = UsbipWin2Client::new(
+                UsbipWin2Config::new(
+                    PathBuf::from(r"C:\Program Files\USBip\usbip.exe"),
+                    SocketAddrV4::new(Ipv4Addr::LOCALHOST, 3241),
+                    Duration::from_secs(5),
+                    MAX_USBIP_OUTPUT_BYTES,
+                )
+                .map_err(|e| e.to_string())?,
+            );
+            self.controller = Some(ViiperDs4RouteController::from_authorized_combined_route(
+                runtime,
+                route,
+                sink,
+                now_ms,
+                viiper,
+                ViiperAutoAttachDisabled::confirmed_by_caller(),
+                ViiperDs4ControlsMapping::gamepad_y_up(),
+                ViiperDs4MotionMapping::android_landscape_to_ds4(),
+                Some(usbip),
+                Some(UsbipWin2DeploymentVerified::confirmed_by_caller()),
+            )?);
+            Ok(())
+        }
+        #[cfg(not(target_os = "windows"))]
+        {
+            let _ = (runtime, route, sink, now_ms);
+            Err("controller projection requires Windows".into())
+        }
+    }
+
     pub(crate) fn new() -> Self {
         let (input_sender, receiver) = sync_channel(8);
         Self {
@@ -257,6 +311,44 @@ impl WindowsGamepadHost {
         self.projection.last_event = "ds4_state_rejected";
     }
 
+    pub(crate) fn controller_kind(&self) -> UiWindowsControllerKind {
+        self.projection.controller_kind
+    }
+
+    pub(crate) fn start_xbox(&mut self, controls: GamepadControls) -> Result<(), String> {
+        #[cfg(target_os = "windows")]
+        {
+            let config = VigemX360SidecarConfig::new(vigem_sidecar_path()?)
+                .map_err(|error| error.to_string())?;
+            let mut companion =
+                VigemX360Companion::start(config).map_err(|error| error.to_string())?;
+            if let Err(error) = companion.submit(controls) {
+                let _ = companion.stop();
+                return Err(error.to_string());
+            }
+            self.xinput_companion = Some(companion);
+            self.projection.controller_kind = UiWindowsControllerKind::Xbox360;
+            self.projection.device_identity = UiWindowsControllerKind::Xbox360.identity();
+            self.projection.status = "active";
+            self.projection.xinput_available = true;
+            self.projection.xinput_ready = true;
+            self.projection.bus_id = None;
+            self.projection.owned_usbip_port = None;
+            self.projection.feedback_packets = 0;
+            self.projection.feedback_small_motor = 0;
+            self.projection.feedback_large_motor = 0;
+            self.projection.problem_code = None;
+            self.projection.problem = None;
+            self.projection.last_event = "xbox_projection_active";
+            Ok(())
+        }
+        #[cfg(not(target_os = "windows"))]
+        {
+            let _ = controls;
+            Err("Xbox projection requires Windows".to_owned())
+        }
+    }
+
     pub(crate) fn start(
         &mut self,
         runtime: &mut NodeRuntime,
@@ -322,6 +414,11 @@ impl WindowsGamepadHost {
             };
             self.xinput_companion = xinput;
             self.projection.status = "active";
+            self.projection.controller_kind = UiWindowsControllerKind::DualShock4;
+            self.projection.device_identity = UiWindowsControllerKind::DualShock4.identity();
+            self.projection.feedback_packets = 0;
+            self.projection.feedback_small_motor = 0;
+            self.projection.feedback_large_motor = 0;
             self.projection.viiper_ready = true;
             self.projection.usbip_ready = true;
             self.projection.xinput_available = vigem_sidecar_path().is_ok();
@@ -350,8 +447,11 @@ impl WindowsGamepadHost {
         let controller_error = self
             .controller
             .as_mut()
+            .filter(|_| self.projection.controller_kind == UiWindowsControllerKind::DualShock4)
             .and_then(|controller| controller.stop(runtime).err());
         self.projection.status = "stopped";
+        self.projection.feedback_small_motor = 0;
+        self.projection.feedback_large_motor = 0;
         self.projection.xinput_ready = false;
         self.projection.bus_id = None;
         self.projection.owned_usbip_port = None;
@@ -383,13 +483,25 @@ impl WindowsGamepadHost {
                         input.last_remote_sequence = Some(state.remote_sequence);
                     }
                     #[cfg(target_os = "windows")]
-                    let mut ds4_accepted = false;
+                    let mut ds4_accepted =
+                        self.projection.controller_kind == UiWindowsControllerKind::Xbox360;
                     #[cfg(target_os = "windows")]
                     if self.is_active()
+                        && self.projection.controller_kind == UiWindowsControllerKind::DualShock4
                         && let Some(controller) = self.controller.as_mut()
                         && let Ok(status) = controller.status(runtime)
                     {
                         state.controls.header.stream_epoch = status.epochs.controls;
+                        if !state.motion_available || !state.gamepad_motion_enabled {
+                            // A projection-neutral pose is not a sensor measurement.
+                            state.motion.payload.acceleration = [0.0, 0.0, 9.806_65];
+                            state.motion.payload.angular_velocity = [0.0; 3];
+                            state.motion.clock_domain_id = "capyio.projection.neutral".to_owned();
+                            let timestamp = state.controls.header.source_timestamp_nanos;
+                            state.motion.source_timestamp_nanos = timestamp;
+                            state.motion.receive_timestamp_nanos = timestamp;
+                            state.motion.payload.component_timestamps = None;
+                        }
                         state.motion.stream_epoch = status.epochs.motion;
                         match controller.submit(runtime, state.controls, &state.motion) {
                             Ok(outcome) if outcome.exhausted() => {
@@ -445,7 +557,10 @@ impl WindowsGamepadHost {
                                 if let Some(companion) = self.xinput_companion.take() {
                                     let _ = companion.stop();
                                 }
-                                if let Some(controller) = self.controller.as_mut() {
+                                if self.projection.controller_kind
+                                    == UiWindowsControllerKind::DualShock4
+                                    && let Some(controller) = self.controller.as_mut()
+                                {
                                     let _ = controller.stop(runtime);
                                 }
                                 self.projection.status = "failed";
@@ -456,7 +571,7 @@ impl WindowsGamepadHost {
                                 self.projection.problem_code =
                                     Some("CAPY.GAMEPAD.XINPUT_STREAM_FAILED");
                                 self.projection.problem =
-                                    Some("Xbox 兼容输入流已失败，联合投影已安全停止。");
+                                    Some("Xbox 输入流已失败，本次手柄设备已停止。");
                             }
                         }
                     }
@@ -466,13 +581,15 @@ impl WindowsGamepadHost {
                         input.offline_events = input.offline_events.saturating_add(1);
                     }
                     #[cfg(target_os = "windows")]
-                    if self.is_active()
-                        && let Some(controller) = self.controller.as_mut()
-                    {
-                        let _ = controller.report_controls_offline(
-                            runtime,
-                            "Android paired controls and IMU source disconnected",
-                        );
+                    if self.is_active() {
+                        if self.projection.controller_kind == UiWindowsControllerKind::DualShock4
+                            && let Some(controller) = self.controller.as_mut()
+                        {
+                            let _ = controller.report_controls_offline(
+                                runtime,
+                                "Android paired controls and IMU source disconnected",
+                            );
+                        }
                         self.projection.status = "offline";
                         self.projection.bus_id = None;
                         self.projection.owned_usbip_port = None;
@@ -480,6 +597,8 @@ impl WindowsGamepadHost {
                             let _ = companion.stop();
                         }
                         self.projection.xinput_ready = false;
+                        self.projection.feedback_small_motor = 0;
+                        self.projection.feedback_large_motor = 0;
                         self.projection.last_event = "android_source_offline";
                     }
                 }
@@ -487,12 +606,61 @@ impl WindowsGamepadHost {
         }
     }
 
+    pub(crate) fn poll_feedback(&mut self, runtime: &mut NodeRuntime) {
+        #[cfg(target_os = "windows")]
+        if self.is_active()
+            && self.projection.controller_kind == UiWindowsControllerKind::Xbox360
+            && let Some(motors) = self
+                .xinput_companion
+                .as_ref()
+                .and_then(|device| device.take_feedback())
+        {
+            self.projection.feedback_packets = self.projection.feedback_packets.saturating_add(1);
+            self.projection.feedback_small_motor = motors[0];
+            self.projection.feedback_large_motor = motors[1];
+        }
+        #[cfg(target_os = "windows")]
+        if self.is_active()
+            && self.projection.controller_kind == UiWindowsControllerKind::DualShock4
+        {
+            // A fixed batch keeps feedback traffic from monopolizing input work.
+            for _ in 0..4 {
+                let Some(controller) = self.controller.as_mut() else {
+                    break;
+                };
+                match controller.try_poll_feedback(runtime) {
+                    Ok(Some(feedback)) => {
+                        self.projection.feedback_packets =
+                            self.projection.feedback_packets.saturating_add(1);
+                        self.projection.feedback_small_motor = feedback.small_motor;
+                        self.projection.feedback_large_motor = feedback.large_motor;
+                    }
+                    Ok(None) => break,
+                    Err(_) => {
+                        let _ = self.stop(runtime);
+                        self.projection.status = "failed";
+                        self.projection.last_event = "ds4_feedback_failed";
+                        self.projection.problem_code = Some("CAPY.GAMEPAD.DS4_FEEDBACK_FAILED");
+                        self.projection.problem =
+                            Some("DS4 反馈连接已断开，投影已停止。可重新启动。");
+                        break;
+                    }
+                }
+            }
+        }
+        #[cfg(not(target_os = "windows"))]
+        let _ = runtime;
+    }
+
     pub(crate) fn input_sender(&self) -> SyncSender<AndroidProjectionEvent> {
         self.input_sender.clone()
     }
 
     pub(crate) fn apply_read_only_preflight(&mut self, projection: UiWindowsGamepadProjection) {
-        self.projection = projection;
+        // A probe may finish after Start; never overwrite a live owned device.
+        if !self.is_active() {
+            self.projection = projection;
+        }
     }
 }
 
@@ -559,6 +727,8 @@ pub(crate) fn run_read_only_preflight_gate() -> Result<(), String> {
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 enum ProbeOutcome {
+    XboxSidecarAvailable,
+    XboxSidecarMissing,
     Unsupported,
     NotChecked,
     NoExport,
@@ -607,6 +777,9 @@ fn projection_from_outcome(
         input_packets: 0,
         non_neutral_packets: 0,
         ds4_rejected_packets: 0,
+        feedback_packets: 0,
+        feedback_small_motor: 0,
+        feedback_large_motor: 0,
         xinput_packets: 0,
         input_offline_events: 0,
         last_remote_sequence: None,
@@ -615,6 +788,21 @@ fn projection_from_outcome(
         problem: None,
     };
     match outcome {
+        ProbeOutcome::XboxSidecarAvailable => {
+            projection.xinput_available = true;
+            projection.viiper_endpoint = None;
+            projection.usbip_endpoint = None;
+            projection.last_event = "xbox_sidecar_available_driver_not_probed";
+        }
+        ProbeOutcome::XboxSidecarMissing => {
+            projection.status = "failed";
+            projection.viiper_endpoint = None;
+            projection.usbip_endpoint = None;
+            projection.last_event = "xbox_sidecar_missing";
+            projection.problem_code = Some("CAPY.GAMEPAD.XINPUT_RUNTIME_MISSING");
+            projection.problem =
+                Some("Xbox 辅助程序或托管客户端缺失，请使用包含 XInput 辅助程序的完整版本。");
+        }
         ProbeOutcome::Unsupported => projection.last_event = "unsupported_platform",
         ProbeOutcome::NotChecked => {}
         ProbeOutcome::NoExport => {
@@ -701,6 +889,13 @@ fn projection_from_outcome(
 
 #[cfg(target_os = "windows")]
 fn run_read_only_probe(kind: UiWindowsControllerKind) -> ProbeOutcome {
+    if kind == UiWindowsControllerKind::Xbox360 {
+        return if vigem_sidecar_path().is_ok() {
+            ProbeOutcome::XboxSidecarAvailable
+        } else {
+            ProbeOutcome::XboxSidecarMissing
+        };
+    }
     let viiper_config = match ViiperLoopbackConfig::new(
         SocketAddr::from((Ipv4Addr::LOCALHOST, 3242)),
         Duration::from_secs(2),
@@ -782,6 +977,31 @@ fn classify_usbip_error(error: &UsbipWin2Error) -> ProbeOutcome {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn xbox_preflight_does_not_require_viiper_or_usbip() {
+        let projection = projection_from_outcome(
+            UiWindowsControllerKind::Xbox360,
+            ProbeOutcome::XboxSidecarAvailable,
+        );
+        assert!(projection.xinput_available);
+        assert!(!projection.xinput_ready);
+        assert!(projection.viiper_endpoint.is_none());
+        assert!(projection.usbip_endpoint.is_none());
+    }
+
+    #[test]
+    fn late_preflight_cannot_replace_an_active_device() {
+        let mut host = WindowsGamepadHost::new();
+        host.projection.status = "active";
+        host.projection.controller_kind = UiWindowsControllerKind::Xbox360;
+        host.apply_read_only_preflight(projection_from_outcome(
+            UiWindowsControllerKind::DualShock4,
+            ProbeOutcome::ViiperUnavailable,
+        ));
+        assert!(host.is_active());
+        assert_eq!(host.controller_kind(), UiWindowsControllerKind::Xbox360);
+    }
 
     #[test]
     fn no_export_is_ready_but_does_not_claim_windows_enumeration() {

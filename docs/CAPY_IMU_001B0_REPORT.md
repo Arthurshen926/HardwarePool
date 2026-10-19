@@ -57,7 +57,7 @@ test build. Full Clippy with warnings denied passed; no source warning remains.
 ## Device and security boundary
 
 - `adb devices -l` returned no device in this session.
-- Reconnecting `100.66.157.119:42575` was actively refused, consistent with a
+- Reconnecting `<LAB_IPV4_03>:42575` was actively refused, consistent with a
   disabled/restarted wireless-debug listener or changed port.
 - No APK, permission, foreground service or phone setting changed.
 - No network socket, WebSocket dependency, production authentication, driver,

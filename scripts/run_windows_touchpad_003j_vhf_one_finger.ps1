@@ -3,8 +3,8 @@ param()
 
 $ErrorActionPreference = 'Stop'
 $repositoryRoot = Split-Path -Parent $PSScriptRoot
-$executable = Join-Path $repositoryRoot 'target\debug\deps\touchpad_runtime_worker-1ef346b5542e36f7.exe'
-$expectedHash = 'F7F16EA7F903D1721D2D441B90B5816C19981A94DFA1A242C2C76985F5DD0A7C'
+$executable = Join-Path $repositoryRoot 'target\debug\deps\touchpad_runtime_worker-ba04efdab6bfc295.exe'
+$expectedHash = '20633CFD3D41A61906722D98AB9F8FC384543273C2A312586968E59D9488B81F'
 $evidenceRoot = Join-Path $repositoryRoot 'target\lab-evidence'
 $evidencePath = Join-Path $evidenceRoot 'CAPY-PTP-003J-vhf-one-finger.txt'
 

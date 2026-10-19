@@ -1,5 +1,109 @@
 # CapyIO Security Model
 
+ADR 1511 adds explicit service allocation for ordinary-user camera shared memory.
+The service handles allocation only; user processes retain media and camera lifetime.
+The ordinary-user path passed local-lab media validation on 2026-10-04 with the
+explicitly configured service (see ALPHA_GAP_CLOSEOUT_20261003.md). Previously
+packaged installers still require separate service deployment; this is not a
+clean-machine or production installation claim.
+
+ADR 1509 separates Windows UI from the Node Host. The local API uses exact-user
+SID DACLs, per-login-session pipe names, remote-client rejection and first-instance
+creation. Clients verify the server executable path before sending data. Requests
+are versioned and dispatch only the 53 existing typed operations plus Host status/
+shutdown; frames are limited to 1 MiB and four fixed workers serve requests.
+Node API reads are explicitly nonblocking with time bounds; response acknowledgement
+avoids unbounded pipe flush waits. Existing service pipes retain their old limits.
+No elevation or low-integrity ACL is added. Same-user arbitrary-code compromise is
+not isolated by this API. A UI from another install must exit the old Host first.
+UI close does not revoke active Routes; explicit node exit runs normal cleanup.
+
+ADR 1507's opt-in enrollment recovery reuses the exact approved protected key and
+peer record. A pending journal is not an active control grant; normal enrollment
+commits only after both peers report durable preparation. Explicit local recovery
+never replaces a different existing peer record and does not assert remote completion.
+
+ADR 1506 adds an explicitly opened local-alpha first-enrollment channel, separate
+from control TLS. An eight-digit one-attempt PIN authenticates ordered public
+Node/certificate hellos through the pinned SPAKE2 implementation; directional
+confirmation is followed by ordinary exact-leaf mTLS and bilateral user consent.
+Only locally generated private keys enter native DPAPI/Keystore storage. Existing
+pins are never overwritten by this entry. No hardware permission is granted by
+pairing. The dependency is not independently audited; durable interrupted-commit
+recovery and full physical acceptance remain open, so this is not production
+enrollment. See ADR 1506 and its dependency note before extending this boundary.
+
+ADR 1505's display workflow reuses paired control TLS for bounded launch/ACK
+material. This never goes through WebView or diagnostic logs. Local resource
+consent remains independent at both endpoints. The requester-SID Windows service
+owns the worker, accepts only typed parameters and keeps a finite renewable
+generation-bound deadline. No node private key is copied to LocalSystem. Ready
+means worker-start acknowledgement; Active requires receiver frame evidence.
+This does not broaden the existing GameStream adapter's media security claims.
+
+ADR 1503 binds the existing C23 camera lab worker to an authenticated control
+Route with resource consent, endpoint leases, expected Stream/epoch and finite
+child lifetime. The control owner stops capture/receiver/projection on revocation
+or disconnect; only published decoded frames mark Windows Active. The old fixed
+camera broker pipe, driver boundary and trusted-lab IP restrictions are unchanged.
+This does not authenticate or encrypt CAVC records; production network use remains
+out of scope. No new Android permission is added by this handoff.
+
+ADR 1484's Windows inbound listener is scoped to an explicitly selected active
+paired Node and local IP/port. It loads the current user's DPAPI credential,
+pins the exact peer leaf, checks the fresh Session binding and does not treat
+the TCP source address as trust. Rejected handshakes do not admit a peer or
+grant a Route. The Android WebView sees only endpoint hints and bounded status,
+never private keys or credential bundles.
+
+The Windows current-account credential check only attempts DPAPI decryption
+of the selected active peer's bundle and returns a bounded ready/error result;
+it never serializes key material to the WebView. A public pairing record is
+not evidence that the current process token owns the protected credential.
+
+ADR 1485 requires old-credential DPAPI decryption before replacing an
+existing paired record. The renewed invitation is written before committing
+new trust metadata and exact new artifacts are rolled back on failure. No
+certificate observed on the network can trigger renewal or overwrite a pin.
+
+ADR 1473 binds a separate touchpad TLS 1.3 connection to the exact paired leaf,
+Session, Route, Source/Sink, Stream, epoch and finite grant expiry. Endpoint
+offers may change only the port on the authenticated control peer's address.
+Both hosts recheck Runtime authorization/leases; the Windows receiver opens its
+native Sink only after admission and Hello validation. Stop interrupts bounded
+I/O and closes the Sink. No plaintext LAN fallback, driver ACL change, new
+Android permission, or automatic elevation is introduced.
+
+ADR 1448 makes the stored peer leaf-certificate fingerprint mandatory in both
+control TLS configurations. After normal mTLS/ALPN verification, the channel
+must match the exact leaf before sending or accepting application binding
+records. A shared issuing CA alone is not a paired identity. Rotation is never
+accepted automatically from discovery or an observed replacement certificate.
+
+The ADR 1446 discovered-device UI exposes only bounded, expiring observations
+from the existing ingress. Node IDs and endpoints remain unauthenticated hints;
+they cannot invoke pairing, connect, grant a resource or start a worker. No
+broadcast-provided name or HTML is rendered, and no nonce or credential reaches
+the DTO. Candidates remain visually separate from admitted resource catalogs.
+
+ADR 1454 appends only the local paired-directory classification to that DTO.
+`paired` is not a claim about the broadcast sender: the endpoint must still
+present the stored exact leaf certificate and complete the expected Node/Session
+binding. `revoked` never becomes connectable, and no handle, fingerprint or
+key material is disclosed to the WebView.
+
+The ADR 1443 Windows discovery interface command is parameter-free and read-only.
+It returns at most 64 local IPv4/index pairs from bounded IP Helper output,
+never credentials, MAC addresses, gateways or DNS settings. Starting a listener
+rechecks address membership. Enumeration supplies neither peer trust nor network
+reachability and does not change firewall or adapter configuration.
+
+The Android saved-audio-peer readback bridge exposes only a versioned,
+direction-scoped private/overlay IPv4 and UDP-port DTO. It does not expose
+credentials, arbitrary preferences or effective build configuration. The UI
+validates exact keys and bounds; reads never start hardware or establish trust.
+See ADR 1431.
+
 Android display credentials are imported only through the system document
 picker into a native, fixed-schema bundle parser. The WebView receives no URI,
 path or credential bytes. Archives are bounded by entry count, exact root names,
@@ -32,7 +136,9 @@ they are not pairing, authentication, encryption or replay-safe production
 authority. Neither saving a setting nor successful media reception establishes
 trusted peer identity. Public-network audio remains outside this lab contract.
 
-> Status: pre-alpha threat model. Production pairing/cryptography are absent.
+> Status: pre-alpha threat model. A generic mTLS control boundary and bounded
+> post-pairing records exist; production enrollment, secure platform storage,
+> rotation, revocation propagation and recovery are not complete.
 
 ## Protected assets
 
@@ -260,6 +366,19 @@ deadlines. No request can change executable paths, bind addresses, ports or
 endpoint identity. Any interactive user can currently control the machine-wide
 Route, so multi-user authorization remains unresolved release work.
 
+ADR 1501 is an accepted, opt-in exception only on a separate SID-scoped native
+audio Route pipe, never on ADR 0034's all-interactive-user pipe. Administrator
+launch configuration chooses the principal and pinned native worker executables.
+That principal's Node Runtime is trusted to check authenticated Session, resource
+consent, catalog and leases; caller-supplied Route JSON is not cryptographic proof.
+The service checks direction, fixed PCM preset, binding, finite grant and endpoints,
+and bounds owner liveness with a 15-second renewable monotonic lease. Requests
+cannot change executables, SIDs, devices or persistent configuration. Dynamic
+endpoints belong only to one worker launch. Legacy operations cannot change a
+Route-owned worker. The desktop handoff is restricted to the explicitly approved
+Windows/Y700 lab endpoints; it does not encrypt native UDP or claim production
+security. Broader endpoint policy and real-device validation remain release work.
+
 ADR 1426 adds an opt-in display configuration path only to trusted service
 launch arguments, not to that interactive-user pipe. The existing bounded,
 closed display configuration loader and hash-verified worker boundary remain
@@ -290,8 +409,9 @@ does not authenticate the Android peer or encrypt MicYou traffic.
 
 ADR 0047 adds a separate native microphone mode to the same privileged Broker.
 Its executable and literal local/peer UDP endpoints remain administrator-set
-service configuration and cannot be supplied through the control pipe or
-WebView. The child accepts only one fixed common-packet binding and explicit
+service configuration and cannot be supplied through the legacy control pipe or
+WebView. ADR 1501's separate principal-bound handoff is the sole dynamic Route
+exception described above. The legacy child accepts one fixed common-packet binding and explicit
 peer, but ADR 0044 still provides no authentication, confidentiality, integrity,
 replay protection or downgrade binding. Explicit peer filtering is not peer
 identity. The capture ring is SPSC, so the native receiver and MicYou ingress
@@ -677,6 +797,15 @@ privileged, ADB-paired local-lab path rather than a production trust boundary;
 it cannot listen beyond `127.0.0.1` and grants no WebView or remote caller direct
 access to the Broker device.
 
+The unified touchpad lab sender closes the owned socket on Stop, clears only
+that generation's queue and removes its JNI record session on the worker even
+after transport failure. It refreshes held contacts at 250 ms intervals. While
+contacts are active, the lab receiver uses a two-second socket read timeout;
+record-boundary EOF explicitly disconnects its Sink and malformed/partial records
+retain fail-closed Drop cleanup. These are lifecycle safeguards, not Route
+authorization, authentication or encryption. The loopback/ADB boundary remains
+unchanged; direct LAN input is not enabled by this change.
+
 ADR 0049 centralizes the post-authentication transport-to-Sink ordering in a
 pure Adapter state machine. Receiver bounds and Route/Stream epoch equality are
 checked before the factory is retained; a mismatched full-binding Hello leaves
@@ -972,6 +1101,237 @@ licenses/notices, SBOM/signing before release and no secrets in untrusted builds
 
 ## Authorization tuple
 
+LAN discovery candidates are unauthenticated hints. ADR 1432 deliberately
+excludes names, catalogs, credentials and IP addresses from its fixed record;
+the receiver obtains an address from packet metadata and must authenticate the
+subsequent control connection. A candidate Node ID or nonce grants no peer,
+Session, Capability or Route authority and must never be rendered as paired.
+The shared ingress admits at most 256 discovery datagrams per monotonic
+one-second window, counting malformed traffic toward the same budget; it still
+opens no socket and grants no authority.
+ADR 1439 fixes the optional socket host to one caller-reviewed IPv4 multicast
+membership, administratively scoped group, TTL 1 and the existing bounded
+ingress. Portable reception uses a wildcard IPv4 socket on one fixed
+dynamic/private port, so cross-interface unicast remains possible but gains no
+trust. The host is not automatically started and cannot choose another port
+after bind failure.
+
+The shared UI preferred-peer profile from ADR 1433 contains only one canonical
+private/overlay IPv4. It never stores tokens, credentials, ports or grants and
+is a form suggestion rather than identity evidence. Native per-feature settings
+remain authoritative; saving or clearing the profile causes no network or
+hardware operation.
+
+ADR 1434 makes Port lease authority local to the Node that owns the Port. A
+claim is not inferred from catalog/UI state: it binds an already-authorized
+Route and Ready Session, has a finite expiry and cannot outlive finite Route
+authorization. Expiry invalidates the Route epoch. ADR 1435 adds the bounded
+remote command shape and a transport-agnostic admitted-host handler, but not a
+socket or authenticator. The host binds the request to one exact Ready Session,
+peer, Route and owner-local Port; malformed, cross-Session, non-local and replayed
+requests fail closed. A production caller must still establish the authenticated
+control binding and cryptographic replay protection before invoking it.
+
+ADR 1436 provides a generic mTLS 1.3 control channel with early data and server
+session tickets disabled, a dedicated ALPN, mutual certificate verification,
+fixed Session/server/client Node binding, bounded deadlines and a 1 MiB frame
+ceiling. Its CA inputs must represent the already-paired expected peer; a broad
+ambient trust store is not an authorization policy. The crate does not create,
+store, rotate or revoke credentials and therefore does not complete pairing.
+
+ADR 1455 permits fresh Session agreement only inside that authenticated and
+leaf-pinned TLS channel. The client supplies a random non-nil Session ID; the
+server accepts it only with exact preconfigured server/client Node IDs and
+canonical reserved bytes, then echoes the complete binding. A changed Node is
+rejected after mTLS. The platform owner must prevent reuse among active peer
+Sessions and close on failed Runtime admission; the identifier itself is not a
+bearer grant and supplies no hardware authority.
+
+ADR 1456 admits that binding into Runtime transactionally. The only pre-catalog
+peer metadata is the already-paired display label plus an explicit pending
+platform marker; Adapter and Capability maps are empty. Local/remote IDs come
+from the TLS binding, and an existing peer is rejected rather than implicitly
+reviving its suspended Sessions. Any failure drops the channel and leaves the
+original Runtime unchanged.
+
+Disconnect cleanup removes transport ownership before Runtime mutation, closes
+only the exact bound Session, invalidates its live Route epochs and releases its
+leases. Another live Session for the same peer prevents the global peer-presence
+flag from being cleared. Repeated cleanup is idempotent and cannot resurrect a
+closed Session.
+
+ADR 1471 carries Route and lease operations on that same authenticated link.
+ADR 1472 supersedes its publication-only authorization for an Android-local
+Touchpad Source: a bounded 60-second request requires explicit local Allow,
+produces a Route-specific finite grant, and fails closed
+on denial, expiry, disconnection or loss of publication. Pending responses grant
+neither local mirror authority nor an owner lease. Other alpha capability
+policies are unchanged. This is resource consent, not online first-device
+pairing, remembered trust, transport configuration or physical input evidence.
+An incoming Route proposal must be Draft/Pending, use the exact bound Session
+and resolve one endpoint on each admitted Node. Android's alpha authorization
+policy is limited to its current publication-filtered catalog. The Port owner
+sets an exclusive policy and is the only side that can grant the finite lease;
+Start fails without a non-expired owner-local claim. Catalog visibility,
+authentication and Route authorization remain distinct decisions. The
+five-minute Port lease remains independent of authorization. ADR 1486 now
+extends explicit touchpad consent to at most eight hours on the same Route and
+Ready Session. Its control owner renews five-minute leases every 60 seconds,
+bounded by the original grant; data workers cannot extend authority. Missing
+or expired claims, denied renewal, Stop and Session loss close the data path.
+No approval persists across a new Route or reconnection. Route control does
+not imply that a feature Adapter's separate data endpoint was configured.
+
+ADR 1457 exposes only a Node ID in the Windows WebView command. Endpoint,
+server name, exact leaf fingerprint and credential handle are re-derived from a
+fresh discovery observation plus active paired record; private material is
+decoded only through the typed DPAPI path. A link is not counted connected until
+the peer's bound catalog is decoded and atomically admitted. Failure at send,
+receive or apply closes the exact Session, and the fixed deadline prevents an
+unbounded UI-request network wait.
+
+ADR 1437 separates discovery hints from post-pairing trust metadata. The
+directory retains at most 64 peers and stores only Node identity, bounded UI
+label, TLS server name, SHA-256 peer-certificate fingerprint and an opaque
+platform credential handle. It contains no private key or trust-root bytes.
+Only a fresh exact Node match in Active state produces a connection candidate;
+unpaired, stale and revoked candidates cannot. This classification is still
+not authentication: a forged discovery Node ID must fail the subsequent mTLS
+certificate and Session/Node binding.
+
+ADR 1441 permits persistence only of the bounded non-secret paired-peer
+directory. The schema contains certificate fingerprints and opaque credential
+handles, not certificate DER, trust roots, private keys or pairing codes.
+Unknown fields, duplicate identities and malformed state fail closed. Copying
+the JSON cannot substitute for access to the referenced platform credential.
+
+ADR 1442 uses current-user Windows DPAPI plus fixed CapyIO optional entropy and
+forbids DPAPI UI. Plaintext and protected inputs are bounded, errors contain no
+credential bytes, and the DPAPI-owned plaintext allocation is cleared before
+release. Machine scope is not used. File placement, ACLs, deletion and rotation
+remain pending and must not be inferred from the protection primitive alone.
+
+ADR 1449 adds fixed current-user file placement and atomic replacement around
+that primitive. Credential handles are a closed prefix plus 64 lowercase hex
+characters and never become caller-selected paths. Reads are bounded; malformed
+or wrong-owner paired directories fail closed instead of becoming empty trust
+state. The directory inherits the current-user local-app-data ACL and credential
+blobs remain DPAPI protected; no custom hardened ACL is claimed. Credential-
+first, directory-last ordering prevents the supported commit path from
+publishing a reference before its blob write, but external deletion and orphan
+cleanup remain connection-manager/recovery concerns. Store readiness neither
+authenticates a peer nor proves that every referenced credential is present.
+
+ADR 1450 provides the Android counterpart for credential bytes. A closed
+64-lowercase-hex handle selects a non-exportable Android Keystore AES-256 key
+and a no-backup app-private envelope. AES-GCM uses a fresh 12-byte IV;
+`AtomicFile`, a 64-KiB plaintext ceiling and bounded envelope parsing precede
+decryption. Key absence, malformed input and tag failure are terminal. Removal
+deletes the key before ciphertext, so interruption may leave only unreadable
+bytes. The store is not a pairing transcript, trust decision, WebView API or
+authenticated transport; paired-directory persistence is separate in ADR 1451.
+
+ADR 1451 places non-secret Android trust metadata in a no-backup `AtomicFile`
+while retaining the shared Rust parser as authority through bounded byte-array
+JNI. Unknown fields, self-pairing, duplicate peers, invalid handles/fingerprints
+and oversized input fail before replacement; corrupt stored content never
+becomes an empty trust state. The Service has not admitted this store, so the
+primitive itself grants no peer access and performs no credential lookup.
+
+ADR 1452 lets the non-exported Android Service retain only a Rust-canonicalized
+document and expose its state/count through the existing local Binder. ADR 1459
+requires it to resolve every active record's Android-Keystore handle and
+revalidate the typed control bundle before reporting `ready`; temporary
+plaintext arrays are overwritten after validation. Revoked records never cause
+credential recovery. Failed admission retains no partially accepted directory
+and does not fall back to empty. `ready` still does not authenticate a peer;
+TLS, discovery and Sessions remain inactive.
+
+ADR 1453 defines the only typed control-identity payload accepted by the new
+platform-store-to-TLS path: a bounded certificate chain, private key and
+peer-specific CA with exact binary consumption. Decoded components are owned by
+a drop-clearing Rust value, and Windows clears temporary encoded/decrypted
+buffers. Android validates before creating a Keystore entry and after AEAD
+decryption, preventing authenticated legacy arbitrary bytes from becoming TLS
+configuration. These measures limit ordinary memory lifetime but do not promise
+forensic erasure after allocator or TLS-library copies. The bundle has no peer
+authority without the separately stored exact leaf fingerprint, active paired
+record and successful TLS/Session binding. Issuance, rotation, recovery and
+revocation remain absent.
+
+ADR 1460 keeps Android's first catalog exchange behind the same authenticated
+binding and exact peer identity checks as Windows. A catalog with a wrong
+Session or Node cannot survive initial admission; any exchange failure closes
+the transport and reconciles the provisional Session. This boundary receives
+an authenticated channel and therefore does not itself prove secure listener
+configuration or credential selection.
+
+ADR 1461 makes Android listener trust selection unambiguous: exactly one active
+paired record supplies the expected client Node, exact leaf fingerprint and the
+handle whose typed credential was recovered. Zero or multiple active records
+fail before a server starts. This single-peer restriction is a current security
+boundary, not a claim that the wider directory format is single-peer.
+
+ADR 1462 transfers the recovered typed credential into native listener
+construction and overwrites the temporary Java array afterward. The listener
+and Runtime registries are bounded, non-exported JNI state. Teardown closes the
+authenticated channel and exact Session before Runtime removal. Binding to all
+interfaces does not itself grant access: mutual TLS, leaf pinning and Node
+binding remain mandatory before catalog admission.
+
+ADR 1463 exposes only Node ID, ephemeral control port and a random restart nonce
+in Android's discovery datagram. It carries no name, certificate, credential or
+capability inventory. TTL one limits intended scope but is not an authorization
+boundary; the receiving host must continue exact pairing and TLS checks.
+
+ADR 1464 does not treat retained peer metadata as current authentication. Every
+reconnect performs fresh mutual TLS, exact leaf pinning and a fresh bound
+Session. A previous non-closed Session blocks admission to prevent concurrent
+duplicate control ownership.
+
+ADR 1465 heartbeat messages are accepted only on the already authenticated TLS
+channel and must match its exact Session. Their sequence is liveness correlation,
+not a nonce for enrollment, replay authorization or certificate rotation.
+
+ADR 1466 assigns heartbeat initiation to the Windows dialer in the current
+single-direction deployment. Android rejects unexpected acknowledgements,
+echoes only a validated request sequence and reconciles the bound Session after
+transport/protocol failure. Heartbeat health never grants a Port lease or starts
+hardware.
+
+ADR 1467 transmits only the Runtime-validated, Source-filtered publication
+catalog after local selection changes. The receiver admits it through the
+existing exact TLS/Session/peer binding and duplicate guard; changing a catalog
+does not grant a lease, authorize a Route or start a device. A malformed,
+wrong-identity or unexpected message closes the connection.
+
+ADR 1469 adds a bounded offline first-pairing invitation. The binary package is
+bound to one exact target Node UUID and rejected on malformed lengths, trailing
+bytes or target mismatch. Windows stores its client identity with current-user
+DPAPI before committing non-secret metadata; Android validates the package in
+Rust, writes the server identity through Android Keystore, then atomically
+commits its directory. Secret bytes never cross the WebView interface. The file
+does contain an Android private key before import, so the alpha UI requires
+private transfer and deletion after use. It is not a PAKE, expiry, rotation or
+recovery protocol and must not be presented as production enrollment.
+
+ADR 1470 permits a numeric endpoint fallback only after pairing. The supplied
+IP address and port never select a credential or peer identity: the exact Node
+record, DPAPI bundle, server name and pinned leaf fingerprint still come from
+the active paired directory, and the TLS transcript remains bound to both Node
+IDs and a fresh Session. Unpaired or revoked targets cannot use this path.
+
+ADR 1476 allows the UI to cache only a Node ID and numeric endpoint after a
+successful authenticated control connection. Discovery and cached endpoints
+are routing hints, not trust records. Every reuse resolves current active
+pairing metadata and re-runs the same pinned mTLS/Session checks; revocation
+invalidates cached selection. No resource grant or data Route is inferred.
+
+ADR 1477 makes Android's existing all-interface control listener prefer a
+stable numeric port, falling back only on address-in-use. Port predictability
+does not weaken the required pinned mTLS check, but the unpaired listener's
+resource-pressure surface remains an alpha risk requiring a production review.
+
 ```text
 requesting_node
 providing_node
@@ -992,6 +1352,38 @@ tokens, unrelated process lists and personal filenames. Recordings are explicit
 artifacts with retention/deletion policy.
 
 ### Android audio shell
+
+ADR 1478 lets a user explicitly retain an idle Android control listener via
+the existing visible connected-device foreground Service. The setting is off
+by default, restored only upon Activity launch after process death, and cleared
+by Stop All. It does not grant peer trust or a hardware Route; incoming control
+still requires the paired pinned mTLS identity and resource authorization.
+
+ADR 1479's Android paired-peer UI projection contains only Node ID, display
+name and revoked state. The Service never sends the canonical directory,
+credential handles or pinned certificate fingerprints to the WebView. Seeing
+a paired name is not proof of an authenticated connection or a capability
+grant; the shared UI labels those states separately.
+
+ADR 1480 gives **new** paired control leaves both TLS ClientAuth and
+ServerAuth EKUs so either Node can eventually dial. It retains exact peer-leaf
+pinning, dedicated CA, ordered Node binding and fresh Session IDs on every
+connection; it does not bypass resource consent. Existing single-role leaves
+remain valid for their present direction and cannot be used in reverse without
+an explicit re-pair/rotation transaction.
+
+ADR 1481's opt-in Windows inbound diagnostic binds only an explicitly named
+local IP/port and one active paired Node. Unknown/revoked peers and invalid
+certificate or Node binding fail before catalog admission. The 20-second
+accept window and per-connection I/O timeout bound this diagnostic; it exposes
+no unpaired enrollment endpoint and starts no hardware Route. It is not
+automatically opened by the desktop app.
+
+ADR 1482's Android outbound host accepts a numeric endpoint only as a routing
+hint. Rust pairing validation, exact Windows leaf pinning and ordered Node
+binding precede Session/catalog admission. Invalid or missing paired material
+fails closed, and an unsuccessful catalog exchange reconciles the Session.
+The host path does not silently grant a Route or expose credentials to WebView.
 
 ADR 0043 requires a visible user action plus granted recording and notification
 permission before the 001C microphone Source starts. The non-exported service

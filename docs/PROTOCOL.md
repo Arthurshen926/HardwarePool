@@ -1,5 +1,79 @@
 # CapyIO Protocol v1
 
+ADR 1509 defines the Windows local Node API v1 (not the cross-device protocol).
+A current-user/session named pipe carries length-prefixed UTF-8 JSON control frames
+up to 1 MiB: `{ "version": 1, "command": "get_snapshot", "args": {} }`.
+Responses use `{ "Ok": <existing DTO> }` or `{ "Err": <message> }`; the client sends
+one byte `1` after reading the complete response before the instance disconnects.
+Unknown versions/commands and invalid typed arguments fail before dispatch. The
+53 existing Desktop command names and camelCase arguments are preserved in
+`host_commands.rs`; only local `host_status` and `host_shutdown` manage process
+lifetime. This API never carries media. SECURITY_MODEL.md describes OS identity
+checks and limits; existing cross-device Session/Route/lease/epoch rules still apply.
+
+Minor 7 adds Start-only `DisplaySessionControl.automatic` (field 11, default
+false). When true, the request selection is a placeholder; the receiver returns
+its screen-fitting, decoder-probed final selection with Capabilities. The host
+checks its adapter policy and exact capability intersection before Launch;
+Launch confirms that exact selection. Missing final selection fails automatic
+startup rather than silently treating it as manual. Manual requests keep exact
+selection semantics. This is startup selection, not dynamic network adaptation.
+Both nodes must be updated to use automatic mode.
+
+The staged display launch adapter also has dedicated `capyio-display-launch/1`
+ALPN with `CPYDSP01` route binding. It reuses paired-node TLS certificate pins,
+finite grants, Session/Route/Stream/epoch and Source/Sink binding. It carries
+bounded 176-byte GameStream launch material and its acknowledgement, not video.
+It is not yet advertised by node catalogs or connected to the product workflow.
+
+ADR 1505 adds `DisplayStreamCapabilities`, `DisplayStreamMode` and
+`DisplayStreamSelection` for exact H.264 SDR mode/bitrate negotiation. Envelope
+64 (`DisplaySessionControl`) carries a fresh operation UUID and, once assigned,
+the authorized Route ID/epoch. Start, Capabilities, Launch, Ack, Presented, Stop
+and Failed are distinct operations; Ready (8) follows the service's worker-start
+acknowledgement and permits the receiver to begin media negotiation. The shared `negotiate_display_settings`
+rejects unsupported explicit selections without fallback. Launch carries one
+176-byte secret-bearing adapter record; Ack carries exactly 64 bytes. Neither
+record may be logged, persisted, included in diagnostics or exposed to WebView.
+These are bounded session setup messages over the existing authenticated node
+TLS connection, not video. Video remains on the GameStream adapter transport.
+Pairing authenticates the peer but does not authorize capture or reception;
+the runtime checks local resource consent, Route binding and finite leases.
+Presented requires positive receiver frame evidence; a listener or successful
+launch acknowledgement must not be represented as delivered video. Both peers
+need the coordinated display-workflow update. Legacy display provisioning is a
+separate compatibility path, not an automatic fallback for this workflow.
+
+ADR 1503 adds optional `RouteStatus.camera_data` (tag 5): fixed TCP port 38173
+and nonzero Stream UUID. Only the Route Sink sends it to its authenticated Source.
+The enclosing AdapterManaged `capyio.video.frames/1` Route must be Starting or
+Active, select `cavc-avc-access-unit-v1`, and carry a positive bounded epoch and
+finite grant. It is mutually exclusive with other data offers. Absent fields
+retain existing audio/touchpad behavior. This configures the controlled-lab CAVC
+worker, not a production encrypted video transport or proof of frame delivery.
+
+Android's local management consent DTO recognizes `resourceKind: gamepad` with
+an exact Capability ID (ADR 1500). This is not a new wire envelope or a data-path
+readiness claim. Gamepad Route Start without its admitted data worker reports
+Offline with `CAPY.GAMEPAD.DATA_WORKER_UNAVAILABLE`; it never dispatches to the
+touchpad/haptics worker or becomes Active from consent alone.
+
+ADR 1499 adds Envelope fields 62/63 for controller settings requests and applied
+state. An authenticated peer may request motion-enabled and strength (0..100)
+preferences using a nonzero request ID and expected owner revision. Android
+returns its persisted applied values/revision and the matching request ID, or a
+bounded error and unchanged current values on conflict/failure. These messages
+never authorize/start hardware or create a haptics Route. Requests are scoped to
+the Ready TLS Session. Both applications require the coordinated 0.5.22 update;
+older workers reject these new payloads. Sensor data remains outside control RPC.
+
+ADR 1472 refines touchpad control policy without changing wire fields: an owner
+may return a Draft/Pending Route while local consent is outstanding. A caller
+must not treat Pending as Authorized or acquire a lease; it may retransmit the
+same bound Route after confirmation. Denied remains a distinct terminal decision
+for that proposal. Authorization, lease acquisition and data-plane readiness
+remain separate stages.
+
 ## Purpose
 
 `capyio.v1` represents Node identity/catalogs, Sessions, Route intent/status,
@@ -9,13 +83,70 @@ compiled with vendored `protoc`.
 
 ## Versioning
 
+ADR 1497 versions the private Android controller UDP payload independently:
+Android 0.5.19 sends version 2 with mandatory `motionAvailable` and
+`gamepadMotionEnabled` booleans. Unavailable motion has zero component timestamps;
+available samples retain original positive source timestamps, no more than
+350 ms older than the packet timestamp. Controls remain usable without motion.
+The updated Windows decoder accepts v1 controls but marks sentinel/stale motion
+unavailable. It gates DS4 motion separately from independent sensor availability
+and stops DSU export on motion loss. This requires paired app updates; older
+Windows rejects v2, with no automatic data-version negotiation or v1 downgrade.
+It does not change the authentication, authorization or trusted-network scope.
+
 Each Envelope has protocol major/minor, typed message ID, optional Session ID
 and one payload. Major mismatch is rejected without an explicit compatibility
 implementation. Minor evolution appends optional fields. Removed field numbers
 are reserved forever within v1. Profile and Adapter-control versions negotiate
 independently.
 
-Initial envelope constants remain `1.0`; the pre-alpha package rename from
+Envelope constants are now `1.7`. Minor 6 adds `DisplaySessionControl` at field
+64; reserved fields are unchanged. Minor 5 adds `ControllerReceiverOffer` at
+Envelope field 61 (the reserved 48–60 range is unchanged). An authenticated
+Session transports the adapter-managed receiver host, UDP port and random token.
+Port zero with an empty token withdraws controller reception while retaining
+the peer address for the camera compatibility adapter. Android replaces the
+offered host with the actual authenticated socket peer IP; neither discovery nor the
+public catalog contains the token. Windows explicitly starts its receiver;
+Android only configures its destination and still requires local hardware Start.
+Session closure clears that destination. This is compatibility configuration,
+not Route authorization/lease negotiation or encrypted UDP; use is limited to
+the existing trusted-lab/Tailscale path and requires updated apps on both peers.
+
+Minor 4 appends optional
+`RouteStatus.native_audio_data` at field 3 (ADR 1494). This metadata names a
+nonzero port, Stream UUID and Source/Sink endpoint, with explicit mono
+48 kHz S16LE/10 ms preset (value 1) and **trusted-lab UDP v1** transport enums.
+ADR 1502 adds stereo 48 kHz S16LE/10 ms preset value 2 without changing mono.
+Reciprocal offers must agree on preset and the selected format must exactly
+match `pcm-s16le-48000-mono` or `pcm-s16le-48000-stereo`. Older peers reject the
+new stereo value; there is no implicit mono fallback or channel conversion. Zero or
+unknown enum values fail closed; audio and touchpad offers cannot coexist.
+The offer requires a finitely authorized Starting/Active AdapterManaged audio
+Route and an Android-compatible epoch. The authenticated sender must own the
+named endpoint, and the other endpoint must belong to the local peer. IP comes
+from the authenticated control connection, not an offer field. These checks
+do not grant hardware permission, verify current leases or secure the UDP data.
+Control owners must require explicit lab-transport policy and exact negotiated
+format, match both offers' Stream/Route/epoch and recheck live state before
+starting workers. Older peers may ignore the optional offer; missing reciprocal
+metadata is not permission to use fixed lab identities or report Active.
+
+Minor 3 appends optional `RouteStatus.touchpad_data`
+at field 2. It contains a nonzero listener port and fresh Stream UUID, never a
+host address or input payload. It is valid only for a finitely authorized,
+nonzero-epoch Starting/Active AdapterManaged touchpad Route. The recipient uses
+the authenticated control peer's address and pins the same paired identity on
+a separate TLS connection (`capyio-touchpad/1`). Missing offers cannot establish
+real touchpad readiness. Minor 1 appends owner-authoritative Port
+lease request/response payloads. Minor 2 appends `ControlHeartbeat` at Envelope
+field 47. It carries a nonzero connection-local sequence and acknowledgement
+flag under an authenticated Session ID, but no clock, authorization, catalog or
+hardware payload. A receiver echoes the sequence with acknowledgement set;
+missing bounded acknowledgements are liveness evidence only. Long-lived link
+owners dispatch heartbeat and CatalogSnapshot by payload type, so a complete
+catalog update may appear before the acknowledgement without violating wire
+order or changing either message's semantics. The pre-alpha package rename from
 `hardwarepool.v1` to `capyio.v1` is intentionally breaking and recorded in ADR
 0009/0011. No released external consumer exists.
 
@@ -65,22 +196,70 @@ control envelopes.
 - `OpenSessionRequest/Response`;
 - `RouteDescriptor`: Source/Sink Port references, backend, compatible and
   selected format/QoS, authorization, epoch, state and diagnostics;
-- `RouteCommand`: start/stop intent in the current foundation envelope;
-- `RouteStatus`: selected values, state and diagnostic reference;
+- `RouteCommand`: session-bound start/stop intent for an existing mirrored
+  Route;
+- `RouteStatus`: a session-bound pending proposal or current mirrored Route
+  state, authorization, selected values and diagnostic reference;
 - `ProblemDescriptor`: structured, typed diagnostic context.
 
-Prepare and authorization transitions currently execute through the local
-Runtime/Adapter-control seam. Adding them to the Node-to-Node envelope is later
-protocol work and must append fields/messages rather than reusing numbers.
+ADR 1471 admits these existing messages on the live authenticated control link.
+A new peer proposal must be Draft/Pending and resolve to the exact TLS-bound
+Session and its two Nodes. Each platform independently authorizes its mirror;
+Start additionally requires a live owner-authoritative lease for the local Port.
+This transition does not carry payload data or bind a concrete Adapter endpoint.
 
 One Route is one direction. Duplex behavior uses multiple Routes.
 
+## Port lease control
+
+Protocol v1.1 appends `PortLeaseRequest` and `PortLeaseResponse`. A request
+names one existing Route and one exact local PortRef and selects acquire, renew
+or release. Acquire/renew carry a relative TTL from 1 second through 5 minutes;
+release carries zero. The owner derives the absolute expiry from its own clock.
+Responses correlate the original Message ID and expose only acquired, renewed,
+released, conflict or denied plus an expiry for successful acquire/renew.
+
+ADR 1486 uses these existing renew messages for active touchpad sessions. The
+consent grant remains finite (at most eight hours), while each lease is at most
+five minutes and bounded by that grant. Renewal does not reauthorize a Route
+or change its TLS data binding. Catalogs and heartbeat requests may precede a
+correlated response and are dispatched within a fixed message-count bound.
+
+The shared control host accepts these messages only on its fixed admitted
+Session/peer binding. The Runtime Session must be Ready, the Route must belong
+to that Session and the requested Port must be owned locally. Existing Route
+authorization and owner-configured lease policy remain mandatory. The request
+cannot create or authorize a Route, select a policy, start hardware or lease a
+Port owned by another Node. Recent duplicate suppression is shared with catalog
+messages and remains only a bounded host safeguard, not cryptographic replay
+protection. No production socket or authentication handshake is implemented by
+the protocol codec or control-host slice. ADR 1436 adds a separate mTLS 1.3
+transport capable of carrying these Envelopes once paired credentials and an
+exact Session/Node binding are supplied by a platform host.
+
 ## Transport separation
+
+ADR 1448 requires the platform's paired leaf-certificate fingerprint on both
+sides of the TLS transport. Chain verification alone is insufficient; the exact
+leaf must match before application binding records are sent or accepted. This
+changes host configuration, not the version-1 control wire format.
 
 Node control requires ordered reliable delivery, mutual authentication,
 confidentiality/integrity, replay/downgrade defense, bounded messages and
 identity binding before production use. The foundation selects no production
-transport and is unsafe for untrusted networks.
+credential-enrollment mechanism. The generic control transport now supplies
+TLS 1.3, mutual certificate verification, a dedicated ALPN, exact
+Session/server/client Node binding and bounded length-prefixed Envelope I/O.
+Credential enrollment, secure storage, rotation, revocation, reconnect and
+multi-peer listener scheduling remain platform/product work.
+
+ADR 1455 retains the same fixed binding bytes while permitting a paired mTLS
+listener to accept a fresh random Session ID proposed by the dialer after TLS
+authentication. The listener still requires its preconfigured server/client
+Node IDs and acknowledges the exact complete record. This removes out-of-band
+Session precoordination; it is not `OpenSessionResponse`, Runtime admission,
+Capability authorization or reconnect policy. Active Session-ID uniqueness and
+transactional Runtime creation remain host-owned.
 
 High-rate audio/video/sensor data never travels in an Envelope. A Route backend
 selects CapyDataPlane, AdapterManaged, LocalPipeline or ExternalProtocol.
@@ -166,6 +345,12 @@ and terminal desynchronization policy above.
 
 ## Error behavior
 
+An authenticated control channel becomes terminal after any received-frame or
+transport I/O failure. Its socket is shut down and later operations return
+`ChannelFailed`; partial traffic cannot be resumed or resent on that stream.
+Local outbound validation errors occur before I/O and leave a healthy channel
+usable. Reconnect and command reconciliation remain host-owned (ADR 1444).
+
 Zero/unknown enums, invalid UUIDs, missing semantic fields, unsupported Profile
 majors and incompatible Route endpoints return typed errors. Unknown optional
 Protobuf fields remain forward-compatible. Human messages are not parsed.
@@ -184,3 +369,60 @@ Unknown-field compatibility fixtures and golden wire fixtures remain required
 before external protocol consumption.
 
 Diagnostic/UI JSON snapshots are not automatically public protocol schemas.
+
+### Resource consent UI scope (ADR 1498)
+
+Android resource-confirmation JSON adds `capabilityId` and `resourceKind`
+(`touchpad`, `gamepad` or `haptics`) to the existing Route/peer/name/expiry fields. These are
+native-host-authored scope metadata, not new control Envelope fields. Both must
+be present together. The UI still parses the earlier touchpad-only shape;
+remembered permissions on the updated host require exact resource identity and
+pair generation. Legacy touchpad permission never authorizes a haptics Sink.
+
+### AdapterManaged haptics data offer (ADR 1498)
+
+RouteStatus optional field 4 is `HapticsDataOffer { port, stream_id }`.
+It is mutually exclusive with other data offers and only valid for a finite,
+authorized, Starting/Active AdapterManaged `capyio.haptics.feedback/1` Route.
+The port is 1–65535; no alternate IP or credentials can be supplied by the offer.
+An old peer may ignore this appended optional field, but the new initiator must
+not claim data readiness without the offer and execution acknowledgement.
+
+The private TLS channel uses ALPN `capyio-haptics/1`, binding magic `CPYHAP01`,
+and the existing exact Session/Route/Source/Sink/Stream/epoch/expiry binding.
+This framing is not a StandardPort interoperability claim. Each application
+record is exactly 24 bytes, big-endian: bytes 0–3 `CPHF`, byte 4 version 1,
+byte 5 kind (0 Stop, 1 Rumble, 2 Ack), bytes 6–7 duration milliseconds,
+bytes 8–15 sequence, bytes 16–17 low-frequency motor, bytes 18–19 high-frequency
+motor, bytes 20–23 reserved zero. Motors use 0–65535; Rumble requires a nonzero
+motor and duration 1–160 ms. Stop/Ack require zero duration and motor fields.
+Sequence begins with Stop 0, then increases exactly by one; Sink returns Ack
+only after command execution. There is one outstanding command, no replay or
+resend after timeout, and channel loss cancels the owned actuator. Control
+envelopes never carry these continuous feedback records.
+
+### Controller single initiation (ADR 1500)
+
+The one-click controller operation reuses RouteStatus, RouteCommand and Port
+leases on the authenticated Session. Android publishes one Gamepad Source whose
+private AdapterManaged packet contains controls and optional motion. Windows
+publishes distinct DS4, Xbox 360 and motion-only DSU Sinks. Selecting DSU does
+not create a virtual controller; it projects motion to the local emulator port.
+No independent IMU Route is implied by the combined gamepad input grant.
+
+Either endpoint may propose the Route. A proposal is not permission to start
+hardware. The owner of the receiving resource obtains finite resource consent;
+the exact source and sink leases must be acquired before startup. A locally
+initiated Android proposal is consent only for that exact operation, not future
+requests from every paired peer. Pairing alone remains insufficient.
+
+ControllerReceiverOffer is endpoint configuration, not a start command. It is
+scoped to the selected authenticated peer and current operation. Android starts
+the sender only for the admitted Route with a matching Session offer, valid
+authorization and live Source lease. Starting and Active are distinct: the
+sender must send input and the receiver must observe live input before the UI
+reports usable. Stop and Session invalidation end the owned operation.
+
+The existing token-bearing controller UDP packet remains an adapter-private
+transport; this work does not claim a new StandardPort or application-layer
+encrypted input protocol. Deployment currently uses the user's Tailscale path.

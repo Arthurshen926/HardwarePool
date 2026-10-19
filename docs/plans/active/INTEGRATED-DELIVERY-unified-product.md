@@ -31,6 +31,29 @@ Source integration is local; existing display worktree changes are preserved.
 6. Produce reproducible test packages with dependency/source/license manifests,
    automated regression and explicit remaining physical acceptance items.
 
+### Discovery contract checkpoint — 2026-09-18
+
+ADR 1432 adds the dependency-free, fixed-size candidate announcement needed by
+slice 5. It is deliberately transport-free and unauthenticated: no platform
+socket, multicast policy, UI candidate list, pairing, control transport or
+catalog exchange is claimed. The pure cache caps 64 entries for 15 seconds,
+derives addresses from packet metadata, rejects self/invalid sources and handles
+stale or restarted advertisers. Seven unit tests and warnings-denied Clippy
+pass. The next slice is a foreground platform socket host that uses this
+contract and never promotes candidates to peers before authenticated admission.
+
+ADR 1433 additionally removes repeated entry of the common trusted-network IP:
+the shared UI stores one strict local preference and uses it only to pre-fill
+features without authoritative native settings. It stores no port, token,
+credential or grant and performs no connection. This improves current onboarding
+without representing the preference as discovery or peer identity.
+
+ADR 1434 establishes owner-authoritative Port occupancy beneath the shared UI.
+It supports independent resource leases, explicit exclusive/bounded-shared
+policy, Route/Session/authorization binding and expiry-driven invalidation. The
+wire command and remote configuration grant remain pending authenticated control
+transport; the UI exposes only claims present in its local Runtime snapshot.
+
 ## Software checkpoint — 2026-09-17
 
 ### Native display connection-bundle import — 0.5.11

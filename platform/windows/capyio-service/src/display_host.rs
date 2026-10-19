@@ -5,7 +5,7 @@ use std::{
     path::{Path, PathBuf},
     sync::{
         Arc, Mutex,
-        atomic::{AtomicBool, Ordering},
+        atomic::{AtomicBool, AtomicU64, Ordering},
     },
     thread,
     time::{Duration, Instant},
@@ -365,6 +365,15 @@ pub fn load_display_service_config(path: &Path) -> Result<LoadedDisplayServiceCo
 pub fn load_single_display_service_config(
     path: &Path,
 ) -> Result<LoadedSingleDisplayServiceConfig, String> {
+    load_single_display_service_config_with_settings(path, None)
+}
+
+/// Per-start numeric settings only; identity, executable paths and credentials
+/// remain in the service-owned configuration. Never rewrites that file.
+pub fn load_single_display_service_config_with_settings(
+    path: &Path,
+    settings: Option<DisplaySessionSettings>,
+) -> Result<LoadedSingleDisplayServiceConfig, String> {
     let metadata =
         fs::metadata(path).map_err(|_| "read single-display service configuration".to_owned())?;
     if metadata.len() == 0 || metadata.len() > MAX_DISPLAY_CONFIG_BYTES {
@@ -372,7 +381,44 @@ pub fn load_single_display_service_config(
     }
     let bytes =
         fs::read(path).map_err(|_| "read single-display service configuration".to_owned())?;
-    parse_single_display_service_config(&bytes, read_credential)
+    parse_single_display_service_config_with_settings(&bytes, read_credential, settings)
+}
+
+pub(crate) fn load_peer_display_service_config(
+    path: &Path,
+    settings: DisplaySessionSettings,
+) -> Result<LoadedSingleDisplayServiceConfig, String> {
+    if fs::metadata(path).map_err(|e| e.to_string())?.len() > MAX_DISPLAY_CONFIG_BYTES {
+        return Err("display configuration too large".into());
+    }
+    let bytes = fs::read(path).map_err(|e| e.to_string())?;
+    // The peer path has no legacy TLS listeners and never loads their private
+    // keys. The closed config parser still validates engine paths and hashes.
+    parse_single_display_service_config_with_settings(&bytes, |_| Ok(vec![1]), Some(settings))
+}
+
+#[derive(Clone, Copy, Debug, serde::Serialize, Deserialize, Eq, PartialEq)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct DisplaySessionSettings {
+    pub width: u32,
+    pub height: u32,
+    pub refresh_millihertz: u32,
+    pub bitrate_kbps: u32,
+}
+
+impl DisplaySessionSettings {
+    pub fn validate(self) -> Result<(), &'static str> {
+        if !(2..=4096).contains(&self.width)
+            || !(2..=4096).contains(&self.height)
+            || !self.width.is_multiple_of(2)
+            || !self.height.is_multiple_of(2)
+            || !(1_000..=120_000).contains(&self.refresh_millihertz)
+            || !(500..=100_000).contains(&self.bitrate_kbps)
+        {
+            return Err("CAPY.DISPLAY.SETTINGS_INVALID");
+        }
+        Ok(())
+    }
 }
 
 /// Derives the Android receiver's public Route/engine expectation file from the
@@ -517,7 +563,18 @@ where
 
 fn parse_single_display_service_config<F>(
     bytes: &[u8],
+    credential: F,
+) -> Result<LoadedSingleDisplayServiceConfig, String>
+where
+    F: FnMut(&str) -> Result<Vec<u8>, String>,
+{
+    parse_single_display_service_config_with_settings(bytes, credential, None)
+}
+
+fn parse_single_display_service_config_with_settings<F>(
+    bytes: &[u8],
     mut credential: F,
+    settings: Option<DisplaySessionSettings>,
 ) -> Result<LoadedSingleDisplayServiceConfig, String>
 where
     F: FnMut(&str) -> Result<Vec<u8>, String>,
@@ -525,10 +582,18 @@ where
     if bytes.is_empty() || bytes.len() as u64 > MAX_DISPLAY_CONFIG_BYTES {
         return Err("single-display service configuration is outside its size bound".to_owned());
     }
-    let stored: SingleDisplayServiceFile = serde_json::from_slice(bytes)
+    let mut stored: SingleDisplayServiceFile = serde_json::from_slice(bytes)
         .map_err(|_| "single-display service configuration is invalid".to_owned())?;
     if stored.schema_version != 3 {
         return Err("single-display service configuration version is unsupported".to_owned());
+    }
+    if let Some(settings) = settings {
+        settings.validate().map_err(str::to_owned)?;
+        stored.route.width = settings.width;
+        stored.route.height = settings.height;
+        stored.route.frame_rate_numerator = settings.refresh_millihertz;
+        stored.route.frame_rate_denominator = 1000;
+        stored.engine_launch.bitrate_kbps = settings.bitrate_kbps;
     }
     let prepared = prepare_display_route(stored.route)?;
     if prepared.endpoint.io_timeout < MIN_HEARTBEAT_TIMEOUT {
@@ -1018,8 +1083,10 @@ impl DisplayServiceHost {
 /// this host retains one Capability-scoped handoff mapping only for the bounded
 /// CPD1 compatibility path and never opens a dynamic-monitor controller itself.
 pub struct SingleDisplayServiceHost {
-    server: AuthenticatedDisplayServer,
-    launch_server: AuthenticatedGameStreamLaunchServer,
+    peer_only: bool,
+    peer_deadline: Option<Arc<AtomicU64>>,
+    server: Option<AuthenticatedDisplayServer>,
+    launch_server: Option<AuthenticatedGameStreamLaunchServer>,
     engine: LoadedDisplayEngineConfig,
     engine_binding: GameStreamLaunchBinding,
     worker_executable: VerifiedDisplayWorkerExecutable,
@@ -1042,6 +1109,15 @@ struct ActiveSingleDisplayRoute {
 
 impl SingleDisplayServiceHost {
     pub fn open(config: LoadedSingleDisplayServiceConfig) -> Result<Self, String> {
+        Self::open_mode(config, false)
+    }
+    pub(crate) fn open_peer(config: LoadedSingleDisplayServiceConfig) -> Result<Self, String> {
+        Self::open_mode(config, true)
+    }
+    fn open_mode(
+        config: LoadedSingleDisplayServiceConfig,
+        peer_only: bool,
+    ) -> Result<Self, String> {
         let route = config.route;
         let engine = config.engine;
         let worker_executable = VerifiedDisplayWorkerExecutable::open(
@@ -1063,25 +1139,32 @@ impl SingleDisplayServiceHost {
         let sink_identity = route.sink_identity;
         let mapping = IddFrameBrokerMapping::create_for_monitor(sink_identity)
             .map_err(|error| error.to_string())?;
-        let server =
-            AuthenticatedDisplayServer::bind(route.endpoint, route.identity, route.binding)
+        let (server, launch_server) = if peer_only {
+            (None, None)
+        } else {
+            let server =
+                AuthenticatedDisplayServer::bind(route.endpoint, route.identity, route.binding)
+                    .map_err(|error| error.to_string())?;
+            server
+                .set_nonblocking(true)
                 .map_err(|error| error.to_string())?;
-        server
-            .set_nonblocking(true)
+            let launch_server = AuthenticatedGameStreamLaunchServer::bind(
+                config.launch_endpoint,
+                config.launch_identity,
+            )
             .map_err(|error| error.to_string())?;
-        let launch_server = AuthenticatedGameStreamLaunchServer::bind(
-            config.launch_endpoint,
-            config.launch_identity,
-        )
-        .map_err(|error| error.to_string())?;
-        launch_server
-            .set_nonblocking(true)
-            .map_err(|error| error.to_string())?;
+            launch_server
+                .set_nonblocking(true)
+                .map_err(|error| error.to_string())?;
+            (Some(server), Some(launch_server))
+        };
         let lifecycle = SingleDisplayLifecycle::new();
         let status = SingleDisplayStatusHandle {
             inner: Arc::new(Mutex::new(lifecycle.snapshot.clone())),
         };
         let mut host = Self {
+            peer_only,
+            peer_deadline: None,
             server,
             launch_server,
             engine,
@@ -1113,6 +1196,8 @@ impl SingleDisplayServiceHost {
 
     pub fn launch_local_addr(&self) -> Result<SocketAddr, String> {
         self.launch_server
+            .as_ref()
+            .ok_or_else(|| "peer display has no legacy listener".to_owned())?
             .local_addr()
             .map_err(|error| error.to_string())
     }
@@ -1150,6 +1235,12 @@ impl SingleDisplayServiceHost {
 
     fn run_until_stop(&mut self, stop: Arc<AtomicBool>) -> Result<(), String> {
         while !stop.load(Ordering::Acquire) {
+            if self.peer_deadline.as_ref().is_some_and(|deadline| {
+                crate::display_runtime::peer_now_ms() >= deadline.load(Ordering::Acquire)
+            }) {
+                stop.store(true, Ordering::Release);
+                return Err("CAPY.DISPLAY.LEASE_EXPIRED".into());
+            }
             self.poll_topology_if_due();
             let active_or_progress = if self.engine_worker.is_some() {
                 self.poll_engine_worker()?
@@ -1157,6 +1248,9 @@ impl SingleDisplayServiceHost {
                 self.poll_active_route()?;
                 true
             } else {
+                if self.peer_only {
+                    return Err("peer display worker ended".into());
+                }
                 self.poll_engine_launch()? || self.poll_accept()?
             };
             thread::sleep(if active_or_progress {
@@ -1171,7 +1265,9 @@ impl SingleDisplayServiceHost {
     fn poll_engine_launch(&mut self) -> Result<bool, String> {
         let secrets = generate_launch_secrets()?;
         let exchange = try_exchange_authenticated_engine_launch(
-            &self.launch_server,
+            self.launch_server
+                .as_ref()
+                .ok_or_else(|| "peer display has no legacy listener".to_owned())?,
             &self.engine.session,
             self.engine_binding,
             secrets,
@@ -1199,6 +1295,76 @@ impl SingleDisplayServiceHost {
             self.publish_status();
         }
         result.map(|()| true)
+    }
+
+    pub(crate) fn prepare_peer(
+        &mut self,
+        request: &crate::display_runtime::DisplayPeerLaunchRequest,
+        deadline: Arc<AtomicU64>,
+    ) -> Result<capyio_display_engine_host::PendingServiceEngineLaunch, String> {
+        self.peer_only = true;
+        self.peer_deadline = Some(deadline);
+        self.engine_binding = GameStreamLaunchBinding {
+            session_id: *request
+                .session_id
+                .parse::<SessionId>()
+                .map_err(|e| e.to_string())?
+                .as_uuid()
+                .as_bytes(),
+            route_id: *request
+                .route_id
+                .parse::<RouteId>()
+                .map_err(|e| e.to_string())?
+                .as_uuid()
+                .as_bytes(),
+            stream_id: *request
+                .stream_id
+                .parse::<StreamId>()
+                .map_err(|e| e.to_string())?
+                .as_uuid()
+                .as_bytes(),
+            stream_epoch: request.stream_epoch,
+            host_ipv4: request
+                .host_ipv4
+                .parse::<Ipv4Addr>()
+                .map_err(|e| e.to_string())?,
+        };
+        let prior = self.engine.session.request();
+        self.engine.session = ValidatedDisplayStreamSession::new(DisplayStreamSessionRequest {
+            adapter_instance_id: prior.adapter_instance_id,
+            display_capability_id: *request
+                .sink_capability_id
+                .parse::<CapabilityId>()
+                .map_err(|e| e.to_string())?
+                .as_uuid()
+                .as_bytes(),
+            mode: DisplayMode {
+                width: request.settings.width,
+                height: request.settings.height,
+                refresh_millihertz: request.settings.refresh_millihertz,
+            },
+            codec: VideoCodec::H264,
+            dynamic_range: DynamicRange::Sdr8,
+            bitrate_kbps: request.settings.bitrate_kbps,
+            port_base: prior.port_base,
+            policy: DisplayOnlyPolicy::CAPYIO,
+        })
+        .map_err(|e| e.to_string())?;
+        capyio_display_engine_host::PendingServiceEngineLaunch::prepare(
+            &self.engine.session,
+            self.engine_binding,
+            generate_launch_secrets()?,
+        )
+        .map_err(|e| e.to_string())
+    }
+
+    pub(crate) fn commit_peer(
+        &mut self,
+        pending: capyio_display_engine_host::PendingServiceEngineLaunch,
+        ack: &[u8],
+    ) -> Result<(), String> {
+        let launch = pending.commit(ack).map_err(|e| e.to_string())?;
+        self.start_engine_worker(launch)
     }
 
     fn start_engine_worker(
@@ -1243,6 +1409,51 @@ impl SingleDisplayServiceHost {
         channel
             .exchange_start(start, Duration::from_secs(5))
             .map_err(|error| error.to_string())?;
+        if let Err(error) = channel.wait_engine_ready(Duration::from_secs(25)) {
+            // Pipe teardown can precede process exit by a few milliseconds.
+            // Wait only on an already broken pipe, not on the readiness timeout.
+            if matches!(
+                error,
+                crate::DisplayWorkerChannelError::PipeClosed
+                    | crate::DisplayWorkerChannelError::Read(_)
+            ) {
+                let _ = channel.wait_for_exit(Duration::from_secs(2));
+            }
+            let exit_code = channel.exit_code().ok();
+            let fallback = match &error {
+                crate::DisplayWorkerChannelError::ExchangeTimedOut => {
+                    "CAPY.DISPLAY.ENGINE_READY_TIMEOUT"
+                }
+                crate::DisplayWorkerChannelError::PipeClosed
+                | crate::DisplayWorkerChannelError::Read(_) => {
+                    "CAPY.DISPLAY.ENGINE_READY_PIPE_FAILED"
+                }
+                crate::DisplayWorkerChannelError::InvalidControlAcknowledgement => {
+                    "CAPY.DISPLAY.ENGINE_READY_ACK_INVALID"
+                }
+                _ => "CAPY.DISPLAY.ENGINE_READY_FAILED",
+            };
+            let problem = channel
+                .exit_code()
+                .ok()
+                .filter(|code| (40..=48).contains(code))
+                .map(crate::display_worker_failure::display_worker_problem)
+                .unwrap_or(fallback);
+            if let Ok(exe) = std::env::current_exe() {
+                let now = crate::display_runtime::peer_now_ms();
+                let detail: String = error.to_string().chars().take(512).collect();
+                let _ = fs::write(
+                    exe.with_file_name("display-service-ready-error.txt"),
+                    format!(
+                        "timeMs={now} workerPid={} exitCode={exit_code:?} problem={problem} detail={detail}",
+                        channel.process_id()
+                    ),
+                );
+            }
+            self.lifecycle.fail(problem);
+            self.publish_status();
+            return Err(error.to_string());
+        }
         self.lifecycle
             .receiver_authenticated()
             .map_err(|()| "single-display generation exhausted".to_owned())?;
@@ -1261,26 +1472,47 @@ impl SingleDisplayServiceHost {
         if running {
             return Ok(true);
         }
+        let problem = self
+            .engine_worker
+            .as_ref()
+            .and_then(|worker| worker.exit_code().ok())
+            .map(crate::display_worker_failure::display_worker_problem)
+            .unwrap_or(ENGINE_WORKER_FAILED);
         self.engine_worker = None;
-        self.lifecycle.transport_lost(TRANSPORT_LOST);
+        // The worker retains the service channel for its lifetime. Its exit
+        // without an explicit service Stop is not a healthy waiting listener.
+        self.lifecycle.fail(problem);
         self.publish_status();
-        Ok(false)
+        Err("display engine worker exited unexpectedly; verify the owned extended output and competing display managers".into())
     }
 
     fn stop_engine_worker(&mut self) -> Result<(), String> {
         let Some(mut worker) = self.engine_worker.take() else {
             return Ok(());
         };
-        worker
-            .graceful_stop(Duration::from_secs(5))
-            .map_err(|error| error.to_string())?;
+        if let Err(error) = worker.graceful_stop(Duration::from_secs(5)) {
+            // A detected mode change starts cleanup before the coordinator's
+            // Stop arrives. Preserve that worker result instead of masking it
+            // as a missing graceful-stop ACK during its topology restoration.
+            let _ = worker.wait_for_exit(ENGINE_WORKER_GRACEFUL_EXIT_TIMEOUT);
+            if worker.exit_code().ok() == Some(48) {
+                self.lifecycle.fail("CAPY.DISPLAY.DISPLAY_MODE_CHANGED");
+                self.publish_status();
+            }
+            return Err(error.to_string());
+        }
         worker
             .wait_for_exit(ENGINE_WORKER_GRACEFUL_EXIT_TIMEOUT)
             .map_err(|error| error.to_string())
     }
 
     fn poll_accept(&mut self) -> Result<bool, String> {
-        let sender = match self.server.try_accept() {
+        let sender = match self
+            .server
+            .as_ref()
+            .ok_or_else(|| "peer display has no legacy listener".to_owned())?
+            .try_accept()
+        {
             Ok(Some(sender)) => sender,
             Ok(None) => return Ok(false),
             Err(_) => {
@@ -1801,6 +2033,63 @@ mod tests {
             "route": multi["routes"][0]
         }))
         .unwrap()
+    }
+
+    #[test]
+    fn per_session_quality_updates_engine_without_changing_identity_or_defaults() {
+        let bytes = valid_single_config();
+        let baseline = parse_single_display_service_config(&bytes, |_| Ok(vec![1])).unwrap();
+        let settings = DisplaySessionSettings {
+            width: 1920,
+            height: 1080,
+            refresh_millihertz: 60_000,
+            bitrate_kbps: 15_000,
+        };
+        let changed = parse_single_display_service_config_with_settings(
+            &bytes,
+            |_| Ok(vec![1]),
+            Some(settings),
+        )
+        .unwrap();
+        let request = changed.engine.session.request();
+        assert_eq!(
+            (
+                request.mode.width,
+                request.mode.height,
+                request.mode.refresh_millihertz,
+                request.bitrate_kbps
+            ),
+            (1920, 1080, 60_000, 15_000)
+        );
+        assert_eq!(
+            changed.worker.executable_path,
+            baseline.worker.executable_path
+        );
+        assert_eq!(
+            changed.engine.expected_sha256,
+            baseline.engine.expected_sha256
+        );
+        assert_eq!(
+            changed.route.binding.stream_epoch(),
+            baseline.route.binding.stream_epoch()
+        );
+        assert_eq!(
+            changed.route.sink_identity.capability_id(),
+            baseline.route.sink_identity.capability_id()
+        );
+        let unchanged = parse_single_display_service_config(&bytes, |_| Ok(vec![1])).unwrap();
+        assert_eq!(unchanged.engine.session.request().mode.width, 1280);
+        assert!(
+            parse_single_display_service_config_with_settings(
+                &bytes,
+                |_| panic!("invalid settings must not read credentials"),
+                Some(DisplaySessionSettings {
+                    width: 1919,
+                    ..settings
+                })
+            )
+            .is_err()
+        );
     }
 
     #[test]

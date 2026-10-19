@@ -199,7 +199,11 @@ pub fn windows_node() -> NodeDescriptor {
         "capyio.windows.projection",
         "Windows Projection Adapter",
         AdapterDeploymentMode::Sidecar,
-        [RouteBackend::CapyDataPlane, RouteBackend::LocalPipeline],
+        [
+            RouteBackend::CapyDataPlane,
+            RouteBackend::LocalPipeline,
+            RouteBackend::ExternalProtocol,
+        ],
     );
     let projection_adapter_id = projection_adapter.id;
     node.add_adapter(projection_adapter)
@@ -590,10 +594,10 @@ where
 #[cfg(test)]
 mod tests {
     use capyio_core::{
-        CapabilityId, CoreError, Problem, ProblemCategory, ProblemId, ProblemSeverity, RouteState,
-        SessionState,
+        CapabilityId, CoreError, OnlineState, Problem, ProblemCategory, ProblemId, ProblemSeverity,
+        RouteState, SessionState,
     };
-    use capyio_runtime::RuntimeEventKind;
+    use capyio_runtime::{PortLeasePolicy, RuntimeEventKind};
 
     use super::*;
 
@@ -783,6 +787,104 @@ mod tests {
     }
 
     #[test]
+    fn closing_session_invalidates_live_routes_and_is_idempotent() {
+        let mut lab = DemoLab::new().expect("demo lab");
+        for (index, route_id) in lab.routes.all().into_iter().enumerate() {
+            lab.set_route_active(route_id, true, index as u64 + 1)
+                .expect("start Route");
+        }
+        let stopped = lab.routes.phone_microphone_to_windows;
+        lab.set_route_active(stopped, false, 10)
+            .expect("stop Route");
+
+        lab.runtime
+            .close_session(lab.session_id)
+            .expect("close Session");
+        let snapshot = lab.runtime.snapshot();
+        assert_eq!(snapshot.sessions[0].state, SessionState::Closed);
+        assert_eq!(snapshot.peers[0].online_state, OnlineState::Offline);
+        assert_eq!(
+            lab.runtime.route(stopped).unwrap().state,
+            RouteState::Stopped
+        );
+        for route_id in [
+            lab.routes.windows_system_mix_to_phone,
+            lab.routes.phone_imu_to_gamepad,
+            lab.routes.phone_camera_to_panel,
+        ] {
+            assert_eq!(
+                lab.runtime.route(route_id).unwrap().state,
+                RouteState::Offline
+            );
+        }
+
+        let closed = lab.runtime.snapshot();
+        lab.runtime
+            .close_session(lab.session_id)
+            .expect("repeat close");
+        assert_eq!(lab.runtime.snapshot(), closed);
+    }
+
+    #[test]
+    fn owner_authoritative_port_lease_gates_start_and_expires_route() {
+        let mut lab = DemoLab::new().expect("demo lab");
+        let route_id = lab.routes.phone_microphone_to_windows;
+        let route = lab.runtime.route(route_id).expect("Route");
+        let local_sink = route.sink;
+        let selected_format = route.compatible_formats.first().cloned();
+        let selected_qos = route
+            .compatible_qos_modes
+            .first()
+            .expect("compatible QoS")
+            .clone();
+        assert_eq!(local_sink.node_id, parse_id(WINDOWS_NODE_ID));
+        lab.runtime
+            .set_local_port_lease_policy(local_sink, PortLeasePolicy::Exclusive)
+            .expect("local exclusive policy");
+
+        assert!(matches!(
+            lab.runtime.acquire_route_port_lease(route_id, local_sink, 90, 1),
+            Err(RuntimeError::LeaseAuthorizationRequired(id)) if id == route_id
+        ));
+        lab.runtime
+            .authorize_route(route_id, Some(100))
+            .expect("authorize Route");
+        assert!(matches!(
+            lab.runtime.acquire_route_port_lease(route_id, local_sink, 101, 1),
+            Err(RuntimeError::LeaseExceedsAuthorization { route_id: id }) if id == route_id
+        ));
+        lab.runtime
+            .prepare_route(route_id, selected_format, selected_qos, 1)
+            .expect("prepare Route");
+        assert!(matches!(
+            lab.runtime.begin_route_start(route_id, 1),
+            Err(RuntimeError::LeaseClaimRequired { route_id: id, port })
+                if id == route_id && port == local_sink
+        ));
+        lab.runtime
+            .acquire_route_port_lease(route_id, local_sink, 90, 1)
+            .expect("lease local Sink");
+        lab.runtime
+            .begin_route_start(route_id, 1)
+            .expect("lease permits start");
+        lab.runtime
+            .activate_route(route_id)
+            .expect("activate Route");
+        assert_eq!(lab.runtime.snapshot().port_leases.len(), 1);
+
+        assert_eq!(lab.runtime.expire_port_leases(90), 1);
+        assert!(lab.runtime.snapshot().port_leases.is_empty());
+        assert_eq!(
+            lab.runtime.route(route_id).expect("Route").state,
+            RouteState::Offline
+        );
+        assert!(lab.runtime.snapshot().events.iter().any(|event| matches!(
+            event.kind,
+            RuntimeEventKind::PortLeaseChanged { route_id: id, active: false, .. } if id == route_id
+        )));
+    }
+
+    #[test]
     fn session_bound_peer_catalog_replaces_atomically_and_reconciles_routes() {
         let mut lab = DemoLab::new().expect("demo lab");
         lab.set_microphone_active(true, 1)
@@ -827,6 +929,88 @@ mod tests {
                 peer_id,
             } if session_id == lab.session_id && peer_id == parse_id(ANDROID_NODE_ID)
         )));
+    }
+
+    #[test]
+    fn local_catalog_replacement_preserves_sessions_and_unaffected_routes() {
+        let mut lab = DemoLab::new().unwrap();
+        lab.set_microphone_active(true, 1).unwrap();
+        lab.set_speaker_active(true, 1).unwrap();
+        let affected = lab
+            .runtime
+            .route(lab.routes.phone_microphone_to_windows)
+            .unwrap()
+            .clone();
+        let unaffected = lab
+            .runtime
+            .route(lab.routes.windows_system_mix_to_phone)
+            .unwrap()
+            .clone();
+        lab.runtime
+            .set_local_port_lease_policy(affected.sink, PortLeasePolicy::Exclusive)
+            .unwrap();
+        lab.runtime
+            .acquire_route_port_lease(affected.id, affected.sink, 90, 2)
+            .unwrap();
+        let before = lab.runtime.snapshot();
+        let original = before.local_node.clone();
+        let mut changed = original.clone();
+        changed.capabilities.remove(&affected.sink.capability_id);
+        for adapter in changed.adapter_instances.values_mut() {
+            adapter
+                .owned_capabilities
+                .retain(|id| *id != affected.sink.capability_id);
+        }
+        lab.runtime.replace_local_catalog(changed).unwrap();
+        assert_catalog_invalidated(&lab, affected.id, "CAPY.ROUTE.ENDPOINT_REMOVED");
+        assert!(lab.runtime.route(affected.id).unwrap().epoch > affected.epoch);
+        assert_eq!(lab.runtime.route(unaffected.id).unwrap(), &unaffected);
+        assert_eq!(lab.runtime.snapshot().sessions, before.sessions);
+        assert_eq!(lab.runtime.snapshot().peers, before.peers);
+        assert!(lab.runtime.snapshot().port_leases.is_empty());
+        lab.runtime.replace_local_catalog(original).unwrap();
+        assert_eq!(
+            lab.runtime.route(affected.id).unwrap().state,
+            RouteState::Offline
+        );
+        assert_eq!(lab.runtime.route(unaffected.id).unwrap(), &unaffected);
+    }
+
+    #[test]
+    fn local_catalog_metadata_and_identical_updates_never_restart_routes() {
+        let mut lab = DemoLab::new().unwrap();
+        lab.set_microphone_active(true, 1).unwrap();
+        let before = lab.runtime.snapshot();
+        lab.runtime
+            .replace_local_catalog(before.local_node.clone())
+            .unwrap();
+        assert_eq!(lab.runtime.snapshot(), before);
+        let mut catalog = before.local_node.clone();
+        catalog.display_name = "Updated local name".into();
+        lab.runtime.replace_local_catalog(catalog).unwrap();
+        let after = lab.runtime.snapshot();
+        assert_eq!(after.routes, before.routes);
+        assert_eq!(after.sessions, before.sessions);
+        assert_eq!(after.peers, before.peers);
+        assert!(matches!(
+            after.events.last().unwrap().kind,
+            RuntimeEventKind::LocalCatalogReplaced { .. }
+        ));
+    }
+
+    #[test]
+    fn local_catalog_wrong_identity_and_invalid_ownership_are_atomic() {
+        let mut lab = DemoLab::new().unwrap();
+        let before = lab.runtime.snapshot();
+        assert!(matches!(
+            lab.runtime.replace_local_catalog(android_node()),
+            Err(RuntimeError::LocalCatalogNodeMismatch)
+        ));
+        assert_eq!(lab.runtime.snapshot(), before);
+        let mut invalid = before.local_node.clone();
+        invalid.adapter_instances.clear();
+        assert!(lab.runtime.replace_local_catalog(invalid).is_err());
+        assert_eq!(lab.runtime.snapshot(), before);
     }
 
     #[test]

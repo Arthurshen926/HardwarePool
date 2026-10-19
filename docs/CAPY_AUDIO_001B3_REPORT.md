@@ -23,7 +23,7 @@ mode outside the callback. The exact v1 ABI is in
 
 ## Toolchain and build evidence
 
-- target: `DESKTOP-AT8EVE9`, AMD64, Windows build `26200.9168`;
+- target: `LAB-WINDOWS-HOST`, AMD64, Windows build `26200.9168`;
 - Visual Studio Build Tools 2022 `17.14.51`;
 - Windows SDK `10.0.26100.0`;
 - WDK `10.0.26100.6584`;
@@ -59,7 +59,7 @@ These hashes identify the unsigned build.
 
 The approved signing-only step created a non-exportable local-machine code
 signing key with subject `CN=CapyIO Driver Lab f29c8a5`, SHA-1 thumbprint
-`7353E729B92ACD148BB0046FB254E976A4762FEF`, valid through 2027-08-27. Its
+`<redacted-certificate-thumbprint>`, valid through 2027-08-27. Its
 public certificate is present in the exact host's Local Machine Root and
 Trusted Publishers stores. It is a lab-only self-signed identity, not a
 production or Microsoft-rooted certificate.
@@ -97,7 +97,7 @@ logging work to the real-time callback.
 
 ## Deployment and remaining boundary
 
-The exact signed package above was installed on `DESKTOP-AT8EVE9` after restore
+The exact signed package above was installed on `LAB-WINDOWS-HOST` after restore
 point sequence 374 was created. The base, APO and extension packages were
 assigned `oem70.inf`, `oem73.inf` and `oem74.inf`. The root MEDIA device,
 software APO component and `CapyIO Speaker with Render Bridge` audio endpoint
@@ -218,7 +218,7 @@ package file was modified by those failed selection attempts. After separate
 human approval, an elevated UAC-scoped script created a replacement
 non-exportable local-machine code-signing key with subject
 `CN=CapyIO Driver Lab 84f16b8`, SHA-1 thumbprint
-`10CED62FA5AFC65320CB35C9D31288F2E928D3F2`, valid through 2027-08-27. Its
+`<redacted-certificate-thumbprint>`, valid through 2027-08-27. Its
 public certificate was added to the exact lab host's Local Machine Root and
 Trusted Publishers stores. The script signed SYS/DLL, regenerated the catalog,
 signed it, and passed Authenticode plus SYS/DLL catalog-membership checks.
@@ -237,7 +237,7 @@ The exact signed package is retained outside version control at
 | `ComponentizedAudioSampleExtension.inf` | 3296 | `C21F5E090E48008D9DAE673EA44EF6AE62DCFB7CD52A4DFBBCE1511E05F776A1` |
 
 After exact-package approval, restore point sequence 383 named
-`CapyIO volume fix 84f16b8` was created on `DESKTOP-AT8EVE9`. The signed base,
+`CapyIO volume fix 84f16b8` was created on `LAB-WINDOWS-HOST`. The signed base,
 APO and extension packages installed as `oem99.inf`, `oem100.inf` and
 `oem101.inf`; the previous `oem96.inf` through `oem98.inf` packages were
 retained for rollback. The MEDIA device, `CapyIO Render APO` component and

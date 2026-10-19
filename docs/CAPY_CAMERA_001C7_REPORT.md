@@ -3,7 +3,7 @@
 - Date: 2026-08-30
 - Branch: `codex/capyio-camera`
 - Base commit: `fc3da3636ca6c969667e71a9b596dcc944380146`
-- Target: `DESKTOP-AT8EVE9`, V2419A / PD2419 over authorized wireless ADB
+- Target: `LAB-WINDOWS-HOST`, V2419A / PD2419 over authorized wireless ADB
 - Status: registered Session/CurrentUser live-camera roundtrip and exact rollback complete
 
 ## Failure found and fixed

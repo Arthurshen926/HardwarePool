@@ -39,7 +39,7 @@ permissions, background behavior, CAVC framing or Windows projection.
 ## Physical evidence
 
 Under the existing exact-device authorization, the rebuilt APK was installed on
-`V2419A` at `100.66.157.119:36275`. Existing CAMERA and INTERNET grants remained
+`V2419A` at `<LAB_IPV4_03>:36275`. Existing CAMERA and INTERNET grants remained
 true. A temporary ADB reverse lab mapping carried three bounded decode-only
 streams:
 

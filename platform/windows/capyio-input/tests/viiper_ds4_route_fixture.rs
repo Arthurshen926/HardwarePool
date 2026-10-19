@@ -32,6 +32,223 @@ const PHONE_IMU_PORT_ID: &str = "00000000-0000-4000-8000-00000000d311";
 const PHONE_GAMEPAD_PORT_ID: &str = "00000000-0000-4000-8000-00000000d312";
 
 #[test]
+fn combined_route_projects_and_stops_once_without_widening_finite_authority() {
+    use capyio_core::{
+        AdapterInstanceId, AuthorizationState, CapabilityId, InteroperabilityMode, PortId,
+    };
+    use capyio_runtime::RuntimeEventKind;
+    use std::collections::BTreeSet;
+    let fixture = Ds4Fixture::start(&[(41, "9")]);
+    let mut lab = DemoLab::new().unwrap();
+    let mut endpoints = Vec::new();
+    for (node_id, direction) in [
+        (parse_id(ANDROID_NODE_ID), PortDirection::Source),
+        (lab.runtime.snapshot().local_node.id, PortDirection::Sink),
+    ] {
+        let adapter_id = AdapterInstanceId::new();
+        let capability_id = CapabilityId::new();
+        let port_id = PortId::new();
+        let mut capability = source_capability(
+            adapter_id,
+            capability_id,
+            port_id,
+            "combined controller fixture",
+            CapabilityClass::Gamepad,
+            ProfileId::gamepad_state_v1(),
+            "gamepad-state-v1",
+            QosMode::Interactive,
+        );
+        let port = capability.ports.get_mut(&port_id).unwrap();
+        port.direction = direction;
+        port.interoperability_mode = InteroperabilityMode::AdapterManaged;
+        lab.runtime
+            .register_adapter_catalog(
+                node_id,
+                AdapterInstanceDescriptor {
+                    id: adapter_id,
+                    adapter_type: "capyio.fixture.combined-controller".into(),
+                    display_name: "Combined controller fixture".into(),
+                    deployment_mode: AdapterDeploymentMode::InProcess,
+                    version: "1".into(),
+                    state: AdapterState::Ready,
+                    health: AdapterHealth::Healthy,
+                    owned_capabilities: BTreeSet::new(),
+                    supported_route_modes: BTreeSet::from([RouteBackend::AdapterManaged]),
+                },
+                vec![capability],
+            )
+            .unwrap();
+        endpoints.push(PortRef {
+            node_id,
+            capability_id,
+            port_id,
+        });
+    }
+    let route = lab
+        .runtime
+        .create_route(
+            lab.session_id,
+            endpoints[0],
+            endpoints[1],
+            RouteBackend::AdapterManaged,
+        )
+        .unwrap();
+    lab.runtime.authorize_route(route, Some(100)).unwrap();
+    let count = lab.runtime.snapshot().routes.len();
+    let mut controller = ViiperDs4RouteController::from_authorized_combined_route(
+        &lab.runtime,
+        route,
+        endpoints[1],
+        10,
+        ViiperLoopbackClient::new(
+            ViiperLoopbackConfig::new(fixture.address, TEST_TIMEOUT, TEST_TIMEOUT, 512).unwrap(),
+        ),
+        ViiperAutoAttachDisabled::confirmed_by_caller(),
+        ViiperDs4ControlsMapping::preserve(),
+        ViiperDs4MotionMapping::identity(),
+        None,
+        None,
+    )
+    .unwrap();
+    assert_eq!(lab.runtime.snapshot().routes.len(), count);
+    assert!(controller.begin_start(&mut lab.runtime, 100).is_err());
+    assert_eq!(lab.runtime.route(route).unwrap().state, RouteState::Draft);
+    let epochs = controller.begin_start(&mut lab.runtime, 20).unwrap();
+    assert_eq!(epochs.controls, epochs.motion);
+    let mut motion = parse_imu_fixture_jsonl(IMU_FIXTURE, 64).unwrap().remove(0);
+    motion.stream_epoch = epochs.motion;
+    controller
+        .activate(
+            &mut lab.runtime,
+            state(
+                StreamId::new(),
+                epochs.controls,
+                0,
+                GamepadControls::neutral(),
+            ),
+            &motion,
+        )
+        .unwrap();
+    assert_eq!(lab.runtime.route(route).unwrap().state, RouteState::Active);
+    assert_eq!(
+        lab.runtime.route(route).unwrap().authorization,
+        AuthorizationState::Authorized {
+            expires_at_ms: Some(100)
+        }
+    );
+    controller.stop(&mut lab.runtime).unwrap();
+    controller.stop(&mut lab.runtime).unwrap();
+    let states: Vec<_> = lab
+        .runtime
+        .snapshot()
+        .events
+        .into_iter()
+        .filter_map(|event| match event.kind {
+            RuntimeEventKind::RouteChanged { route_id, state } if route_id == route => Some(state),
+            _ => None,
+        })
+        .collect();
+    for expected in [
+        RouteState::Starting,
+        RouteState::Active,
+        RouteState::Stopping,
+        RouteState::Stopped,
+    ] {
+        assert_eq!(
+            states.iter().filter(|state| **state == expected).count(),
+            1,
+            "{expected:?}: {states:?}"
+        );
+    }
+    assert_eq!(
+        lab.runtime.route(route).unwrap().authorization,
+        AuthorizationState::Authorized {
+            expires_at_ms: Some(100)
+        }
+    );
+    let observed = fixture.finish();
+    assert_eq!(
+        observed
+            .management
+            .iter()
+            .filter(|message| message.as_slice() == b"bus/remove 41\0")
+            .count(),
+        1
+    );
+    assert_eq!(observed.streams.len(), 1);
+    assert_stream(&observed.streams[0], 41, "9", 2);
+}
+
+#[test]
+fn admitted_routes_preserve_finite_grants_and_recheck_expiry_before_start() {
+    let mut lab = DemoLab::new().unwrap();
+    let controls = RouteId::new();
+    let motion = RouteId::new();
+    // Binding and begin_start are hardware-free; activate is deliberately absent.
+    let mut host = controller(
+        &mut lab,
+        controls,
+        motion,
+        SocketAddr::from((Ipv4Addr::LOCALHOST, 9)),
+    );
+    assert!(
+        host.bind_authorized_routes(&lab.runtime, controls, motion, 10)
+            .is_err()
+    );
+    lab.runtime.authorize_route(controls, Some(100)).unwrap();
+    assert!(
+        host.bind_authorized_routes(&lab.runtime, controls, motion, 10)
+            .is_err()
+    );
+    lab.runtime.authorize_route(motion, Some(50)).unwrap();
+    host.bind_authorized_routes(&lab.runtime, controls, motion, 10)
+        .unwrap();
+    let count = lab.runtime.snapshot().routes.len();
+    host = ViiperDs4RouteController::from_authorized_routes(
+        &lab.runtime,
+        controls,
+        motion,
+        10,
+        ViiperLoopbackClient::new(
+            ViiperLoopbackConfig::new(
+                SocketAddr::from((Ipv4Addr::LOCALHOST, 9)),
+                TEST_TIMEOUT,
+                TEST_TIMEOUT,
+                512,
+            )
+            .unwrap(),
+        ),
+        ViiperAutoAttachDisabled::confirmed_by_caller(),
+        ViiperDs4ControlsMapping::gamepad_y_up(),
+        ViiperDs4MotionMapping::android_landscape_to_ds4(),
+        None,
+        None,
+    )
+    .unwrap();
+    assert_eq!(lab.runtime.snapshot().routes.len(), count);
+    assert!(host.begin_start(&mut lab.runtime, 50).is_err());
+    assert_eq!(
+        lab.runtime.route(controls).unwrap().state,
+        RouteState::Draft
+    );
+    assert_eq!(lab.runtime.route(motion).unwrap().state, RouteState::Draft);
+    host.begin_start(&mut lab.runtime, 20).unwrap();
+    assert_eq!(
+        lab.runtime.route(controls).unwrap().authorization,
+        capyio_core::AuthorizationState::Authorized {
+            expires_at_ms: Some(100)
+        }
+    );
+    assert_eq!(
+        lab.runtime.route(motion).unwrap().authorization,
+        capyio_core::AuthorizationState::Authorized {
+            expires_at_ms: Some(50)
+        }
+    );
+    host.stop(&mut lab.runtime).unwrap();
+}
+
+#[test]
 fn paired_routes_activate_project_retry_and_stop_without_touching_unrelated_route() {
     let fixture = Ds4Fixture::start(&[(31, "7"), (32, "8")]);
     let mut lab = DemoLab::new().unwrap();

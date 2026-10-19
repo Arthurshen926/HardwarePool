@@ -81,6 +81,7 @@
 
         <activity
             android:name=".MainActivity"
+            android:configChanges="orientation|screenSize|smallestScreenSize|screenLayout"
             android:exported="true">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
@@ -90,6 +91,7 @@
 
         <activity
             android:name="dev.capyio.display.app.DisplayActivity"
+            android:configChanges="orientation|screenSize|smallestScreenSize"
             android:exported="false" />
 
         <service

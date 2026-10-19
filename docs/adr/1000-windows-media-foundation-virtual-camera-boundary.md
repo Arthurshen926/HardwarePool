@@ -229,7 +229,7 @@ privacy access, ordinary-application compatibility or catalog cleanup.
 
 CAPY-CAMERA-001B1C completed the approved DLL/COM deployment, Frame Server
 activation, controlled enumeration/two-frame pull and exact cleanup on
-`DESKTOP-AT8EVE9`. The host required an administrator token for `Start` even
+`LAB-WINDOWS-HOST`. The host required an administrator token for `Start` even
 though all camera privacy toggles were already enabled. The final rollback
 removed the session registration, fixed CLSID, DLL and empty lab directories.
 Ordinary-application evidence and a non-elevated product workflow remain later

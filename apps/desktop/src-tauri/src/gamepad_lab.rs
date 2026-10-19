@@ -295,6 +295,7 @@ struct UiStickState {
 }
 
 pub(crate) struct GamepadLab {
+    pub(crate) workflow: crate::controller_workflow::ControllerWorkflow,
     composer: GamepadStateComposer,
     started: Instant,
     last_sequence: Option<u64>,
@@ -320,6 +321,7 @@ impl GamepadLab {
 
     pub(crate) fn new_with_windows_host(windows_host: WindowsGamepadHost) -> Result<Self, String> {
         Ok(Self {
+            workflow: crate::controller_workflow::ControllerWorkflow::default(),
             composer: GamepadStateComposer::new(StreamId::new(), 1, 0)
                 .map_err(|error| error.to_string())?,
             started: Instant::now(),
@@ -353,7 +355,7 @@ impl GamepadLab {
                     Some(latest.controls.header.source_timestamp_nanos),
                     android.last_event,
                     &android,
-                    Some(&latest.motion),
+                    latest.motion_available.then_some(&latest.motion),
                 );
             }
             return self.to_ui(
@@ -448,16 +450,219 @@ impl GamepadLab {
         Ok(self.snapshot())
     }
 
+    pub(crate) fn controller_receiver_endpoint(&self) -> Option<(u16, String)> {
+        self.android_listener
+            .as_ref()
+            .map(|listener| (listener.local_address().port(), listener.token().to_owned()))
+    }
+
+    pub(crate) fn prepare_controller_receiver(
+        &mut self,
+        port: u16,
+    ) -> Result<(u16, String), String> {
+        if self.android_listener.is_some()
+            || self.dsu_worker.is_some()
+            || self.windows_host.is_active()
+        {
+            return Err("请先停止已有手柄或高级诊断接收器".into());
+        }
+        self.start_android(port)?;
+        self.controller_receiver_endpoint()
+            .ok_or("手柄接收器没有就绪".into())
+    }
+
+    pub(crate) fn controller_input_live(&self) -> bool {
+        self.android_listener
+            .as_ref()
+            .is_some_and(|l| l.snapshot().peer_connected)
+    }
+
+    pub(crate) fn controller_projection_live(
+        &self,
+        mode: crate::controller_workflow::ControllerMode,
+    ) -> bool {
+        use crate::controller_workflow::ControllerMode;
+        match mode {
+            ControllerMode::Dsu => self
+                .dsu_worker
+                .as_ref()
+                .is_some_and(|worker| !worker.stats().stopped),
+            ControllerMode::Dualshock4 => {
+                self.windows_host.is_active()
+                    && self.windows_host.controller_kind()
+                        == crate::windows_gamepad_host::UiWindowsControllerKind::DualShock4
+            }
+            ControllerMode::Xbox360 => {
+                self.windows_host.is_active()
+                    && self.windows_host.controller_kind()
+                        == crate::windows_gamepad_host::UiWindowsControllerKind::Xbox360
+            }
+        }
+    }
+
+    pub(crate) fn activate_authorized_controller(
+        &mut self,
+        runtime: &mut NodeRuntime,
+        route: capyio_core::RouteId,
+        mode: crate::controller_workflow::ControllerMode,
+        now_ms: u64,
+    ) -> Result<(), String> {
+        use crate::controller_workflow::{ControllerMode, sink};
+        let descriptor = runtime.route(route).map_err(|e| e.to_string())?;
+        let session = runtime
+            .session(descriptor.session_id)
+            .map_err(|e| e.to_string())?;
+        if session.state != capyio_core::SessionState::Ready
+            || session.remote_node_id != descriptor.source.node_id
+            || descriptor.profile != capyio_core::ProfileId::gamepad_state_v1()
+            || descriptor.backend != capyio_core::RouteBackend::AdapterManaged
+            || !matches!(descriptor.authorization, capyio_core::AuthorizationState::Authorized { expires_at_ms: Some(expiry) } if expiry > now_ms)
+        {
+            return Err(
+                "controller requires a ready peer and a finite authorized input Route".into(),
+            );
+        }
+        let (capability_id, port_id) = sink(mode);
+        if descriptor.sink.node_id != runtime.snapshot().local_node.id
+            || descriptor.sink.capability_id != capability_id
+            || descriptor.sink.port_id != port_id
+        {
+            return Err("controller Route does not select this projection".into());
+        }
+        if self.workflow.route() != Some(route)
+            || self.workflow.peer() != Some(descriptor.source.node_id)
+        {
+            return Err("controller Route does not belong to current operation".into());
+        }
+        let (motion, controls) = self
+            .android_listener
+            .as_ref()
+            .ok_or("controller receiver is not prepared")?
+            .anchors()?;
+        let authorized_sink = descriptor.sink;
+        if mode != ControllerMode::Dualshock4 {
+            use capyio_core::{FormatDescriptor, QosMode, RouteState};
+            match descriptor.state {
+                RouteState::Draft | RouteState::Stopped => runtime
+                    .prepare_route(
+                        route,
+                        Some(FormatDescriptor::new("gamepad-state-v1")),
+                        QosMode::Interactive,
+                        now_ms,
+                    )
+                    .map_err(|e| e.to_string())?,
+                RouteState::Prepared => {}
+                _ => return Err("controller Route is not ready to start".into()),
+            }
+            runtime
+                .begin_route_start(route, now_ms)
+                .map_err(|e| e.to_string())?;
+        }
+        match mode {
+            ControllerMode::Dualshock4 => {
+                self.windows_host.bind_authorized_combined_route(
+                    runtime,
+                    route,
+                    authorized_sink,
+                    now_ms,
+                )?;
+                self.windows_host
+                    .start(runtime, controls, motion, now_ms, false)?;
+            }
+            ControllerMode::Xbox360 => self.windows_host.start_xbox(controls.controls)?,
+            ControllerMode::Dsu => {
+                self.start_dsu_mode(26760, UiDsuMode::MotionOnly)?;
+            }
+        }
+        if mode != ControllerMode::Dualshock4 {
+            runtime.activate_route(route).map_err(|e| e.to_string())?;
+        }
+        Ok(())
+    }
+
+    pub(crate) fn stop_authorized_controller(
+        &mut self,
+        runtime: &mut NodeRuntime,
+    ) -> Result<(), String> {
+        let dsu = self.stop_dsu();
+        let projection = self.stop_windows_projection(runtime);
+        let receiver = self.stop_android();
+        if let Some(route) = self.workflow.route() {
+            use capyio_core::RouteState;
+            if let Ok(descriptor) = runtime.route(route)
+                && matches!(
+                    descriptor.state,
+                    RouteState::Prepared
+                        | RouteState::Starting
+                        | RouteState::Active
+                        | RouteState::Offline
+                )
+            {
+                let _ = runtime.begin_route_stop(route);
+                let _ = runtime.stop_route(route);
+            }
+        }
+        dsu.and(projection).and(receiver).map(|_| ())
+    }
+
+    /// One local user action owns receiver preparation and virtual-device creation.
+    /// This does not authorize or start the remote Android source.
+    pub(crate) fn start_controller_host(
+        &mut self,
+        runtime: &mut NodeRuntime,
+        port: u16,
+        kind: crate::windows_gamepad_host::UiWindowsControllerKind,
+    ) -> Result<UiGamepadState, String> {
+        if self.dsu_worker.is_some() {
+            return Err("请先停止 DSU 再切换手柄模式".to_owned());
+        }
+        let created_receiver = self.android_listener.is_none();
+        if created_receiver {
+            self.start_android(port)?;
+        }
+        match self.select_windows_projection(runtime, kind) {
+            Ok(state) => Ok(state),
+            Err(error) => {
+                // Keep a separately started diagnostic receiver intact.
+                if created_receiver && let Err(cleanup) = self.stop_android() {
+                    return Err(format!("{error}; receiver cleanup failed: {cleanup}"));
+                }
+                Err(error)
+            }
+        }
+    }
+
+    pub(crate) fn stop_controller_host(
+        &mut self,
+        runtime: &mut NodeRuntime,
+    ) -> Result<UiGamepadState, String> {
+        // DSU has a separate stop action; do not remove its shared input.
+        if self.dsu_worker.is_some() {
+            return Err("请先停止 DSU；其输入接收仍在使用中".to_owned());
+        }
+        let projection = self.stop_windows_projection(runtime);
+        let receiver = self.stop_android();
+        match (projection, receiver) {
+            (Ok(_), Ok(state)) => Ok(state),
+            (Err(error), Ok(_)) | (Ok(_), Err(error)) => Err(error),
+            (Err(error), Err(cleanup)) => {
+                Err(format!("{error}; receiver cleanup failed: {cleanup}"))
+            }
+        }
+    }
+
     pub(crate) fn stop_android(&mut self) -> Result<UiGamepadState, String> {
         if self.dsu_worker.is_some() {
             return Err("stop DSU before stopping Android controller input".to_owned());
         }
         let Some(mut listener) = self.android_listener.take() else {
             self.android_status = "stopped";
+            self.android_endpoint = None;
             return Ok(self.snapshot());
         };
-        self.last_android_snapshot = listener.stop()?;
         self.android_status = "stopped";
+        self.android_endpoint = None;
+        self.last_android_snapshot = listener.stop()?;
         Ok(self.snapshot())
     }
 
@@ -494,8 +699,48 @@ impl GamepadLab {
         Ok(self.snapshot())
     }
 
+    pub(crate) fn select_windows_projection(
+        &mut self,
+        runtime: &mut NodeRuntime,
+        kind: crate::windows_gamepad_host::UiWindowsControllerKind,
+    ) -> Result<UiGamepadState, String> {
+        if self.windows_host.is_active() {
+            if self.windows_host.controller_kind() == kind {
+                return Ok(self.snapshot());
+            }
+            self.windows_host.stop(runtime)?;
+        }
+        if kind == crate::windows_gamepad_host::UiWindowsControllerKind::DualShock4 {
+            return self.start_windows_projection(runtime, false);
+        }
+        if self.dsu_worker.is_some() {
+            return Err("请先停止 DSU 再切换手柄模式".to_owned());
+        }
+        let listener = self
+            .android_listener
+            .as_ref()
+            .ok_or("请先启动手机输入接收")?;
+        let (_, controls) = listener.anchors()?;
+        self.windows_host.start_xbox(controls.controls)?;
+        Ok(self.snapshot())
+    }
+
     pub(crate) fn poll_windows_projection(&mut self, runtime: &mut NodeRuntime) {
         self.windows_host.poll(runtime);
+        self.windows_host.poll_feedback(runtime);
+    }
+
+    pub(crate) fn feedback_motors(&self) -> Option<[u8; 2]> {
+        if !self
+            .android_listener
+            .as_ref()
+            .is_some_and(|listener| listener.snapshot().peer_connected)
+        {
+            return None;
+        }
+        let state = self.windows_host.snapshot();
+        (state.status == "active")
+            .then_some([state.feedback_small_motor, state.feedback_large_motor])
     }
 
     /// The debug-only direct projection Gates consume accepted snapshots
@@ -516,6 +761,18 @@ impl GamepadLab {
         port: u16,
         mode: UiDsuMode,
     ) -> Result<UiGamepadState, String> {
+        if self.windows_host.is_active() {
+            return Err(
+                "请先停止 DS4 再启动 DSU；DS4 已直接包含体感，无需同时启动 DSU。".to_owned(),
+            );
+        }
+        if self
+            .dsu_worker
+            .as_ref()
+            .is_some_and(|worker| worker.stats().stopped)
+        {
+            self.stop_dsu()?;
+        }
         if self.dsu_worker.is_some() {
             return Err("DSU gamepad projection is already running".to_owned());
         }
@@ -697,6 +954,8 @@ impl GamepadLab {
             motion: UiGamepadMotion {
                 source: if motion.is_some() {
                     "android_sensors"
+                } else if !simulated {
+                    "unavailable"
                 } else {
                     "stationary_fixture"
                 },
@@ -1474,6 +1733,72 @@ mod tests {
     static ANDROID_PORT_TEST_LOCK: Mutex<()> = Mutex::new(());
 
     #[test]
+    fn motion_only_dsu_accepts_android_receiver_without_controls_sender() {
+        let _guard = ANDROID_PORT_TEST_LOCK.lock().unwrap();
+        let socket = UdpSocket::bind((Ipv4Addr::LOCALHOST, 0)).unwrap();
+        let port = socket.local_addr().unwrap().port();
+        drop(socket);
+        let mut lab = GamepadLab::new().unwrap();
+        lab.start_android(port).unwrap();
+        lab.start_dsu_mode(0, UiDsuMode::MotionOnly).unwrap();
+        assert_eq!(lab.snapshot().dsu_projection.status, "active");
+        lab.stop_dsu().unwrap();
+        lab.stop_android().unwrap();
+    }
+
+    #[test]
+    fn controller_host_failure_rolls_back_only_its_new_receiver() {
+        let _guard = ANDROID_PORT_TEST_LOCK.lock().unwrap();
+        for existing_receiver in [false, true] {
+            let socket = UdpSocket::bind((Ipv4Addr::LOCALHOST, 0)).unwrap();
+            let port = socket.local_addr().unwrap().port();
+            drop(socket);
+            let mut lab = GamepadLab::new().unwrap(); // No hardware host installed.
+            let mut runtime = NodeRuntime::new(capyio_testkit::windows_node()).unwrap();
+            if existing_receiver {
+                lab.start_android(port).unwrap();
+            }
+            let previous = lab.controller_receiver_endpoint();
+            assert!(
+                lab.start_controller_host(
+                    &mut runtime,
+                    port,
+                    crate::windows_gamepad_host::UiWindowsControllerKind::DualShock4
+                )
+                .is_err()
+            );
+            assert_eq!(lab.controller_receiver_endpoint(), previous);
+            if !existing_receiver {
+                assert!(lab.snapshot().android_input.endpoint.is_none());
+                assert!(UdpSocket::bind((Ipv4Addr::LOCALHOST, port)).is_ok());
+            }
+            lab.stop_controller_host(&mut runtime).unwrap();
+            lab.stop_controller_host(&mut runtime).unwrap();
+            assert!(lab.controller_receiver_endpoint().is_none());
+            assert!(lab.snapshot().android_input.endpoint.is_none());
+        }
+    }
+
+    #[test]
+    fn controller_host_does_not_interrupt_independent_dsu() {
+        let mut lab = GamepadLab::new().unwrap();
+        let mut runtime = NodeRuntime::new(capyio_testkit::windows_node()).unwrap();
+        lab.start_dsu_mode(0, UiDsuMode::MotionOnly).unwrap();
+        assert!(
+            lab.start_controller_host(
+                &mut runtime,
+                31580,
+                crate::windows_gamepad_host::UiWindowsControllerKind::DualShock4
+            )
+            .is_err()
+        );
+        assert!(lab.stop_controller_host(&mut runtime).is_err());
+        assert_eq!(lab.snapshot().dsu_projection.status, "active");
+        assert!(lab.controller_receiver_endpoint().is_none());
+        lab.stop_dsu().unwrap();
+    }
+
+    #[test]
     fn simulator_composes_complete_snapshots_and_resets_neutral() {
         let mut lab = GamepadLab::new().expect("gamepad lab");
         let neutral = lab.snapshot();
@@ -1568,6 +1893,17 @@ mod tests {
             "motion_only_controls_not_projected"
         );
         lab.stop_dsu().expect("stop motion-only DSU lab");
+    }
+
+    #[test]
+    fn dsu_cannot_replace_an_active_windows_projection() {
+        let mut lab = GamepadLab::new().expect("gamepad lab");
+        let mut projection = lab.windows_host.snapshot();
+        projection.status = "active";
+        lab.windows_host.apply_read_only_preflight(projection);
+        assert!(lab.start_dsu_mode(0, UiDsuMode::MotionOnly).is_err());
+        assert!(lab.dsu_worker.is_none());
+        assert_eq!(lab.windows_host.snapshot().status, "active");
     }
 
     #[test]

@@ -88,7 +88,7 @@ public final class MainActivity extends Activity implements SensorEventListener 
         bar.setPadding(padding, dp(5), padding, dp(5));
         bar.setBackgroundColor(Color.rgb(13, 43, 33));
 
-        hostInput = field("电脑 IPv4", "192.168.1.2", 15);
+        hostInput = field("电脑 IPv4", "", 15);
         hostInput.setInputType(InputType.TYPE_CLASS_PHONE);
         portInput = field("端口", "31580", 5);
         portInput.setInputType(InputType.TYPE_CLASS_NUMBER);

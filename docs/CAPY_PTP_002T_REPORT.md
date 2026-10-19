@@ -39,7 +39,7 @@ Hello and impose finite I/O deadlines.
 ## Android toolchain evidence
 
 The host contains Android SDK API 36, Build Tools 36.x and `platform-tools` under
-`C:\Users\arthu\AppData\Local\Android\Sdk`, but they are not on PATH. JDK,
+`%USERPROFILE%\AppData\Local\Android\Sdk`, but they are not on PATH. JDK,
 Gradle, Kotlin and NDK are absent. No unverifiable Android project or APK was
 added in this slice.
 

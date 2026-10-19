@@ -1,0 +1,216 @@
+{
+  "schemaVersion": 1,
+  "releaseVersion": "0.5.24-alpha.1",
+  "publicationApproved": false,
+  "preserveUserData": true,
+  "components": [
+    {
+      "id": "app",
+      "group": "core",
+      "kind": "application",
+      "required": true,
+      "versionPolicy": "package-artifact-hash",
+      "files": [
+        "capyio-desktop.exe"
+      ],
+      "requires": [],
+      "restart": "none",
+      "operations": {
+        "install": "application-files",
+        "upgrade": "application-files",
+        "rollback": "application-files",
+        "remove": "application-files"
+      },
+      "limitation": null
+    },
+    {
+      "id": "node-host",
+      "group": "core",
+      "kind": "process-mode",
+      "required": true,
+      "versionPolicy": "package-artifact-hash",
+      "files": [
+        "capyio-desktop.exe"
+      ],
+      "requires": [
+        "app"
+      ],
+      "restart": "none",
+      "operations": {
+        "install": "prerequisite-only",
+        "upgrade": "prerequisite-only",
+        "rollback": "prerequisite-only",
+        "remove": "prerequisite-only"
+      },
+      "limitation": "Same executable as app; no second install or removal."
+    },
+    {
+      "id": "broker-service",
+      "group": "core",
+      "kind": "windows-service",
+      "required": true,
+      "versionPolicy": "package-artifact-hash",
+      "files": [
+        "capyio-windows-service.exe"
+      ],
+      "requires": [
+        "app"
+      ],
+      "restart": "service",
+      "operations": {
+        "install": "prerequisite-only",
+        "upgrade": "prerequisite-only",
+        "rollback": "prerequisite-only",
+        "remove": "prerequisite-only"
+      },
+      "limitation": "Files do not establish service registration, configuration or running version."
+    },
+    {
+      "id": "audio-driver",
+      "group": "core",
+      "kind": "driver",
+      "required": true,
+      "versionPolicy": "package-artifact-hash",
+      "files": [],
+      "requires": [
+        "broker-service"
+      ],
+      "restart": "may-require-reboot",
+      "operations": {
+        "install": "prerequisite-only",
+        "upgrade": "prerequisite-only",
+        "rollback": "prerequisite-only",
+        "remove": "prerequisite-only"
+      },
+      "limitation": "Existing signed/deployed audio package required; no unsigned driver deployment."
+    },
+    {
+      "id": "native-audio",
+      "group": "core",
+      "kind": "user-mode-workers",
+      "required": true,
+      "versionPolicy": "package-artifact-hash",
+      "files": [
+        "capyio-native-virtual-microphone.exe",
+        "capyio-native-virtual-speaker.exe"
+      ],
+      "requires": [
+        "broker-service",
+        "audio-driver"
+      ],
+      "restart": "service",
+      "operations": {
+        "install": "prerequisite-only",
+        "upgrade": "prerequisite-only",
+        "rollback": "prerequisite-only",
+        "remove": "prerequisite-only"
+      },
+      "limitation": "Workers require the matching installed audio endpoints and approved Broker configuration."
+    },
+    {
+      "id": "touchpad-driver",
+      "group": "core",
+      "kind": "driver",
+      "required": true,
+      "versionPolicy": "package-artifact-hash",
+      "files": [],
+      "requires": [
+        "app"
+      ],
+      "restart": "may-require-reboot",
+      "operations": {
+        "install": "prerequisite-only",
+        "upgrade": "prerequisite-only",
+        "rollback": "prerequisite-only",
+        "remove": "prerequisite-only"
+      },
+      "limitation": "Existing approved VHF package required; no boot-policy changes."
+    },
+    {
+      "id": "camera-projection",
+      "group": "core",
+      "kind": "media-foundation",
+      "required": true,
+      "versionPolicy": "package-artifact-hash",
+      "files": [
+        "capyio-avc-lab-receiver.exe",
+        "capyio-camera-session-host.exe"
+      ],
+      "requires": [
+        "app"
+      ],
+      "restart": "none",
+      "operations": {
+        "install": "prerequisite-only",
+        "upgrade": "prerequisite-only",
+        "rollback": "prerequisite-only",
+        "remove": "prerequisite-only"
+      },
+      "limitation": "Helper presence does not prove COM registration or ordinary-user projection."
+    },
+    {
+      "id": "display-backend",
+      "group": "extras",
+      "kind": "external-backend",
+      "required": false,
+      "versionPolicy": "package-artifact-hash",
+      "files": [
+        "capyio-display-engine-worker.exe",
+        "libcapyio_display_engine.dll"
+      ],
+      "requires": [
+        "broker-service"
+      ],
+      "restart": "none",
+      "operations": {
+        "install": "prerequisite-only",
+        "upgrade": "prerequisite-only",
+        "rollback": "prerequisite-only",
+        "remove": "prerequisite-only"
+      },
+      "limitation": "Optional engine/license and IDD prerequisites; local debug only."
+    },
+    {
+      "id": "gamepad-backend",
+      "group": "extras",
+      "kind": "external-backend",
+      "required": false,
+      "versionPolicy": "package-artifact-hash",
+      "files": [
+        "CapyIO.ViGEmX360Sidecar.exe",
+        "Nefarius.ViGEm.Client.dll"
+      ],
+      "requires": [
+        "app"
+      ],
+      "restart": "none",
+      "operations": {
+        "install": "prerequisite-only",
+        "upgrade": "prerequisite-only",
+        "rollback": "prerequisite-only",
+        "remove": "prerequisite-only"
+      },
+      "limitation": "Optional ViGEm/VIIPER installation remains external."
+    }
+  ],
+  "compatibilityAdapters": [
+    {
+      "id": "audio-share",
+      "source": "adapters/audio-share",
+      "compatibilityOnly": true,
+      "packagedByDefault": false
+    },
+    {
+      "id": "micyou",
+      "source": "adapters/micyou",
+      "compatibilityOnly": true,
+      "packagedByDefault": false
+    },
+    {
+      "id": "sensor-server",
+      "source": "adapters/sensor-server",
+      "compatibilityOnly": true,
+      "packagedByDefault": false
+    }
+  ]
+}

@@ -65,6 +65,126 @@ pub struct ViiperDs4RouteController {
 }
 
 impl ViiperDs4RouteController {
+    /// The private controller adapter carries controls and optional motion in
+    /// one admitted gamepad stream. Both projections share that single grant.
+    #[allow(clippy::too_many_arguments)]
+    pub fn from_authorized_combined_route(
+        runtime: &NodeRuntime,
+        route_id: RouteId,
+        expected_sink: PortRef,
+        now_ms: u64,
+        client: ViiperLoopbackClient,
+        auto_attach_disabled: ViiperAutoAttachDisabled,
+        controls_mapping: ViiperDs4ControlsMapping,
+        motion_mapping: ViiperDs4MotionMapping,
+        usbip_client: Option<UsbipWin2Client>,
+        usbip_deployment_verified: Option<UsbipWin2DeploymentVerified>,
+    ) -> Result<Self, String> {
+        let route = runtime.route(route_id).map_err(string_error)?;
+        if route.sink != expected_sink
+            || expected_sink.node_id != runtime.snapshot().local_node.id
+            || route.profile != ProfileId::gamepad_state_v1()
+            || route.backend != RouteBackend::AdapterManaged
+            || !matches!(
+                route.state,
+                RouteState::Draft
+                    | RouteState::Prepared
+                    | RouteState::Stopped
+                    | RouteState::Offline
+            )
+            || usbip_client.is_some() != usbip_deployment_verified.is_some()
+        {
+            return Err("invalid admitted combined controller Route".into());
+        }
+        let binding = Ds4Route {
+            lab_authorization: false,
+            route_id,
+            source_node_id: route.source.node_id,
+            source_adapter_id: adapter_id_for_port(runtime, route.source)?,
+            sink_node_id: route.sink.node_id,
+            sink_adapter_id: adapter_id_for_port(runtime, route.sink)?,
+            format: GAMEPAD_FORMAT,
+            qos: QosMode::Interactive,
+        };
+        binding.check_admitted_authority(runtime, now_ms)?;
+        Ok(Self {
+            client,
+            auto_attach_disabled,
+            controls_mapping,
+            motion_mapping,
+            controls_route: binding.clone(),
+            motion_route: binding,
+            worker: None,
+            usbip_client,
+            usbip_deployment_verified,
+            usbip_attachment: None,
+        })
+    }
+
+    fn combined(&self) -> bool {
+        self.controls_route.route_id == self.motion_route.route_id
+    }
+    /// Uses negotiated Routes without creating bootstrap Routes or granting authority.
+    #[allow(clippy::too_many_arguments)]
+    pub fn from_authorized_routes(
+        runtime: &NodeRuntime,
+        controls: RouteId,
+        motion: RouteId,
+        now_ms: u64,
+        client: ViiperLoopbackClient,
+        auto_attach_disabled: ViiperAutoAttachDisabled,
+        controls_mapping: ViiperDs4ControlsMapping,
+        motion_mapping: ViiperDs4MotionMapping,
+        usbip_client: Option<UsbipWin2Client>,
+        usbip_deployment_verified: Option<UsbipWin2DeploymentVerified>,
+    ) -> Result<Self, String> {
+        if usbip_client.is_some() != usbip_deployment_verified.is_some() {
+            return Err("USB/IP configuration requires matching deployment verification".into());
+        }
+        let mut owner = Self {
+            client,
+            auto_attach_disabled,
+            controls_mapping,
+            motion_mapping,
+            controls_route: Ds4Route::admitted(runtime, controls, false, now_ms)?,
+            motion_route: Ds4Route::admitted(runtime, motion, true, now_ms)?,
+            worker: None,
+            usbip_client,
+            usbip_deployment_verified,
+            usbip_attachment: None,
+        };
+        owner.bind_authorized_routes(runtime, controls, motion, now_ms)?;
+        Ok(owner)
+    }
+
+    /// Bind externally admitted, finite-authority Routes without creating or
+    /// authorizing replacement Routes. Does not open VIIPER or attach USB/IP.
+    pub fn bind_authorized_routes(
+        &mut self,
+        runtime: &NodeRuntime,
+        controls: RouteId,
+        motion: RouteId,
+        now_ms: u64,
+    ) -> Result<(), String> {
+        if self.worker.is_some() || self.usbip_attachment.is_some() {
+            return Err("stop the DS4 device before changing its Route binding".into());
+        }
+        if controls == motion {
+            return Err("DS4 controls and motion require distinct Routes".into());
+        }
+        let controls_route = Ds4Route::admitted(runtime, controls, false, now_ms)?;
+        let motion_route = Ds4Route::admitted(runtime, motion, true, now_ms)?;
+        let a = runtime.route(controls).map_err(string_error)?;
+        let b = runtime.route(motion).map_err(string_error)?;
+        if a.session_id != b.session_id || a.source.node_id != b.source.node_id {
+            return Err("DS4 inputs must belong to the same peer Session".into());
+        }
+        // Commit only after both endpoints and grants have been checked.
+        self.controls_route = controls_route;
+        self.motion_route = motion_route;
+        Ok(())
+    }
+
     #[allow(clippy::too_many_arguments)]
     pub fn install(
         runtime: &mut NodeRuntime,
@@ -192,7 +312,17 @@ impl ViiperDs4RouteController {
         if self.worker.is_some() || self.usbip_attachment.is_some() {
             return Err("DS4 Projection still owns a Worker or USB/IP port".to_owned());
         }
+        self.controls_route
+            .check_admitted_authority(runtime, now_ms)?;
+        self.motion_route
+            .check_admitted_authority(runtime, now_ms)?;
         let controls = self.controls_route.begin_start(runtime, now_ms)?;
+        if self.combined() {
+            return Ok(ViiperDs4RouteEpochs {
+                controls,
+                motion: controls,
+            });
+        }
         match self.motion_route.begin_start(runtime, now_ms) {
             Ok(motion) => Ok(ViiperDs4RouteEpochs { controls, motion }),
             Err(error) => {
@@ -264,7 +394,9 @@ impl ViiperDs4RouteController {
                 error,
             );
         }
-        if let Err(error) = self.motion_route.activate(runtime) {
+        if !self.combined()
+            && let Err(error) = self.motion_route.activate(runtime)
+        {
             return self.fail_projection(
                 runtime,
                 "CAPY.GAMEPAD.DS4_ROUTE_ACTIVATION_FAILED",
@@ -344,6 +476,27 @@ impl ViiperDs4RouteController {
         }
     }
 
+    pub fn try_poll_feedback(
+        &mut self,
+        runtime: &mut NodeRuntime,
+    ) -> Result<Option<ViiperDs4Feedback>, String> {
+        self.require_active(runtime)?;
+        let result = self
+            .worker
+            .as_mut()
+            .ok_or_else(|| "Active DS4 Routes have no Worker".to_owned())?
+            .try_poll_feedback();
+        match result {
+            Ok(feedback) => Ok(feedback),
+            Err(error) => self.fail_projection(
+                runtime,
+                "CAPY.GAMEPAD.DS4_STREAM_FAILED",
+                "The VIIPER DualShock 4 feedback stream failed",
+                error.to_string(),
+            ),
+        }
+    }
+
     pub fn report_controls_offline(
         &mut self,
         runtime: &mut NodeRuntime,
@@ -363,7 +516,11 @@ impl ViiperDs4RouteController {
     pub fn stop(&mut self, runtime: &mut NodeRuntime) -> Result<(), String> {
         let cleanup = self.cleanup_projection();
         let controls = self.controls_route.stop(runtime).err();
-        let motion = self.motion_route.stop(runtime).err();
+        let motion = if self.combined() {
+            None
+        } else {
+            self.motion_route.stop(runtime).err()
+        };
         combine_many("DualShock 4 stop failed", cleanup, controls, motion)
     }
 
@@ -448,13 +605,17 @@ impl ViiperDs4RouteController {
             "A DualShock 4 source disconnected",
             detail.clone(),
         );
-        let second = dependent.report_offline(
-            runtime,
-            ProblemOwner::Projection,
-            "CAPY.GAMEPAD.DS4_PAIRED_SOURCE_OFFLINE",
-            "The paired DualShock 4 source is unavailable",
-            format!("the {label} source disconnected; {detail}"),
-        );
+        let second = if self.combined() {
+            Ok(())
+        } else {
+            dependent.report_offline(
+                runtime,
+                ProblemOwner::Projection,
+                "CAPY.GAMEPAD.DS4_PAIRED_SOURCE_OFFLINE",
+                "The paired DualShock 4 source is unavailable",
+                format!("the {label} source disconnected; {detail}"),
+            )
+        };
         combine_many(
             "DualShock 4 source disconnect cleanup failed",
             cleanup,
@@ -501,9 +662,12 @@ impl ViiperDs4RouteController {
         let controls =
             self.controls_route
                 .report_offline(runtime, owner, code, message, detail.clone());
-        let motion = self
-            .motion_route
-            .report_offline(runtime, owner, code, message, detail);
+        let motion = if self.combined() {
+            Ok(())
+        } else {
+            self.motion_route
+                .report_offline(runtime, owner, code, message, detail)
+        };
         combine_many(
             "paired DS4 Route offline update failed",
             None,
@@ -566,6 +730,7 @@ impl ViiperDs4RouteController {
 
 #[derive(Clone)]
 struct Ds4Route {
+    lab_authorization: bool,
     route_id: RouteId,
     source_node_id: NodeId,
     source_adapter_id: AdapterInstanceId,
@@ -582,6 +747,82 @@ enum ProblemOwner {
 }
 
 impl Ds4Route {
+    fn admitted(
+        runtime: &NodeRuntime,
+        route_id: RouteId,
+        motion: bool,
+        now_ms: u64,
+    ) -> Result<Self, String> {
+        let route = runtime.route(route_id).map_err(string_error)?;
+        let local = runtime.snapshot().local_node.id;
+        let (capability, port, profile, format, qos) = if motion {
+            (
+                MOTION_CAPABILITY_ID,
+                MOTION_PORT_ID,
+                ProfileId::imu_samples_v1(),
+                IMU_FORMAT,
+                QosMode::Measurement,
+            )
+        } else {
+            (
+                CONTROLS_CAPABILITY_ID,
+                CONTROLS_PORT_ID,
+                ProfileId::gamepad_state_v1(),
+                GAMEPAD_FORMAT,
+                QosMode::Interactive,
+            )
+        };
+        if route.sink
+            != (PortRef {
+                node_id: local,
+                capability_id: parse_id(capability)?,
+                port_id: parse_id(port)?,
+            })
+            || route.source.node_id == local
+            || route.profile != profile
+            || route.backend != RouteBackend::ExternalProtocol
+            || !matches!(
+                route.state,
+                RouteState::Draft
+                    | RouteState::Prepared
+                    | RouteState::Stopped
+                    | RouteState::Offline
+            )
+        {
+            return Err("Route does not target the expected idle DS4 projection Port".into());
+        }
+        let result = Self {
+            lab_authorization: false,
+            route_id,
+            source_node_id: route.source.node_id,
+            source_adapter_id: adapter_id_for_port(runtime, route.source)?,
+            sink_node_id: local,
+            sink_adapter_id: adapter_id_for_port(runtime, route.sink)?,
+            format,
+            qos,
+        };
+        result.check_admitted_authority(runtime, now_ms)?;
+        Ok(result)
+    }
+
+    fn check_admitted_authority(&self, runtime: &NodeRuntime, now_ms: u64) -> Result<(), String> {
+        if self.lab_authorization {
+            return Ok(());
+        }
+        let route = runtime.route(self.route_id).map_err(string_error)?;
+        let session = runtime.session(route.session_id).map_err(string_error)?;
+        if session.state != capyio_core::SessionState::Ready
+            || session.remote_node_id != self.source_node_id
+            || !matches!(route.authorization, capyio_core::AuthorizationState::Authorized {
+                expires_at_ms: Some(expiry) } if expiry > now_ms)
+        {
+            return Err(
+                "DS4 Route requires a live peer Session and unexpired finite authorization".into(),
+            );
+        }
+        Ok(())
+    }
+
     #[allow(clippy::too_many_arguments)]
     fn install(
         runtime: &mut NodeRuntime,
@@ -610,6 +851,7 @@ impl Ds4Route {
             )
             .map_err(string_error)?;
         Ok(Self {
+            lab_authorization: true,
             route_id,
             source_node_id: source.node_id,
             source_adapter_id,
@@ -623,9 +865,11 @@ impl Ds4Route {
     fn begin_start(&self, runtime: &mut NodeRuntime, now_ms: u64) -> Result<u64, String> {
         match self.state(runtime)? {
             RouteState::Draft => {
-                runtime
-                    .authorize_route(self.route_id, None)
-                    .map_err(string_error)?;
+                if self.lab_authorization {
+                    runtime
+                        .authorize_route(self.route_id, None)
+                        .map_err(string_error)?;
+                }
                 runtime
                     .prepare_route(
                         self.route_id,

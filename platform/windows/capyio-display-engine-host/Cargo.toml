@@ -32,7 +32,11 @@ path = "src/bin/capyio-display-engine-capability-probe.rs"
 [dependencies]
 capyio-display-stream-adapter = { path = "../../../adapters/sunshine-moonlight" }
 capyio-display-tls = { path = "../../../crates/capyio-display-tls" }
+capyio-control-tls = { path = "../../../crates/capyio-control-tls" }
 sha2.workspace = true
+
+[dev-dependencies]
+capyio-core = { path = "../../../crates/capyio-core" }
 
 [target.'cfg(windows)'.dependencies]
 capyio-windows-display = { path = "../capyio-display" }

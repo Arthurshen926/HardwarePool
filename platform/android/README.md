@@ -255,8 +255,11 @@ without repeating manual ADB commands:
 ```powershell
 powershell -NoProfile -ExecutionPolicy Bypass -File `
   scripts/connect_android_touchpad_lab.ps1 `
-  -AdbSerial 100.66.157.119:44801
+  -AdbSerial $env:CAPYIO_ADB_SERIAL
 ```
+
+Set `CAPYIO_ADB_SERIAL` to the explicitly selected device serial or wireless-debug
+endpoint from the current ADB device list before running this command.
 
 The helper verifies the exact ADB endpoint, installed app version, loopback
 listener, reverse mapping, established connection and top-resumed Activity. It

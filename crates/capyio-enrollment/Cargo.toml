@@ -1,0 +1,20 @@
+[package]
+name = "capyio-enrollment"
+description = "Opt-in PIN authenticated peer enrollment outside the Node control channel."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish = false
+
+[dependencies]
+capyio-core = { path = "../capyio-core" }
+capyio-control-credentials = { path = "../capyio-control-credentials" }
+capyio-pairing = { path = "../capyio-pairing" }
+spake2 = "=0.4.0"
+ring = "=0.17.14"
+rustls.workspace = true
+rcgen = { version = "=0.14.5", default-features = false, features = ["ring"] }
+serde.workspace = true
+serde_json.workspace = true
+sha2.workspace = true

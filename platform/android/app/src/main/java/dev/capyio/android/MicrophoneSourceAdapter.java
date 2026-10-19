@@ -6,6 +6,7 @@ import android.media.MediaRecorder;
 
 import dev.capyio.android.contract.ActualAudioFormat;
 import dev.capyio.android.lan.NativeLanMicrophoneSessionConfig;
+import dev.capyio.android.lan.NativeLanRouteGuard;
 import dev.capyio.android.lan.NativeLanPacketQueue;
 import dev.capyio.android.lan.NativeLanPcmPacketizer;
 import dev.capyio.android.lan.NativeLanSenderWorker;
@@ -37,6 +38,7 @@ final class MicrophoneSourceAdapter implements AudioPlatformAdapter {
 
     private final Listener listener;
     private NativeLanMicrophoneSessionConfig config;
+    private volatile NativeLanRouteGuard routeGuard;
     private final AtomicBoolean running = new AtomicBoolean();
     private final AtomicLong completionGeneration = new AtomicLong();
 
@@ -65,6 +67,10 @@ final class MicrophoneSourceAdapter implements AudioPlatformAdapter {
             listener.onFailed(generation, PROBLEM_CONFIG);
             return;
         }
+        if (routeGuard != null && !routeGuard.isLive()) {
+            listener.onFailed(generation, NativeLanSenderWorker.PROBLEM_ROUTE_ENDED);
+            return;
+        }
         completionGeneration.set(generation);
         activeGeneration = generation;
         running.set(true);
@@ -77,14 +83,47 @@ final class MicrophoneSourceAdapter implements AudioPlatformAdapter {
     synchronized boolean configure(NativeLanMicrophoneSessionConfig next, Runnable persist) {
         if (worker != null || running.get()) return false;
         persist.run();
+        if (reservedRouteSocket != null) reservedRouteSocket.close();
+        reservedRouteSocket = null;
+        if (routeGuard != null) routeGuard.revoke();
         config = next;
+        routeGuard = null;
         return true;
+    }
+
+    /** Internal handoff only: caller owns current consent, Session and Port leases. */
+    synchronized boolean configureRoute(NativeLanMicrophoneSessionConfig next,
+            NativeLanRouteGuard guard) {
+        return configureRoute(next, guard, null);
+    }
+
+    private java.net.DatagramSocket reservedRouteSocket;
+
+    synchronized boolean configureRoute(NativeLanMicrophoneSessionConfig next,
+            NativeLanRouteGuard guard, java.net.DatagramSocket socket) {
+        if (worker != null || running.get() || next == null || guard == null || guard == routeGuard
+                || !guard.isLive() || !next.binding.matches(guard.route.binding)) return false;
+        if (routeGuard != null) routeGuard.revoke();
+        config = next;
+        routeGuard = guard;
+        reservedRouteSocket = socket;
+        return true;
+    }
+
+    private synchronized java.net.DatagramSocket takeRouteSocket() {
+        java.net.DatagramSocket socket = reservedRouteSocket;
+        reservedRouteSocket = null;
+        return socket;
     }
 
     @Override
     public void stop(long generation) {
+        java.net.DatagramSocket reserved = takeRouteSocket();
+        if (reserved != null) reserved.close();
         completionGeneration.set(generation);
         running.set(false);
+        NativeLanRouteGuard guard = routeGuard;
+        if (guard != null) guard.revoke();
         AudioRecord current = recorder;
         NativeLanSenderWorker sender = senderWorker;
         if (sender != null) {
@@ -156,11 +195,12 @@ final class MicrophoneSourceAdapter implements AudioPlatformAdapter {
 
             NativeLanPacketQueue queue = new NativeLanPacketQueue(
                     config.binding, PACKET_QUEUE_CAPACITY, PACKET_QUEUE_BYTES);
-            NativeLanUdpEndpoint endpoint = NativeLanUdpEndpoint.bind(
+            java.net.DatagramSocket reserved = takeRouteSocket();
+            NativeLanUdpEndpoint endpoint = reserved == null ? NativeLanUdpEndpoint.bind(
                     config.localAddress,
                     config.peerAddress,
                     config.binding,
-                    SOCKET_TIMEOUT_MILLIS);
+                    SOCKET_TIMEOUT_MILLIS) : new NativeLanUdpEndpoint(reserved, config.peerAddress, config.binding, SOCKET_TIMEOUT_MILLIS);
             NativeLanPcmPacketizer packetizer = new NativeLanPcmPacketizer(
                     config.binding,
                     queue,
@@ -174,20 +214,20 @@ final class MicrophoneSourceAdapter implements AudioPlatformAdapter {
             NativeLanSenderWorker sender = new NativeLanSenderWorker(
                     endpoint,
                     queue,
-                    problem -> onMediaFailure(startGeneration, mediaFailed, problem));
+                    problem -> onMediaFailure(startGeneration, mediaFailed, problem), routeGuard);
             localSender = sender;
             this.packetizer = packetizer;
             packetQueue = queue;
             this.endpoint = endpoint;
             senderWorker = sender;
-            sender.start();
-
+            if (!running.get() || (routeGuard != null && !routeGuard.isLive())) return;
             localRecorder.startRecording();
             if (localRecorder.getRecordingState() != AudioRecord.RECORDSTATE_RECORDING) {
                 failed = true;
                 listener.onFailed(startGeneration, PROBLEM_START);
                 return;
             }
+            sender.start();
             listener.onStarted(startGeneration, actualFormat);
             android.os.Process.setThreadPriority(android.os.Process.THREAD_PRIORITY_AUDIO);
 
@@ -220,6 +260,7 @@ final class MicrophoneSourceAdapter implements AudioPlatformAdapter {
             listener.onFailed(startGeneration, PROBLEM_START);
         } finally {
             running.set(false);
+            if (routeGuard != null) routeGuard.revoke();
             if (localSender != null) {
                 localSender.stop();
             }

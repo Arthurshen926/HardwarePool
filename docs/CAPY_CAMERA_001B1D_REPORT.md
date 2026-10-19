@@ -53,7 +53,7 @@ documentation/manifests, Adapter Smoke and desktop typecheck/build.
 
 ## Controlled host evidence
 
-On `DESKTOP-AT8EVE9`, the final media-source DLL used for the 001B1D lab is
+On `LAB-WINDOWS-HOST`, the final media-source DLL used for the 001B1D lab is
 174080 bytes with SHA-256
 `3DE60DA0F84ACBAFA424EB4E356342D0B8C9B2B81F738AD34CCA09892425CCD8`.
 The elevated `shared-roundtrip` returned exit code 0: both sequential external

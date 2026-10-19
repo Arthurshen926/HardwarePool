@@ -157,6 +157,59 @@ fn wrong_ds4_identity_rolls_back_owned_bus() {
     assert!(observed.stream.is_empty());
 }
 
+#[test]
+fn nonblocking_feedback_keeps_input_usable_when_game_is_silent_or_fragmented() {
+    for feedback in [vec![], vec![1, 2, 3], vec![1, 2, 3, 4, 5, 6, 7]] {
+        let complete = feedback.len() == 7;
+        let fixture = Ds4Fixture::start(
+            br#"{"busId":9,"devId":"4","vid":"0x054c","pid":"0x09cc","type":"dualshock4","deviceSpecific":{}}"#,
+            feedback,
+        );
+        let id = StreamId::new();
+        let mut motion = imu_anchor();
+        motion.sequence = 0;
+        let mut worker = client(fixture.address)
+            .open_dualshock4(
+                ViiperAutoAttachDisabled::confirmed_by_caller(),
+                gamepad(id, 1, 0, GamepadControls::neutral()),
+                &motion,
+                ViiperDs4ControlsMapping::preserve(),
+                ViiperDs4MotionMapping::identity(),
+            )
+            .unwrap();
+        let deadline = std::time::Instant::now() + Duration::from_secs(1);
+        loop {
+            let start = std::time::Instant::now();
+            let result = worker.try_poll_feedback().unwrap();
+            assert!(
+                start.elapsed() < Duration::from_millis(500),
+                "feedback waited for the game"
+            );
+            if let Some(result) = result {
+                assert!(complete);
+                assert_eq!((result.small_motor, result.large_motor), (1, 2));
+                break;
+            }
+            if !complete
+                && deadline.saturating_duration_since(std::time::Instant::now())
+                    < Duration::from_millis(900)
+            {
+                break;
+            }
+            assert!(std::time::Instant::now() < deadline);
+            thread::sleep(Duration::from_millis(1));
+        }
+        worker
+            .submit(
+                gamepad(id, 1, 0, controls_with(GamepadButton::South)),
+                &motion,
+            )
+            .unwrap();
+        worker.stop().unwrap();
+        fixture.finish();
+    }
+}
+
 fn client(address: SocketAddr) -> ViiperLoopbackClient {
     ViiperLoopbackClient::new(
         ViiperLoopbackConfig::new(address, TEST_TIMEOUT, TEST_TIMEOUT, 4096).unwrap(),

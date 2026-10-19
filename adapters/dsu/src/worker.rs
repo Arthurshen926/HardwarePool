@@ -186,6 +186,10 @@ pub struct DsuImuWorkerSender {
 }
 
 impl DsuImuWorkerSender {
+    /// Stop an export whose Source no longer has valid motion samples.
+    pub fn request_stop(&self) {
+        self.stopped.store(true, Ordering::Release);
+    }
     pub fn try_submit(&self, envelope: DataEnvelope<ImuSampleV1>) -> DsuSubmitOutcome {
         if self.stopped.load(Ordering::Acquire) {
             return DsuSubmitOutcome::Stopped;

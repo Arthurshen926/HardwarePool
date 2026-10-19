@@ -86,6 +86,12 @@ final class Camera2Session implements AutoCloseable {
     private long lastEncodedProgressMillis = -1;
     private boolean progressFailureReported;
     private final Runnable progressWatchdog = this::checkProgressWatchdog;
+    private CameraRouteBinding routeBinding;
+
+    void bindRoute(CameraRouteBinding binding) {
+        if (cameraThread != null) throw new IllegalStateException("camera already started");
+        routeBinding = binding;
+    }
 
     Camera2Session(
             Context context,
@@ -167,7 +173,7 @@ final class Camera2Session implements AutoCloseable {
         LoopbackAvcSender createdSender = new LoopbackAvcSender(
                 transportEndpoint,
                 encoderConfig,
-                listener::onTransportStatus);
+                listener::onTransportStatus, routeBinding);
         createdSender.start();
         MediaCodecSurfaceEncoder createdEncoder = new MediaCodecSurfaceEncoder(encoderConfig);
         try {

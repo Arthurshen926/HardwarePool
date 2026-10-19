@@ -14,6 +14,17 @@ final class AndroidForegroundOwnership {
         return owns(imu) || owns(gamepad) || owns(touchpad) || owns(haptics);
     }
 
+    static boolean connectedDevice(
+            boolean publication,
+            boolean backgroundWaiting,
+            CapabilityLifecycleState imu,
+            CapabilityLifecycleState gamepad,
+            CapabilityLifecycleState touchpad,
+            CapabilityLifecycleState haptics) {
+        return publication || backgroundWaiting
+                || connectedDevice(imu, gamepad, touchpad, haptics);
+    }
+
     private static boolean owns(CapabilityLifecycleState state) {
         return state != null && state.ownsAdapterLifecycle();
     }

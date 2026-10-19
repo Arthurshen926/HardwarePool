@@ -8,7 +8,7 @@ Date: 2026-09-01
 ## Result
 
 After the operator completed the installer-required Windows restart, the
-authorized `DESKTOP-AT8EVE9` host reported both `usbip2_ude` and
+authorized `LAB-WINDOWS-HOST` host reported both `usbip2_ude` and
 `usbip2_filter` running. `ROOT\\USB\\0001` was Started with `oem172.inf`, the
 fixed CLI remained `0.9.7.7`, and no imported USB/IP port existed before the
 gate.

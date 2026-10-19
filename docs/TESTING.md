@@ -1,5 +1,292 @@
 # CapyIO Testing Strategy
 
+Local `cargo xtask ci`, `cargo xtask alpha-check` and hosted static checks also run
+`python -m unittest discover -s scripts -p "test_*.py"`. These existing tests cover
+source export/review validity, Core/Extras artifact boundaries and component plans.
+They use temporary fixture files, do not build/install packages or contact devices,
+and need no Windows service or Android SDK. Keep tests under this pattern portable;
+physical deployment checks remain separate explicitly invoked scripts.
+
+`scripts/test_local_debug_installer.ps1` checks the real file-only NSIS installer
+with fake payloads in an isolated workspace target: installation, overwrite refusal,
+recoverable removal and restore. It does not execute payloads or deploy system
+components. Release inventory generation and coverage are in RELEASE_EVIDENCE.md.
+
+Windows window lifecycle can be checked after building the embedded UI:
+`cargo build -p capyio-desktop --bin capyio-desktop --features tauri/custom-protocol`,
+then `scripts/test_desktop_host_lifecycle.ps1 -Executable target/debug/capyio-desktop.exe`.
+Close existing nodes first. The script launches its own UI and separate Host, checks snapshot/version/argument
+boundaries, closes and interrupts its UI, checks the unchanged Host PID and response,
+then invokes the native quit menu and requires both processes to exit.
+It does not start physical Routes or install components; this is not media continuity
+or device acceptance. Failure leaves the test process available for diagnosis.
+
+`cargo xtask alpha-check` is the strict Windows/Android candidate software gate
+(ADR 1509): format, complete workspace check/Clippy/tests including Desktop,
+repository/manifests/Adapter checks, mandatory frontend build and Node tests,
+and Android capyioCheck. Missing tools fail instead of skipping. Physical soak,
+deployment/signing and publication approval are separate gates; see
+ALPHA_CONSOLIDATION.md. Compatibility microphone DTO tests use the pure
+projection seam so an installed native service cannot override their fixture.
+
+ADR 1486 adds touchpad lease-policy and renewal tests covering use across the
+old five-minute boundary, final grant expiry, lost claims and exact correlated
+replies with intervening catalogs/heartbeats. The optional paired touchpad soak
+uses a fixed 370-second hold and the production renewal helper; it must be
+reported separately from hardware-free tests and visible gesture acceptance.
+
+ADR 1484's reverse-control loopback test uses fresh dual-role certificates,
+Windows accepted/Android dialed catalog exchange and three simultaneous
+heartbeat rounds in both directions. It does not prove Windows listener UI
+startup on a physical host, Android APK reverse dialing, or a touchpad Route.
+
+ADR 1485 tests that explicit renewal replaces only the selected peer record,
+preserves unrelated peers, and rejects an unknown peer. Windows account
+credential preflight and Android invitation import still require a physical
+user-session check before claiming old-pair migration success.
+
+ADR 1478 extends `:app:capabilityCompositionTest` with background-waiting
+ownership independent of publication and hardware. On the authorized Y700,
+the updated debug APK kept the same PID and TCP 43193 reachable after Home;
+`dumpsys` reported the Node Service as `connectedDevice` foreground with no
+Activity binding. Under the paired Windows account the control-only gate
+passed pinned mTLS, catalog exchange (two capabilities) and heartbeat in this
+background state. Disabling waiting removed foreground ownership and the port
+became unreachable after Home. This short run does not establish OEM-policy,
+reboot, long-duration or touchpad data behavior.
+
+ADR 1479 reuses the shared peer-list parser tests for bounded three-field
+metadata and exclusion of credential fields. The authorized Y700 debug APK
+returned one Windows peer with exactly `nodeId`, `displayName` and `revoked`
+from the WebView bridge; Remote Resources rendered its display name while
+truthfully reporting no current authenticated connection. This does not prove
+Android outbound dialing or Windows resource consumption.
+
+ADR 1480 adds a desktop enrollment regression that issues fresh Windows and
+Android control bundles and authenticates their pinned TLS 1.3 identities in
+both dial directions on loopback. It asserts fresh ordered Node/Session
+bindings. The test uses no stored user credentials and does not prove the
+production listener/dialer lifecycle or migrate old pairs.
+
+ADR 1481 adds a Windows inbound loopback regression using a newly issued pair:
+non-TLS bytes are rejected, then the same listener accepts a pinned Android
+identity, admits the catalog, acknowledges heartbeat and closes. The test
+caught a Windows nonblocking-accepted-socket TLS abort; the TLS boundary now
+sets accepted sockets to blocking mode with finite read/write timeouts.
+This remains a hardware-free CLI-gate test, not an Android-initiated device run.
+
+ADR 1482 adds three Android-host loopback cases: valid pinned Windows TLS
+acceptance and catalog exchange with no Route; unpaired/invalid credential
+rejection before a network attempt; and wrong Windows leaf rejection with no
+Session admission. These tests do not exercise JNI, the physical Android
+network stack or any shared UI control. The `:app:buildRustJni` Android ARM64
+release compilation also passed; it is compile evidence, not a device run.
+
+ADR 1475 adds `:app:controlRecoveryContractTest` for Android listener failure
+isolation. Invalid peer handshakes must not terminate the accept loop; cleanup
+failure remains terminal and cannot advertise a live listener. Device evidence
+must show an invalid handshake followed by paired mTLS on the same port.
+
+ADR 1474: `:app:capabilityCompositionTest` covers publication-only foreground
+ownership and remote-stop generation isolation. The Y700 background-publication
+and unpublication lifecycle was physically checked; see
+`docs/TOUCHPAD_CLOSED_LOOP_STATUS.md` for precise evidence and remaining limits.
+
+ADR 1473: run `cargo test -p capyio-control-tls -p capyio-control-link
+-p capyio-protocol` and `cargo test -p capyio-remote-touchpad-adapter --features
+tls --test secure_receiver`. These cover real loopback TLS with fake Sinks,
+pin/ALPN/binding rejection, authorization/lease admission and cleanup. They do
+not prove Windows cursor movement. The opt-in desktop diagnostic
+`--verify-paired-touchpad-data <node> <ip> <control-port>
+--acknowledge-desktop-input` uses the native receiver and requires resource
+consent; its transport success alone still does not prove physical gestures.
+
+ADR 1448 control TLS tests reject an incorrect paired leaf on both sides of a
+real mTLS connection despite valid CA chains, and reject missing certificates
+or using an issuer as the leaf. Catalog/lease success fixtures explicitly pin
+their peer leaves. Run `cargo test -p capyio-control-tls -p capyio-control-link`.
+
+ADR 1455 adds real loopback mTLS tests in which both endpoints converge on one
+new non-nil Session binding without prior Session coordination. The listener
+rejects a request that changes either configured Node identity after successful
+mTLS, and unit coverage rejects non-zero reserved binding bytes. These tests do
+not prove application Runtime admission, reconnect or multi-peer scheduling.
+
+ADR 1456 extends the loopback composition so both initially independent
+Runtimes transactionally admit the shared Session and opposite peer. Tests
+assert exact IDs, one Ready Session, empty provisional resource catalogs and
+rollback for wrong-local and existing-peer cases. Catalog exchange remains
+separately covered. Testkit then closes an active multi-Route Session, requires
+live Routes Offline, preserves a Stopped Route, marks the peer Offline and
+proves repeated close is a no-op. Reconnect and process-owned lifecycle remain
+unproven.
+
+ADR 1457 adds Windows host regression for recovering a paired record, retaining
+its exact platform store, matching a fresh discovery endpoint and producing the
+closed dial inputs. Desktop Clippy/tests plus shared UI typecheck/build cover the
+command and Node-ID-only button. The lower layers retain real loopback mTLS,
+fresh admission, catalog exchange and teardown tests, but this is not a physical
+Windows-to-Android connection result: the current Android APK has no common
+control listener or advertisement.
+
+The 1458 Windows release gate runs the complete Tauri frontend/release compile,
+records the EXE size and SHA-256, then starts it for five seconds and terminates
+the exact process. See `CAPY_WINDOWS_DESKTOP_RELEASE_BUILD_1458_REPORT.md`.
+This proves a directly runnable unsigned EXE can be produced, not an installer,
+signature, upgrade or physical cross-device acceptance.
+
+ADR 1449 tests absent-store read-only startup, bounded malformed input,
+wrong-owner rejection, closed credential-handle paths, atomic directory/blob
+replacement and a real current-user DPAPI credential round trip. Desktop tests
+recover paired metadata and reject corrupt state without partial admission.
+Run `cargo test -p capyio-windows-pairing-store -p capyio-desktop` on Windows.
+
+Run `node --test scripts/trusted_endpoints_ui.test.mjs` for ADR 1476. It
+proves bounded, non-secret endpoint hints, revoked/unpaired filtering,
+manual-disconnect suppression and retry cooldown. It does not prove a live
+network reconnect, interactive pairing or Android-originated dialing.
+
+Run `cargo test -p capyio-android-jni control_bind_tests` for ADR 1477. It
+proves an occupied preferred control port falls back without replacing the
+occupying listener. A physical Android Service restart and post-restart
+authenticated reconnect are still required before claiming live persistence.
+
+ADR 1450 adds a dependency-free Android instrumentation APK. On a separately
+authorized device it verifies real Keystore AES-GCM creation, replacement,
+recovery, tamper rejection, closed handles, bounds and cleanup. CI assembles the
+test APK but cannot count assembly as Keystore execution. The identified-device
+result is recorded in `CAPY_ANDROID_KEYSTORE_1450_REPORT.md`.
+
+ADR 1451 adds native canonicalization tests and extends that physical gate with
+an isolated `AtomicFile` root. It covers absent read-only startup, canonical
+commit/reload, rejection without replacement, stored corruption and cleanup.
+The result is recorded in `CAPY_ANDROID_PAIRING_DIRECTORY_1451_REPORT.md`.
+
+ADR 1452 adds schema-5 contract cases for ready/failed states and a physical
+WebView readback after Service restart. The readback must show ready/zero peers
+while transport and catalog exchange remain disconnected. See
+`CAPY_ANDROID_PAIRING_HOST_1452_REPORT.md`.
+
+ADR 1459 adds an active-only pairing projection test proving revoked records do
+not cause credential recovery. The full Android gate compiles the JNI symbol,
+Service recovery path, ARM64 library and APK and runs lint plus hardware-free
+contracts. A populated-directory Keystore run remains a physical-device gate;
+see `CAPY_ANDROID_ACTIVE_CREDENTIAL_ADMISSION_1459_REPORT.md`.
+
+ADR 1460 adds real loopback mTLS tests for Android's acceptor-ordered initial
+catalog exchange and for rollback after an authenticated wrong-Session catalog.
+See `CAPY_ANDROID_ACCEPTED_CATALOG_1460_REPORT.md`.
+
+ADR 1461 extends the same loopback gate through the real Android control
+listener constructor, canonical pairing selection and typed credential decode.
+It also proves zero/multiple active records fail closed. See
+`CAPY_ANDROID_CONTROL_LISTENER_1461_REPORT.md`.
+
+ADR 1462 makes the full Android gate compile/package the JNI registry, Service
+worker and teardown ordering. Shared snapshot contracts cover disconnected and
+authenticated catalog states. Physical accept and teardown remain device/peer
+tests; see `CAPY_ANDROID_SERVICE_CONTROL_1462_REPORT.md`.
+
+ADR 1463 adds a send-only ephemeral-socket transport test and makes the Android
+gate cross-compile/package the periodic announcer and discovery-state UI
+projection. Physical multicast delivery remains an environment gate; see
+`CAPY_ANDROID_DISCOVERY_1463_REPORT.md`.
+
+ADR 1464 adds a two-generation real mTLS reconnect test covering exact Session
+close, retained peer state, fresh Session admission and duplicate-live rejection.
+See `CAPY_CONTROL_RECONNECT_1464_REPORT.md`.
+
+ADR 1465 adds protocol round trips plus a real mTLS link request/acknowledgement
+test for the exact Session-bound heartbeat. See
+`CAPY_CONTROL_HEARTBEAT_1465_REPORT.md`.
+
+ADR 1466 makes the Windows controller and Android Service package the same
+heartbeat primitive and automatic Session cleanup. Rust link tests retain the
+real mTLS request/acknowledgement evidence; desktop checks and Android
+`capyioCheck` cover both platform compositions. Physical half-open timing remains
+a device gate; see `CAPY_CONTROL_HEARTBEAT_OWNER_1466_REPORT.md`.
+
+ADR 1467 adds a real mTLS ordering test in which a CatalogSnapshot is dispatched
+and applied while a heartbeat acknowledgement is pending. Desktop compilation
+and lifecycle regression tests cover the worker composition, while Android
+`capyioCheck` packages the dirty-publication Service/JNI path. A physical
+UI-toggle-to-peer-inventory test remains required; see
+`CAPY_LIVE_CATALOG_SYNC_1467_REPORT.md`.
+
+ADR 1469 adds codec tests for exact target binding, round trip, truncation and
+trailing-byte rejection. Desktop/JNI compilation checks the issuer and native
+import boundary; Android `capyioCheck` compiles the Keystore-first importer and
+shared file-picker UI. Installing and launching an APK is not evidence that an
+invitation was imported or that mTLS reconnect succeeded; those remain explicit
+physical acceptance observations. See `CAPY_PAIRING_INVITATION_1469_REPORT.md`.
+
+Alpha packaging evidence and its signature/recovery limits are recorded in
+`CAPY_ALPHA_PACKAGING_REPORT.md`. Merely producing an NSIS executable or a
+debug-signed APK is not evidence of Authenticode, production Android signing,
+installer upgrade/uninstall correctness or update rollback.
+
+The current TB323FU lifecycle evidence and its explicit cross-device exclusions
+are recorded in `CAPY_ANDROID_TB323FU_REGRESSION.md`.
+
+ADR 1470 requires manual-endpoint parsing tests plus the same authenticated
+catalog/heartbeat path used after discovery. Endpoint reachability alone is not
+an authentication pass; a physical pass must observe the peer catalog and a
+matching Session-bound heartbeat acknowledgement.
+
+ADR 1468 adds pure shared-UI selection cases for paired-only automatic connect,
+connected/manual-suppression exclusion and retry cooldown. The production UI
+typecheck/build verifies the startup composition; physical multicast and
+reconnect remain device/network gates. See
+`CAPY_AUTOMATIC_PAIRED_CONNECT_1468_REPORT.md`.
+
+ADR 1453 tests exact typed-bundle round trips and rejection of malformed,
+truncated, extended, empty, excessive-chain and oversized input. Windows tests
+exercise a real DPAPI typed round trip and reject protected arbitrary plaintext;
+control TLS tests map the same type into both endpoint identities. Android
+`capyioCheck` compiles the ARM64 JNI validator and instrumentation APK, whose
+physical gate must prove Keystore round trip/replacement plus rejection before
+storage. Run `cargo test -p capyio-control-credentials -p
+capyio-control-tls -p capyio-windows-pairing-store -p capyio-android-jni` and
+Android `gradlew.bat capyioCheck`. APK assembly is not physical Keystore
+execution; the 2026-09-18 attempt could not run because the previously supplied
+wireless-debug endpoint refused the connection.
+
+ADR 1447 adds Testkit local-catalog replacement cases and an Android JNI host
+test with an existing peer/Session. They verify identity/ownership rejection,
+idempotent updates, independent Route preservation, epoch invalidation, affected
+lease cleanup and no automatic restart. Run `cargo test -p capyio-testkit` and
+`cargo test -p capyio-android-jni`; Android `capyioCheck` validates the native
+build and Service call site. Connected physical acceptance remains separate.
+
+ADR 1446 adds the desktop candidate observer regression (including expiry after
+listener Stop) and `node --test scripts/discovery_candidates_ui.test.mjs` for
+bounded untrusted candidate readback. These checks do not establish physical
+discovery, pairing or a usable remote resource.
+
+ADR 1454 extends those regressions with active and revoked paired-directory
+records. The native projection must report `paired`, `revoked` and `unpaired`
+without changing authenticated connection/catalog state; the TypeScript parser
+accepts only those closed values. This remains local metadata classification,
+not certificate or Session authentication.
+
+ADR 1445 uses real loopback mTLS connections with synthetic catalogs to test
+bidirectional publication-filtered catalog exchange and Runtime admission,
+deselection updates, peer loss between receive/apply, cross-link work rejection
+and explicit close. Run `cargo test -p capyio-control-link`. These are host
+composition tests, not physical Android/Windows application connection evidence.
+
+ADR 1444 control TLS regression tests cover terminal truncated/malformed input,
+partial-write timeout, untouched-channel local rejection and a real loopback
+mTLS failure followed by successful exchange on a fresh authenticated channel.
+Run `cargo test -p capyio-control-tls`. This is transport evidence, not Android/
+Windows application pairing, automatic reconnect or Route epoch acceptance.
+
+ADR 1443 adds read-only Windows interface inventory and shared UI selection
+tests. Run `cargo test -p capyio-desktop network_interfaces` and
+`node --test scripts/discovery_interfaces_ui.test.mjs`. These cover bounded
+enumeration, excluded address/state classes, malformed DTOs, ambiguous-network
+selection and stale-choice removal, not multicast delivery or peer pairing.
+
 ## Principles
 
 - Tests prove explicit requirements and failure isolation.
@@ -51,6 +338,44 @@ Frontend uses `corepack pnpm typecheck` and `corepack pnpm build`.
 - the shared control host composes decoder and Runtime admission, rejects
   mismatched Session/peer and recent duplicate IDs before mutation, does not
   consume an ID after Runtime rejection and bounds retention to 256;
+- Port lease control round-trips exact Session/Route/Port identity and response
+  correlation, rejects invalid TTL/response shapes, and the admitted host can
+  acquire, renew and release only an owner-local Port on its bound Ready
+  Session; non-local requests and replays fail closed;
+- the unified admitted-host dispatcher routes CatalogSnapshot and
+  PortLeaseRequest while the authenticated link additionally validates typed
+  RouteStatus, RouteCommand and PortLeaseResponse messages;
+- the live-link integration test completes a real mutual-TLS pending Route
+  proposal, independent authorization, exclusive owner lease and lease-gated
+  Start with exact Session/Route/Port correlation;
+- the generic control TLS channel requires mutual TLS 1.3 with its dedicated
+  ALPN, exact Session/server/client Node binding, bounded valid Envelopes and
+  carries an owner lease request through the admitted control host end to end;
+- the bounded post-pairing directory classifies exact fresh discovery matches,
+  rejects unpaired/expired/revoked candidates, prevents silent re-pairing and
+  stores only an opaque secure-storage handle plus peer certificate fingerprint;
+- paired-directory schema-1 JSON round-trips deterministically while rejecting
+  oversize input, unknown fields, unsupported schema and duplicate identities;
+- Windows current-user DPAPI round-trips a bounded fixture credential, rejects
+  a modified protected blob and applies size checks before platform access;
+- the Windows pairing store performs read-only empty startup, bounded
+  fail-closed directory recovery, closed handle-to-path mapping, atomic
+  replacement and desktop restart admission without exposing credential bytes;
+- Android Keystore device testing protects, replaces and recovers one bounded
+  credential, rejects a changed authentication tag and removes its dedicated
+  key/file without adding an application permission;
+- Android paired-directory tests retain the shared Rust schema across JNI and
+  prove atomic isolated-device persistence without enrolling a peer;
+- Android Service startup owns the readable canonical directory and projects
+  ready/failed plus bounded count without implying a connection;
+- discovery ingress counts malformed frames against its fixed per-window rate
+  budget, rejects backward time and admits only exact records;
+- the explicit UDP host fixes private-scope multicast address, dynamic/private
+  port, TTL and poll timeout, rejects invalid interfaces before binding and
+  treats a receive timeout as an idle lifecycle poll;
+- Windows discovery start/stop is a separate worker lifecycle, does not hold the
+  Runtime lock while polling, clears listening state on exit and prevents a
+  Node identity reset while active;
 - outbound publication keeps selected Source-bearing Capabilities plus all
   Sink/Control-only Capabilities, prunes Adapter ownership, round-trips through
   the bounded Session encoder and rejects unknown, non-Source or Offline
@@ -325,7 +650,7 @@ CAPY-CAMERA-001C6 adds an exact decoded-to-`VideoFrameDescriptor` test, retains
 the camera-host duplicate-owner/lifecycle tests and adds a fixed independent
 read-only probe. A config-only local-lab preflight proved a separate process can
 open `Local\CapyIO.CameraIngress.v1.lab` and adopt stream
-`00010203-0405-0607-0809-0a0b0c0d0e0f`, epoch 2. Since no key frame was sent,
+`<LAB_ID_02>`, epoch 2. Since no key frame was sent,
 the probe correctly timed out at zero frames and both processes failed closed;
 the mapping disappeared on owner exit. A later V2419A live run published 517
 decoded 1280x720 NV12 frames while an independent process observed 30 advancing
@@ -342,7 +667,7 @@ seen when Frame Server requested a second sample between live 30 fps
 publications. Its regression test consumes one shared frame, accepts another
 request while the mapping has no newer frame, publishes a distinct frame 20 ms
 later and observes its exact luma through the retained FIFO request. Focused
-tests and Clippy pass. On `DESKTOP-AT8EVE9`, the repaired hash-locked DLL then
+tests and Clippy pass. On `LAB-WINDOWS-HOST`, the repaired hash-locked DLL then
 used V2419A stream `ef2dc243a7c6d37fe8cb9a8cdd69521e`: the Global receiver
 published 1,226 decoded NV12 frames, the Session/CurrentUser camera enumerated
 exactly once as `CapyIO Camera`, and Source Reader returned two 1,382,400-byte
@@ -352,7 +677,7 @@ Android camera client or lab process.
 
 CAPY-CAMERA-001C8 adds a parameter-free `gui-hold` command that retains the
 same Session/CurrentUser camera for exactly 60 seconds after verifying one exact
-enumeration match. On `DESKTOP-AT8EVE9`, a fresh Windows inbox Camera launch
+enumeration match. On `LAB-WINDOWS-HOST`, a fresh Windows inbox Camera launch
 displayed live V2419A workspace pixels through `CapyIO Camera`. The successful
 stream `bd117f7226a47444b86eb1ce6c9d75a2` produced 2,718 decoded and published
 1280x720 NV12 frames through source sequence 3,040 with distinct first/last
@@ -482,7 +807,7 @@ ID or one physical lens through its logical owner. Contract tests cover stable
 source keys, deterministic cycling, focal metadata and malformed IDs. Offline
 API-29 APK assembly and warnings-as-errors lint pass; `aapt2` confirms unchanged
 CAMERA/INTERNET permissions. The supplied V2419A endpoint
-`100.66.157.119:46143` was TCP unreachable, so no APK was installed and no
+`<LAB_IPV4_03>:46143` was TCP unreachable, so no APK was installed and no
 physical output configuration has yet been claimed as working. See
 `docs/CAPY_CAMERA_001C18_REPORT.md`.
 
@@ -845,6 +1170,40 @@ device or changes Android permissions. Wireless ADB ABI/API queries are
 read-only evidence and are not required by hosted CI.
 
 ## Live Android-to-Windows touchpad lab
+
+ADR 1472 adds host tests for Pending lease rejection, finite single-Route
+approval, denial/idempotence, request expiry, retransmission deadlines, Session
+loss and a sixteen-request bound. Shared UI parsing is covered by
+`node --test scripts/resource_consent_ui.test.mjs`. The explicit
+`--verify-paired-touchpad-consent <node-uuid> <ip> <port>` diagnostic waits at
+most 45 seconds for the real owner's UI decision and uses an explicitly labeled
+simulated AdapterManaged Sink. It never opens an input device. Its simulated
+catalog changes are scoped to this diagnostic, not ordinary desktop inventory.
+An observed Allow/lease/Start/Stop result proves control protocol only; a Reject
+must return without occupancy or input. Physical cursor evidence is separate.
+
+The integrated sender's transport-generation contract verifies immediate socket
+close on Stop, a late socket arriving after Stop, stale Stop-token rejection,
+independent retry queues and the eight-frame bound. Run
+`platform/android/gradlew.bat --offline :app:touchpadTransportContractTest` from
+the Android project (or `./gradlew.bat` there). The aggregate `capyioCheck` includes
+this gate. JNI session removal executes on the owning worker on both success
+and exception paths.
+
+The opt-in `scripts/touchpad_transport_device_gate.mjs` requires an exact ADB
+executable, authorized device serial and already-forwarded CapyIO WebView URL.
+It refuses an active touchpad and an existing `tcp:61000` reverse mapping. A
+loopback fixture withholds ACK through three Start/Stop cycles, then acknowledges
+a synthetic held contact to verify periodic complete snapshots and active Stop.
+It removes only its owned reverse mapping, never opens a Windows input Sink and
+must not be cited as cursor-motion or native contact-release evidence.
+
+The unified sender refreshes a held snapshot every 250 ms. The lab receiver
+shortens socket read timeout to two seconds while it has active contacts, keeping
+the longer manual-session wait only when released. Boundary EOF explicitly
+disconnects the Sink; partial records and timeouts fail with Drop cleanup. Tests
+distinguish boundary EOF from every truncated header length. The actual Windows
+device-release/blackhole test remains a separately observed physical gate.
 
 The CAPY-PTP-002V procedure requires explicit approval for the Internet
 permission, APK installation and desktop input. The APK permission inventory
@@ -1578,7 +1937,7 @@ classes are present. This is packaging evidence only: the native Activity is
 unchanged, no WebView/Tauri observer bridge runs, and no APK is installed.
 
 ANDROID-A01C2 extends the hardware-free composition executable from 39 to 51
-assertions. It projects all seven non-display Capabilities into shared schema 4,
+assertions. It projects all seven non-display Capabilities into shared schema 5,
 checks Android observer mode, node and capability counts, Source/Sink direction,
 read-only sharing flags, JSON escaping and a disconnected-service snapshot.
 Android Lint and debug compilation cover the local-only WebView host, its single
@@ -1738,7 +2097,7 @@ physical/RDP endpoint, audio-service/reboot survival and clean uninstall. The
 APO callback must have evidence of no blocking, allocation, file/network I/O
 or ordinary logging. Repository validation prevents driver source from
 appearing while the SysVAD record still declares `source_imported: false`.
-ADR 0029 permits `DESKTOP-AT8EVE9` for the approved-target install only after
+ADR 0029 permits `LAB-WINDOWS-HOST` for the approved-target install only after
 its recovery, exact-package and rollback preflight passes.
 
 ADR 0051 adds a remote-recording compatibility regression. The speaker-only
@@ -1835,7 +2194,7 @@ not prerequisites for these paths.
   Android reported exactly 240,000 processed frames.
 - Microphone: a bounded six-second restart processed 291,840 Android frames
   with no sender queue loss. The service-owned Windows helper held the exact
-  `100.66.231.100:40011` socket while the Tailscale adapter gained 636 unicast
+  `<LAB_IPV4_04>:40011` socket while the Tailscale adapter gained 636 unicast
   packets / 650,049 bytes. The protected capture-ring DACL returned Win32 error
   5 to a normal-user metrics observer, so final ring-write evidence remains
   open; no audio was recorded or retained.
@@ -1963,3 +2322,23 @@ foundation: those runners still execute Rust Core/Adapter and web UI gates, but
 they do not count as Tauri application build evidence. Adding non-Windows Tauri
 packaging requires an explicit workflow and platform prerequisites; absence is
 never reported as a pass.
+
+
+ADR 1511 camera acceptance has an explicit ordinary-user entry:
+`scripts/test_paired_camera_regression.ps1 -Executable <candidate Desktop> -ConsumerProbe
+<camera virtual lab exe> -PeerNodeId <paired UUID> -PeerHost <approved address>
+-ControlPort <current CapyIO port> -EvidenceRoot <new directory>`.
+It refuses an existing Host and elevated caller, waits for real device consent,
+requires increasing route-bound frame counters plus a separate MF consumer, then
+checks Route/lease cleanup and Host exit. It stores counters/diagnostics, not video.
+A failed consumer is a failed check even when the Route is Active. Do not confuse
+ADB's wireless-debug port with the app's current control port. Execution requires
+an available paired device and the explicitly configured allocation service; parsing
+the script alone is not a physical pass.
+
+The consumer executable must support `consumer-current-live-probe`: after the initial
+format/timing checks it reads up to 90 more samples and requires at least three
+whose middle-row color-bar signature differs from the deterministic placeholder.
+The older two-sample `consumer-current-probe` only proves system activation and
+sample delivery. It does not establish live content. This signature check does not
+measure visual quality, latency or scene identity; raw frames are never saved.

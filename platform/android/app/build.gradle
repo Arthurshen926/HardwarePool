@@ -89,8 +89,9 @@ android {
         applicationId = 'dev.capyio.android'
         minSdk = 29
         targetSdk = 36
-        versionCode = 23
-        versionName = '0.5.11-dev'
+        versionCode = 36
+        versionName = '0.5.24-alpha.1'
+        testInstrumentationRunner 'dev.capyio.android.AndroidCredentialStoreInstrumentation'
         buildConfigField 'String', 'SOURCE_REVISION', groovy.json.JsonOutput.toJson(
                 System.getenv('CAPYIO_BUILD_REVISION') ?: 'unrecorded')
         buildConfigField 'String', 'BUILT_AT', groovy.json.JsonOutput.toJson(
@@ -121,6 +122,12 @@ android {
     }
 
     buildTypes {
+        pairingLab {
+            initWith debug
+            applicationIdSuffix = '.pairinglab'
+            versionNameSuffix = '-pairing-lab'
+            matchingFallbacks = ['debug']
+        }
         release {
             minifyEnabled = false
             proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro'
@@ -186,6 +193,11 @@ tasks.register('verifyDebugEntrypoints') {
             'dev/capyio/android/AndroidUiSnapshotJson.class',
             'dev/capyio/android/AndroidCoreCatalogJson.class',
             'dev/capyio/android/AndroidNativeCatalogRuntime.class',
+            'dev/capyio/android/AndroidNativeControlCredential.class',
+            'dev/capyio/android/AndroidNativeControlListener.class',
+            'dev/capyio/android/AndroidNativePairingDirectory.class',
+            'dev/capyio/android/AndroidPairingDirectoryStore.class',
+            'dev/capyio/android/AndroidCredentialStore.class',
             'dev/capyio/android/TouchpadRouteAdapter.class',
             'dev/capyio/android/ControllerRouteAdapter.class',
             'dev/capyio/touchpad/NativeTouchpadRecordBridge.class',
@@ -244,12 +256,18 @@ tasks.register('compileCapabilityCompositionTest', JavaCompile) {
     source file('src/main/java/dev/capyio/android/AndroidCameraCommand.java')
     source file('src/main/java/dev/capyio/android/AndroidHapticsCommand.java')
     source file('src/main/java/dev/capyio/android/AndroidSharingSelection.java')
+    source file('src/main/java/dev/capyio/android/AndroidControlConnectionCycle.java')
+    source file('src/main/java/dev/capyio/android/AndroidPairingImportPlan.java')
     source file('src/main/java/dev/capyio/android/AndroidGamepadUiCommand.java')
     source file('src/main/java/dev/capyio/android/AndroidTouchpadUiFrame.java')
     source file('src/main/java/dev/capyio/android/AndroidUiInputRelease.java')
     source file('src/main/java/dev/capyio/android/AndroidForegroundOwnership.java')
     source file('src/main/java/dev/capyio/android/TouchpadMotionFrame.java')
+    source file('src/main/java/dev/capyio/android/TouchpadTransportGeneration.java')
     source file('src/main/java/dev/capyio/android/ControllerPacketJson.java')
+    source file('src/main/java/dev/capyio/android/ImuSamplingUsers.java')
+    source file('src/main/java/dev/capyio/android/HapticsStrength.java')
+    source file('src/main/java/dev/capyio/android/ResourceConsentMemory.java')
     source file('src/main/java/dev/capyio/android/GenerationBoundSourceDelivery.java')
     source file('src/main/java/dev/capyio/android/AndroidUiSnapshotJson.java')
     source file('src/main/java/dev/capyio/android/AndroidCoreCatalogJson.java')
@@ -277,6 +295,30 @@ tasks.register('audioPeerContractTest', JavaExec) {
     dependsOn tasks.named('compileCapabilityCompositionTest')
     classpath = files(capabilityCompositionOutput)
     mainClass = 'dev.capyio.android.AndroidAudioPeerContractTest'
+    enableAssertions = true
+}
+
+tasks.register('controlRecoveryContractTest', JavaExec) {
+    group = 'verification'
+    dependsOn tasks.named('compileCapabilityCompositionTest')
+    classpath = files(capabilityCompositionOutput)
+    mainClass = 'dev.capyio.android.AndroidControlConnectionCycleTest'
+    enableAssertions = true
+}
+
+tasks.register('pairingImportContractTest', JavaExec) {
+    group = 'verification'
+    dependsOn tasks.named('compileCapabilityCompositionTest')
+    classpath = files(capabilityCompositionOutput)
+    mainClass = 'dev.capyio.android.AndroidPairingImportPlanTest'
+    enableAssertions = true
+}
+
+tasks.register('touchpadTransportContractTest', JavaExec) {
+    group = 'verification'
+    dependsOn tasks.named('compileCapabilityCompositionTest')
+    classpath = files(capabilityCompositionOutput)
+    mainClass = 'dev.capyio.android.TouchpadTransportGenerationContractTest'
     enableAssertions = true
 }
 

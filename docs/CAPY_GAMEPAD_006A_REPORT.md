@@ -21,7 +21,7 @@ Driver Verifier.
 
 ## Pinned host and packages
 
-- authorized host: `DESKTOP-AT8EVE9`, Windows build `10.0.26200.0`, x64;
+- authorized host: `LAB-WINDOWS-HOST`, Windows build `10.0.26200.0`, x64;
 - VIIPER: upstream v0.7.0, release commit `6b71b14`;
 - VIIPER Windows archive SHA-256:
   `a02b06751d64e43e7700aba8ee1f7e3e4f5f4e7f370a11722ff922ab075c1629`;
@@ -31,7 +31,7 @@ Driver Verifier.
   `51620fa5f9f8be5932bc9d786deee557ce06d5407a99cab490dcfac71f185fea`;
 - installer Authenticode: `Valid`, signer `Cloudyne Systems (Scheibling
   Consulting AB)`, certificate thumbprint
-  `9AC56B6C76141395D74FFF6652818376E80B9C95`, Microsoft timestamp;
+  `<redacted-certificate-thumbprint>`, Microsoft timestamp;
 - expected root device: `ROOT\USBIP_WIN2\UDE`;
 - expected services/drivers: `usbip2_ude` and `usbip2_filter`;
 - expected application directory: `C:\Program Files\USBip`.

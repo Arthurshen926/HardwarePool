@@ -36,14 +36,18 @@ baseline. These commits are local only and are not pushed.
 
 ## Unified UI state
 
-`UiSnapshot` schema 4 and the shared Vue `CapyIOApi` now expose:
+`UiSnapshot` schema 5 and the shared Vue `CapyIOApi` now expose:
 
 - local and peer Capability catalogs from the Runtime snapshot;
 - availability and permission requirement;
 - each Port's Source, Sink or Control direction, Profile and format;
 - per-local-Source publication selection with a narrow allow-listed command;
 - explicit fixture labels so catalog projection is not mistaken for physical
-  hardware enumeration or authorization.
+  hardware enumeration or authorization;
+- a schema-v1 control-plane status shared across hosts, with separate discovery,
+  pairing, authenticated transport and catalog-exchange states plus bounded
+  counts. Current hosts report these paths stopped or unconfigured rather than
+  implying that foundation crates are already running in the applications.
 
 The UI intentionally uses “本机能力” and “远端节点公开的能力” rather than
 global sender/receiver roles. One Node can simultaneously expose Source, Sink
@@ -56,7 +60,7 @@ sharing availability. A01C1 makes the Android build package the exact shared
 Vue/Vite output under `assets/capyio-ui`, with relative-path and entrypoint asset
 checks. A01C2 adds a local-only, read-only Android observer that renders this
 packaged workspace on demand and projects the service catalog into shared schema
-4. The native audio controls remain available as the fallback, and Back returns
+5. The native audio controls remain available as the fallback, and Back returns
 to them. The observer exposes no sharing selection, Route or hardware lifecycle
 command and does not invent peer state; those operations remain separate work.
 

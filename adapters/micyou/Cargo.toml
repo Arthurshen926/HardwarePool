@@ -15,3 +15,7 @@ thiserror.workspace = true
 [[bin]]
 name = "capyio-micyou-fixture"
 path = "src/bin/capyio-micyou-fixture.rs"
+
+[package.metadata.capyio]
+compatibility-only = true
+packaged-by-default = false

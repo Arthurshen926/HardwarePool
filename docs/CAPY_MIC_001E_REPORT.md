@@ -49,9 +49,9 @@ into or distributed by this repository.
 
 ## Physical regression
 
-On the approved `DESKTOP-AT8EVE9` lab, the private microphone ingress had
+On the approved `LAB-WINDOWS-HOST` lab, the private microphone ingress had
 endpoint ID
-`{0.0.0.00000000}.{c7e4cce3-d84e-4985-bca2-bed51be21971}` and currently
+`{0.0.0.00000000}.{<LAB_ID_15>}` and currently
 resolved to one-based index 5. Launching with the correct ID/name but index 6
 failed before the server or lock started. Launching the mutually consistent
 tuple started TCP control on 8554 and UDP audio on 8555.

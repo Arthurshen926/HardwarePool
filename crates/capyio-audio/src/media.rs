@@ -31,6 +31,46 @@ pub struct AudioMediaStreamBinding {
 }
 
 impl AudioMediaStreamBinding {
+    /// Control/worker-thread check against a fresh runtime snapshot, not an
+    /// authorization grant. The owner must separately validate catalog/format
+    /// negotiation, current Port leases and authenticated transport admission.
+    /// Call again before handing an old binding to a restarted worker.
+    pub fn validate_route_context(
+        &self,
+        route: &capyio_core::Route,
+        session: &capyio_core::Session,
+        now_ms: u64,
+    ) -> Result<(), AudioDataError> {
+        use capyio_core::{AuthorizationState, ProfileId, RouteState, SessionState};
+        self.validate()?;
+        let endpoints_match = (route.source.node_id == session.local_node_id
+            && route.sink.node_id == session.remote_node_id)
+            || (route.sink.node_id == session.local_node_id
+                && route.source.node_id == session.remote_node_id);
+        if self.route_id != route.id
+            || self.session_id != route.session_id
+            || self.session_id != session.id
+            || session.state != SessionState::Ready
+            || session.local_node_id == session.remote_node_id
+            || !endpoints_match
+            || route.profile != ProfileId::audio_frames_v1()
+            || !matches!(route.state, RouteState::Starting | RouteState::Active)
+            || !matches!(route.authorization, AuthorizationState::Authorized {
+                expires_at_ms: Some(expiry)
+            } if expiry > now_ms)
+        {
+            return Err(AudioDataError::InvalidMediaBinding(
+                "audio binding no longer matches a live, finitely authorized Route/Session".into(),
+            ));
+        }
+        if u64::from(self.stream_epoch) != route.epoch {
+            return Err(AudioDataError::InvalidMediaBinding(
+                "audio binding belongs to a different or unrepresentable Route epoch".into(),
+            ));
+        }
+        Ok(())
+    }
+
     pub fn validate(&self) -> Result<(), AudioDataError> {
         if self.session_id.as_uuid().is_nil() {
             return Err(AudioDataError::InvalidMediaBinding(

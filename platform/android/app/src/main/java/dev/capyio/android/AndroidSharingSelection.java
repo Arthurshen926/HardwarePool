@@ -11,7 +11,7 @@ import java.util.LinkedHashSet;
 import java.util.Set;
 import java.util.function.Consumer;
 
-/** Service-owned, session-local publication intent for Android Source Ports. */
+/** Service-owned publication intent for Android Sources and the speaker Sink (ADR 1504). */
 final class AndroidSharingSelection {
     private static final int MAX_CAPABILITY_ID_LENGTH = 256;
 
@@ -34,9 +34,10 @@ final class AndroidSharingSelection {
             return false;
         }
         CapabilitySnapshot capability = findCapability(catalog, capabilityId);
-        if (capability == null || !hasSource(capability)) {
+        if (capability == null || !(hasSource(capability) || isSpeaker(capability))) {
             return false;
         }
+        if (selected && !isSelectable(capability)) return false;
         Set<String> candidate = new LinkedHashSet<>(selectedCapabilityIds);
         if (selected) {
             candidate.add(capabilityId);
@@ -45,7 +46,7 @@ final class AndroidSharingSelection {
         }
         try {
             CapabilityCatalogSnapshot publication =
-                    CapabilityPublicationProjection.project(catalog, candidate);
+                    project(catalog, candidate);
             beforeCommit.accept(publication);
         } catch (RuntimeException invalid) {
             return false;
@@ -61,14 +62,27 @@ final class AndroidSharingSelection {
 
     synchronized CapabilityCatalogSnapshot publicationCatalog(
             CapabilityCatalogSnapshot catalog) {
-        return CapabilityPublicationProjection.project(catalog, selectedCapabilityIds);
+        return project(catalog, selectedCapabilityIds);
     }
 
     static boolean isSelectable(CapabilitySnapshot capability) {
         return capability.adapterAttached()
                 && capability.hardwarePresence() == HardwarePresence.PRESENT
                 && capability.availability() != CapabilityAvailability.OFFLINE
-                && hasSource(capability);
+                && (hasSource(capability) || isSpeaker(capability));
+    }
+
+    private static boolean isSpeaker(CapabilitySnapshot capability) {
+        return capability.kind() == dev.capyio.android.contract.CapabilityKind.SPEAKER;
+    }
+
+    private static CapabilityCatalogSnapshot project(CapabilityCatalogSnapshot catalog, Set<String> selected) {
+        Set<String> sources = new LinkedHashSet<>(selected);
+        for (CapabilitySnapshot capability : catalog.capabilities()) {
+            if (isSpeaker(capability)) sources.remove(catalog.nodeId() + ":" + capability.capabilityKey());
+        }
+        return CapabilityPublicationProjection.projectWithSpeakerSelection(catalog, sources,
+                selected.contains(catalog.nodeId() + ":android.speaker"));
     }
 
     private static boolean hasSource(CapabilitySnapshot capability) {

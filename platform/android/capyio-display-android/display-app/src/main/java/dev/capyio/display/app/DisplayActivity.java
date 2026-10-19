@@ -13,6 +13,10 @@ import android.view.View;
 import android.view.ViewGroup;
 import android.widget.FrameLayout;
 import android.widget.TextView;
+import android.widget.Button;
+import android.view.WindowInsets;
+import android.view.WindowInsetsController;
+import android.view.WindowManager;
 import dev.capyio.android.R;
 
 /** Minimal application-owned Surface for the CapyIO virtual-monitor sink. */
@@ -25,19 +29,30 @@ public final class DisplayActivity extends Activity implements SurfaceHolder.Cal
     private AuthenticatedDisplayTlsClient.Configuration configuration;
     private ProvisionedDisplayConfiguration.GameStreamLaunch gameStreamLaunch;
     private AuthenticatedGameStreamReceiver gameStreamReceiver;
+    private NodeDisplaySession nodeSession;
     private DisplayTransportMode transportMode;
     private FrameLayout root;
     private SurfaceView display;
     private TextView status;
     private int contentWidth;
     private int contentHeight;
+    private int negotiatedRefresh;
+    private int negotiatedBitrate;
     private boolean reportedPresentedFrame;
+    private boolean showStatistics;
+    private long previousFrames;
+    private long previousSampleMillis;
     private final Handler mainHandler = new Handler(Looper.getMainLooper());
     private final Runnable gameStreamMetricsPoll = this::pollGameStreamMetrics;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
+        android.content.SharedPreferences viewing = getSharedPreferences("capyio-display-viewing", MODE_PRIVATE);
+        showStatistics = viewing.getBoolean("showStatistics", false);
+        if (viewing.getBoolean("keepAwake", true)) {
+            getWindow().addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
+        }
 
         root = new FrameLayout(this);
         root.setBackgroundColor(Color.BLACK);
@@ -60,11 +75,38 @@ public final class DisplayActivity extends Activity implements SurfaceHolder.Cal
                 ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);
         statusLayout.gravity = Gravity.BOTTOM | Gravity.START;
         root.addView(status, statusLayout);
+        Button exit = new Button(this);
+        exit.setText("退出接收");
+        exit.setContentDescription("退出画面接收；Windows 扩展屏需在发送端停止");
+        exit.setOnClickListener(view -> finish());
+        FrameLayout.LayoutParams exitLayout = new FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+        exitLayout.gravity = Gravity.TOP | Gravity.END;
+        root.addView(exit, exitLayout);
         setContentView(root);
+        if (viewing.getBoolean("fullscreen", true) && android.os.Build.VERSION.SDK_INT >= 30) {
+            WindowInsetsController insets = getWindow().getInsetsController();
+            if (insets != null) {
+                insets.setSystemBarsBehavior(WindowInsetsController.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE);
+                insets.hide(WindowInsets.Type.systemBars());
+            }
+        }
 
         controller = new DisplaySurfaceController(
                 mainHandler, next -> status.setText(next));
         try {
+            String operation = getIntent().getStringExtra("nodeDisplayOperation");
+            if(operation!=null) {
+                nodeSession=NodeDisplaySession.attach(operation,()->runOnUiThread(this::finish));
+                if(nodeSession==null)throw new IllegalStateException("display session is no longer active");
+                exit.setText("停止共享");
+                exit.setContentDescription("停止双方屏幕共享并恢复 Windows 显示器");
+                transportMode=DisplayTransportMode.GAMESTREAM;
+                contentWidth=nodeSession.expected.width(); contentHeight=nodeSession.expected.height();
+                negotiatedRefresh=nodeSession.expected.refreshMillihertz();
+                negotiatedBitrate=nodeSession.expected.bitrateKbps();
+                updateDisplayBounds(); startTransportIfReady(display.getHolder()); return;
+            }
             transportMode = ProvisionedDisplayConfiguration.loadTransportMode(this);
             if (transportMode == DisplayTransportMode.CPD1) {
                 configuration = ProvisionedDisplayConfiguration.load(this);
@@ -75,6 +117,8 @@ public final class DisplayActivity extends Activity implements SurfaceHolder.Cal
                 gameStreamLaunch = ProvisionedDisplayConfiguration.loadGameStreamLaunch(this);
                 contentWidth = gameStreamLaunch.expected().width();
                 contentHeight = gameStreamLaunch.expected().height();
+                negotiatedRefresh=gameStreamLaunch.expected().refreshMillihertz();
+                negotiatedBitrate=gameStreamLaunch.expected().bitrateKbps();
                 status.setText(R.string.display_gamestream_selected);
             }
             updateDisplayBounds();
@@ -97,21 +141,25 @@ public final class DisplayActivity extends Activity implements SurfaceHolder.Cal
         if (tlsClient != null) {
             return;
         }
-        if (transportMode == DisplayTransportMode.GAMESTREAM && gameStreamLaunch != null) {
+        if (transportMode == DisplayTransportMode.GAMESTREAM && (gameStreamLaunch != null || nodeSession != null)) {
             if (gameStreamReceiver != null) {
                 return;
             }
             try {
-                gameStreamReceiver = new AuthenticatedGameStreamReceiver(
+                gameStreamReceiver = nodeSession != null ? new AuthenticatedGameStreamReceiver(
+                        nodeSession, holder.getSurface(),
+                        next -> runOnUiThread(() -> { status.setVisibility(View.VISIBLE); status.setText(next); })) : new AuthenticatedGameStreamReceiver(
                         gameStreamLaunch,
                         holder.getSurface(),
-                        next -> runOnUiThread(() -> status.setText(next)));
+                        next -> runOnUiThread(() -> { status.setVisibility(View.VISIBLE); status.setText(next); }));
                 gameStreamReceiver.start();
                 mainHandler.removeCallbacks(gameStreamMetricsPoll);
                 mainHandler.postDelayed(gameStreamMetricsPoll, METRICS_POLL_MILLIS);
             } catch (Exception | LinkageError error) {
+                if(gameStreamReceiver!=null)gameStreamReceiver.close();
                 gameStreamReceiver = null;
                 status.setText(getString(R.string.display_gamestream_unavailable, error.getMessage()));
+                if(nodeSession!=null)nodeSession.close("receiver_failed_"+error.getClass().getSimpleName());
             }
             return;
         }
@@ -145,7 +193,19 @@ public final class DisplayActivity extends Activity implements SurfaceHolder.Cal
     }
 
     @Override
+    protected void onStop() {
+        // A display Surface is visible-use only. Home/lock stops this Route,
+        // not the Node service or concurrent audio/camera/input capabilities.
+        if(nodeSession!=null&&!isChangingConfigurations()) {
+            if(gameStreamReceiver!=null)gameStreamReceiver.close();
+            nodeSession.close("");
+        }
+        super.onStop();
+    }
+
+    @Override
     protected void onDestroy() {
+        if(nodeSession!=null)nodeSession.close("");
         mainHandler.removeCallbacks(gameStreamMetricsPoll);
         if (tlsClient != null) {
             tlsClient.close();
@@ -163,14 +223,22 @@ public final class DisplayActivity extends Activity implements SurfaceHolder.Cal
             return;
         }
         long presentedFrames = receiver.presentedFrames();
+        long now = android.os.SystemClock.elapsedRealtime();
         if (presentedFrames > 0) {
-            String metrics = "GameStream video connected; frames presented: " + presentedFrames;
+            if(nodeSession!=null)nodeSession.presented(presentedFrames);
+            long elapsed = now - previousSampleMillis;
+            String metrics = DisplayReceiverPresentation.metrics(contentWidth,contentHeight,
+                    negotiatedRefresh,negotiatedBitrate,presentedFrames,presentedFrames-previousFrames,
+                    previousSampleMillis>0?elapsed:0);
             status.setText(metrics);
+            status.setVisibility(showStatistics ? View.VISIBLE : View.GONE);
             if (!reportedPresentedFrame) {
                 reportedPresentedFrame = true;
                 Log.i(TAG, metrics);
             }
         }
+        previousFrames = presentedFrames;
+        previousSampleMillis = now;
         mainHandler.postDelayed(gameStreamMetricsPoll, METRICS_POLL_MILLIS);
     }
 
@@ -193,5 +261,8 @@ public final class DisplayActivity extends Activity implements SurfaceHolder.Cal
         current.height = fitted.height();
         current.gravity = Gravity.CENTER;
         display.setLayoutParams(current);
+        // Do not require a second layout callback to create the Surface.
+        // An initially INVISIBLE SurfaceView has no displayable Surface.
+        display.setVisibility(View.VISIBLE);
     }
 }

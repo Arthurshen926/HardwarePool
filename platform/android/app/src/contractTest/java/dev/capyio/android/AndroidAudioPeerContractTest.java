@@ -13,7 +13,13 @@ public final class AndroidAudioPeerContractTest {
             rejects(() -> new AndroidAudioPeer("10.0.0.1", port, 2));
             rejects(() -> new AndroidAudioPeer("10.0.0.1", 1, port));
         }
-        System.out.println("Android audio peer contract: PASS (29 cases)");
+        assert AndroidAudioPeer.savedSettingsJson("speaker", null).equals(
+                "{\"schemaVersion\":1,\"direction\":\"speaker\",\"savedPeer\":null}");
+        assert AndroidAudioPeer.savedSettingsJson("microphone", new AndroidAudioPeer("10.0.0.1", 1, 65535)).equals(
+                "{\"schemaVersion\":1,\"direction\":\"microphone\",\"savedPeer\":{\"host\":\"10.0.0.1\",\"localPort\":1,\"peerPort\":65535}}");
+        rejects(() -> AndroidAudioPeer.savedSettingsJson("camera", null));
+        rejects(() -> AndroidAudioPeer.savedSettingsJson(null, null));
+        System.out.println("Android audio peer contract: PASS (33 cases)");
     }
     private static void rejects(Runnable action) {
         try { action.run(); } catch (IllegalArgumentException expected) { return; }

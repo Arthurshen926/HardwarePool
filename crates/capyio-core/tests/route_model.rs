@@ -100,6 +100,37 @@ fn endpoint_adapter(
 }
 
 #[test]
+fn finite_authorization_renewal_keeps_stream_and_cannot_revive_a_stopped_or_expired_grant() {
+    use capyio_core::AuthorizationState;
+    let (_, source) = port(PortDirection::Source, ProfileId::audio_frames_v1());
+    let (_, sink) = port(PortDirection::Sink, ProfileId::audio_frames_v1());
+    let mut value = route(&source, &sink).unwrap();
+    assert!(value.renew_authorization(200, 1).is_err());
+    value.authorize(Some(100)).unwrap();
+    value
+        .prepare(Some(FormatDescriptor::new("mock/1")), QosMode::Basic, 1)
+        .unwrap();
+    value.begin_start(1).unwrap();
+    value.mark_active().unwrap();
+    let epoch = value.epoch;
+    value.renew_authorization(200, 50).unwrap();
+    assert_eq!(value.epoch, epoch);
+    assert_eq!(value.state, RouteState::Active);
+    assert_eq!(
+        value.authorization,
+        AuthorizationState::Authorized {
+            expires_at_ms: Some(200)
+        }
+    );
+    assert!(value.renew_authorization(199, 50).is_err());
+    assert!(value.renew_authorization(300, 200).is_err());
+    value.begin_stop().unwrap();
+    assert!(value.renew_authorization(300, 100).is_err());
+    value.mark_stopped().unwrap();
+    assert!(value.renew_authorization(300, 100).is_err());
+}
+
+#[test]
 fn source_to_sink_route_completes_lifecycle() {
     let (_, source) = port(PortDirection::Source, ProfileId::audio_frames_v1());
     let (_, sink) = port(PortDirection::Sink, ProfileId::audio_frames_v1());

@@ -34,6 +34,14 @@ endorsements.
 
 The initial dependency families include Rust crates (`serde`, `uuid`, `prost`, `thiserror`, `tracing`, `clap`), Tauri, Vue, Vite, TypeScript, and related build tooling. Their exact resolved versions and license texts must be generated after the first successful online dependency installation and committed as a release artifact or Software Bill of Materials.
 
+The generic Node control transport reuses the workspace-pinned `rustls` 0.23.43
+crate (Apache-2.0 OR ISC OR MIT) and its ring provider for user-mode mutual TLS
+1.3. `rcgen` 0.14.5 (MIT OR Apache-2.0) creates certificates in deterministic
+tests and in the opt-in Alpha enrollment identity path (`capyio-enrollment`).
+The latter follows ADR 1506 and the platform-protected credential store; it is
+not a claim of audited production enrollment.
+No upstream source or binary is vendored by this integration.
+
 The optional Windows camera support probe, COM projection/class factory and
 closed session/current-user virtual-camera backend use Microsoft's `windows`
 0.61.3 and `windows-core` 0.61.2 Rust bindings under MIT OR Apache-2.0,

@@ -1,13 +1,33 @@
 use capyio_core::{
     AdapterInstanceId, CapabilityClass, NodeDescriptor, Problem, ProblemCategory, ProblemId,
-    ProblemSeverity, Route,
+    ProblemSeverity, Route, SessionId,
 };
 use capyio_protocol::{
     MAX_CATALOG_CAPABILITIES, MAX_CATALOG_STRING_BYTES, PROTOCOL_MAJOR, ProtocolError,
-    decode_catalog_snapshot, decode_envelope, encode_catalog_snapshot, encode_envelope,
-    new_envelope, v1,
+    decode_catalog_snapshot, decode_control_heartbeat, decode_envelope, encode_catalog_snapshot,
+    encode_control_heartbeat, encode_envelope, new_envelope, v1,
 };
 use capyio_testkit::{DemoLab, android_node};
+
+#[test]
+fn control_heartbeat_is_session_bound_and_rejects_zero_sequence() {
+    let session = SessionId::new();
+    let encoded = encode_control_heartbeat(session, 7, false).expect("heartbeat");
+    let decoded = decode_control_heartbeat(&encoded).expect("decode heartbeat");
+    assert_eq!(decoded.session_id, session);
+    assert_eq!(decoded.sequence, 7);
+    assert!(!decoded.acknowledgement);
+    let acknowledgement = encode_control_heartbeat(session, 7, true).expect("acknowledgement");
+    assert!(
+        decode_control_heartbeat(&acknowledgement)
+            .expect("decode acknowledgement")
+            .acknowledgement
+    );
+    assert!(matches!(
+        encode_control_heartbeat(session, 0, false),
+        Err(ProtocolError::InvalidControlHeartbeat)
+    ));
+}
 
 #[test]
 fn generic_node_catalog_round_trips_through_protobuf() {

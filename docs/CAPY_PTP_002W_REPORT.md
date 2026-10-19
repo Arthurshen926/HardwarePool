@@ -86,7 +86,7 @@ contains only the `arm64-v8a` native ABI, and has SHA-256
 `ccd9ec1efce6b49ed207f77ec939f0d50520dd86df217ad825cf8042588dc708`.
 
 Version 6 was installed through the new wireless-debug endpoint
-`100.66.157.119:42567`. Pulling the installed base APK produced the same exact
+`<LAB_IPV4_03>:42567`. Pulling the installed base APK produced the same exact
 SHA-256, and package inspection reported version code 6 with `INTERNET`
 granted.
 

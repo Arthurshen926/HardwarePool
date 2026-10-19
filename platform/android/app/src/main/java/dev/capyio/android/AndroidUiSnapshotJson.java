@@ -35,17 +35,70 @@ public final class AndroidUiSnapshotJson {
             String platformVersion,
             String projectVersion,
             Set<String> selectedCapabilityIds) {
+        return encode(catalog, platformVersion, projectVersion, selectedCapabilityIds,
+                "not_configured", 0);
+    }
+
+    public static String encode(
+            CapabilityCatalogSnapshot catalog,
+            String platformVersion,
+            String projectVersion,
+            Set<String> selectedCapabilityIds,
+            String pairingState,
+            int pairedPeerCount) {
+        return encode(catalog, platformVersion, projectVersion, selectedCapabilityIds,
+                pairingState, pairedPeerCount, false, false, 0);
+    }
+
+    public static String encode(
+            CapabilityCatalogSnapshot catalog,
+            String platformVersion,
+            String projectVersion,
+            Set<String> selectedCapabilityIds,
+            String pairingState,
+            int pairedPeerCount,
+            boolean discoveryAnnouncing,
+            boolean authenticatedCatalogConnected) {
+        return encode(catalog, platformVersion, projectVersion, selectedCapabilityIds,
+                pairingState, pairedPeerCount, discoveryAnnouncing,
+                authenticatedCatalogConnected, 0);
+    }
+
+    public static String encode(
+            CapabilityCatalogSnapshot catalog,
+            String platformVersion,
+            String projectVersion,
+            Set<String> selectedCapabilityIds,
+            String pairingState,
+            int pairedPeerCount,
+            boolean discoveryAnnouncing,
+            boolean authenticatedCatalogConnected,
+            int controlListenPort) {
         if (catalog == null) {
             return encodeDisconnected(platformVersion, projectVersion);
         }
         if (selectedCapabilityIds == null) {
             throw new IllegalArgumentException("Selected Capability IDs are required");
         }
+        if (!("not_configured".equals(pairingState)
+                || "ready".equals(pairingState)
+                || "failed".equals(pairingState))) {
+            throw new IllegalArgumentException("Pairing store state is invalid");
+        }
+        if (pairedPeerCount < 0 || pairedPeerCount > 64
+                || (!"ready".equals(pairingState) && pairedPeerCount != 0)) {
+            throw new IllegalArgumentException("Paired peer count is invalid");
+        }
+        if (controlListenPort < 0 || controlListenPort > 65_535) {
+            throw new IllegalArgumentException("Control listen port is invalid");
+        }
         StringBuilder json = new StringBuilder(4096);
         json.append('{');
         appendStringField(json, "backendMode", "android_node");
-        json.append(",\"schemaVersion\":4");
+        json.append(",\"schemaVersion\":5");
         appendStringField(json, "projectVersion", requireText(projectVersion, "project version"));
+        appendControlPlane(json, pairingState, pairedPeerCount, discoveryAnnouncing,
+                authenticatedCatalogConnected, controlListenPort);
         json.append(",\"nodes\":[{");
         appendStringField(json, "id", catalog.nodeId());
         appendStringField(json, "displayName", NODE_NAME);
@@ -60,7 +113,7 @@ public final class AndroidUiSnapshotJson {
         json.append(",\"warnings\":[");
         appendQuoted(json, "Android shared UI controls local audio, camera, IMU, gamepad, haptics and touchpad lifecycles plus bounded input state.");
         json.append(',');
-        appendQuoted(json, "Sharing selection records local publication intent; Routes and remote catalog exchange are not attached yet.");
+        appendQuoted(json, "Sharing selection controls the authenticated catalog; hardware data Routes remain capability-specific.");
         json.append("],\"imuFixture\":null}");
         return json.toString();
     }
@@ -69,8 +122,9 @@ public final class AndroidUiSnapshotJson {
         StringBuilder json = new StringBuilder(768);
         json.append('{');
         appendStringField(json, "backendMode", "android_node");
-        json.append(",\"schemaVersion\":4");
+        json.append(",\"schemaVersion\":5");
         appendStringField(json, "projectVersion", requireText(projectVersion, "project version"));
+        appendControlPlane(json, "not_configured", 0, false, false, 0);
         json.append(",\"nodes\":[{");
         appendStringField(json, "id", "android.pending");
         appendStringField(json, "displayName", NODE_NAME);
@@ -178,7 +232,7 @@ public final class AndroidUiSnapshotJson {
                 "Start or stop the service-owned bounded gamepad state Adapter.", gamepad);
         json.append(',');
         appendQuickAction(json, "capyio.quick-action.android-touchpad", "Touchpad surface",
-                "Start or stop the service-owned complete multi-touch state Adapter.", touchpad);
+                "Publish the touchpad, then accept a Windows resource request to start its secure Route.", touchpad);
         json.append(',');
         appendQuickAction(json, "capyio.quick-action.android-haptics", "Phone vibration",
                 "Start the service-owned feedback Sink with a short confirmation pulse.", haptics);
@@ -478,21 +532,30 @@ public final class AndroidUiSnapshotJson {
         appendStringField(json, "status", actionStatus(lifecycle.state()));
         json.append(",\"simulated\":false,\"routeId\":null,\"routeState\":null")
                 .append(",\"routeEpoch\":null,\"availableOperations\":[");
-        String operation = availableOperation(lifecycle.state());
+        boolean touchpad = "capyio.quick-action.android-touchpad".equals(id);
+        String operation = touchpad
+                ? switch (lifecycle.state()) {
+                    case STARTING, ACTIVE, FAILED -> "stop";
+                    case STOPPED, STOPPING -> null;
+                }
+                : availableOperation(lifecycle.state());
         if (operation != null) {
             appendQuoted(json, operation);
         }
         json.append(']');
         appendStringField(json, "evidenceLevel", "not_started");
-        appendStringField(
-                json,
-                "connectionHint",
-                "Local Android Capability lifecycle only; sharing and Routes remain separate.");
+        appendStringField(json, "connectionHint", touchpad
+                ? "勾选本机触控板共享后，从 Windows 的远程资源申请使用；此处不启动旧 ADB 反向接收器。"
+                : "Local Android Capability lifecycle only; sharing and Routes remain separate.");
         if (lifecycle.problemCode() == null) {
             json.append(",\"problemCode\":null,\"problem\":null}");
         } else {
             appendStringField(json, "problemCode", lifecycle.problemCode());
-            appendStringField(json, "problem", "Android Adapter reported a bounded failure.");
+            appendStringField(json, "problem", touchpad
+                    ? "上一次触控链路失败。可清除错误，再从 Windows 重新申请；本机屏幕仍可共享。"
+                    : "CAPY.ANDROID.CONTROLLER_QUEUE_FULL".equals(lifecycle.problemCode())
+                            ? "手柄输入发送队列已满，已停止输入。请重新启动手柄；如再次出现，请保留此错误码。"
+                            : "Android Adapter reported a bounded failure.");
             json.append('}');
         }
     }
@@ -576,6 +639,37 @@ public final class AndroidUiSnapshotJson {
 
     private static void appendEmptyCollections(StringBuilder json) {
         json.append(",\"routes\":[],\"adapters\":[],\"events\":[]");
+    }
+
+    private static void appendControlPlane(
+            StringBuilder json,
+            String pairingState,
+            int pairedPeerCount,
+            boolean discoveryAnnouncing,
+            boolean authenticatedCatalogConnected,
+            int controlListenPort) {
+        json.append(",\"controlPlane\":{")
+                .append("\"schemaVersion\":1")
+                .append(",\"simulated\":false")
+                .append(",\"discoveryState\":\"")
+                .append(discoveryAnnouncing ? "listening" : "not_started")
+                .append('"')
+                .append(",\"pairingState\":");
+        appendQuoted(json, pairingState);
+        json.append(",\"transportState\":\"")
+                .append(authenticatedCatalogConnected ? "connected" : "not_connected")
+                .append('"')
+                .append(",\"catalogExchangeState\":\"")
+                .append(authenticatedCatalogConnected ? "active" : "not_connected")
+                .append('"')
+                .append(",\"discoveredCandidateCount\":0")
+                .append(",\"pairedPeerCount\":").append(pairedPeerCount)
+                .append(",\"authenticatedConnectionCount\":")
+                .append(authenticatedCatalogConnected ? 1 : 0)
+                .append(",\"listenPort\":");
+        if (controlListenPort == 0) json.append("null");
+        else json.append(controlListenPort);
+        json.append('}');
     }
 
     private static void appendStringField(StringBuilder json, String name, String value) {

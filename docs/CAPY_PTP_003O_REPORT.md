@@ -14,7 +14,7 @@ driver or APK, changes no Android permission and does not restart Windows.
 
 ## Exact inputs and gates
 
-- Android endpoint: `100.66.157.119:46143`, model `V2419A`;
+- Android endpoint: `<LAB_IPV4_03>:46143`, model `V2419A`;
 - package/activity: `dev.capyio.touchpad.lab/.TouchpadLabActivity`;
 - tunnel: device `tcp:61000` to Windows loopback `tcp:61000`;
 - receiver SHA-256:

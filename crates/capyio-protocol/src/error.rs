@@ -43,6 +43,13 @@ pub enum ProtocolError {
     #[error("numeric value in {field} is out of range: {value}")]
     NumericRange { field: &'static str, value: u64 },
 
+    #[error("invalid Port lease request: {0}")]
+    InvalidPortLease(&'static str),
+    #[error("invalid Route control message: {0}")]
+    InvalidRouteControl(&'static str),
+    #[error("control heartbeat sequence must be non-zero")]
+    InvalidControlHeartbeat,
+
     #[error("wire catalog ownership for Adapter {adapter_id} does not match its Capabilities")]
     CatalogOwnershipMismatch { adapter_id: String },
 

@@ -43,7 +43,7 @@ fixed 180-second GUI hold instead of deterministically ending around 120 seconds
 - full `cargo xtask ci`: PASS.
 - C30 Windows and Android temporary deployment rollback: PASS; final read-only
   preflight proved clean ProgramData, CLSID, process and TCP 38173 state.
-- authorized C31 APK replacement on V2419A at `100.66.157.119:35491`: PASS;
+- authorized C31 APK replacement on V2419A at `<LAB_IPV4_03>:35491`: PASS;
   package, CAMERA and INTERNET grants were read back after installation.
 - ordinary Windows Camera live view: PASS. The selected Camera2 device reported
   `rotation=90`; the phone scene was upright with expected black pillarboxes and

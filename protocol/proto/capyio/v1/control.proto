@@ -62,6 +62,167 @@ message RouteCommand {
 
 message RouteStatus {
   RouteDescriptor route = 1;
+  optional TouchpadDataOffer touchpad_data = 2;
+  optional NativeAudioDataOffer native_audio_data = 3;
+  optional HapticsDataOffer haptics_data = 4;
+  optional CameraDataOffer camera_data = 5;
+}
+
+// Explicit controlled-lab CAVC receiver; Route carries epoch and finite grant.
+message CameraDataOffer {
+  uint32 port = 1;
+  string stream_id = 2;
+}
+
+// Display negotiation contract (ADR 1505). No video payload.
+message DisplayStreamMode {
+  uint32 width = 1;
+  uint32 height = 2;
+  uint32 refresh_millihertz = 3;
+}
+
+message DisplayStreamCapabilities {
+  repeated DisplayStreamMode modes = 1;
+  uint32 minimum_bitrate_kbps = 2;
+  uint32 maximum_bitrate_kbps = 3;
+  bool h264_sdr = 4;
+}
+
+message DisplayStreamSelection {
+  DisplayStreamMode mode = 1;
+  uint32 bitrate_kbps = 2;
+}
+
+enum DisplaySessionAction {
+  DISPLAY_SESSION_ACTION_UNSPECIFIED = 0;
+  DISPLAY_SESSION_ACTION_START = 1;
+  DISPLAY_SESSION_ACTION_CAPABILITIES = 2;
+  DISPLAY_SESSION_ACTION_LAUNCH = 3;
+  DISPLAY_SESSION_ACTION_ACK = 4;
+  DISPLAY_SESSION_ACTION_PRESENTED = 5;
+  DISPLAY_SESSION_ACTION_STOP = 6;
+  DISPLAY_SESSION_ACTION_FAILED = 7;
+  DISPLAY_SESSION_ACTION_READY = 8;
+}
+
+// Only on the authenticated node session. A fresh operation identifies one
+// startup; Route/epoch bind the authorized use. Launch is a single 176-byte
+// secret-bearing record, never logged, persisted, or exposed to the WebView.
+// Media continues on the adapter transport, not the control connection.
+message DisplaySessionControl {
+  string operation_id = 1;
+  DisplaySessionAction action = 2;
+  string route_id = 3;
+  uint64 epoch = 4;
+  DisplayStreamSelection selection = 5;
+  DisplayStreamCapabilities capabilities = 6;
+  bytes launch_record = 7;
+  bytes acknowledgement = 8;
+  string problem_code = 9;
+  uint64 presented_frames = 10;
+  // Start only: receiver returns a screen-fitting selection with Capabilities.
+  // Launch confirms exact final parameters; this is not runtime ABR.
+  bool automatic = 11;
+}
+
+// Address comes from the authenticated control peer. Motor payloads travel on
+// the separate capyio-haptics/1 TLS channel, never in this control envelope.
+message HapticsDataOffer {
+  uint32 port = 1;
+  string stream_id = 2;
+}
+
+// Explicit controlled-lab UDP metadata, never a claim of media authentication.
+// IP comes from the authenticated peer, not this message. No audio payload.
+message NativeAudioDataOffer {
+  uint32 port = 1;
+  string stream_id = 2;
+  NativeAudioEndpoint endpoint = 3;
+  NativeAudioPreset preset = 4;
+  NativeAudioTransport transport = 5;
+}
+
+enum NativeAudioEndpoint {
+  NATIVE_AUDIO_ENDPOINT_UNSPECIFIED = 0;
+  NATIVE_AUDIO_ENDPOINT_SOURCE = 1;
+  NATIVE_AUDIO_ENDPOINT_SINK = 2;
+}
+
+enum NativeAudioPreset {
+  NATIVE_AUDIO_PRESET_UNSPECIFIED = 0;
+  NATIVE_AUDIO_PRESET_PCM_48000_S16LE_MONO_10MS = 1;
+  NATIVE_AUDIO_PRESET_PCM_48000_S16LE_STEREO_10MS = 2;
+}
+
+enum NativeAudioTransport {
+  NATIVE_AUDIO_TRANSPORT_UNSPECIFIED = 0;
+  NATIVE_AUDIO_TRANSPORT_TRUSTED_LAB_UDP_V1 = 1;
+}
+
+// Endpoint metadata only. The address is the authenticated control peer's IP,
+// never a remotely supplied address. Continuous CPTR records use separate TLS.
+message TouchpadDataOffer {
+  uint32 port = 1;
+  string stream_id = 2;
+}
+
+enum PortLeaseAction {
+  PORT_LEASE_ACTION_UNSPECIFIED = 0;
+  PORT_LEASE_ACTION_ACQUIRE = 1;
+  PORT_LEASE_ACTION_RENEW = 2;
+  PORT_LEASE_ACTION_RELEASE = 3;
+}
+
+message PortLeaseRequest {
+  string route_id = 1;
+  PortRef port = 2;
+  PortLeaseAction action = 3;
+  uint64 requested_ttl_ms = 4;
+}
+
+enum PortLeaseOutcome {
+  PORT_LEASE_OUTCOME_UNSPECIFIED = 0;
+  PORT_LEASE_OUTCOME_ACQUIRED = 1;
+  PORT_LEASE_OUTCOME_RENEWED = 2;
+  PORT_LEASE_OUTCOME_RELEASED = 3;
+  PORT_LEASE_OUTCOME_CONFLICT = 4;
+  PORT_LEASE_OUTCOME_DENIED = 5;
+}
+
+message PortLeaseResponse {
+  string request_message_id = 1;
+  string route_id = 2;
+  PortRef port = 3;
+  PortLeaseOutcome outcome = 4;
+  optional uint64 expires_at_ms = 5;
+}
+
+message ControlHeartbeat {
+  uint64 sequence = 1;
+  bool acknowledgement = 2;
+}
+
+// Adapter-managed controller receiver configuration, sent only over paired TLS.
+// This advertises a receiver; it never starts remote hardware.
+message ControllerReceiverOffer {
+  string host = 1;
+  uint32 port = 2;
+  string token = 3;
+}
+
+// Paired peer may edit preferences, never start hardware or grant a Route.
+message ControllerSettingsRequest {
+  uint64 request_id = 1;
+  uint64 expected_revision = 2;
+  bool motion_enabled = 3;
+  uint32 haptics_strength = 4;
+}
+message ControllerSettingsState {
+  uint64 revision = 1;
+  bool motion_enabled = 2;
+  uint32 haptics_strength = 3;
+  uint64 request_id = 4;
+  string error = 5;
 }
 
 message ErrorMessage {
@@ -89,9 +250,16 @@ message Envelope {
     RouteCommand route_command = 42;
     RouteStatus route_status = 43;
     ProblemDescriptor problem = 44;
+    PortLeaseRequest port_lease_request = 45;
+    PortLeaseResponse port_lease_response = 46;
+    ControlHeartbeat control_heartbeat = 47;
+    ControllerReceiverOffer controller_receiver_offer = 61;
+    ControllerSettingsRequest controller_settings_request = 62;
+    ControllerSettingsState controller_settings_state = 63;
+    DisplaySessionControl display_session_control = 64;
   }
 
   reserved 11, 14 to 19;
   reserved 21 to 40;
-  reserved 45 to 60;
+  reserved 48 to 60;
 }

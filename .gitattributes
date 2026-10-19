@@ -7,3 +7,5 @@
 *.wav binary
 *.jar binary
 third_party/patches/moonlight-common-c-874ac954/0001-capyio-video-only-client.patch -whitespace
+# Unified patch context keeps upstream indentation and blank-line markers.
+platform/windows/capyio-input/tools/viiper-ds4-clock.patch -whitespace

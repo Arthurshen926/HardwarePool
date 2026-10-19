@@ -1,8 +1,8 @@
 # CapyIO Android JNI boundary
 
 This crate exposes primitive-only JNI entrypoints for the private touchpad
-bridge and the local Android catalog Runtime. Android framework objects and
-Core memory layouts never cross the boundary.
+bridge, the local Android catalog Runtime and paired-directory validation.
+Android framework objects and Core memory layouts never cross the boundary.
 
 ADR 1406 adds `AndroidCatalogRuntimeV1`. It decodes the schema-v1 catalog from
 the unified Java host, constructs a real `NodeRuntime`, and permits
@@ -19,3 +19,8 @@ cargo ndk -t arm64-v8a -o target/android-jni build \
 
 ADR 1407 packages and instantiates this library from the unified Service. This
 crate still does not open a socket, authenticate a peer or authorize a Route.
+
+ADR 1451 reuses the shared `capyio-pairing` schema through a bounded byte-array
+JNI call. Java owns only no-backup `AtomicFile` placement; Rust validates the
+local Node relationship, schema, peer bounds and duplicate identities and
+returns canonical non-secret JSON. This does not enroll or connect a peer.

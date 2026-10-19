@@ -19,6 +19,18 @@ final class AndroidHapticsSinkAdapter {
     private final Vibrator vibrator;
     private final CapabilityLifecycleController controller;
     private final Runnable stateChanged;
+    private volatile int strengthPercent = 70;
+
+    boolean available() { return vibrator != null && vibrator.hasVibrator(); }
+
+    int strengthPercent() { return strengthPercent; }
+
+    void setStrengthPercent(int percent) {
+        if (percent < 0 || percent > 100) throw new IllegalArgumentException("Strength must be 0..100");
+        strengthPercent = percent;
+        // Do not let an effect at the previous gain continue after a change.
+        if (vibrator != null) vibrator.cancel();
+    }
 
     AndroidHapticsSinkAdapter(
             Vibrator vibrator,
@@ -29,7 +41,20 @@ final class AndroidHapticsSinkAdapter {
         this.stateChanged = stateChanged;
     }
 
-    void start() {
+    synchronized void start() { start(true); }
+
+    synchronized long beginRemote() {
+        if (controller.snapshot().state().ownsAdapterLifecycle()) return 0;
+        start(false);
+        CapabilityLifecycleSnapshot state = controller.snapshot();
+        return state.state() == CapabilityLifecycleState.ACTIVE ? state.generation() : 0;
+    }
+
+    synchronized void endRemote(long generation) {
+        if (controller.snapshot().generation() == generation) stop();
+    }
+
+    private void start(boolean confirmation) {
         TransitionToken transition = controller.beginStart();
         if (!transition.accepted()) {
             stateChanged.run();
@@ -46,8 +71,10 @@ final class AndroidHapticsSinkAdapter {
                 stateChanged.run();
                 return;
             }
-            vibrator.vibrate(VibrationEffect.createOneShot(
-                    CONFIRMATION_DURATION_MILLIS, CONFIRMATION_AMPLITUDE));
+            int amplitude = HapticsStrength.amplitude(
+                    CONFIRMATION_AMPLITUDE * 1000 / 255, strengthPercent);
+            if (confirmation && amplitude > 0) vibrator.vibrate(VibrationEffect.createOneShot(
+                    CONFIRMATION_DURATION_MILLIS, amplitude));
             controller.completeStart(transition.generation());
         } catch (RuntimeException denied) {
             controller.fail(transition.generation(), PROBLEM_START);
@@ -55,7 +82,7 @@ final class AndroidHapticsSinkAdapter {
         stateChanged.run();
     }
 
-    void stop() {
+    synchronized void stop() {
         TransitionToken transition = controller.beginStop();
         if (transition.accepted()) {
             try {
@@ -85,7 +112,7 @@ final class AndroidHapticsSinkAdapter {
         controller.fail(lifecycle.generation(), problemCode);
     }
 
-    boolean submit(AndroidHapticsCommand command) {
+    synchronized boolean submit(AndroidHapticsCommand command) {
         if (command == null) {
             throw new IllegalArgumentException("Haptics command is required");
         }
@@ -100,8 +127,9 @@ final class AndroidHapticsSinkAdapter {
                 vibrator.cancel();
             } else {
                 int magnitude = Math.max(command.lowFrequency(), command.highFrequency());
-                int amplitude = Math.max(1, (magnitude * 255 + 999) / 1_000);
-                vibrator.vibrate(VibrationEffect.createOneShot(
+                int amplitude = HapticsStrength.amplitude(magnitude, strengthPercent);
+                if (amplitude == 0) vibrator.cancel();
+                else vibrator.vibrate(VibrationEffect.createOneShot(
                         command.durationMillis(), amplitude));
             }
             return true;

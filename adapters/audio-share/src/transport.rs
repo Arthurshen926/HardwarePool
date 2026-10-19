@@ -859,7 +859,7 @@ mod tests {
         let binding = media_binding(AudioStreamSpec::media_balanced());
         let format = AudioSharePrivateFormat::from_stream_spec(&binding.selected_spec)
             .expect("baseline format");
-        let transport = AudioShareTransport::bind(
+        let mut transport = AudioShareTransport::bind(
             AudioShareTransportConfig::local_lab("127.0.0.1:0".parse().unwrap()),
             format,
         )
@@ -907,6 +907,9 @@ mod tests {
             }
         }
         assert_eq!(&received[..pcm.len()], pcm);
+        // Receipt can precede the sender's post-send counter updates. Joining
+        // makes the final snapshot deterministic without delaying production I/O.
+        transport.stop_and_join();
         let stats = transport.stats();
         assert!(stats.blocks_enqueued >= 1);
         assert!(stats.datagrams_sent >= 2);
@@ -917,7 +920,6 @@ mod tests {
         assert_eq!(common.packets_transmitted, stats.datagrams_sent);
         assert_eq!(common.payload_bytes_transmitted, stats.pcm_bytes_sent);
         assert_eq!(common.estimated_jitter_micros, None);
-        transport.shutdown();
     }
 
     #[test]

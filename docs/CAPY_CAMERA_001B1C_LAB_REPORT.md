@@ -5,7 +5,7 @@ Date: 2026-08-29
 Status: Frame Server roundtrip passed; exact rollback verified; changes
 uncommitted.
 
-Target: `DESKTOP-AT8EVE9`, Windows NT 10.0.26200.0, x86-64
+Target: `LAB-WINDOWS-HOST`, Windows NT 10.0.26200.0, x86-64
 
 Scope: `MFVirtualCameraLifetime_Session`, `MFVirtualCameraAccess_CurrentUser`,
 `KSCATEGORY_VIDEO_CAMERA`

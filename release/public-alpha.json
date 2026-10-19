@@ -1,0 +1,15 @@
+{
+  "schemaVersion": 1,
+  "productName": "CapyIO",
+  "publisher": "Arthurshen926",
+  "channel": "public-alpha",
+  "version": "0.5.24-alpha.1",
+  "publicationApproved": false,
+  "windowsSigning": "unsigned",
+  "android": {
+    "applicationId": "dev.capyio.android",
+    "versionCode": 36,
+    "signerSha256": "29307555e525e46a29150bb85d0b73e3fde7270865b215d07b5a95805cc41007",
+    "preserveExistingSigningIdentity": true
+  }
+}

@@ -1,5 +1,10 @@
 // Optional locally built GPL display receiver. Never accepts an opaque arbitrary .so.
 def stageOption = providers.gradleProperty('capyioGameStreamStageRoot').orNull
+if (stageOption == null) {
+    tasks.matching { it.name == 'prePairingLabBuild' }.configureEach {
+        doFirst { throw new GradleException('Pairing lab uses the integrated UI; pass -PcapyioGameStreamStageRoot=target/android-moonlight-unified to include its display runtime') }
+    }
+}
 if (stageOption != null) {
     def repository = rootProject.file('../..').canonicalFile
     def stage = new File(repository, stageOption).canonicalFile
@@ -64,9 +69,11 @@ if (stageOption != null) {
         from(new File(stage, 'source/moonlight-common-c/nanors/LICENSE')) { rename { 'nanors-MIT.txt' } }
         from(new File(repository, 'docs/MOONLIGHT_ANDROID_DISTRIBUTION_PLAN.md'))
     }
-    android.sourceSets.debug.jniLibs.srcDir new File(stage, 'jniLibs')
+    android.sourceSets.matching { it.name in ['debug', 'pairingLab'] }.configureEach {
+        jniLibs.srcDir new File(stage, 'jniLibs')
+        assets.srcDir layout.buildDirectory.dir('generated/gamestream-assets').get().asFile
+    }
     android.packaging.jniLibs.keepDebugSymbols += ['**/libcapyio-gamestream-client.so']
-    android.sourceSets.debug.assets.srcDir layout.buildDirectory.dir('generated/gamestream-assets').get().asFile
     def verifyApk = tasks.register('verifyGameStreamDebugApk') {
         group = 'verification'
         dependsOn 'assembleDebug', verify
@@ -90,7 +97,7 @@ if (stageOption != null) {
         }
     }
     rootProject.tasks.named('capyioCheck') { dependsOn verifyApk }
-    tasks.matching { it.name == 'preDebugBuild' }.configureEach { dependsOn notices }
+    tasks.matching { it.name in ['preDebugBuild', 'prePairingLabBuild'] }.configureEach { dependsOn notices }
     tasks.matching { it.name == 'preReleaseBuild' }.configureEach {
         doFirst { throw new GradleException('GameStream source distribution gate is not closed; debug-only integration') }
     }

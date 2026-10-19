@@ -102,7 +102,7 @@ WASAPI probes were launched from the Codex filesystem sandbox and returned
 account. This was a harness false negative, matching the earlier 21.82
 qualification finding.
 
-In the interactive `DESKTOP-AT8EVE9\arthu` session, the physical microphone
+In the interactive `LAB-WINDOWS-HOST\local-user` session, the physical microphone
 opened for 98 callbacks / 94,080 samples and the restored 21.83 CapyIO
 microphone opened for 99 callbacks / 47,520 samples. With the CapyIO Android
 microphone Source and native Runtime active, the non-retained CapyIO probe

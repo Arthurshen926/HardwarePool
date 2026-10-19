@@ -67,7 +67,7 @@ without playing through the physical or Remote Desktop output.
 - fixed-revision review rejects SysVAD loopback as real-PCM evidence, rejects
   VirtualDrivers as a functional transport baseline and retains Scream only as
   research evidence; ADR 0028 selects the bounded render APO spike;
-- local host: `DESKTOP-AT8EVE9`, x64 Windows build 26200.9168, Visual Studio
+- local host: `LAB-WINDOWS-HOST`, x64 Windows build 26200.9168, Visual Studio
   Build Tools 17.14, Windows SDK 10.0.26100.0 and WDK 10.0.26100.6584;
 - isolated target `CapyIO-DriverLab` now exists as a Hyper-V Generation 2 VM
   under `F:\CapyIO-DriverLab\vm`, with 8 vCPU, 4–16 GiB dynamic memory, a
@@ -82,7 +82,7 @@ without playing through the physical or Remote Desktop output.
   InfVerif are installed. The minimized x64 Release package builds with signing
   disabled, passes WDK Signability with zero findings and passes independent
   InfVerif `/u` and `/w` validation;
-- the refreshed `arthu` login token contains the `Hyper-V Administrators` SID
+- the refreshed `local-user` login token contains the `Hyper-V Administrators` SID
   and can enumerate/manage the exact lab VM.
 - `CAPY-AUDIO-001B2T` is complete at the transport/submission level. The
   CapyIO-authored bounded sender negotiated with the pinned Android v0.3.4 app
@@ -120,7 +120,7 @@ Android remained connected, and the human operator confirmed the corresponding
 phone playback changes. B4 now has compile- and unit-validated dedicated Broker
 supervision: trusted host configuration selects the fixed projection, skips the
 legacy upstream endpoint probe/picker, bounds readiness/output and reaps the
-child on stop. On `DESKTOP-AT8EVE9`, the ignored exact physical test launched
+child on stop. On `LAB-WINDOWS-HOST`, the ignored exact physical test launched
 the repository-built Broker under the Runtime controller, reached `Active`
 epoch 1 with the Android v0.3.4 receiver, stopped explicitly, passed in 18.63
 seconds and released TCP/UDP port 65530. A separate Runtime-spawned session had

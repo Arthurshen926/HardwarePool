@@ -72,7 +72,7 @@ was present, and the exact VIIPER PID was stopped with 3241/3242 no longer
 listening.
 
 A second authorized physical run used the vivo endpoint
-`100.66.157.119:44801`. The same pinned VIIPER v0.7.0 archive was restored after
+`<LAB_IPV4_03>:44801`. The same pinned VIIPER v0.7.0 archive was restored after
 reboot and its SHA-256 matched the value above. VIIPER ran loopback-only at
 exact PID 57352 with both auto-attach modes disabled. The bounded Android ->
 DS4 Gate provisioned exact export `1-1`; read-only USB/IP preflight identified
@@ -260,7 +260,7 @@ robustness run accepted 15,253 packets, neutralized two transient timeouts and
 recovered both. Its automated screen taps missed the face controls, so it did
 not satisfy the non-neutral assertion. A final 90-second run first corrected
 two stale phone settings discovered from the live UI hierarchy: port `31580`
-was changed to `31581`, and the obsolete desktop address `192.168.1.2` was
+was changed to `31581`, and the obsolete desktop address `<LAB_IPV4_05>` was
 changed to the host's current Tailscale address. With the layout-derived A
 button center, that Gate accepted 3,352 packets, rejected and replayed none,
 submitted 3,295 DS4 states, observed non-neutral controls and finite IMU, had

@@ -16,8 +16,8 @@ use capyio_runtime::NodeRuntime;
 use serde::{Deserialize, Serialize};
 
 use crate::audio_share_runtime::{
-    AudioShareProcessBoundary, AudioShareRouteController, AudioShareStartError,
-    DEFAULT_RECEIVER_WAIT_POLLS, DEFAULT_STABLE_RECEIVER_POLLS,
+    AudioShareProcessBoundary, AudioShareReadiness, AudioShareRouteController,
+    AudioShareStartError, DEFAULT_RECEIVER_WAIT_POLLS, DEFAULT_STABLE_RECEIVER_POLLS,
 };
 
 #[cfg(windows)]
@@ -339,12 +339,13 @@ impl AudioShareQuickAction {
             route_state: Some(route_state_label(status.route_state)),
             route_epoch: Some(status.route_epoch),
             available_operations: operations(status.route_state),
-            evidence_level: if status.route_state == RouteState::Active {
+            evidence_level: if status.route_state == RouteState::Active && status.receiver_verified {
                 "stable_tcp_receiver_presence"
             } else {
                 "process_and_route_state"
             },
-            connection_hint: None,
+            connection_hint: (status.route_state == RouteState::Active && !status.receiver_verified)
+                .then(|| "Windows 音频传输服务已就绪；尚无远端接收或播放证据。请在平板开启扬声器并用实际音频验证。".to_owned()),
             problem_code: problem.as_ref().map(|value| value.code.clone()),
             problem: self
                 .orchestration_problem
@@ -480,6 +481,14 @@ impl AudioShareProcessBoundary for AudioShareHostProcess {
         }
     }
 
+    fn readiness(&mut self) -> Result<AudioShareReadiness, String> {
+        match self {
+            Self::Direct(process) => AudioShareProcessBoundary::readiness(process.as_mut()),
+            #[cfg(windows)]
+            Self::WindowsService(process) => process.client.status().map(service_readiness),
+        }
+    }
+
     fn stop(&mut self) -> Result<(), String> {
         match self {
             Self::Direct(process) => AudioShareProcessBoundary::stop(process.as_mut()),
@@ -508,21 +517,38 @@ impl BrokerServiceProcess {
     }
 
     fn receiver_presence(&self) -> Result<ReceiverTcpPresence, String> {
-        self.client.status().map(|snapshot| {
-            if snapshot.state == BrokerServiceState::Active {
-                ReceiverTcpPresence::Established {
-                    connection_count: 1,
-                }
-            } else if snapshot.state == BrokerServiceState::Stopped {
-                ReceiverTcpPresence::SupervisorNotRunning
-            } else {
-                ReceiverTcpPresence::Disconnected
-            }
-        })
+        self.client
+            .status()
+            .map(|snapshot| service_receiver_presence(&snapshot))
     }
 
     fn stop(&self) -> Result<(), String> {
         self.client.stop().map(|_| ())
+    }
+}
+
+#[cfg(windows)]
+fn service_receiver_presence(snapshot: &BrokerServiceSnapshot) -> ReceiverTcpPresence {
+    if matches!(
+        snapshot.state,
+        BrokerServiceState::Stopped | BrokerServiceState::Failed
+    ) {
+        ReceiverTcpPresence::SupervisorNotRunning
+    } else if snapshot.receiver_present {
+        ReceiverTcpPresence::Established {
+            connection_count: 1,
+        }
+    } else {
+        ReceiverTcpPresence::Disconnected
+    }
+}
+
+#[cfg(windows)]
+fn service_readiness(snapshot: BrokerServiceSnapshot) -> AudioShareReadiness {
+    if snapshot.state == BrokerServiceState::Active && !snapshot.receiver_present {
+        AudioShareReadiness::ServiceTransportReady
+    } else {
+        AudioShareReadiness::ReceiverTcp(service_receiver_presence(&snapshot))
     }
 }
 
@@ -768,6 +794,75 @@ mod tests {
         assert_eq!(sanitized.chars().count(), 256);
         assert!(sanitized.contains('\u{fffd}'));
         assert!(!sanitized.contains('\n'));
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn native_service_active_is_transport_ready_not_an_invented_tcp_receiver() {
+        let snapshot = BrokerServiceSnapshot {
+            schema_version: 1,
+            state: BrokerServiceState::Active,
+            generation: 1,
+            receiver_present: false,
+            produced_frames: None,
+            consumed_frames: None,
+            problem_code: None,
+            local_endpoint: None,
+            peer_endpoint: None,
+        };
+        assert_eq!(
+            service_receiver_presence(&snapshot),
+            ReceiverTcpPresence::Disconnected
+        );
+        assert_eq!(
+            service_readiness(snapshot),
+            AudioShareReadiness::ServiceTransportReady
+        );
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn service_receiver_evidence_requires_observation_and_a_live_service() {
+        for state in [
+            BrokerServiceState::Stopped,
+            BrokerServiceState::Starting,
+            BrokerServiceState::WaitingForReceiver,
+            BrokerServiceState::Active,
+            BrokerServiceState::Failed,
+        ] {
+            for receiver_present in [false, true] {
+                let snapshot = BrokerServiceSnapshot {
+                    schema_version: 1,
+                    state,
+                    generation: 1,
+                    receiver_present,
+                    produced_frames: None,
+                    consumed_frames: None,
+                    problem_code: None,
+                    local_endpoint: None,
+                    peer_endpoint: None,
+                };
+                let expected = if matches!(
+                    state,
+                    BrokerServiceState::Stopped | BrokerServiceState::Failed
+                ) {
+                    ReceiverTcpPresence::SupervisorNotRunning
+                } else if receiver_present {
+                    ReceiverTcpPresence::Established {
+                        connection_count: 1,
+                    }
+                } else {
+                    ReceiverTcpPresence::Disconnected
+                };
+                assert_eq!(service_receiver_presence(&snapshot), expected);
+                if state != BrokerServiceState::Active || receiver_present {
+                    assert_eq!(
+                        service_readiness(snapshot),
+                        AudioShareReadiness::ReceiverTcp(expected)
+                    );
+                }
+            }
+        }
     }
 
     #[cfg(windows)]

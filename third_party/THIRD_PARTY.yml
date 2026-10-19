@@ -1,6 +1,22 @@
 schema_version: 1
 foundation_source_imports: []
 planned_integrations:
+  - id: rustcrypto-spake2-enrollment
+    upstream_repository: https://github.com/RustCrypto/PAKEs
+    pinned_revision: 3e126d74b692a20d88f6ec62c770ac0c93ab002c
+    pinned_release: crates.io/spake2/0.4.0
+    source_archive_sha256: c5482afe85a0b6ce956c945401598dbc527593c77ba51d0a87a586938b1b893a
+    license: MIT OR Apache-2.0
+    integration_mode: registry_library_dependency
+    source_imported: false
+    binary_imported: false
+    imported_paths: []
+    local_modifications: []
+    distribution_note: >-
+      Exact registry version and transitive checksums are in Cargo.lock.
+      The crate Ed25519 SPAKE2 suite is not claimed RFC-9382-wire-compatible
+      or independently audited. See docs/adr/1506-enrollment-dependencies.md.
+      No upstream source is copied into this repository.
   - id: micyou
     upstream_repository: https://github.com/LanRhyme/MicYou
     pinned_revision: b22c41fff3d3d1169c04c8acd1db7266cf9d4c62
@@ -495,6 +511,18 @@ planned_integrations:
         Evaluate the current DS4Windows backend release against the exact WGI,
         direct-HID and RawInput inventory Gates while retaining the existing
         bounded loopback protocol and one-owned-device lifecycle.
+    local_ds4_clock_patch:
+      source_revision: 6b71b148a2243fab77ee1a46f4e22e00bd7d5a04
+      patch: platform/windows/capyio-input/tools/viiper-ds4-clock.patch
+      regression: platform/windows/capyio-input/tools/viiper-clock-regression_test.go
+      license: GPL-3.0-only
+      distributed: false
+      binary_sha256: e8981fbed5f361f7287e7554d8b62f937c8220d248d0078fb897c64e1d8994c7
+      purpose: >-
+        Correct DS4 USB sensor timestamp from a per-report interval to a
+        cumulative wrapping counter. Local external-process build only;
+        input wire, loopback policy and driver installation policy unchanged.
+      evidence: docs/CAPY_DS4_CLOCK_FIX.md
     fixed_revision_protocol_review:
       reviewed_paths:
         - LICENSE.txt
@@ -626,7 +654,7 @@ planned_integrations:
     pinned_release: 1.21.256
     license: MIT
     license_source: https://github.com/ViGEm/ViGEm.NET/blob/master/LICENSE
-    integration_mode: external_user_mode_sidecar_over_fixed_binary_stdin
+    integration_mode: external_user_mode_sidecar_over_fixed_binary_stdio
     source_imported: false
     binary_imported: false
     imported_paths: []
@@ -636,12 +664,13 @@ planned_integrations:
       size_bytes: 198914
       sha256: ff460031b33e0882cd1166fe2d072d0fe97578480c61ed85dccfa6c930fdb55e
     purpose: >-
-      publish the same normalized phone controls as a standard Xbox 360 XInput
-      companion for Steam and browser consumers while the independent DS4 and
-      DSU projections retain motion semantics
+      publish normalized phone controls as a standalone Xbox 360 XInput target
+      or the retained explicit lab companion; DS4 and DSU retain motion semantics
     data_contract: >-
       fixed 20-byte little-endian Xbox 360 complete-state frames over inherited
-      stdin; one readiness line on stdout; failures on stderr
+      stdin; one readiness line then fixed two-byte small/large motor feedback
+      on stdout; failures on stderr; a latest-value mailbox separates the
+      driver feedback callback from pipe writes
     alternatives_considered:
       - VIIPER Xbox 360 over usbip-win2, rejected after WGI absence and premature attachment loss
       - replacing the motion-capable DS4 projection with Xbox 360, rejected because XInput has no IMU contract

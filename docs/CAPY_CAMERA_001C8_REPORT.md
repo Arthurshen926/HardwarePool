@@ -2,7 +2,7 @@
 
 - Date: 2026-08-30
 - Branch: `codex/capyio-camera`
-- Target: `DESKTOP-AT8EVE9`, V2419A / PD2419 over authorized wireless ADB
+- Target: `LAB-WINDOWS-HOST`, V2419A / PD2419 over authorized wireless ADB
 - Status: Windows Camera displayed live phone-camera pixels; exact rollback complete
 
 ## Closed GUI hold command

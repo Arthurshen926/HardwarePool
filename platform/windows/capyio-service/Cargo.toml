@@ -17,6 +17,8 @@ serde_json.workspace = true
 sha2.workspace = true
 
 [target.'cfg(windows)'.dependencies]
+capyio-windows-camera-share = { path = "../capyio-camera-share" }
+capyio-audio = { path = "../../../crates/capyio-audio" }
 capyio-display-stream-adapter = { path = "../../../adapters/sunshine-moonlight" }
 capyio-display-engine-host = { path = "../capyio-display-engine-host" }
 capyio-core = { path = "../../../crates/capyio-core" }
@@ -39,4 +41,5 @@ windows-sys = { workspace = true, features = [
     "Win32_System_IO",
     "Win32_System_Pipes",
     "Win32_System_Threading",
+    "Win32_System_Services",
 ] }

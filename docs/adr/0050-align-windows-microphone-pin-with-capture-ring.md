@@ -15,7 +15,7 @@ consumer successfully and then failed WASAPI initialization with
 
 That diagnosis was a false negative: the same sandbox probe returned the same
 `E_INVALIDARG` for a physical `AB13X USB Audio` microphone. Running the probe
-in the interactive `DESKTOP-AT8EVE9\arthu` session opened both devices.
+in the interactive `LAB-WINDOWS-HOST\local-user` session opened both devices.
 
 ## Rejected decision
 
@@ -24,7 +24,7 @@ device format: 48 kHz, mono, 32-bit IEEE float. Raw, default, speech,
 communications and far-field speech modes selected that same device format.
 The streaming data range was likewise bounded to 48 kHz mono float32.
 
-This decision is rejected. On `DESKTOP-AT8EVE9`, the signed 21.84 package made
+This decision is rejected. On `LAB-WINDOWS-HOST`, the signed 21.84 package made
 the capture endpoint `NOTPRESENT` and removed it from Windows/CPAL input
 enumeration. Removing 21.84 and reinstalling the signed 21.83 package restored
 the endpoint without a reboot. In the interactive user session, restored 21.83
