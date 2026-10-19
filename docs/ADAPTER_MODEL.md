@@ -164,3 +164,7 @@ ADR 1516 adds experimental explicit finite Linux mock Unix-local IPC separate fr
 control pipes. Prepare carries endpoint setup; Sink Start carries bounded receipt
 metadata. The old independent smoke sample is omitted in payload mode. This does
 not enable mock IP networking, hardware, continuous media or a public wire.
+
+ADR 1517 extends only the explicit Linux fixture boundary with a distinct
+four-record batch transport. Payload bytes remain off control pipes; a complete
+aggregate receipt is required. ADR 1516 single-record behavior remains unchanged.

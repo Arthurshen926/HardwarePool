@@ -66,3 +66,11 @@ The full finite-fixture tests passed on hosted Ubuntu for commit `4210120`:
 This is bounded synthetic IPC evidence, not continuous media or hardware support.
 The original cloud environment still denies Unix socket execution; see ADR 1516
 for the exact tested scope and historical local blocker.
+
+### Experimental fixed batch fixture (ADR 1517)
+
+Use `--mock-routes --mock-batch` for exactly four ordered synthetic records. It
+conflicts with `--mock-payload`; the old one-record option is unchanged. Complete
+consumption and an aggregate receipt are required before Active. No continuous
+stream, worker thread or hardware support is implied. Stop waits for bounded
+synchronous Start to finish. Batch IPC acceptance is pending hosted CI.

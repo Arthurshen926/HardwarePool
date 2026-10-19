@@ -1456,3 +1456,9 @@ No grants, credentials, services or system security settings change. Same-user
 processes and caller-controlled temporary-directory ancestry remain trusted;
 this is not peer authentication. Cleanup closes the pair before removing owned
 paths. Forced termination can leave residue; no broad cleanup is authorized.
+
+ADR 1517 retains the trusted local-fixture boundary for explicitly selected
+four-record batches. Count, token, ordering and timestamps are fixed; records
+remain at most 2048 bytes. Complete receipt validation precedes Active, and
+partial/error paths retain child-before-path cleanup. No peer authentication,
+IP networking, hardware access or asynchronous Stop guarantee is added.

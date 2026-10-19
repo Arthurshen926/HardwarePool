@@ -8,3 +8,6 @@
   process communication rather than IP networking. Hardware/network access remains
   forbidden. In payload mode, samples stay off stdin/stdout; control carries only
   endpoint setup and bounded receipt metadata.
+
+- ADR 1517 additionally permits the explicit fixed four-record local batch. It
+  remains finite, bounded and hardware/network-free; no worker thread is added.

@@ -460,3 +460,15 @@ are Route ID, Stream ID, epoch, received count, payload-byte count and a
 payload. The bounded private Unix datagram is not this management protocol,
 Sidecar JSON-RPC or a public cross-device protocol. Finite IPC acceptance passed
 on hosted Ubuntu for commit `4210120`; see ADR 1516 for exact run and scope.
+
+
+ADR 1517 adds `--mock-batch`, requiring `--mock-routes` and conflicting with
+`--mock-payload`. The inherited-stdio management schema and commands are unchanged.
+`host_status.mock_batch_enabled` explicitly identifies the selected fixed-batch
+mode; `sample_transfer_enabled` is true for either payload mode. Batch receipts
+retain Route/Stream/epoch, received count, payload bytes and checksum, and add
+`first_sequence=0` and `last_sequence=3`. These two fields are omitted from the
+unchanged one-record receipt. Count must be four, total token bytes 84 and the
+checksum must match ordered sequence/token consumption before Active. The private
+`dev.capyio.test.unix-batch-v1` datagrams remain separate from JSON-RPC payloads
+and do not extend the cross-device protocol or claim continuous streaming.

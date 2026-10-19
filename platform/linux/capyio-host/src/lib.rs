@@ -79,7 +79,26 @@ impl LinuxNodeHost {
             .mocks
             .as_mut()
             .ok_or_else(|| io::Error::other("mock payload requires mock routes"))?;
+        if mocks.batch_enabled {
+            return Err(io::Error::other("mock batch conflicts with mock payload"));
+        }
         mocks.payload_enabled = true;
+        Ok(self)
+    }
+
+    /// Opt-in fixed four-record fixture; not a continuous stream.
+    pub fn with_mock_batch(mut self) -> io::Result<Self> {
+        if !cfg!(target_os = "linux") {
+            return Err(io::Error::other("mock batch requires Linux"));
+        }
+        let mocks = self
+            .mocks
+            .as_mut()
+            .ok_or_else(|| io::Error::other("mock batch requires mock routes"))?;
+        if mocks.payload_enabled {
+            return Err(io::Error::other("mock batch conflicts with mock payload"));
+        }
+        mocks.batch_enabled = true;
         Ok(self)
     }
 
@@ -136,7 +155,8 @@ impl LinuxNodeHost {
                         "node_id": self.runtime.snapshot().local_node.id,
                         "transport": "inherited_stdio", "hardware_enabled": false,
                         "network_enabled": false, "identity_persisted": false,
-                        "mock_routes_enabled": self.mocks.is_some(), "sample_transfer_enabled": self.mocks.as_ref().is_some_and(|m|m.payload_enabled),
+                        "mock_routes_enabled": self.mocks.is_some(), "sample_transfer_enabled": self.mocks.as_ref().is_some_and(|m|m.payload_enabled || m.batch_enabled),
+                        "mock_batch_enabled": self.mocks.as_ref().is_some_and(|m|m.batch_enabled),
                         "sample_receipt": self.mocks.as_ref().and_then(|m|m.receipt.as_ref())
                     }),
                     false,

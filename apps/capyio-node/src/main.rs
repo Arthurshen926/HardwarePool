@@ -32,6 +32,9 @@ enum Command {
         /// Transfer one finite fixture via separate Linux-local IPC; no hardware or IP network.
         #[arg(long, requires = "mock_routes")]
         mock_payload: bool,
+        /// Transfer a fixed four-record ordered fixture, not a continuous stream.
+        #[arg(long, requires = "mock_routes", conflicts_with = "mock_payload")]
+        mock_batch: bool,
     },
     /// Runs four independent mock Routes across audio, motion and video Profiles.
     Demo,
@@ -62,6 +65,7 @@ fn main() -> anyhow::Result<()> {
             name,
             mock_routes,
             mock_payload,
+            mock_batch,
         } => {
             anyhow::ensure!(cfg!(target_os = "linux"), "linux-host requires Linux");
             let mut host = capyio_linux_host::LinuxNodeHost::new(node_id, &name)?;
@@ -75,6 +79,9 @@ fn main() -> anyhow::Result<()> {
             }
             if mock_payload {
                 host = host.with_mock_payload()?;
+            }
+            if mock_batch {
+                host = host.with_mock_batch()?;
             }
             host.serve(std::io::stdin().lock(), std::io::stdout().lock())?;
             Ok(())

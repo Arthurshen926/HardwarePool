@@ -1583,3 +1583,7 @@ and checks child completion identity/epoch before Active. Snapshot/status and
 repeated Start reconcile failures; there is no background liveness guarantee.
 This is process-backed lifecycle simulation, not hardware or sample transfer.
 See `adr/1515-linux-mock-route-lifecycle.md` for cleanup and trust boundaries.
+
+ADR 1517 adds separately opted-in fixed four-record Linux mock batches. One
+stateful bounded receiver validates exact sequence/timing and complete consumption
+before Active. It introduces no background worker or continuous stream.

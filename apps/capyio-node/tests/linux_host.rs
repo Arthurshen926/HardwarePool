@@ -19,6 +19,9 @@ impl Host {
         Self::spawn_options(mock_routes, false)
     }
     fn spawn_options(mock_routes: bool, mock_payload: bool) -> Self {
+        Self::spawn_all_options(mock_routes, mock_payload, false)
+    }
+    fn spawn_all_options(mock_routes: bool, mock_payload: bool, mock_batch: bool) -> Self {
         let mut command = Command::new(env!("CARGO_BIN_EXE_capyio-node"));
         command.args([
             "linux-host",
@@ -29,6 +32,9 @@ impl Host {
         ]);
         if mock_routes {
             command.arg("--mock-routes");
+        }
+        if mock_batch {
+            command.arg("--mock-batch");
         }
         if mock_payload {
             command.arg("--mock-payload");
@@ -277,14 +283,35 @@ fn payload_requires_explicit_lifecycle_opt_in() {
 }
 #[test]
 fn payload_crosses_real_children_once_per_epoch_and_cleans_on_every_exit() {
+    assert_transfer_lifecycle(false);
+}
+#[test]
+fn batch_crosses_real_children_once_per_epoch_and_cleans_on_every_exit() {
+    assert_transfer_lifecycle(true);
+}
+fn assert_transfer_lifecycle(batch: bool) {
     for exit in ["stop", "shutdown", "eof", "oversized", "crash"] {
-        let mut host = Host::spawn_options(true, true);
+        let mut host = Host::spawn_all_options(true, !batch, batch);
         host.send("mock_route_start", 1);
         let first = host.reply();
         assert_eq!(first["result"]["routes"][0]["state"], "active");
         let receipt = first["result"]["sample_receipt"].clone();
-        assert_eq!(receipt["received"], 1);
-        assert_eq!(receipt["payload_bytes"], "finite-source-sample".len());
+        assert_eq!(receipt["received"], if batch { 4 } else { 1 });
+        assert_eq!(
+            receipt["payload_bytes"],
+            if batch {
+                4 * "finite-batch-sample-0".len()
+            } else {
+                "finite-source-sample".len()
+            }
+        );
+        if batch {
+            assert_eq!(receipt["first_sequence"], 0);
+            assert_eq!(receipt["last_sequence"], 3);
+        } else {
+            assert!(receipt.get("first_sequence").is_none());
+            assert!(receipt.get("last_sequence").is_none());
+        }
         assert_eq!(receipt["epoch"], 1);
         assert!(
             receipt["payload_checksum"]
@@ -350,5 +377,21 @@ fn payload_crosses_real_children_once_per_epoch_and_cleans_on_every_exit() {
             _ => unreachable!(),
         }
         assert!(!directory.exists(), "cleanup on {exit}");
+    }
+}
+
+#[test]
+fn batch_requires_opt_in_and_rejects_payload_conflict() {
+    for flags in [
+        vec!["--mock-batch"],
+        vec!["--mock-routes", "--mock-payload", "--mock-batch"],
+    ] {
+        let output = Command::new(env!("CARGO_BIN_EXE_capyio-node"))
+            .args(["linux-host", "--node-id", ID])
+            .args(flags)
+            .output()
+            .unwrap();
+        assert!(!output.status.success());
+        assert!(output.stdout.is_empty());
     }
 }

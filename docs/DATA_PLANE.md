@@ -266,3 +266,12 @@ queue validate one test token before the Sink reports receipt metadata. No paylo
 uses JSON-RPC in this mode. This experimental finite synthetic fixture is not
 production transport/media. Finite IPC acceptance passed on hosted Ubuntu for
 commit `4210120` (ADR 1516); local cloud socket restrictions remain unchanged.
+
+## Linux fixed mock batch (ADR 1517)
+
+`--mock-routes --mock-batch` transfers exactly four fixture records, separately
+from `--mock-payload`. A capacity-two stateful queue rejects overflow without
+eviction or sequence advancement; ordinary receives consume immediately. Exact
+sequences 0..3, synthetic timing and order-sensitive aggregate integrity precede
+Active. Each participant has one 500 ms batch I/O budget. A full kernel queue
+fails closed; no transport flow control or continuous-stream claim is made.

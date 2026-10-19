@@ -9,6 +9,8 @@ use serde::{Deserialize, Serialize};
 use std::{io, path::PathBuf};
 
 pub const TRANSPORT: &str = "dev.capyio.test.unix-datagram-v1";
+pub const BATCH_TRANSPORT: &str = "dev.capyio.test.unix-batch-v1";
+pub const BATCH_COUNT: u64 = 4;
 pub const MAX_RECORD_BYTES: usize = 2048;
 const TOKEN: &str = "finite-source-sample";
 // Diagnostic fixture integrity only, not authentication or a cryptographic hash.
@@ -31,7 +33,10 @@ struct Token {
 #[cfg(target_os = "linux")]
 impl DataPayload for Token {
     fn validate_payload(&self) -> Result<(), DataPlaneError> {
-        if !self.test_only || self.token != TOKEN {
+        if !self.test_only
+            || (self.token != TOKEN
+                && !(0..BATCH_COUNT).any(|sequence| self.token == batch_token(sequence)))
+        {
             return Err(DataPlaneError::InvalidPayload(
                 "invalid fixture token".into(),
             ));
@@ -56,6 +61,10 @@ pub struct Receipt {
     pub received: u64,
     pub payload_bytes: usize,
     pub payload_checksum: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub first_sequence: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_sequence: Option<u64>,
 }
 
 /// The host owns this fresh directory, removing only its fixed socket and empty directory.
@@ -64,6 +73,11 @@ pub struct Endpoint {
     pub descriptor: DataEndpointDescriptor,
 }
 impl Endpoint {
+    pub fn create_batch(stream: StreamId) -> io::Result<Self> {
+        let mut endpoint = Self::create(stream)?;
+        endpoint.descriptor.transport = BATCH_TRANSPORT.into();
+        Ok(endpoint)
+    }
     pub fn create(stream: StreamId) -> io::Result<Self> {
         #[cfg(target_os = "linux")]
         {
@@ -119,7 +133,7 @@ impl Transfer {
             .data_endpoint
             .as_ref()
             .ok_or_else(|| invalid("missing endpoint"))?;
-        if endpoint.transport != TRANSPORT
+        if !matches!(endpoint.transport.as_str(), TRANSPORT | BATCH_TRANSPORT)
             || endpoint.metadata.len() != 1
             || request.profile != ProfileId::new("capyio.test.samples", 1)
             || !request
@@ -181,6 +195,11 @@ impl Transfer {
     }
     #[cfg(target_os = "linux")]
     fn record(&self) -> Record {
+        self.record_at(0)
+    }
+    #[cfg(target_os = "linux")]
+    fn record_at(&self, sequence: u64) -> Record {
+        let batch = self.endpoint.transport == BATCH_TRANSPORT;
         Record {
             version: 1,
             route_id: self.route,
@@ -188,13 +207,17 @@ impl Transfer {
                 profile: ProfileId::new("capyio.test.samples", 1),
                 stream_id: self.stream,
                 stream_epoch: self.epoch,
-                sequence: 0,
-                source_timestamp_nanos: 1,
-                receive_timestamp_nanos: 1,
+                sequence,
+                source_timestamp_nanos: sequence + 1,
+                receive_timestamp_nanos: sequence + 1,
                 clock_domain_id: "synthetic-fixture-clock".into(),
                 payload: Token {
                     test_only: true,
-                    token: TOKEN.into(),
+                    token: if batch {
+                        batch_token(sequence)
+                    } else {
+                        TOKEN.into()
+                    },
                 },
             },
         }
@@ -207,6 +230,7 @@ impl Transfer {
         let record: Record = serde_json::from_slice(bytes).map_err(invalid)?;
         if record.version != 1
             || record.route_id != self.route
+            || record.envelope.payload.token != TOKEN
             || record.envelope.sequence != 0
             || record.envelope.clock_domain_id != "synthetic-fixture-clock"
             || record.envelope.source_timestamp_nanos != 1
@@ -232,11 +256,16 @@ impl Transfer {
             received: 1,
             payload_bytes: delivered.envelope.payload.token.len(),
             payload_checksum: checksum(delivered.envelope.payload.token.as_bytes()),
+            first_sequence: None,
+            last_sequence: None,
         })
     }
     pub fn start(&self) -> io::Result<Option<DataEndpointDescriptor>> {
         #[cfg(target_os = "linux")]
         {
+            if self.endpoint.transport == BATCH_TRANSPORT {
+                return self.start_batch();
+            }
             if let Some(socket) = &self.sink {
                 let mut bytes = [0u8; MAX_RECORD_BYTES + 1];
                 let size = socket.recv(&mut bytes)?;
@@ -267,6 +296,156 @@ impl Transfer {
         }
     }
 }
+fn batch_token(sequence: u64) -> String {
+    format!("finite-batch-sample-{sequence}")
+}
+fn batch_digest() -> Vec<u8> {
+    let mut bytes = Vec::new();
+    for sequence in 0..BATCH_COUNT {
+        bytes.extend_from_slice(&sequence.to_le_bytes());
+        bytes.extend_from_slice(batch_token(sequence).as_bytes());
+    }
+    bytes
+}
+fn batch_payload_bytes() -> usize {
+    (0..BATCH_COUNT)
+        .map(|sequence| batch_token(sequence).len())
+        .sum()
+}
+#[cfg(target_os = "linux")]
+fn remaining(deadline: std::time::Instant) -> io::Result<std::time::Duration> {
+    deadline
+        .checked_duration_since(std::time::Instant::now())
+        .filter(|duration| !duration.is_zero())
+        .ok_or_else(|| io::Error::new(io::ErrorKind::TimedOut, "fixture batch deadline"))
+}
+
+#[cfg(target_os = "linux")]
+struct BatchConsumer {
+    route: RouteId,
+    stream: StreamId,
+    epoch: u64,
+    next: u64,
+    consumed: u64,
+    bytes: usize,
+    digest: Vec<u8>,
+    queue: BoundedEnvelopeQueue<Token>,
+}
+#[cfg(target_os = "linux")]
+impl BatchConsumer {
+    fn new(transfer: &Transfer) -> io::Result<Self> {
+        Ok(Self {
+            route: transfer.route,
+            stream: transfer.stream,
+            epoch: transfer.epoch,
+            next: 0,
+            consumed: 0,
+            bytes: 0,
+            digest: Vec::with_capacity(batch_digest().len()),
+            queue: BoundedEnvelopeQueue::new(
+                ProfileId::new("capyio.test.samples", 1),
+                transfer.stream,
+                transfer.epoch,
+                2,
+            )
+            .map_err(invalid)?,
+        })
+    }
+    fn push(&mut self, bytes: &[u8]) -> io::Result<()> {
+        if bytes.len() > MAX_RECORD_BYTES || bytes.first() != Some(&b'{') {
+            return Err(invalid("invalid batch record size/shape"));
+        }
+        let record: Record = serde_json::from_slice(bytes).map_err(invalid)?;
+        let envelope = &record.envelope;
+        if self.next >= BATCH_COUNT
+            || record.version != 1
+            || record.route_id != self.route
+            || envelope.sequence != self.next
+            || envelope.source_timestamp_nanos != self.next + 1
+            || envelope.receive_timestamp_nanos != self.next + 1
+            || envelope.clock_domain_id != "synthetic-fixture-clock"
+            || envelope.payload.token != batch_token(self.next)
+        {
+            return Err(invalid("invalid batch identity/sequence/timing"));
+        }
+        if self.queue.push(record.envelope).map_err(invalid)?
+            != (PushOutcome::Enqueued { gap: None })
+        {
+            return Err(invalid("batch queue rejected record"));
+        }
+        self.next += 1;
+        Ok(())
+    }
+    fn consume_one(&mut self) -> io::Result<()> {
+        let delivery = self
+            .queue
+            .pop()
+            .ok_or_else(|| invalid("missing batch delivery"))?;
+        self.digest
+            .extend_from_slice(&delivery.envelope.sequence.to_le_bytes());
+        self.digest
+            .extend_from_slice(delivery.envelope.payload.token.as_bytes());
+        self.bytes += delivery.envelope.payload.token.len();
+        self.consumed += 1;
+        Ok(())
+    }
+    fn finish(self) -> io::Result<Receipt> {
+        if self.next != BATCH_COUNT || self.consumed != BATCH_COUNT {
+            return Err(invalid("incomplete batch"));
+        }
+        Ok(Receipt {
+            route_id: self.route,
+            stream_id: self.stream,
+            epoch: self.epoch,
+            received: self.consumed,
+            payload_bytes: self.bytes,
+            payload_checksum: checksum(&self.digest),
+            first_sequence: Some(0),
+            last_sequence: Some(BATCH_COUNT - 1),
+        })
+    }
+}
+#[cfg(target_os = "linux")]
+impl Transfer {
+    fn start_batch(&self) -> io::Result<Option<DataEndpointDescriptor>> {
+        let deadline = std::time::Instant::now() + std::time::Duration::from_millis(500);
+        if let Some(socket) = &self.sink {
+            let mut consumer = BatchConsumer::new(self)?;
+            let mut bytes = [0u8; MAX_RECORD_BYTES + 1];
+            for _ in 0..BATCH_COUNT {
+                socket.set_read_timeout(Some(remaining(deadline)?))?;
+                let size = socket.recv(&mut bytes)?;
+                remaining(deadline)?;
+                consumer.push(&bytes[..size])?;
+                consumer.consume_one()?;
+            }
+            let receipt = consumer.finish()?;
+            remaining(deadline)?;
+            let mut endpoint = self.endpoint.clone();
+            endpoint.metadata.insert(
+                "receipt".into(),
+                serde_json::to_string(&receipt).map_err(invalid)?,
+            );
+            Ok(Some(endpoint))
+        } else {
+            let socket = std::os::unix::net::UnixDatagram::unbound()?;
+            socket.connect(&self.endpoint.address)?;
+            for sequence in 0..BATCH_COUNT {
+                let bytes = serde_json::to_vec(&self.record_at(sequence)).map_err(invalid)?;
+                if bytes.len() > MAX_RECORD_BYTES {
+                    return Err(invalid("batch record too large"));
+                }
+                socket.set_write_timeout(Some(remaining(deadline)?))?;
+                if socket.send(&bytes)? != bytes.len() {
+                    return Err(invalid("partial batch write"));
+                }
+                remaining(deadline)?;
+            }
+            Ok(None)
+        }
+    }
+}
+
 pub fn validate_receipt(
     endpoint: Option<DataEndpointDescriptor>,
     expected: &DataEndpointDescriptor,
@@ -291,9 +470,20 @@ pub fn validate_receipt(
     if receipt.route_id != route
         || receipt.epoch != epoch
         || Some(&receipt.stream_id.to_string()) != expected.metadata.get("stream_id")
-        || receipt.received != 1
-        || receipt.payload_bytes != TOKEN.len()
-        || receipt.payload_checksum != checksum(TOKEN.as_bytes())
+        || if expected.transport == BATCH_TRANSPORT {
+            receipt.received != BATCH_COUNT
+                || receipt.payload_bytes != batch_payload_bytes()
+                || receipt.payload_checksum != checksum(&batch_digest())
+                || receipt.first_sequence != Some(0)
+                || receipt.last_sequence != Some(BATCH_COUNT - 1)
+        } else {
+            expected.transport != TRANSPORT
+                || receipt.received != 1
+                || receipt.payload_bytes != TOKEN.len()
+                || receipt.payload_checksum != checksum(TOKEN.as_bytes())
+                || receipt.first_sequence.is_some()
+                || receipt.last_sequence.is_some()
+        }
     {
         return Err(invalid("receipt binding mismatch"));
     }
@@ -525,5 +715,215 @@ mod tests {
             .send_to(&oversized, &endpoint.descriptor.address)
             .unwrap();
         assert!(sink.start().is_err());
+    }
+    fn setup_batch() -> (Endpoint, RoutePrepareRequest) {
+        let (mut endpoint, mut request) = setup();
+        endpoint.descriptor.transport = BATCH_TRANSPORT.into();
+        request.data_endpoint = Some(endpoint.descriptor.clone());
+        (endpoint, request)
+    }
+    fn batch_bytes(transfer: &Transfer, sequence: u64) -> Vec<u8> {
+        serde_json::to_vec(&transfer.record_at(sequence)).unwrap()
+    }
+    #[test]
+    fn batch_parser_orders_all_records_and_binds_complete_receipt() {
+        let (endpoint, request) = setup_batch();
+        let transfer = Transfer::prepare(&request, false).unwrap();
+        let mut consumer = BatchConsumer::new(&transfer).unwrap();
+        for sequence in 0..BATCH_COUNT {
+            consumer.push(&batch_bytes(&transfer, sequence)).unwrap();
+            consumer.consume_one().unwrap();
+        }
+        assert!(consumer.push(&batch_bytes(&transfer, BATCH_COUNT)).is_err());
+        let receipt = consumer.finish().unwrap();
+        assert_eq!(receipt.received, BATCH_COUNT);
+        assert_eq!(receipt.payload_bytes, 84);
+        assert_eq!(receipt.payload_checksum, "fnv1a64:d5953109b0ac8ffd");
+        assert_eq!(receipt.payload_checksum, checksum(&batch_digest()));
+        let mut reversed = Vec::new();
+        for sequence in (0..BATCH_COUNT).rev() {
+            reversed.extend_from_slice(&sequence.to_le_bytes());
+            reversed.extend_from_slice(batch_token(sequence).as_bytes());
+        }
+        assert_ne!(checksum(&reversed), receipt.payload_checksum);
+        for case in 0..7 {
+            let mut changed = receipt.clone();
+            match case {
+                0 => {}
+                1 => changed.received = 3,
+                2 => changed.first_sequence = Some(1),
+                3 => changed.last_sequence = Some(2),
+                4 => changed.payload_checksum = checksum(&reversed),
+                5 => changed.payload_bytes -= 1,
+                _ => changed.epoch += 1,
+            }
+            let mut returned = endpoint.descriptor.clone();
+            returned
+                .metadata
+                .insert("receipt".into(), serde_json::to_string(&changed).unwrap());
+            assert_eq!(
+                validate_receipt(Some(returned), &endpoint.descriptor, request.route_id, 1).is_ok(),
+                case == 0
+            );
+        }
+    }
+    #[test]
+    fn batch_parser_rejects_gaps_replay_binding_timing_and_partial_completion() {
+        let (_endpoint, request) = setup_batch();
+        let transfer = Transfer::prepare(&request, false).unwrap();
+        for case in 0..15 {
+            let mut consumer = BatchConsumer::new(&transfer).unwrap();
+            consumer.push(&batch_bytes(&transfer, 0)).unwrap();
+            consumer.consume_one().unwrap();
+            let mut record = transfer.record_at(1);
+            match case {
+                0 => record.envelope.sequence = 0,
+                1 => record.envelope.sequence = 2,
+                2 => record.route_id = RouteId::new(),
+                3 => record.envelope.stream_id = StreamId::new(),
+                4 => record.envelope.stream_epoch = 0,
+                5 => record.envelope.stream_epoch = 2,
+                6 => record.envelope.profile.major = 2,
+                7 => record.envelope.source_timestamp_nanos = 1,
+                8 => record.envelope.receive_timestamp_nanos = 1,
+                9 => record.envelope.clock_domain_id = "wrong".into(),
+                10 => record.envelope.payload.token = batch_token(2),
+                11 => record.envelope.payload.test_only = false,
+                12 => record.version = 2,
+                13 => record.envelope.payload.token = TOKEN.into(),
+                _ => record.envelope.payload.token = "finite-batch-samplf-1".into(),
+            }
+            assert!(
+                consumer
+                    .push(&serde_json::to_vec(&record).unwrap())
+                    .is_err(),
+                "case {case}"
+            );
+            assert_eq!(consumer.next, 1);
+            consumer.push(&batch_bytes(&transfer, 1)).unwrap();
+            consumer.consume_one().unwrap();
+            assert!(consumer.finish().is_err());
+        }
+        let mut consumer = BatchConsumer::new(&transfer).unwrap();
+        assert!(consumer.push(&batch_bytes(&transfer, 1)).is_err());
+        for bytes in [
+            vec![],
+            b"[]".to_vec(),
+            b"{bad".to_vec(),
+            vec![b'x'; MAX_RECORD_BYTES + 1],
+        ] {
+            assert!(consumer.push(&bytes).is_err());
+        }
+        let mut extra = serde_json::to_value(transfer.record_at(0)).unwrap();
+        extra["extra"] = serde_json::json!(true);
+        assert!(consumer.push(&serde_json::to_vec(&extra).unwrap()).is_err());
+        assert!(
+            remaining(std::time::Instant::now() - std::time::Duration::from_millis(1)).is_err()
+        );
+    }
+    #[test]
+    fn batch_queue_overflow_is_transactional_without_eviction() {
+        let (_endpoint, request) = setup_batch();
+        let transfer = Transfer::prepare(&request, false).unwrap();
+        let mut consumer = BatchConsumer::new(&transfer).unwrap();
+        consumer.push(&batch_bytes(&transfer, 0)).unwrap();
+        consumer.push(&batch_bytes(&transfer, 1)).unwrap();
+        assert!(consumer.push(&batch_bytes(&transfer, 2)).is_err());
+        assert_eq!(consumer.next, 2);
+        consumer.consume_one().unwrap();
+        consumer.push(&batch_bytes(&transfer, 2)).unwrap();
+        consumer.consume_one().unwrap();
+        consumer.push(&batch_bytes(&transfer, 3)).unwrap();
+        consumer.consume_one().unwrap();
+        consumer.consume_one().unwrap();
+        assert_eq!(
+            consumer.finish().unwrap().payload_checksum,
+            checksum(&batch_digest())
+        );
+    }
+    #[test]
+    fn batch_separate_socket_transfer_and_complete_receipt() {
+        let (endpoint, request) = setup_batch();
+        let sink = Transfer::prepare(&request, true).unwrap();
+        let source = Transfer::prepare(&request, false).unwrap();
+        source.start().unwrap();
+        let receipt = validate_receipt(
+            sink.start().unwrap(),
+            &endpoint.descriptor,
+            request.route_id,
+            1,
+        )
+        .unwrap();
+        assert_eq!(receipt.received, BATCH_COUNT);
+        assert_eq!(receipt.first_sequence, Some(0));
+        assert_eq!(receipt.last_sequence, Some(3));
+        let path = endpoint.directory.clone();
+        drop(source);
+        drop(sink);
+        drop(endpoint);
+        assert!(!path.exists());
+    }
+    #[test]
+    fn batch_paced_partial_sender_cannot_renew_whole_transfer_budget() {
+        let (endpoint, request) = setup_batch();
+        let sink = Transfer::prepare(&request, true).unwrap();
+        let socket = std::os::unix::net::UnixDatagram::unbound().unwrap();
+        socket
+            .set_write_timeout(Some(std::time::Duration::from_millis(100)))
+            .unwrap();
+        socket
+            .send_to(&batch_bytes(&sink, 0), &endpoint.descriptor.address)
+            .unwrap();
+        let second = batch_bytes(&sink, 1);
+        let address = endpoint.descriptor.address.clone();
+        // Test-only pacing, not a production worker. Exactly one bounded send;
+        // always join before asserting or releasing the owned socket path.
+        let sender = std::thread::spawn(move || {
+            std::thread::sleep(std::time::Duration::from_millis(350));
+            socket.send_to(&second, address)
+        });
+        let now = std::time::Instant::now();
+        let result = sink.start();
+        let elapsed = now.elapsed();
+        let sent = sender.join();
+        let path = endpoint.directory.clone();
+        drop(sink);
+        drop(endpoint);
+        assert!(!path.exists());
+        assert!(sent.unwrap().is_ok());
+        assert!(result.is_err());
+        // A renewed timeout would expire around 850 ms; the shared budget is
+        // 500 ms. Allow 250 ms scheduler jitter without accepting that renewal.
+        assert!(
+            elapsed < std::time::Duration::from_millis(750),
+            "batch elapsed: {elapsed:?}"
+        );
+    }
+    #[test]
+    fn batch_missing_partial_and_oversized_input_fail_within_budget() {
+        let (endpoint, request) = setup_batch();
+        assert!(Transfer::prepare(&request, false).unwrap().start().is_err());
+        let sink = Transfer::prepare(&request, true).unwrap();
+        let now = std::time::Instant::now();
+        assert!(sink.start().is_err());
+        assert!(now.elapsed() < std::time::Duration::from_secs(2));
+        let socket = std::os::unix::net::UnixDatagram::unbound().unwrap();
+        socket
+            .send_to(&batch_bytes(&sink, 0), &endpoint.descriptor.address)
+            .unwrap();
+        let now = std::time::Instant::now();
+        assert!(sink.start().is_err());
+        assert!(now.elapsed() < std::time::Duration::from_secs(2));
+        let mut bytes = batch_bytes(&sink, 0);
+        bytes.resize(MAX_RECORD_BYTES + 100, b' ');
+        socket
+            .send_to(&bytes, &endpoint.descriptor.address)
+            .unwrap();
+        assert!(sink.start().is_err());
+        let path = endpoint.directory.clone();
+        drop(socket);
+        drop(sink);
+        drop(endpoint);
+        assert!(!path.exists());
     }
 }

@@ -66,6 +66,7 @@ pub(crate) struct MockRoutes {
     route_id: RouteId,
     failed: bool,
     pub(crate) payload_enabled: bool,
+    pub(crate) batch_enabled: bool,
     endpoint: Option<Endpoint>,
     pub(crate) receipt: Option<Receipt>,
 }
@@ -181,6 +182,7 @@ impl MockRoutes {
             route_id,
             failed: false,
             payload_enabled: false,
+            batch_enabled: false,
             endpoint: None,
             receipt: None,
         })
@@ -250,7 +252,7 @@ impl MockRoutes {
             .map_err(error)?;
         runtime.begin_route_start(self.route_id, 0).map_err(error)?;
         let route = runtime.route(self.route_id).map_err(error)?.clone();
-        if self.payload_enabled {
+        if self.payload_enabled || self.batch_enabled {
             return self.start_payload(runtime);
         }
         for index in 0..2 {
@@ -288,7 +290,11 @@ impl MockRoutes {
     fn start_payload(&mut self, runtime: &mut NodeRuntime) -> io::Result<()> {
         let route = runtime.route(self.route_id).map_err(error)?.clone();
         self.receipt = None;
-        let endpoint = match Endpoint::create(capyio_core::StreamId::new()) {
+        let endpoint = match if self.batch_enabled {
+            Endpoint::create_batch(capyio_core::StreamId::new())
+        } else {
+            Endpoint::create(capyio_core::StreamId::new())
+        } {
             Ok(value) => value,
             Err(err) => {
                 self.fail(runtime, 0);
@@ -466,18 +472,35 @@ mod tests {
                 Err(error("injected"))
             } else if self.valid_receipt {
                 let mut endpoint = self.data_endpoint.clone().expect("payload endpoint");
-                let hash = b"finite-source-sample"
-                    .iter()
-                    .fold(0xcbf29ce484222325u64, |hash, byte| {
-                        (hash ^ u64::from(*byte)).wrapping_mul(0x100000001b3)
-                    });
+                let batch =
+                    endpoint.transport == capyio_mock_sidecar_support::payload::BATCH_TRANSPORT;
+                let mut digest = Vec::new();
+                if batch {
+                    for sequence in 0u64..4 {
+                        digest.extend_from_slice(&sequence.to_le_bytes());
+                        digest.extend_from_slice(
+                            format!("finite-batch-sample-{sequence}").as_bytes(),
+                        );
+                    }
+                } else {
+                    digest.extend_from_slice(b"finite-source-sample");
+                }
+                let hash = digest.iter().fold(0xcbf29ce484222325u64, |hash, byte| {
+                    (hash ^ u64::from(*byte)).wrapping_mul(0x100000001b3)
+                });
                 let receipt = Receipt {
                     route_id: request.route_id,
                     stream_id: endpoint.metadata["stream_id"].parse().unwrap(),
                     epoch: request.epoch,
-                    received: 1,
-                    payload_bytes: b"finite-source-sample".len(),
+                    received: if batch { 4 } else { 1 },
+                    payload_bytes: if batch {
+                        4 * b"finite-batch-sample-0".len()
+                    } else {
+                        b"finite-source-sample".len()
+                    },
                     payload_checksum: format!("fnv1a64:{hash:016x}"),
+                    first_sequence: batch.then_some(0),
+                    last_sequence: batch.then_some(3),
                 };
                 endpoint
                     .metadata
@@ -556,6 +579,7 @@ mod tests {
                 route_id,
                 failed: false,
                 payload_enabled: false,
+                batch_enabled: false,
                 endpoint: None,
                 receipt: None,
             },
@@ -565,6 +589,15 @@ mod tests {
     #[cfg(target_os = "linux")]
     #[test]
     fn payload_faults_drop_both_children_and_remove_owned_directory() {
+        assert_transfer_fault_cleanup(false);
+    }
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn batch_faults_drop_both_children_and_remove_owned_directory() {
+        assert_transfer_fault_cleanup(true);
+    }
+    #[cfg(target_os = "linux")]
+    fn assert_transfer_fault_cleanup(batch: bool) {
         for fault in [
             Fault::Prepare,
             Fault::Start,
@@ -576,7 +609,8 @@ mod tests {
                 let mut faults = [Fault::None; 2];
                 faults[side] = fault;
                 let (mut runtime, mut mocks, calls) = fixture_faults(faults, true);
-                mocks.payload_enabled = true;
+                mocks.payload_enabled = !batch;
+                mocks.batch_enabled = batch;
                 if matches!(fault, Fault::Stop) {
                     mocks.start(&mut runtime).unwrap();
                     assert!(mocks.receipt.is_some());

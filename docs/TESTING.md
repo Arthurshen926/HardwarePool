@@ -2395,3 +2395,10 @@ zero ignored/filtered tests and all eight explicit IPC guards satisfied. ADR 151
 records the retained log evidence and bounded acceptance scope. This hosted run
 does not change the original cloud environment's socket restriction or establish
 continuous streaming, physical hardware or production networking behavior.
+
+ADR 1517 batch tests add socket-free ordering, exact binding/timing, aggregate
+receipt, partial completion and transactional queue-full checks. Hosted tests
+require actual four-record IPC, missing/partial sender timeouts, oversized
+datagrams and all owner-cleanup exits. The dedicated workflow retains its eight
+single-record guards and requires batch guards too. Batch IPC remains unverified
+until exact-head hosted acceptance; no restricted local socket retry is allowed.

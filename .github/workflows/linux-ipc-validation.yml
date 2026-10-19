@@ -49,6 +49,15 @@ jobs:
           payload::tests::oversized_datagram_is_not_accepted_after_truncation
           payload_requires_explicit_lifecycle_opt_in
           payload_crosses_real_children_once_per_epoch_and_cleans_on_every_exit
+          payload::tests::batch_parser_orders_all_records_and_binds_complete_receipt
+          payload::tests::batch_parser_rejects_gaps_replay_binding_timing_and_partial_completion
+          payload::tests::batch_queue_overflow_is_transactional_without_eviction
+          payload::tests::batch_separate_socket_transfer_and_complete_receipt
+          payload::tests::batch_paced_partial_sender_cannot_renew_whole_transfer_budget
+          payload::tests::batch_missing_partial_and_oversized_input_fail_within_budget
+          mock_routes::tests::batch_faults_drop_both_children_and_remove_owned_directory
+          batch_requires_opt_in_and_rejects_payload_conflict
+          batch_crosses_real_children_once_per_epoch_and_cleans_on_every_exit
           TESTS
           cargo test --locked -p capyio-mock-source -p capyio-mock-sink -p capyio-linux-host -p capyio-node --all-targets -- --list --color never | tee "$RUNNER_TEMP/linux-test-list.txt"
           while IFS= read -r test_name; do
