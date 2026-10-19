@@ -12,9 +12,12 @@ hardware, IP networking, configuration changes or local socket execution.
 
 ## Acceptance
 
-- Nonblocking setup discovers saturation within 4096 sends and a two-second
-  setup budget; it never assumes or changes a kernel queue setting.
-- A separate fresh nonblocking sender confirms receiver-side saturation.
+- Nonblocking setup discovers saturation within 4096 aggregate send attempts,
+  32 retained sender sockets and a two-second setup budget; it never assumes
+  or changes a kernel queue setting.
+- A fresh nonblocking sender must fail on its first write to confirm target
+  pressure independently of sender-buffer exhaustion. Earlier sender sockets
+  remain live until the Source test finishes.
 - The real four-record Source Start fails with WouldBlock/TimedOut within the
   existing two-second scheduling tolerance for its 500 ms I/O budget.
 - All test sockets close before the endpoint owner removes its socket/directory.
@@ -37,3 +40,14 @@ workspace formatting passed. The three socket-free batch parser/queue tests and
 Python suite ran 25 tests successfully with one existing Windows-only skip.
 No local socket tests ran. Hosted acceptance for the new regression remains
 pending; no commit, push or workflow execution was performed in this slice.
+
+## Hosted fixture correction
+
+Run 39295014378 on `b75ddba19b330dfe50239ed1737425da3592e714` failed in
+setup: after one filler returned WouldBlock, a fresh sender could still enqueue.
+That is sender-buffer pressure, not demonstrated receiver queue saturation or a
+production defect. The revised setup retains bounded multiple senders and keeps
+filling until an independently fresh sender is blocked before any successful
+write. It fails explicitly if aggregate limits prevent establishing that state.
+The revised fixture still requires exact-head hosted execution; no local sockets
+were attempted and prior hosted acceptance must not be attributed to this fix.
