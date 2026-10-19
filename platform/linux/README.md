@@ -73,4 +73,9 @@ Use `--mock-routes --mock-batch` for exactly four ordered synthetic records. It
 conflicts with `--mock-payload`; the old one-record option is unchanged. Complete
 consumption and an aggregate receipt are required before Active. No continuous
 stream, worker thread or hardware support is implied. Stop waits for bounded
-synchronous Start to finish. Batch IPC acceptance is pending hosted CI.
+synchronous Start to finish. Fixed-batch IPC acceptance passed for implementation
+commit `07b068e43ccf628326288d2918a2b90021984918`:
+[CI run 39280283094](https://github.com/Arthurshen926/HardwarePool/actions/runs/39280283094).
+That run passed 39 focused tests and all 17 then-required IPC guards. It does not
+cover subsequent test changes or documentation commits. The original cloud
+socket restriction remains unchanged.

@@ -900,6 +900,72 @@ mod tests {
         );
     }
     #[test]
+    fn batch_saturated_kernel_queue_bounds_source_failure_and_cleans_endpoint() {
+        let (endpoint, request) = setup_batch();
+        let sink = Transfer::prepare(&request, true).unwrap();
+        let source = Transfer::prepare(&request, false).unwrap();
+        let filler = std::os::unix::net::UnixDatagram::unbound().unwrap();
+        filler.connect(&endpoint.descriptor.address).unwrap();
+        filler.set_nonblocking(true).unwrap();
+        // Discover saturation instead of assuming a host's max_dgram_qlen.
+        // Both attempt count and elapsed setup time are bounded. The Sink never
+        // receives, so no concurrent consumer can free space during this test.
+        let setup_deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
+        let mut saturated = false;
+        for _ in 0..4096 {
+            assert!(
+                std::time::Instant::now() < setup_deadline,
+                "kernel queue saturation setup exceeded its time bound"
+            );
+            match filler.send(b"x") {
+                Ok(1) => {}
+                Err(err) if err.kind() == io::ErrorKind::WouldBlock => {
+                    saturated = true;
+                    break;
+                }
+                result => panic!("unexpected queue prefill result: {result:?}"),
+            }
+        }
+        assert!(
+            saturated,
+            "kernel queue not saturated within 4096 datagrams"
+        );
+        // A fresh sender must also be blocked: exhaustion of the filler's own
+        // send buffer alone is not evidence that the receiver queue is full.
+        let probe = std::os::unix::net::UnixDatagram::unbound().unwrap();
+        probe.connect(&endpoint.descriptor.address).unwrap();
+        probe.set_nonblocking(true).unwrap();
+        assert_eq!(
+            probe.send(b"x").unwrap_err().kind(),
+            io::ErrorKind::WouldBlock
+        );
+        let now = std::time::Instant::now();
+        let result = source.start();
+        let elapsed = now.elapsed();
+        let path = endpoint.directory.clone();
+        let socket_path = std::path::PathBuf::from(&endpoint.descriptor.address);
+        // Preserve owner order even when the operation failed; no Sink Start or
+        // successful receipt is produced, and all sockets close before unlink.
+        drop(probe);
+        drop(filler);
+        drop(source);
+        drop(sink);
+        drop(endpoint);
+        assert!(!socket_path.exists());
+        assert!(!path.exists());
+        assert!(matches!(
+            result.unwrap_err().kind(),
+            io::ErrorKind::WouldBlock | io::ErrorKind::TimedOut
+        ));
+        // The production I/O budget is 500 ms; retain the existing timeout
+        // tests' scheduler tolerance rather than requiring precise wall time.
+        assert!(
+            elapsed < std::time::Duration::from_secs(2),
+            "source elapsed: {elapsed:?}"
+        );
+    }
+
+    #[test]
     fn batch_missing_partial_and_oversized_input_fail_within_budget() {
         let (endpoint, request) = setup_batch();
         assert!(Transfer::prepare(&request, false).unwrap().start().is_err());

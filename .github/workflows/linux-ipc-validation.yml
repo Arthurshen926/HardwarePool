@@ -54,6 +54,7 @@ jobs:
           payload::tests::batch_queue_overflow_is_transactional_without_eviction
           payload::tests::batch_separate_socket_transfer_and_complete_receipt
           payload::tests::batch_paced_partial_sender_cannot_renew_whole_transfer_budget
+          payload::tests::batch_saturated_kernel_queue_bounds_source_failure_and_cleans_endpoint
           payload::tests::batch_missing_partial_and_oversized_input_fail_within_budget
           mock_routes::tests::batch_faults_drop_both_children_and_remove_owned_directory
           batch_requires_opt_in_and_rejects_payload_conflict
