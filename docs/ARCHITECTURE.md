@@ -1564,3 +1564,10 @@ endpoint/lifecycle evidence, the bounded 001D1/001D2 native LAN wire and 001E
 Windows-application-to-Android Speaker evidence. Native microphone switching,
 other hardware Adapters, production security/distribution and performance
 claims remain on the roadmap.
+
+## Linux headless host boundary
+
+ADR 1514 adds a Linux Runtime-owning process through `capyio-node linux-host`.
+The platform crate owns bounded inherited-stdio management and Core/Runtime remain
+OS-independent. The catalog is empty; no peers, synthetic grants, hardware workers
+or network listeners are created. This is not a Linux port of the Windows UI.

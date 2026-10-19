@@ -6,7 +6,7 @@ This table separates architecture intent from evidence.
 |---|---|---|---|---|
 | Windows | CI target/intended | local Rust workspace and Tauri build | service-owned Audio Share-compatible Broker physically exercised | installed `CapyIO Speaker` render-APO bridge; playback and endpoint volume physically proven on the ADR 0029 lab |
 | Android | shared model intended | pinned Audio Share receiver physical lab | Audio Share-compatible speaker sink | app-level speaker playback physically proven; no system Projection |
-| Linux | hosted Core/UI CI history | no current local platform run | none | none |
+| Linux | hosted Core/UI CI history | hardware-free headless stdio host and subprocess tests on Linux x86_64 (ADR 1514, 2026-10-19) | none | none |
 | macOS | hosted Core CI history | no current local platform run | none | none |
 | iOS/iPadOS | future app-level host | none | none | no global virtual-device promise |
 | Embedded | future compact Node | none | none | API/protocol only initially |

@@ -1425,3 +1425,12 @@ closes the created socket before propagating failure; only successful setup
 transfers ownership. CPD1 temporary caller-owned key bytes are wiped after
 configuration copying, and GameStream binding validation precedes key loading.
 Neither preflight nor these lifecycle fixes issue credentials or grant peer trust.
+
+## Linux inherited-stdio host
+
+ADR 1514 exposes only local status/snapshot/shutdown on inherited process pipes.
+It opens no listener, establishes no peer trust and creates no credentials or
+hardware grants. The caller supplies a public non-nil Node ID, which is identity
+metadata, not authentication. Strict request shape and byte bounds reject malformed
+input. Stdio backpressure remains the local process owner's responsibility; this
+is not a hardened multi-client service or a production network security claim.

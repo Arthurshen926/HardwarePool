@@ -592,6 +592,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "capyio-linux-host"
+version = "0.1.0"
+dependencies = [
+ "capyio-core",
+ "capyio-runtime",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "capyio-micyou-adapter"
 version = "0.1.0"
 dependencies = [
@@ -647,6 +657,7 @@ dependencies = [
  "capyio-audio",
  "capyio-core",
  "capyio-data-plane",
+ "capyio-linux-host",
  "capyio-protocol",
  "capyio-runtime",
  "capyio-testkit",

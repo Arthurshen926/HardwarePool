@@ -20,6 +20,13 @@ struct Cli {
 
 #[derive(Debug, Subcommand)]
 enum Command {
+    /// Runs the Linux headless host over inherited stdin/stdout (no hardware or network).
+    LinuxHost {
+        #[arg(long)]
+        node_id: capyio_core::NodeId,
+        #[arg(long, default_value = "CapyIO Linux Node")]
+        name: String,
+    },
     /// Runs four independent mock Routes across audio, motion and video Profiles.
     Demo,
     /// Prints the initial deterministic Runtime snapshot as JSON.
@@ -37,12 +44,19 @@ fn main() -> anyhow::Result<()> {
         .with_env_filter(
             EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info")),
         )
+        .with_writer(std::io::stderr)
         .with_target(false)
         .compact()
         .init();
 
     let cli = Cli::parse();
     match cli.command.unwrap_or(Command::Demo) {
+        Command::LinuxHost { node_id, name } => {
+            anyhow::ensure!(cfg!(target_os = "linux"), "linux-host requires Linux");
+            capyio_linux_host::LinuxNodeHost::new(node_id, &name)?
+                .serve(std::io::stdin().lock(), std::io::stdout().lock())?;
+            Ok(())
+        }
         Command::Demo => run_demo(),
         Command::Snapshot => print_snapshot(),
         Command::ProtocolRoundtrip => protocol_roundtrip(),

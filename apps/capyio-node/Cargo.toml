@@ -18,3 +18,4 @@ capyio-testkit = { path = "../../crates/capyio-testkit" }
 serde_json.workspace = true
 tracing.workspace = true
 tracing-subscriber.workspace = true
+capyio-linux-host = { path = "../../platform/linux/capyio-host" }

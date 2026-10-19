@@ -2354,3 +2354,12 @@ whose middle-row color-bar signature differs from the deterministic placeholder.
 The older two-sample `consumer-current-probe` only proves system activation and
 sample delivery. It does not establish live content. This signature check does not
 measure visual quality, latency or scene identity; raw frames are never saved.
+
+## Linux headless Node management
+
+ADR 1514 adds hardware-free `capyio-linux-host` unit tests and Linux-only
+`capyio-node` subprocess tests. Run `cargo test -p capyio-linux-host -p capyio-node`.
+They prove stable explicit identity, Linux snapshots, bounded local NDJSON,
+malformed-input recovery, EOF, shutdown and oversized-request exit. Process tests
+have bounded response/exit waits and kill/reap on failure. They do not establish
+mock Route composition, secure peer connectivity or Linux hardware/projection.

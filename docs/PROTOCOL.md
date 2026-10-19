@@ -426,3 +426,12 @@ reports usable. Stop and Session invalidation end the owned operation.
 The existing token-bearing controller UDP packet remains an adapter-private
 transport; this work does not claim a new StandardPort or application-layer
 encrypted input protocol. Deployment currently uses the user's Tailscale path.
+
+## Linux local management v1
+
+ADR 1514 defines a local inherited-stdio NDJSON contract, separate from Adapter
+JSON-RPC and cross-device Protobuf: exactly `version`, `id` and `command`; version
+1 supports `get_snapshot`, `host_status` and `host_shutdown`. Requests are bounded
+to 4096 bytes and responses to 65536 bytes, excluding LF. Responses contain `result`
+or `error.code`; no media or credential data is carried. See ADR 1514 for rejection
+and termination semantics. This is not compatible with the Windows named-pipe API.
