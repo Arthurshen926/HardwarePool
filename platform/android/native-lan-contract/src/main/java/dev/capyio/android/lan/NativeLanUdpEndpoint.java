@@ -22,6 +22,9 @@ public final class NativeLanUdpEndpoint implements Closeable {
     private final byte[] sendBuffer = new byte[NativeLanPacketCodec.MAX_DATAGRAM_BYTES];
     private final byte[] receiveBuffer = new byte[NativeLanPacketCodec.MAX_DATAGRAM_BYTES + 1];
 
+    // I/O is serialized by this endpoint's monitor. Never make a metrics reader
+    // wait behind socket.receive(): repeated timeout/reentry can starve readers.
+    private final Object metricsLock = new Object();
     private long packetsSent;
     private long datagramsSent;
     private long datagramsReceived;
@@ -70,22 +73,32 @@ public final class NativeLanUdpEndpoint implements Closeable {
                     sendBuffer);
             DatagramPacket datagram = new DatagramPacket(sendBuffer, bytes, peer);
             socket.send(datagram);
-            datagramsSent = saturatingIncrement(datagramsSent);
+            synchronized (metricsLock) {
+                datagramsSent = saturatingIncrement(datagramsSent);
+            }
         }
-        packetsSent = saturatingIncrement(packetsSent);
+        synchronized (metricsLock) {
+            packetsSent = saturatingIncrement(packetsSent);
+        }
     }
 
     public synchronized ReceiveOutcome receive() throws IOException {
         DatagramPacket datagram = new DatagramPacket(receiveBuffer, receiveBuffer.length);
         socket.receive(datagram);
-        datagramsReceived = saturatingIncrement(datagramsReceived);
+        synchronized (metricsLock) {
+            datagramsReceived = saturatingIncrement(datagramsReceived);
+        }
         SocketAddress sender = datagram.getSocketAddress();
         if (!peer.equals(sender)) {
-            wrongPeerDatagrams = saturatingIncrement(wrongPeerDatagrams);
+            synchronized (metricsLock) {
+                wrongPeerDatagrams = saturatingIncrement(wrongPeerDatagrams);
+            }
             return ReceiveOutcome.wrongPeer();
         }
         if (datagram.getLength() > NativeLanPacketCodec.MAX_DATAGRAM_BYTES) {
-            malformedDatagrams = saturatingIncrement(malformedDatagrams);
+            synchronized (metricsLock) {
+                malformedDatagrams = saturatingIncrement(malformedDatagrams);
+            }
             return ReceiveOutcome.malformed();
         }
         try {
@@ -93,12 +106,16 @@ public final class NativeLanUdpEndpoint implements Closeable {
                     receiveBuffer,
                     datagram.getLength());
             if (!fragment.matches(binding)) {
-                malformedDatagrams = saturatingIncrement(malformedDatagrams);
+                synchronized (metricsLock) {
+                    malformedDatagrams = saturatingIncrement(malformedDatagrams);
+                }
                 return ReceiveOutcome.malformed();
             }
             return ReceiveOutcome.fragment(fragment);
         } catch (IllegalArgumentException malformed) {
-            malformedDatagrams = saturatingIncrement(malformedDatagrams);
+            synchronized (metricsLock) {
+                malformedDatagrams = saturatingIncrement(malformedDatagrams);
+            }
             return ReceiveOutcome.malformed();
         }
     }
@@ -111,13 +128,15 @@ public final class NativeLanUdpEndpoint implements Closeable {
         return binding;
     }
 
-    public synchronized Metrics metrics() {
-        return new Metrics(
-                packetsSent,
-                datagramsSent,
-                datagramsReceived,
-                wrongPeerDatagrams,
-                malformedDatagrams);
+    public Metrics metrics() {
+        synchronized (metricsLock) {
+            return new Metrics(
+                    packetsSent,
+                    datagramsSent,
+                    datagramsReceived,
+                    wrongPeerDatagrams,
+                    malformedDatagrams);
+        }
     }
 
     @Override

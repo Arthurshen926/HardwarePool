@@ -261,7 +261,7 @@ jobs:
       - name: Run existing Java lifecycle and native LAN contracts
         run: |
           set -euo pipefail
-          for main in dev.capyio.android.contract.AudioNodeContractTest dev.capyio.android.contract.CapabilityCatalogContractTest dev.capyio.android.contract.CapabilityLifecycleContractTest dev.capyio.android.lan.NativeLanContractTest; do
+          for main in dev.capyio.android.contract.AudioNodeContractTest dev.capyio.android.contract.CapabilityCatalogContractTest dev.capyio.android.contract.CapabilityLifecycleContractTest dev.capyio.android.lan.NativeLanContractTest dev.capyio.android.lan.NativeLanEndpointConcurrencyTest; do
             timeout --signal=TERM --kill-after=10s 60s java -ea -Dcapyio.nativeLanFixture="$GITHUB_WORKSPACE/fixtures/audio/native_lan_v1_opus_single.hex" -cp "$RUNNER_TEMP/android-contract-classes" "$main"
           done
 
