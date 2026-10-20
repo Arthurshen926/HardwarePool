@@ -613,6 +613,7 @@ dependencies = [
  "capyio-adapter-host",
  "capyio-adapter-sdk",
  "capyio-control-credentials",
+ "capyio-control-host",
  "capyio-control-link",
  "capyio-control-tls",
  "capyio-core",

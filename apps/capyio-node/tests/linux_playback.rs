@@ -260,7 +260,9 @@ fn pending() -> (Process, CatalogControlLink, Value) {
     let observation = Instant::now() + Duration::from_millis(150);
     while Instant::now() < observation {
         assert!(
-            peer.poll_control_message_until(observation)
+            // Observation duration is not a framing deadline: a scheduler pause
+            // at its boundary must not poison an otherwise idle healthy channel.
+            peer.poll_control_message_until(Instant::now() + BOUND)
                 .unwrap()
                 .is_none(),
             "no offer before local approval"

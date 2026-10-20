@@ -263,7 +263,9 @@ fn prepare(
             None => thread::sleep(Duration::from_millis(2)),
         }
     }
-    let selected = BTreeSet::from([sink.capability_id]);
+    // This set opts Sources into publication; Sink-only capabilities are
+    // already included. Selecting the Sink here is a NotSourceCapability error.
+    let selected = BTreeSet::new();
     let catalog = sanitized(link.prepare_catalog(runtime, &selected))?;
     sanitized(link.send_catalog_until(catalog, deadline))?;
     // Real authenticated catalog descriptors, not launch-config/fixture ports.
@@ -455,6 +457,24 @@ mod tests {
             assert_eq!(error.to_string(), "Linux lab playback launch failed");
             assert!(!error.to_string().contains("PRIVATE_SECRET_MARKER"));
         }
+    }
+    #[test]
+    fn local_sink_catalog_requires_no_source_publication_selection() {
+        let (runtime, sink) = local_runtime(NodeId::new()).unwrap();
+        let local = runtime.snapshot().local_node;
+        let published =
+            capyio_control_host::project_publication_catalog(&local, &BTreeSet::new()).unwrap();
+        assert_eq!(
+            published
+                .port(sink.capability_id, sink.port_id)
+                .unwrap()
+                .direction,
+            PortDirection::Sink
+        );
+        assert!(matches!(
+            capyio_control_host::project_publication_catalog(&local, &BTreeSet::from([sink.capability_id])),
+            Err(capyio_control_host::PublicationError::NotSourceCapability(id)) if id == sink.capability_id
+        ));
     }
     #[test]
     fn local_command_rejects_unknown_fields_and_keeps_stop_separate_from_approval() {

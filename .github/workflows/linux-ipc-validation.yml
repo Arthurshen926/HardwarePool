@@ -143,6 +143,7 @@ jobs:
           tests::ipc_try_accept_pinned_tls_exact_and_fresh_binding_succeed
           tests::ipc_try_accept_trickled_handshake_cannot_renew_whole_deadline
           tests::ipc_try_accept_trickled_binding_shares_handshake_deadline
+          launch::tests::local_sink_catalog_requires_no_source_publication_selection
           TESTS
           cargo test --locked -p capyio-mock-source -p capyio-mock-sink -p capyio-linux-host -p capyio-node -p capyio-linux-audio -p capyio-native-audio-lan -p capyio-control-tls -p capyio-control-link --all-targets -- --list --color never | tee "$RUNNER_TEMP/linux-test-list.txt"
           while IFS= read -r test_name; do
