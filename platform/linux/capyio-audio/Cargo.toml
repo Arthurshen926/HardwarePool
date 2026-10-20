@@ -8,6 +8,9 @@ license.workspace = true
 publish = false
 
 [dependencies]
+capyio-control-link = { path = "../../../crates/capyio-control-link" }
+capyio-control-tls = { path = "../../../crates/capyio-control-tls" }
+capyio-protocol = { path = "../../../crates/capyio-protocol" }
 capyio-core = { path = "../../../crates/capyio-core" }
 capyio-runtime = { path = "../../../crates/capyio-runtime" }
 capyio-audio = { path = "../../../crates/capyio-audio" }
@@ -18,4 +21,5 @@ name = "capyio-linux-audio-playback"
 path = "src/main.rs"
 
 [dev-dependencies]
+rcgen = { version = "=0.14.5", default-features = false, features = ["ring"] }
 capyio-testkit = { path = "../../../crates/capyio-testkit" }

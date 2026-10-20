@@ -1476,3 +1476,10 @@ negotiation and local consent. The library is not a remote authorization API.
 UDP remains insecure lab transport, with no automatic static-binding fallback.
 Default Linux management opens no listener. Paused polling stops data forwarding
 but resource expiry/closure is caller-driven, not an independent watchdog.
+
+ADR 1520's accepted Linux owner requires the exact expected paired TLS
+Session/local/peer binding plus existing finite local authority. Peer audio
+offers are read from that channel; peer IP comes from its TCP socket. This does
+not secure UDP media. Timeout/disconnect closes the dedicated Session and media
+at the next driven control I/O; no independent watchdog is claimed. No new
+credential, grant, listener or default device operation is created.

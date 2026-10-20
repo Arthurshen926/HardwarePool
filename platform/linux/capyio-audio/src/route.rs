@@ -344,15 +344,75 @@ fn clock(start: Instant) -> io::Result<(u64, Duration)> {
     Ok((u64::try_from(wall).map_err(error)?, start.elapsed()))
 }
 
+/// Shared preflight for the authenticated control owner; opens no resources.
+pub(crate) fn validate_start(
+    runtime: &NodeRuntime,
+    media: AudioMediaStreamBinding,
+    now_ms: u64,
+) -> io::Result<()> {
+    Guard::new(runtime, media, now_ms).map(|_| ())
+}
+
 #[cfg(test)]
-mod tests {
+impl RuntimePlayback {
+    pub(crate) fn open_synthetic(
+        runtime: &mut NodeRuntime,
+        media: AudioMediaStreamBinding,
+        config: &PlaybackConfig,
+    ) -> io::Result<Self> {
+        let start = Instant::now();
+        let binding = media.clone();
+        let worker = Worker::start(
+            runtime,
+            media,
+            config.duration,
+            || clock(start),
+            || {
+                let endpoint = NativeLanUdpEndpoint::bind(
+                    config.local.into(),
+                    NativeLanEndpointConfig {
+                        peer: config.peer.into(),
+                        read_timeout: Duration::from_millis(10),
+                        inflight_packet_capacity: 2,
+                    },
+                    binding,
+                )
+                .map_err(error)?;
+                Ok(NativeResources {
+                    endpoint: Some(endpoint),
+                    sink: PipeWirePlayback::synthetic_cat()?,
+                })
+            },
+        )?;
+        Ok(Self { worker, start })
+    }
+}
+
+pub(crate) fn validate_live(
+    runtime: &NodeRuntime,
+    media: AudioMediaStreamBinding,
+    now_ms: u64,
+) -> io::Result<()> {
+    let route = runtime.route(media.route_id).map_err(error)?;
+    let session = runtime.session(media.session_id).map_err(error)?;
+    let binding =
+        NativeLanRouteBinding::from_live_context(media, route, session, now_ms).map_err(error)?;
+    Guard {
+        binding,
+        last_wall_ms: now_ms,
+    }
+    .check(runtime, now_ms)
+}
+
+#[cfg(test)]
+pub(crate) mod tests {
     use super::*;
     use capyio_core::{InteroperabilityMode, Platform, RouteBackend, StreamId};
     use capyio_runtime::PortLeasePolicy;
     use std::{cell::RefCell, rc::Rc};
 
     // Synthetic catalogs only, never an authenticated peer or real device grant.
-    fn fixture() -> (NodeRuntime, AudioMediaStreamBinding) {
+    pub(crate) fn fixture() -> (NodeRuntime, AudioMediaStreamBinding) {
         let lab = capyio_testkit::DemoLab::new().unwrap();
         let original = lab
             .runtime

@@ -1598,3 +1598,10 @@ dynamic AdapterManaged Routes, using the existing native audio binding and local
 Sink lease checks. It owns real UDP/PipeWire resources but requires caller-driven
 polling and explicit shutdown; it does not add Linux authenticated control or
 change the default host. Active remains readiness, not physical audio evidence.
+
+ADR 1520 adds a Linux library owner consuming a real accepted authenticated TLS
+channel and an already locally authorized single-Route Runtime. It reuses
+CatalogControlLink reciprocal-offer validation and the actual Route worker, not
+serialized Ready assertions. No listener/default-host command or credential flow
+is added. Control receive pauses caller-driven media polling; scheduling and
+complete Linux pairing/local-consent composition remain separate gates.

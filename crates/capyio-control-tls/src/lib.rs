@@ -12,7 +12,7 @@ use std::{
     io::{Read, Write},
     net::{Shutdown, SocketAddr, TcpListener, TcpStream},
     sync::Arc,
-    time::Duration,
+    time::{Duration, Instant},
 };
 
 use capyio_control_credentials::ControlCredentialBundle;
@@ -352,6 +352,36 @@ impl AuthenticatedControlClientChannel {
         result
     }
 
+    /// Absolute whole-operation bound, including trickled TLS/framing bytes.
+    /// Deadline or any I/O error closes this channel; partial frames are never retried.
+    pub fn receive_envelope_until(
+        &mut self,
+        deadline: Instant,
+    ) -> Result<Vec<u8>, ControlTlsError> {
+        let socket = self.stream.io.sock.try_clone()?;
+        let result = with_socket_deadline(socket, deadline, || self.receive_envelope());
+        if result.is_err() {
+            self.stream.failed = true;
+            let _ = self.stream.io.sock.shutdown(Shutdown::Both);
+        }
+        result
+    }
+
+    /// Deadline-bounded counterpart for an entire framed write.
+    pub fn send_envelope_until(
+        &mut self,
+        bytes: &[u8],
+        deadline: Instant,
+    ) -> Result<(), ControlTlsError> {
+        let socket = self.stream.io.sock.try_clone()?;
+        let result = with_socket_deadline(socket, deadline, || self.send_envelope(bytes));
+        if result.is_err() {
+            self.stream.failed = true;
+            let _ = self.stream.io.sock.shutdown(Shutdown::Both);
+        }
+        result
+    }
+
     pub fn receive_envelope(&mut self) -> Result<Vec<u8>, ControlTlsError> {
         let result = self.stream.receive();
         if self.stream.failed {
@@ -379,6 +409,36 @@ impl AuthenticatedControlServerChannel {
         result
     }
 
+    /// Absolute whole-operation bound, including trickled TLS/framing bytes.
+    /// Deadline or any I/O error closes this channel; partial frames are never retried.
+    pub fn receive_envelope_until(
+        &mut self,
+        deadline: Instant,
+    ) -> Result<Vec<u8>, ControlTlsError> {
+        let socket = self.stream.io.sock.try_clone()?;
+        let result = with_socket_deadline(socket, deadline, || self.receive_envelope());
+        if result.is_err() {
+            self.stream.failed = true;
+            let _ = self.stream.io.sock.shutdown(Shutdown::Both);
+        }
+        result
+    }
+
+    /// Deadline-bounded counterpart for an entire framed write.
+    pub fn send_envelope_until(
+        &mut self,
+        bytes: &[u8],
+        deadline: Instant,
+    ) -> Result<(), ControlTlsError> {
+        let socket = self.stream.io.sock.try_clone()?;
+        let result = with_socket_deadline(socket, deadline, || self.send_envelope(bytes));
+        if result.is_err() {
+            self.stream.failed = true;
+            let _ = self.stream.io.sock.shutdown(Shutdown::Both);
+        }
+        result
+    }
+
     pub fn receive_envelope(&mut self) -> Result<Vec<u8>, ControlTlsError> {
         let result = self.stream.receive();
         if self.stream.failed {
@@ -386,6 +446,54 @@ impl AuthenticatedControlServerChannel {
         }
         result
     }
+}
+
+/// A bounded watcher shuts down only a clone of the same owned connection.
+/// Completion cancels and joins it, so successful operations leave no sleeper.
+/// This is additive: legacy per-syscall-timeout methods are unchanged.
+fn with_socket_deadline<T>(
+    socket: TcpStream,
+    deadline: Instant,
+    operation: impl FnOnce() -> Result<T, ControlTlsError>,
+) -> Result<T, ControlTlsError> {
+    use std::sync::mpsc::{self, RecvTimeoutError};
+    if deadline <= Instant::now() {
+        let _ = socket.shutdown(Shutdown::Both);
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::TimedOut,
+            "control operation deadline expired",
+        )
+        .into());
+    }
+    let (cancel, cancelled) = mpsc::channel();
+    let watcher = std::thread::Builder::new()
+        .name("capyio-control-deadline".into())
+        .spawn(move || {
+            let expired = matches!(
+                cancelled.recv_timeout(deadline.saturating_duration_since(Instant::now())),
+                Err(RecvTimeoutError::Timeout)
+            );
+            if expired {
+                let _ = socket.shutdown(Shutdown::Both);
+            }
+            expired
+        })?;
+    let result = operation();
+    let _ = cancel.send(());
+    let shutdown_fired = watcher
+        .join()
+        .map_err(|_| std::io::Error::other("control deadline watcher failed"))?;
+    // The operation can finish before the deadline but lose the cancellation
+    // race while this thread is descheduled. Never report success on the socket
+    // its watcher already shut down; sample time only after the joined outcome.
+    if shutdown_fired || Instant::now() >= deadline {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::TimedOut,
+            "control operation deadline expired",
+        )
+        .into());
+    }
+    result
 }
 
 /// Any failure after touching the wire is terminal: partial I/O cannot be
@@ -1226,5 +1334,64 @@ mod tests {
         let key = KeyPair::generate().expect("leaf key");
         let cert = params.signed_by(&key, issuer).expect("leaf cert");
         (cert.der().to_vec(), key.serialize_der())
+    }
+}
+
+#[cfg(test)]
+mod deadline_tests {
+    use super::*;
+
+    #[test]
+    fn ipc_trickled_frame_cannot_renew_whole_operation_deadline() {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let mut peer = TcpStream::connect(listener.local_addr().unwrap()).unwrap();
+        let (mut local, _) = listener.accept().unwrap();
+        local
+            .set_read_timeout(Some(Duration::from_millis(100)))
+            .unwrap();
+        let sender = std::thread::spawn(move || {
+            for _ in 0..200 {
+                if peer.write_all(&[1]).is_err() {
+                    break;
+                }
+                std::thread::sleep(Duration::from_millis(10));
+            }
+        });
+        let start = Instant::now();
+        let result = with_socket_deadline(
+            local.try_clone().unwrap(),
+            start + Duration::from_millis(80),
+            || local.read_exact(&mut [0; 200]).map_err(ControlTlsError::Io),
+        );
+        let elapsed = start.elapsed();
+        let _ = local.shutdown(Shutdown::Both);
+        sender.join().unwrap();
+        assert!(result.is_err());
+        assert!(
+            elapsed < Duration::from_millis(750),
+            "whole operation exceeded budget tolerance: {elapsed:?}"
+        );
+    }
+
+    #[test]
+    fn ipc_success_cancels_deadline_watcher_without_closing_connection() {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let mut peer = TcpStream::connect(listener.local_addr().unwrap()).unwrap();
+        let (mut local, _) = listener.accept().unwrap();
+        local
+            .set_read_timeout(Some(Duration::from_secs(1)))
+            .unwrap();
+        peer.write_all(&[1]).unwrap();
+        with_socket_deadline(
+            local.try_clone().unwrap(),
+            Instant::now() + Duration::from_millis(50),
+            || local.read_exact(&mut [0; 1]).map_err(ControlTlsError::Io),
+        )
+        .unwrap();
+        std::thread::sleep(Duration::from_millis(80));
+        peer.write_all(&[2]).unwrap();
+        let mut byte = [0];
+        local.read_exact(&mut byte).unwrap();
+        assert_eq!(byte, [2]);
     }
 }

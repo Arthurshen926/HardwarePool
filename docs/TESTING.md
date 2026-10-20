@@ -2427,3 +2427,15 @@ The additional `ipc_dynamic_route_udp_pcm_stop_releases_socket_and_lease` test
 must execute in hosted CI: real UDP and a synthetic child do not prove Android,
 PipeWire, cryptographic admission or audible playback. Local all-target compile
 is not an IPC pass. The caller-driven worker has no independent expiry watchdog.
+
+ADR 1520 adds socket-free admission-policy tests and hosted-only real TLS owner
+fixtures. The latter use ephemeral in-memory certificate pins, reciprocal offers,
+UDP and an owned synthetic child to test readiness/Stop, wrong-Stream preflight,
+disconnect, terminal timeout and Drop. They do not provision credentials or prove
+physical Android/PipeWire, continuous low-jitter playback or secure UDP. Local
+`--skip ipc_` runs deliberately exclude all socket-capable audio fixtures.
+
+The ADR 1520 hosted gate also requires a paced trickled-frame regression against
+the absolute TCP operation deadline, cancellation of the watcher on success, and
+an actual TLS owner read clamped to the local Sink lease. Per-read timeouts alone
+are not evidence of a bounded whole control operation.

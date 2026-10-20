@@ -484,3 +484,13 @@ existing dynamic AudioMediaStreamBinding and live Runtime/lease state, without
 accepting those assertions from serialized peer input. The unchanged static CLI
 and inherited-stdio host cannot start this worker. Authenticated Linux control
 composition and secure media remain separate gates.
+
+ADR 1520 reuses unchanged authenticated control RouteStatus/native-audio offers,
+heartbeat and exact-Route Stop commands for a dedicated Linux playback Session.
+Unknown message families fail closed in this bounded owner. No new wire fields
+or peer-provided Ready/authorization injection API is introduced. Stop closes
+the dedicated channel; it does not promise a graceful wire acknowledgement.
+
+The opt-in deadline APIs bound whole control-frame operations, not each received
+fragment. Expiry closes that connection; partial frames cannot be retried. No
+wire representation changes, and legacy callers retain their existing API.

@@ -34,7 +34,7 @@ jobs:
       - name: Check formatting
         run: cargo fmt --all -- --check
       - name: Lint Linux host, node and mock adapters
-        run: cargo clippy --locked -p capyio-mock-source -p capyio-mock-sink -p capyio-linux-host -p capyio-node -p capyio-linux-audio -p capyio-native-audio-lan --all-targets -- -D warnings
+        run: cargo clippy --locked -p capyio-mock-source -p capyio-mock-sink -p capyio-linux-host -p capyio-node -p capyio-linux-audio -p capyio-native-audio-lan -p capyio-control-tls -p capyio-control-link --all-targets -- -D warnings
       - name: Build repository mock adapters
         run: cargo build --locked -p capyio-mock-source -p capyio-mock-sink
       - name: Require finite IPC regression tests
@@ -87,8 +87,19 @@ jobs:
           route::tests::ipc_dynamic_route_udp_pcm_stop_releases_socket_and_lease
           route::tests::route_stop_cleanup_failure_is_stopping_not_active
           route::tests::route_runtime_stop_request_cleans_before_more_media
+          owner::tests::admission_requires_exact_paired_session_and_existing_local_lease
+          owner::tests::admission_rejects_implicit_target_public_address_and_wrong_offer
+          owner::tests::admission_rejects_shared_session_but_preserves_other_sessions
+          owner::tests::ipc_authenticated_owner_offer_drives_dynamic_pcm_and_stop
+          owner::tests::ipc_authenticated_owner_wrong_stream_never_opens_media
+          owner::tests::ipc_authenticated_owner_disconnect_closes_media_and_lease
+          owner::tests::ipc_authenticated_owner_timeout_is_terminal_not_idle_retry
+          owner::tests::ipc_authenticated_owner_drop_closes_control_and_udp
+          deadline_tests::ipc_trickled_frame_cannot_renew_whole_operation_deadline
+          deadline_tests::ipc_success_cancels_deadline_watcher_without_closing_connection
+          owner::tests::ipc_authenticated_owner_read_deadline_is_clamped_to_lease
           TESTS
-          cargo test --locked -p capyio-mock-source -p capyio-mock-sink -p capyio-linux-host -p capyio-node -p capyio-linux-audio -p capyio-native-audio-lan --all-targets -- --list --color never | tee "$RUNNER_TEMP/linux-test-list.txt"
+          cargo test --locked -p capyio-mock-source -p capyio-mock-sink -p capyio-linux-host -p capyio-node -p capyio-linux-audio -p capyio-native-audio-lan -p capyio-control-tls -p capyio-control-link --all-targets -- --list --color never | tee "$RUNNER_TEMP/linux-test-list.txt"
           while IFS= read -r test_name; do
             grep -Fx -- "$test_name: test" "$RUNNER_TEMP/linux-test-list.txt"
           done < "$RUNNER_TEMP/required-ipc-tests.txt"
@@ -96,7 +107,7 @@ jobs:
         timeout-minutes: 5
         run: |
           set -euo pipefail
-          timeout --signal=TERM --kill-after=10s 240s cargo test --locked -p capyio-mock-source -p capyio-mock-sink -p capyio-linux-host -p capyio-node -p capyio-linux-audio -p capyio-native-audio-lan --all-targets -- --test-threads=1 --color never | tee "$RUNNER_TEMP/linux-test-results.txt"
+          timeout --signal=TERM --kill-after=10s 240s cargo test --locked -p capyio-mock-source -p capyio-mock-sink -p capyio-linux-host -p capyio-node -p capyio-linux-audio -p capyio-native-audio-lan -p capyio-control-tls -p capyio-control-link --all-targets -- --test-threads=1 --color never | tee "$RUNNER_TEMP/linux-test-results.txt"
           while IFS= read -r test_name; do
             grep -Fx -- "test $test_name ... ok" "$RUNNER_TEMP/linux-test-results.txt"
           done < "$RUNNER_TEMP/required-ipc-tests.txt"

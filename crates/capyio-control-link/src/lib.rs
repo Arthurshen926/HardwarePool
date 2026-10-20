@@ -4,7 +4,7 @@
 //! Prepare/apply touch Runtime but never sockets. Send/receive touch sockets
 //! but never Runtime, so a platform need not hold its Runtime lock during I/O.
 
-use std::collections::BTreeSet;
+use std::{collections::BTreeSet, time::Instant};
 
 use capyio_control_host::{
     AdmittedPeerBinding, ControlHostError, PeerCatalogControlHost, PublicationError,
@@ -332,9 +332,31 @@ impl CatalogControlLink {
     /// Receives one authenticated catalog or heartbeat frame and validates its
     /// exact Session/Node binding before exposing the typed message.
     pub fn receive_control_message(&mut self) -> Result<ReceivedControlMessage, CatalogLinkError> {
-        let result = match self.channel.as_mut().ok_or(CatalogLinkError::Closed)? {
-            Channel::Dialed(channel) => channel.receive_envelope(),
-            Channel::Accepted(channel) => channel.receive_envelope(),
+        self.receive_control_message_mode(None)
+    }
+
+    /// Whole-frame deadline; expiry is terminal even when a peer trickles bytes.
+    pub fn receive_control_message_until(
+        &mut self,
+        deadline: Instant,
+    ) -> Result<ReceivedControlMessage, CatalogLinkError> {
+        self.receive_control_message_mode(Some(deadline))
+    }
+
+    fn receive_control_message_mode(
+        &mut self,
+        deadline: Option<Instant>,
+    ) -> Result<ReceivedControlMessage, CatalogLinkError> {
+        let result = match (
+            self.channel.as_mut().ok_or(CatalogLinkError::Closed)?,
+            deadline,
+        ) {
+            (Channel::Dialed(channel), Some(deadline)) => channel.receive_envelope_until(deadline),
+            (Channel::Accepted(channel), Some(deadline)) => {
+                channel.receive_envelope_until(deadline)
+            }
+            (Channel::Dialed(channel), None) => channel.receive_envelope(),
+            (Channel::Accepted(channel), None) => channel.receive_envelope(),
         };
         let bytes = match result {
             Ok(bytes) => bytes,
@@ -487,6 +509,44 @@ impl CatalogControlLink {
         result.map_err(Into::into)
     }
 
+    fn send_bytes_until(
+        &mut self,
+        bytes: &[u8],
+        deadline: Instant,
+    ) -> Result<(), CatalogLinkError> {
+        let result = match self.channel.as_mut().ok_or(CatalogLinkError::Closed)? {
+            Channel::Dialed(channel) => channel.send_envelope_until(bytes, deadline),
+            Channel::Accepted(channel) => channel.send_envelope_until(bytes, deadline),
+        };
+        if result.is_err() {
+            self.close();
+        }
+        result.map_err(Into::into)
+    }
+
+    pub fn send_route_status_until(
+        &mut self,
+        route: &Route,
+        deadline: Instant,
+    ) -> Result<(), CatalogLinkError> {
+        self.send_bytes_until(
+            &encode_route_status(self.binding.session_id, route)?,
+            deadline,
+        )
+    }
+
+    pub fn send_heartbeat_until(
+        &mut self,
+        sequence: u64,
+        acknowledgement: bool,
+        deadline: Instant,
+    ) -> Result<(), CatalogLinkError> {
+        self.send_bytes_until(
+            &encode_control_heartbeat(self.binding.session_id, sequence, acknowledgement)?,
+            deadline,
+        )
+    }
+
     pub fn send_route_status(&mut self, route: &Route) -> Result<(), CatalogLinkError> {
         self.send_bytes(&encode_route_status(self.binding.session_id, route)?)
     }
@@ -523,6 +583,26 @@ impl CatalogControlLink {
         offer: capyio_protocol::NativeAudioDataOffer,
         now_ms: u64,
     ) -> Result<(), CatalogLinkError> {
+        self.send_native_audio_data_offer_mode(route, offer, now_ms, None)
+    }
+
+    pub fn send_native_audio_data_offer_until(
+        &mut self,
+        route: &Route,
+        offer: capyio_protocol::NativeAudioDataOffer,
+        now_ms: u64,
+        deadline: Instant,
+    ) -> Result<(), CatalogLinkError> {
+        self.send_native_audio_data_offer_mode(route, offer, now_ms, Some(deadline))
+    }
+
+    fn send_native_audio_data_offer_mode(
+        &mut self,
+        route: &Route,
+        offer: capyio_protocol::NativeAudioDataOffer,
+        now_ms: u64,
+        deadline: Option<Instant>,
+    ) -> Result<(), CatalogLinkError> {
         let other = match offer.endpoint {
             capyio_protocol::NativeAudioEndpoint::Source => route.sink.node_id,
             capyio_protocol::NativeAudioEndpoint::Sink => route.source.node_id,
@@ -534,13 +614,15 @@ impl CatalogControlLink {
         {
             return Err(CatalogLinkError::InvalidPeerRoute);
         }
-        self.send_bytes(
-            &capyio_protocol::encode_route_status_with_native_audio_data(
-                self.binding.session_id,
-                route,
-                offer,
-            )?,
-        )
+        let bytes = capyio_protocol::encode_route_status_with_native_audio_data(
+            self.binding.session_id,
+            route,
+            offer,
+        )?;
+        match deadline {
+            Some(deadline) => self.send_bytes_until(&bytes, deadline),
+            None => self.send_bytes(&bytes),
+        }
     }
 
     pub fn send_camera_data_offer(

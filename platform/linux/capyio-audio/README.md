@@ -44,3 +44,17 @@ consent, create leases or expose a new host command. Paused polling forwards no
 PCM but does not independently close resources. See
 [ADR 1519](../../../docs/adr/1519-linux-runtime-audio-worker.md) for exact caller,
 security, cleanup and evidence boundaries. The CLI above is still static-lab-only.
+
+## Accepted authenticated control owner (library only)
+
+`AuthenticatedPlaybackOwner::from_accepted_trusted_lab` consumes a real accepted
+TLS channel plus the host's exact expected paired binding and an already
+locally authorized single-Route Runtime. It reads reciprocal offers only through
+that channel, derives peer IP from the socket and starts the dynamic worker.
+It creates no credentials, listener, grants or leases. Stop/EOF/timeout closes
+its dedicated Session. Calls remain caller-driven: a control receive pauses
+media polling for at most its absolute deadline (one-second cap, owner lifetime,
+grant and lease), with trickled framing interrupted by connection shutdown.
+Timeout is terminal. This is not complete Linux pairing or
+continuous scheduled playback. UDP remains unencrypted/unauthenticated. See
+[ADR 1520](../../../docs/adr/1520-linux-authenticated-audio-owner.md).

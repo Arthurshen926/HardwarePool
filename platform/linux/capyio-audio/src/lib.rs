@@ -15,6 +15,13 @@ mod route;
 #[cfg(target_os = "linux")]
 pub use route::RuntimePlayback;
 
+#[cfg(target_os = "linux")]
+mod owner;
+#[cfg(target_os = "linux")]
+pub use owner::{
+    AuthenticatedPlaybackOwner, PlaybackAdmission, PlaybackOwnerEvent, PlaybackTarget,
+};
+
 pub const PCM_PACKET_BYTES: usize = 960;
 pub const MAX_STALL: Duration = Duration::from_millis(250);
 
