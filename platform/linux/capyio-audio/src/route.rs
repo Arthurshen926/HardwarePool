@@ -296,6 +296,17 @@ impl RuntimePlayback {
             config.target.clone(),
         ])
         .map_err(error)?;
+        crate::validate_endpoint_target(config.endpoint_mode, &config.target).map_err(error)?;
+        if config.endpoint_mode == crate::EndpointMode::VirtualMicrophone
+            && config.target
+                != crate::virtual_microphone_name(
+                    runtime.route(media.route_id).map_err(error)?.sink.port_id,
+                )
+        {
+            return Err(error(
+                "virtual microphone identity differs from exact Route Sink",
+            ));
+        }
         if config.duration.subsec_nanos() != 0 {
             return Err(error("duration must use whole seconds"));
         }
@@ -317,7 +328,7 @@ impl RuntimePlayback {
                     binding,
                 )
                 .map_err(error)?;
-                let sink = PipeWirePlayback::open(&config.target)?;
+                let sink = PipeWirePlayback::open_mode(&config.target, config.endpoint_mode)?;
                 Ok(NativeResources {
                     endpoint: Some(endpoint),
                     sink,

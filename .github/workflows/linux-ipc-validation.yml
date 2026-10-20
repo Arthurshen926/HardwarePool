@@ -68,6 +68,7 @@ jobs:
           tests::child_failure_is_checked_even_without_a_pending_packet
           tests::sequence_overflow_cannot_wrap_to_a_fresh_stream
           pipewire::tests::exact_pipewire_arguments_never_use_a_shell_or_default_target
+          pipewire::tests::virtual_microphone_arguments_are_owned_source_without_autoconnect
           pipewire::tests::ipc_child_eof_and_repeated_stop_reap_owned_process
           pipewire::tests::ipc_early_child_exit_is_not_playback_readiness
           pipewire::tests::ipc_full_stdin_never_blocks_stop_and_child_is_reaped
@@ -90,6 +91,7 @@ jobs:
           owner::tests::admission_requires_exact_paired_session_and_existing_local_lease
           owner::tests::admission_rejects_implicit_target_public_address_and_wrong_offer
           owner::tests::admission_rejects_shared_session_but_preserves_other_sessions
+          owner::tests::virtual_microphone_admission_binds_owned_name_and_retains_finite_lease
           owner::tests::ipc_authenticated_owner_offer_drives_dynamic_pcm_and_stop
           owner::tests::ipc_authenticated_owner_wrong_stream_never_opens_media
           owner::tests::ipc_authenticated_owner_disconnect_closes_media_and_lease
@@ -126,6 +128,7 @@ jobs:
           launcher_io::tests::serialization_is_length_prefixed_and_bounded
           launcher_io::tests::writes_are_bounded_and_errors_sanitized
           launch::tests::launch_config_is_explicit_finite_and_not_a_secret_error_or_authorization
+          launch::tests::virtual_microphone_mode_is_explicit_owned_network_sink_and_not_permission
           launch::tests::local_command_rejects_unknown_fields_and_keeps_stop_separate_from_approval
           ipc_linux_playback_approved_finite_offer_status_and_stop
           ipc_linux_playback_wrong_nonce_or_route_rejected_without_offer
@@ -169,6 +172,7 @@ jobs:
           audio_negotiation::tests::audio_local_stop_cancels_authorized_draft_and_rejects_delayed_start
           hosted_pipewire::pure_hosted_pipewire_requires_both_opt_ins_and_private_remote
           hosted_pipewire::pure_hosted_pipewire_signal_preserves_dynamic_binding_and_waveform
+          hosted_pipewire::pure_hosted_virtual_microphone_scenarios_are_explicit_and_separate
           incoming_draft::ipc_linux_incoming_actual_android_start_requires_independent_local_approval
           incoming_draft::ipc_linux_incoming_explicit_linux_led_mode_does_not_advertise_or_accept_start
           incoming_draft::ipc_linux_incoming_smaller_android_grant_is_narrowed_before_lease
@@ -323,3 +327,25 @@ jobs:
             | tee "$RUNNER_TEMP/pipewire-e2e-result.txt"
           grep -Fx 'capyio_pipewire_e2e=passed pinned_tls=true consent=true dynamic_udp=true real_graph=true stop=true cleanup=true' \
             "$RUNNER_TEMP/pipewire-e2e-result.txt"
+      - name: Require direct virtual microphone waveform and bounded failure cleanup
+        run: |
+          set -euo pipefail
+          fixture="$(python3 - "$RUNNER_TEMP/pipewire-e2e-build.jsonl" <<'PY'
+          import json, sys
+          items = [json.loads(line) for line in open(sys.argv[1])]
+          matches = [item['executable'] for item in items
+                     if item.get('reason') == 'compiler-artifact'
+                     and item.get('target', {}).get('name') == 'linux_playback'
+                     and item.get('executable')]
+          assert len(matches) == 1, 'exact integration executable required'
+          print(matches[0])
+          PY
+          )"
+          for scenario in waveform no_consumer child_exit server_disconnect; do
+            timeout --signal=TERM --kill-after=15s 75s python3 scripts/run_pipewire_loopback.py \
+              --hosted-pipewire-loopback --virtual-microphone-fixture "$fixture" \
+              --virtual-microphone-scenario "$scenario" \
+              | tee "$RUNNER_TEMP/pipewire-virtual-microphone-$scenario-result.txt"
+            grep -Fx "capyio_pipewire_virtual_microphone=passed scenario=$scenario pinned_tls=true consent=true dynamic_udp=true real_source=true stop=true cleanup=true" \
+              "$RUNNER_TEMP/pipewire-virtual-microphone-$scenario-result.txt"
+          done

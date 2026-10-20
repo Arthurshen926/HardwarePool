@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Explicit hosted, synthetic-only real PipeWire integration. Never installs tools."""
+"""Hosted private PipeWire playback/virtual-Source integration. Never installs tools."""
 import argparse
 import array
 import json
@@ -12,6 +12,7 @@ import subprocess
 import sys
 import tempfile
 import time
+import uuid
 
 LIMIT = 2 * 1024 * 1024
 SPA = '''context.spa-libs = {
@@ -143,10 +144,105 @@ def select_ports(objects, monitor_only=False):
     return [(port(player, 'out'), port(sink, 'in')), monitor]
 
 
+VIRTUAL_PREFIX = 'capyio.virtual-microphone.'
+VIRTUAL_SCENARIOS = ('waveform', 'no_consumer', 'child_exit', 'server_disconnect')
+
+
+def virtual_expectation(value):
+    """Only the fresh production approval's generated local Sink name is usable."""
+    port_id = str(uuid.UUID(value['sink_port_id']))
+    if value['sink_port_id'] != port_id or value['node_name'] != VIRTUAL_PREFIX + port_id:
+        raise ValueError('virtual microphone identity is not the exact local Sink')
+    if type(value['owner_pid']) is not int or value['owner_pid'] <= 1:
+        raise ValueError('invalid production owner identity')
+    return value
+
+
+def virtual_nodes(objects):
+    return [o for o in objects if o.get('type') == 'PipeWire:Interface:Node'
+            and (o.get('info', {}).get('props', {}).get('media.class') == 'Audio/Source'
+                 or str(o.get('info', {}).get('props', {}).get('node.name', ''))
+                 .startswith(VIRTUAL_PREFIX))]
+
+
+def select_virtual_source(objects, expected):
+    """Reject monitors, renamed sinks, duplicate nodes and automatic graph links."""
+    candidates = virtual_nodes(objects)
+    if len(candidates) != 1:
+        raise ValueError('exact virtual microphone node not uniquely ready')
+    source = candidates[0]
+    props = source.get('info', {}).get('props', {})
+    if (props.get('node.name') != expected['node_name']
+            or props.get('media.class') != 'Audio/Source'
+            or not (props.get('node.virtual') is True or props.get('node.virtual') == 'true')):
+        raise ValueError('owned node is not the declared virtual Audio/Source')
+    ports = [o for o in objects if o.get('type') == 'PipeWire:Interface:Port'
+             and str(o.get('info', {}).get('props', {}).get('node.id')) == str(source['id'])]
+    if len(ports) != 1:
+        raise ValueError('virtual microphone needs exactly one mono output port')
+    port = ports[0]
+    port_props = port.get('info', {}).get('props', {})
+    if (port_props.get('port.direction') != 'out'
+            or port_props.get('port.monitor') not in (None, False, 'false')
+            or port_props.get('audio.channel') != 'MONO'):
+        raise ValueError('virtual microphone is not a direct mono Source output')
+    if any(o.get('type') == 'PipeWire:Interface:Link'
+           and (str(o.get('info', {}).get('output-node-id')) == str(source['id'])
+                or str(o.get('info', {}).get('input-node-id')) == str(source['id']))
+           for o in objects):
+        raise ValueError('virtual microphone unexpectedly autolinked')
+    return source, port
+
+
+def recorder_port(objects):
+    nodes = [o['id'] for o in objects if o.get('type') == 'PipeWire:Interface:Node'
+             and o.get('info', {}).get('props', {}).get('node.name') == 'capyio.test.monitor']
+    if len(nodes) != 1:
+        raise ValueError('independent app recorder not uniquely ready')
+    ports = [o['id'] for o in objects if o.get('type') == 'PipeWire:Interface:Port'
+             and str(o.get('info', {}).get('props', {}).get('node.id')) == str(nodes[0])
+             and o.get('info', {}).get('props', {}).get('port.direction') == 'in']
+    if len(ports) != 1:
+        raise ValueError('independent app recorder port not uniquely ready')
+    return ports[0]
+
+
+def graph_fingerprint(objects):
+    """Persistent unrelated Node/Port/Link identities, including global serial."""
+    return {o['id']: (o['type'], o.get('info', {}).get('props', {}).get('object.serial'))
+            for o in objects if o.get('type') in (
+                'PipeWire:Interface:Node', 'PipeWire:Interface:Port', 'PipeWire:Interface:Link')}
+
+
+def verify_virtual_removed(objects, owned, unrelated):
+    current = graph_fingerprint(objects)
+    if virtual_nodes(objects) or any(current.get(key) == value for key, value in owned.items()):
+        raise ValueError('owned virtual microphone node, ports or links survived Stop')
+    if any(current.get(key) != value for key, value in unrelated.items()):
+        raise ValueError('unrelated graph object changed during owned Stop')
+
+
+def verify_process_owner(source, expected):
+    """A matching graph name alone cannot prove production pw-cat ownership."""
+    pid = int(source.get('info', {}).get('props', {}).get('application.process.id', 0))
+    if pid <= 1:
+        raise ValueError('virtual microphone process identity absent')
+    process = Path('/proc') / str(pid)
+    status = dict(line.split(':', 1) for line in (process / 'status').read_text().splitlines()
+                  if ':' in line)
+    args = (process / 'cmdline').read_bytes().rstrip(b'\0').split(b'\0')
+    if (int(status['PPid']) != expected['owner_pid']
+            or (process / 'exe').resolve() != Path('/usr/bin/pw-cat').resolve()
+            or not args or b'--playback' not in args or b'--target=0' not in args):
+        raise ValueError('Source is not the production owner direct no-autolink pw-cat child')
+    return pid
+
+
 class Harness:
-    def __init__(self, root, e2e=False):
+    def __init__(self, root, e2e=False, virtual_scenario=None):
         self.root = root
         self.e2e = e2e
+        self.virtual_scenario = virtual_scenario
         self.children = []
         self.files = []
         self.deadline = time.monotonic() + (45 if e2e else 30)
@@ -156,6 +252,8 @@ class Harness:
                     'XDG_RUNTIME_DIR': str(root), 'PIPEWIRE_RUNTIME_DIR': str(root),
                     'PIPEWIRE_CONFIG_DIR': str(root), 'PIPEWIRE_REMOTE': 'capyio-test',
                     'CAPYIO_PIPEWIRE_TEST': '1', 'CAPYIO_PIPEWIRE_E2E': '1'}
+        if virtual_scenario is not None:
+            self.env['CAPYIO_PIPEWIRE_VIRTUAL_MICROPHONE'] = virtual_scenario
 
     def check(self):
         if time.monotonic() >= self.deadline:
@@ -227,11 +325,7 @@ class Harness:
         if errors:
             raise RuntimeError('owned process cleanup failed')
 
-    def run(self, fixture):
-        for name, content in [('daemon.conf', DAEMON), ('client.conf', CLIENT),
-                              ('client-rt.conf', CLIENT)]:
-            (self.root / name).write_text(content)
-        (self.root / '.capyio-pipewire-loopback').write_text('capyio-hosted-pipewire-loopback-v1\n')
+    def start_daemon(self):
         daemon = self.spawn(['/usr/bin/pipewire', '-c', 'daemon.conf'], 'daemon')
         ready = time.monotonic() + 5
         while not (self.root / 'capyio-test').exists():
@@ -239,6 +333,119 @@ class Harness:
             if daemon.poll() is not None or time.monotonic() > ready:
                 raise ValueError('private daemon failed to become ready')
             time.sleep(.02)
+        return daemon
+
+    def prepare_daemon(self):
+        for name, content in [('daemon.conf', DAEMON), ('client.conf', CLIENT),
+                              ('client-rt.conf', CLIENT)]:
+            (self.root / name).write_text(content)
+        (self.root / '.capyio-pipewire-loopback').write_text('capyio-hosted-pipewire-loopback-v1\n')
+        return self.start_daemon()
+
+    def wait_checkpoint(self, producer, marker):
+        ready = time.monotonic() + 10
+        while not (self.root / marker).exists():
+            self.check()
+            if producer.poll() is not None or time.monotonic() >= ready:
+                raise ValueError('bounded integrated graph checkpoint absent: ' + marker)
+            time.sleep(.02)
+
+    def dump(self):
+        return json.loads(self.command(['/usr/bin/pw-dump']))
+
+    def run_virtual(self, fixture):
+        daemon = self.prepare_daemon()
+        record = self.spawn(['/usr/bin/pw-cat', '--record', '--rate=48000', '--channels=1',
+                             '--format=s16', '--channel-map=mono', '--latency=20ms', '--target=0',
+                             '--properties={"node.name":"capyio.test.monitor"}', '-'], 'capture')
+        producer = self.spawn([str(fixture), '--ignored', '--exact',
+                               'hosted_pipewire_virtual_microphone_end_to_end',
+                               '--nocapture', '--test-threads=1'], 'producer')
+        self.wait_checkpoint(producer, '.capyio-before-consent')
+        expected = virtual_expectation(json.loads(
+            (self.root / '.capyio-virtual-microphone.json').read_text()))
+        for announced, checked in [
+                ('.capyio-before-consent', '.capyio-consent-checked'),
+                ('.capyio-before-android-consent', '.capyio-android-consent-checked')]:
+            self.wait_checkpoint(producer, announced)
+            # Two distinct whole graph observations while the exact consent is
+            # withheld. No synthetic monitor can stand in for Source absence.
+            for _ in range(2):
+                if virtual_nodes(self.dump()):
+                    raise ValueError('virtual microphone appeared before both consents')
+                time.sleep(.1)
+            publish_marker(self.root / checked)
+        ready = time.monotonic() + 10
+        while True:
+            self.check()
+            if any(c.poll() is not None for c in (daemon, record, producer)):
+                raise ValueError('virtual microphone child exited before graph readiness')
+            objects = self.dump()
+            try:
+                source, port = select_virtual_source(objects, expected)
+                target = recorder_port(objects)
+                break
+            except ValueError:
+                if time.monotonic() >= ready:
+                    raise
+                time.sleep(.05)
+        source_pid = verify_process_owner(source, expected)
+        fingerprint = graph_fingerprint(objects)
+        owned = {key: fingerprint[key] for key in (source['id'], port['id'])}
+        unrelated = {key: value for key, value in fingerprint.items() if key not in owned}
+        if self.virtual_scenario == 'waveform':
+            self.command(['/usr/bin/pw-link', str(port['id']), str(target)])
+            objects = self.dump()
+            links = [o for o in objects if o.get('type') == 'PipeWire:Interface:Link'
+                     and (o.get('info', {}).get('output-port-id'),
+                          o.get('info', {}).get('input-port-id')) == (port['id'], target)]
+            all_links = [o for o in objects if o.get('type') == 'PipeWire:Interface:Link']
+            if len(links) != 1 or len(all_links) != 1:
+                raise ValueError('expected only direct Source to independent app link')
+            owned.update(graph_fingerprint(links))
+        publish_marker(self.root / '.capyio-links-ready')
+        if self.virtual_scenario == 'child_exit':
+            self.wait_checkpoint(producer, '.capyio-fault-ready')
+            # PID was verified as the current launcher's direct pw-cat child.
+            if verify_process_owner(source, expected) != source_pid:
+                raise ValueError('owned pw-cat identity changed before fault injection')
+            os.kill(source_pid, signal.SIGTERM)
+        elif self.virtual_scenario == 'server_disconnect':
+            self.wait_checkpoint(producer, '.capyio-fault-ready')
+            self.stop(daemon)
+            self.children.remove(daemon)
+        self.wait_checkpoint(producer, '.capyio-after-stop')
+        if Path('/proc', str(source_pid)).exists():
+            raise ValueError('owned pw-cat process not reaped before completion')
+        if self.virtual_scenario == 'server_disconnect':
+            # A fresh private server must not recover the stopped Source. This
+            # is not used as evidence that unrelated old-server objects survived.
+            daemon = self.start_daemon()
+            unrelated = {}
+            owned = {}
+        observe_until = time.monotonic() + .35
+        while time.monotonic() < observe_until:
+            verify_virtual_removed(self.dump(), owned, unrelated)
+            self.check()
+            time.sleep(.03)
+        publish_marker(self.root / '.capyio-stop-checked')
+        while producer.poll() is None:
+            self.check()
+            if daemon.poll() is not None:
+                raise ValueError('private graph died during Stop verification')
+            time.sleep(.02)
+        expected_marker = ('capyio_pipewire_virtual_microphone=passed scenario='
+                           + self.virtual_scenario
+                           + ' authorized_udp=true stop=true fresh_post_stop=true child_reaped=true')
+        if producer.returncode or expected_marker not in (self.root / 'producer.err').read_text():
+            raise ValueError('integrated virtual microphone lifecycle evidence absent')
+        self.stop(record)
+        self.children.remove(record)
+        if self.virtual_scenario == 'waveform':
+            verify_signal((self.root / 'capture.out').read_bytes())
+
+    def run(self, fixture):
+        daemon = self.prepare_daemon()
         record = self.spawn(['/usr/bin/pw-cat', '--record', '--rate=48000', '--channels=1',
                              '--format=s16', '--channel-map=mono', '--latency=20ms', '--target=0',
                              '--properties={"node.name":"capyio.test.monitor"}', '-'], 'capture')
@@ -342,7 +549,13 @@ def main():
     fixtures = parser.add_mutually_exclusive_group(required=True)
     fixtures.add_argument('--fixture', type=Path)
     fixtures.add_argument('--e2e-fixture', type=Path)
+    fixtures.add_argument('--virtual-microphone-fixture', type=Path)
+    parser.add_argument('--virtual-microphone-scenario', choices=VIRTUAL_SCENARIOS)
     args = parser.parse_args()
+    if args.virtual_microphone_fixture is None and args.virtual_microphone_scenario is not None:
+        parser.error('virtual microphone scenario requires its explicit fixture')
+    if args.virtual_microphone_scenario is None:
+        args.virtual_microphone_scenario = 'waveform'
     if os.environ.get('GITHUB_ACTIONS') != 'true':
         parser.error('requires explicit disposable hosted CI environment')
     for tool in ('pipewire', 'pw-cat', 'pw-dump', 'pw-link'):
@@ -351,9 +564,15 @@ def main():
     signal.signal(signal.SIGTERM, interrupted)
     signal.signal(signal.SIGINT, interrupted)
     with tempfile.TemporaryDirectory(prefix='capyio-pipewire-') as directory:
-        harness = Harness(Path(directory), e2e=args.e2e_fixture is not None)
+        virtual = args.virtual_microphone_fixture is not None
+        harness = Harness(Path(directory), e2e=args.e2e_fixture is not None or virtual,
+                          virtual_scenario=args.virtual_microphone_scenario if virtual else None)
         try:
-            harness.run((args.fixture or args.e2e_fixture).resolve(strict=True))
+            fixture = (args.fixture or args.e2e_fixture or args.virtual_microphone_fixture)
+            if virtual:
+                harness.run_virtual(fixture.resolve(strict=True))
+            else:
+                harness.run(fixture.resolve(strict=True))
         except Exception:
             # All processes/configurations are owned synthetic fixtures, no user data.
             for name in ('daemon.err', 'producer.err', 'capture.err', 'command.err'):
@@ -367,7 +586,11 @@ def main():
             signal.signal(signal.SIGTERM, signal.SIG_IGN)
             signal.signal(signal.SIGINT, signal.SIG_IGN)
             harness.close()
-    if args.e2e_fixture:
+    if args.virtual_microphone_fixture:
+        print('capyio_pipewire_virtual_microphone=passed scenario='
+              + args.virtual_microphone_scenario
+              + ' pinned_tls=true consent=true dynamic_udp=true real_source=true stop=true cleanup=true')
+    elif args.e2e_fixture:
         print('capyio_pipewire_e2e=passed pinned_tls=true consent=true dynamic_udp=true real_graph=true stop=true cleanup=true')
     else:
         print('capyio_pipewire_loopback=passed real_graph=true ordered_pcm=true cleanup=true')

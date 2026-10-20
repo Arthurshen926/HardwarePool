@@ -146,3 +146,19 @@ Source, Sink, target or finite duration. No reverse audio or virtual microphone
 is added. See [ADR 1529](../../docs/adr/1529-linux-incoming-audio-draft.md) for
 binding, grant ordering, Stop, timeouts and test limitations. Incoming-mode real
 Android/PipeWire audio acceptance is still unverified.
+
+### Experimental native PipeWire virtual microphone
+
+ADR 1530 adds explicit `"endpoint_mode":"virtual_microphone"` to the bounded
+playback launcher configuration. Omit `target` for this mode; the launcher owns a
+fresh name derived from the local Sink Port ID. The default endpoint mode remains
+`playback` and still requires its explicit target. `proposal_mode` is independent.
+The local approval event displays the exact mode and generated `node_name`.
+
+The advertised capability is Microphone, but its network port is Sink. Only after
+existing independent consent, finite grants and leases can the owned pw-cat
+process expose an Audio/Source for an application to select. No autolinking,
+default-device change, service installation, PulseAudio/ALSA compatibility or
+reverse capture is implied. This candidate requires the private real-PipeWire
+source/readback/cleanup gate; argument tests alone are not readiness evidence.
+See [ADR 1530](../../docs/adr/1530-linux-owned-virtual-microphone.md).

@@ -9,7 +9,7 @@ use capyio_control_tls::{
 };
 use capyio_core::*;
 use capyio_linux_audio::{
-    AuthenticatedPlaybackOwner, PlaybackAdmission, PlaybackConfig, PlaybackTarget,
+    AuthenticatedPlaybackOwner, EndpointMode, PlaybackAdmission, PlaybackConfig, PlaybackTarget,
 };
 use capyio_pairing::PairedPeerDirectory;
 use capyio_protocol::{
@@ -67,12 +67,34 @@ struct LaunchConfig {
     source: PortRef,
     listen: SocketAddrV4,
     media: SocketAddrV4,
-    target: String,
+    #[serde(default)]
+    target: Option<String>,
+    #[serde(default, deserialize_with = "deserialize_endpoint_mode")]
+    endpoint_mode: EndpointMode,
     duration_secs: u64,
     #[serde(default)]
     proposal_mode: ProposalMode,
 }
+fn deserialize_endpoint_mode<'de, D: serde::Deserializer<'de>>(
+    deserializer: D,
+) -> Result<EndpointMode, D::Error> {
+    match String::deserialize(deserializer)?.as_str() {
+        "playback" => Ok(EndpointMode::Playback),
+        "virtual_microphone" => Ok(EndpointMode::VirtualMicrophone),
+        _ => Err(serde::de::Error::custom("unknown endpoint mode")),
+    }
+}
+
 impl LaunchConfig {
+    fn output_target(&self, sink: PortRef) -> io::Result<String> {
+        match self.endpoint_mode {
+            EndpointMode::Playback => self.target.clone().ok_or_else(fail),
+            EndpointMode::VirtualMicrophone => {
+                Ok(capyio_linux_audio::virtual_microphone_name(sink.port_id))
+            }
+        }
+    }
+
     fn parse(bytes: &[u8]) -> io::Result<Self> {
         let value: Self = sanitized(serde_json::from_slice(bytes))?;
         if value.version != 1
@@ -85,7 +107,13 @@ impl LaunchConfig {
         {
             return Err(fail());
         }
-        // Reuse the existing exact target/address/duration policy; no hardware opens.
+        match value.endpoint_mode {
+            EndpointMode::Playback if value.target.is_none() => return Err(fail()),
+            EndpointMode::VirtualMicrophone if value.target.is_some() => return Err(fail()),
+            _ => {}
+        }
+        // Reuse the existing address/duration policy; no hardware opens. Virtual
+        // mode cannot target another node and its actual name is generated later.
         let mut listen = value.listen;
         if listen.port() == 0 {
             listen.set_port(1);
@@ -95,7 +123,10 @@ impl LaunchConfig {
             listen.to_string(),
             value.media.to_string(),
             value.duration_secs.to_string(),
-            value.target.clone(),
+            value
+                .target
+                .clone()
+                .unwrap_or_else(|| "capyio.validation.only".into()),
         ]))?;
         Ok(value)
     }
@@ -160,7 +191,8 @@ fn launch(io: &mut LauncherIo) -> io::Result<()> {
     let credential_bytes = io.read_frame(65_536, bootstrap_deadline)?;
     let credentials = sanitized(ControlCredentialBundle::decode(credential_bytes.as_slice()))?;
     drop(credential_bytes); // Clear the sole encoded secret buffer immediately.
-    let (mut runtime, sink) = local_runtime_mode(config.node_id, config.proposal_mode)?;
+    let (mut runtime, sink) =
+        local_runtime_endpoint(config.node_id, config.proposal_mode, config.endpoint_mode)?;
     let expectation = sanitized(ControlTlsNodeBinding::new(config.node_id, peer.node_id))?;
     let listener = sanitized(TcpListener::bind(config.listen))?;
     let identity = ControlTlsServerIdentity::from_bundle(peer.peer_certificate_sha256, credentials);
@@ -210,7 +242,8 @@ fn launch(io: &mut LauncherIo) -> io::Result<()> {
         PlaybackTarget {
             local: config.media,
             duration: Duration::from_secs(config.duration_secs),
-            pipewire_target: config.target,
+            pipewire_target: config.output_target(sink)?,
+            endpoint_mode: config.endpoint_mode,
         },
     ))?;
     let (mut host, _stop) = LinuxPlaybackHost::from_admitted_trusted_lab(owner);
@@ -297,6 +330,7 @@ fn prepare(
     let consent_deadline = Instant::now() + CONSENT;
     io.send_json(&json!({"version":1,"event":"approval_required","request_id":request_id,"route_id":route_id,
         "session_id":link.session_id(),"source":config.source,"sink":sink,"target":config.target,
+        "endpoint_mode":config.endpoint_mode.name(),"node_name":if config.endpoint_mode==EndpointMode::VirtualMicrophone { Some(config.output_target(sink)?) } else { None },
         "format":"pcm-s16le-48000-mono","duration_secs":config.duration_secs,"approval_timeout_secs":CONSENT.as_secs(),"media_security":"unauthenticated_udp_trusted_lab_only"}), Instant::now() + Duration::from_secs(1))?;
     loop {
         check(consent_deadline)?;
@@ -782,10 +816,23 @@ fn local_runtime(node_id: NodeId) -> io::Result<(NodeRuntime, PortRef)> {
     local_runtime_mode(node_id, ProposalMode::LinuxLed)
 }
 
+#[cfg(test)]
 fn local_runtime_mode(node_id: NodeId, mode: ProposalMode) -> io::Result<(NodeRuntime, PortRef)> {
+    local_runtime_endpoint(node_id, mode, EndpointMode::Playback)
+}
+
+fn local_runtime_endpoint(
+    node_id: NodeId,
+    mode: ProposalMode,
+    endpoint: EndpointMode,
+) -> io::Result<(NodeRuntime, PortRef)> {
     let mut node = NodeDescriptor::new(
         node_id,
-        "Linux lab playback",
+        if endpoint == EndpointMode::VirtualMicrophone {
+            "Linux virtual microphone"
+        } else {
+            "Linux lab playback"
+        },
         Platform::Linux,
         "not probed",
         env!("CARGO_PKG_VERSION"),
@@ -794,21 +841,33 @@ fn local_runtime_mode(node_id: NodeId, mode: ProposalMode) -> io::Result<(NodeRu
     let adapter = AdapterInstanceId::new();
     let capability = CapabilityId::new();
     let port = PortId::new();
-    sanitized(node.add_adapter(AdapterInstanceDescriptor {
-        id: adapter,
-        adapter_type: "capyio.linux.lab-playback".into(),
-        display_name: "Explicit lab PCM playback".into(),
-        deployment_mode: AdapterDeploymentMode::Sidecar,
-        version: env!("CARGO_PKG_VERSION").into(),
-        state: AdapterState::Ready,
-        health: AdapterHealth::Unknown,
-        owned_capabilities: BTreeSet::new(),
-        supported_route_modes: BTreeSet::from([RouteBackend::AdapterManaged]),
-    }))?;
+    sanitized(
+        node.add_adapter(AdapterInstanceDescriptor {
+            id: adapter,
+            adapter_type: "capyio.linux.lab-playback".into(),
+            display_name: if endpoint == EndpointMode::VirtualMicrophone {
+                "Owned PipeWire virtual microphone"
+            } else {
+                "Explicit lab PCM playback"
+            }
+            .into(),
+            deployment_mode: AdapterDeploymentMode::Sidecar,
+            version: env!("CARGO_PKG_VERSION").into(),
+            state: AdapterState::Ready,
+            health: AdapterHealth::Unknown,
+            owned_capabilities: BTreeSet::new(),
+            supported_route_modes: BTreeSet::from([RouteBackend::AdapterManaged]),
+        }),
+    )?;
     let descriptor = PortDescriptor {
         id: port,
         capability_id: capability,
-        display_name: "Explicit playback Sink".into(),
+        display_name: if endpoint == EndpointMode::VirtualMicrophone {
+            "Virtual microphone network Sink"
+        } else {
+            "Explicit playback Sink"
+        }
+        .into(),
         direction: PortDirection::Sink,
         profile: ProfileId::audio_frames_v1(),
         schema_id: None,
@@ -819,23 +878,34 @@ fn local_runtime_mode(node_id: NodeId, mode: ProposalMode) -> io::Result<(NodeRu
         permission_requirement: PermissionRequirement::None,
         interoperability_mode: InteroperabilityMode::AdapterManaged,
     };
-    sanitized(node.add_capability(CapabilityDescriptor {
-        id: capability,
-        adapter_instance_id: adapter,
-        display_name: "Explicit lab playback".into(),
-        class: CapabilityClass::Speaker,
-        availability: Availability::Available,
-        permission_requirement: PermissionRequirement::None,
-        metadata: if mode == ProposalMode::IncomingDraft {
-            BTreeMap::from([(
-                capyio_protocol::NATIVE_AUDIO_INBOUND_DRAFT_METADATA_KEY.into(),
-                capyio_protocol::NATIVE_AUDIO_INBOUND_DRAFT_MONO_V1.into(),
-            )])
-        } else {
-            BTreeMap::new()
-        },
-        ports: BTreeMap::from([(port, descriptor)]),
-    }))?;
+    sanitized(
+        node.add_capability(CapabilityDescriptor {
+            id: capability,
+            adapter_instance_id: adapter,
+            display_name: if endpoint == EndpointMode::VirtualMicrophone {
+                "PipeWire virtual microphone"
+            } else {
+                "Explicit lab playback"
+            }
+            .into(),
+            class: if endpoint == EndpointMode::VirtualMicrophone {
+                CapabilityClass::Microphone
+            } else {
+                CapabilityClass::Speaker
+            },
+            availability: Availability::Available,
+            permission_requirement: PermissionRequirement::None,
+            metadata: if mode == ProposalMode::IncomingDraft {
+                BTreeMap::from([(
+                    capyio_protocol::NATIVE_AUDIO_INBOUND_DRAFT_METADATA_KEY.into(),
+                    capyio_protocol::NATIVE_AUDIO_INBOUND_DRAFT_MONO_V1.into(),
+                )])
+            } else {
+                BTreeMap::new()
+            },
+            ports: BTreeMap::from([(port, descriptor)]),
+        }),
+    )?;
     Ok((
         sanitized(NodeRuntime::new(node))?,
         PortRef {
@@ -852,6 +922,56 @@ mod tests {
     fn config() -> serde_json::Value {
         json!({"version":1,"node_id":NodeId::new(),"source":PortRef{node_id:NodeId::new(),capability_id:CapabilityId::new(),port_id:PortId::new()},"listen":"127.0.0.1:0","media":"127.0.0.1:40211","target":"explicit.test","duration_secs":10})
     }
+    #[test]
+    fn virtual_microphone_mode_is_explicit_owned_network_sink_and_not_permission() {
+        let mut value = config();
+        assert_eq!(
+            LaunchConfig::parse(&serde_json::to_vec(&value).unwrap())
+                .unwrap()
+                .endpoint_mode,
+            EndpointMode::Playback
+        );
+        value["endpoint_mode"] = json!("virtual_microphone");
+        assert!(LaunchConfig::parse(&serde_json::to_vec(&value).unwrap()).is_err());
+        value.as_object_mut().unwrap().remove("target");
+        for proposal in [ProposalMode::LinuxLed, ProposalMode::IncomingDraft] {
+            let parsed = LaunchConfig::parse(&serde_json::to_vec(&value).unwrap()).unwrap();
+            let (runtime, sink) =
+                local_runtime_endpoint(parsed.node_id, proposal, parsed.endpoint_mode).unwrap();
+            let (other, other_sink) =
+                local_runtime_endpoint(parsed.node_id, proposal, parsed.endpoint_mode).unwrap();
+            let snapshot = runtime.snapshot();
+            assert_ne!(
+                parsed.output_target(sink).unwrap(),
+                parsed.output_target(other_sink).unwrap()
+            );
+            assert_eq!(
+                parsed.output_target(sink).unwrap(),
+                capyio_linux_audio::virtual_microphone_name(sink.port_id)
+            );
+            assert_eq!(
+                snapshot.local_node.capabilities[&sink.capability_id].class,
+                CapabilityClass::Microphone
+            );
+            assert_eq!(
+                snapshot
+                    .local_node
+                    .port(sink.capability_id, sink.port_id)
+                    .unwrap()
+                    .direction,
+                PortDirection::Sink
+            );
+            assert!(snapshot.routes.is_empty());
+            assert!(snapshot.sessions.is_empty());
+            assert!(snapshot.port_leases.is_empty());
+            assert!(other.snapshot().routes.is_empty());
+        }
+        value["endpoint_mode"] = json!("unknown");
+        assert!(LaunchConfig::parse(&serde_json::to_vec(&value).unwrap()).is_err());
+        value["endpoint_mode"] = json!("playback");
+        assert!(LaunchConfig::parse(&serde_json::to_vec(&value).unwrap()).is_err());
+    }
+
     #[test]
     fn launch_config_is_explicit_finite_and_not_a_secret_error_or_authorization() {
         let valid = config();

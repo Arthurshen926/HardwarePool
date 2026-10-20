@@ -1,4 +1,4 @@
-use crate::{PcmPlaybackSink, validate_target};
+use crate::{EndpointMode, PcmPlaybackSink, validate_endpoint_target};
 use std::{
     ffi::OsString,
     io::{self, Write},
@@ -19,11 +19,11 @@ pub struct PipeWirePlayback {
 
 impl PipeWirePlayback {
     pub fn open(target: &str) -> io::Result<Self> {
-        let args = playback_arguments(target)?;
-        // Fixed distributor-owned path, not PATH search or peer-provided input.
-        let mut command = Command::new(Path::new("/usr/bin/pw-cat"));
-        command.args(args);
-        Self::spawn(command)
+        Self::open_mode(target, EndpointMode::Playback)
+    }
+
+    pub fn open_mode(target: &str, mode: EndpointMode) -> io::Result<Self> {
+        Self::spawn(endpoint_command(target, mode)?)
     }
 
     #[cfg(test)]
@@ -113,8 +113,22 @@ impl Drop for PipeWirePlayback {
     }
 }
 
+fn endpoint_command(target: &str, mode: EndpointMode) -> io::Result<Command> {
+    // Fixed distributor-owned path, not PATH search or peer-provided input.
+    let mut command = Command::new(Path::new("/usr/bin/pw-cat"));
+    command
+        .args(endpoint_arguments(target, mode)?)
+        .env_remove("PIPEWIRE_NODE");
+    Ok(command)
+}
+
+#[cfg(test)]
 fn playback_arguments(target: &str) -> io::Result<Vec<OsString>> {
-    validate_target(target)
+    endpoint_arguments(target, EndpointMode::Playback)
+}
+
+fn endpoint_arguments(target: &str, mode: EndpointMode) -> io::Result<Vec<OsString>> {
+    validate_endpoint_target(mode, target)
         .map_err(|reason| io::Error::new(io::ErrorKind::InvalidInput, reason))?;
     if cfg!(target_endian = "big") {
         return Err(io::Error::new(
@@ -122,6 +136,14 @@ fn playback_arguments(target: &str) -> io::Result<Vec<OsString>> {
             "S16LE playback requires little-endian Linux",
         ));
     }
+    let properties = match mode {
+        EndpointMode::Playback => r#"--properties={"node.dont-fallback":true,"node.dont-reconnect":true,"node.dont-move":true}"#.to_owned(),
+        EndpointMode::VirtualMicrophone => format!(r#"--properties={{"media.class":"Audio/Source","node.virtual":true,"node.name":"{target}","node.description":"CapyIO Virtual Microphone","node.dont-fallback":true,"node.dont-reconnect":true,"node.dont-move":true}}"#),
+    };
+    let destination = match mode {
+        EndpointMode::Playback => format!("--target={target}"),
+        EndpointMode::VirtualMicrophone => "--target=0".to_owned(),
+    };
     Ok([
         "--playback",
         "--rate=48000",
@@ -129,8 +151,8 @@ fn playback_arguments(target: &str) -> io::Result<Vec<OsString>> {
         "--format=s16",
         "--channel-map=mono",
         "--latency=20ms",
-        r#"--properties={"node.dont-fallback":true,"node.dont-reconnect":true,"node.dont-move":true}"#,
-        &format!("--target={target}"),
+        &properties,
+        &destination,
         "-",
     ]
     .into_iter()
@@ -141,6 +163,35 @@ fn playback_arguments(target: &str) -> io::Result<Vec<OsString>> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn virtual_microphone_arguments_are_owned_source_without_autoconnect() {
+        let name = crate::virtual_microphone_name(capyio_core::PortId::new());
+        let command = endpoint_command(&name, EndpointMode::VirtualMicrophone).unwrap();
+        let args: Vec<_> = command.get_args().map(|a| a.to_str().unwrap()).collect();
+        assert!(args.contains(&"--target=0"));
+        assert!(args.contains(&"--playback"));
+        let properties = args
+            .iter()
+            .find(|a| a.starts_with("--properties="))
+            .unwrap();
+        assert!(properties.contains("\"media.class\":\"Audio/Source\""));
+        assert!(properties.contains("\"node.virtual\":true"));
+        assert!(properties.contains(&name));
+        assert!(
+            command
+                .get_envs()
+                .any(|(key, value)| key == "PIPEWIRE_NODE" && value.is_none())
+        );
+        for bad in [
+            "auto",
+            "0",
+            "some.external.target",
+            "capyio.virtual-microphone.00000000-0000-0000-0000-000000000000",
+        ] {
+            assert!(endpoint_arguments(bad, EndpointMode::VirtualMicrophone).is_err());
+        }
+    }
 
     #[test]
     fn exact_pipewire_arguments_never_use_a_shell_or_default_target() {

@@ -1,8 +1,9 @@
 #![cfg(target_os = "linux")]
 //! Hosted executable checks only: ephemeral certificates, loopback control and
 //! inherited FIFO pipes. Ordinary tests never return a media offer or open an
-//! audio process. The explicitly ignored end-to-end case additionally requires
-//! the hosted harness's private synthetic PipeWire graph and opt-in markers.
+//! audio process. The explicitly ignored playback and virtual-microphone cases
+//! additionally require the hosted harness's private synthetic PipeWire graph
+//! and exact opt-in markers.
 use capyio_android_jni::AndroidCatalogRuntimeV1;
 use capyio_control_credentials::ControlCredentialBundle;
 use capyio_control_link::{CatalogControlLink, ReceivedControlMessage};
@@ -1186,6 +1187,13 @@ fn hosted_pipewire_android_source_end_to_end() {
     hosted_pipewire::run();
 }
 
+/// A separate direct Audio/Source gate, not a renamed null-sink monitor.
+#[test]
+#[ignore = "requires the dedicated hosted private-PipeWire virtual-microphone harness"]
+fn hosted_pipewire_virtual_microphone_end_to_end() {
+    hosted_pipewire::run_virtual_microphone();
+}
+
 mod hosted_pipewire {
     use super::*;
     use capyio_audio::{AudioMediaPacket, AudioMediaStreamBinding, AudioStreamSpec};
@@ -1206,6 +1214,46 @@ mod hosted_pipewire {
     const WHOLE_BUDGET: Duration = Duration::from_secs(20);
     const FRAME_SAMPLES: u32 = 480;
     const FRAMES: u64 = 500;
+    const LATE_FRAMES: u64 = 20;
+
+    #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+    enum Scenario {
+        Playback,
+        Waveform,
+        NoConsumer,
+        ChildExit,
+        ServerDisconnect,
+    }
+
+    impl Scenario {
+        fn parse(value: &str) -> Option<Self> {
+            match value {
+                "waveform" => Some(Self::Waveform),
+                "no_consumer" => Some(Self::NoConsumer),
+                "child_exit" => Some(Self::ChildExit),
+                "server_disconnect" => Some(Self::ServerDisconnect),
+                _ => None,
+            }
+        }
+
+        fn name(self) -> &'static str {
+            match self {
+                Self::Playback => "playback",
+                Self::Waveform => "waveform",
+                Self::NoConsumer => "no_consumer",
+                Self::ChildExit => "child_exit",
+                Self::ServerDisconnect => "server_disconnect",
+            }
+        }
+
+        fn virtual_microphone(self) -> bool {
+            self != Self::Playback
+        }
+
+        fn injected_failure(self) -> bool {
+            matches!(self, Self::ChildExit | Self::ServerDisconnect)
+        }
+    }
 
     fn opted_in(test: Option<&OsStr>, e2e: Option<&OsStr>, remote: Option<&OsStr>) -> bool {
         test == Some(OsStr::new("1"))
@@ -1264,6 +1312,10 @@ mod hosted_pipewire {
             ".capyio-before-android-consent",
             ".capyio-android-consent-checked",
             ".capyio-links-ready",
+            ".capyio-fault-ready",
+            ".capyio-virtual-microphone.json",
+            ".capyio-after-stop",
+            ".capyio-stop-checked",
         ] {
             assert!(
                 !runtime.join(name).try_exists().unwrap(),
@@ -1273,13 +1325,7 @@ mod hosted_pipewire {
         runtime
     }
 
-    fn checkpoint(
-        runtime: &Path,
-        announce: &str,
-        acknowledged: &str,
-        process: &mut Process,
-        deadline: Instant,
-    ) {
+    fn publish_marker(runtime: &Path, announce: &str) {
         let temporary = runtime.join(format!("{announce}.tmp"));
         let destination = runtime.join(announce);
         assert!(!destination.try_exists().unwrap());
@@ -1291,6 +1337,16 @@ mod hosted_pipewire {
         marker.write_all(MARKER).unwrap();
         drop(marker);
         fs::rename(temporary, destination).unwrap();
+    }
+
+    fn checkpoint(
+        runtime: &Path,
+        announce: &str,
+        acknowledged: &str,
+        process: &mut Process,
+        deadline: Instant,
+    ) {
+        publish_marker(runtime, announce);
         wait_marker(runtime, acknowledged, process, deadline);
     }
 
@@ -1309,7 +1365,7 @@ mod hosted_pipewire {
     // The same five-second waveform as the component fixture: two seconds of
     // 1 kHz, one second of exact zero PCM, two seconds of 2 kHz, 48 kHz S16LE.
     fn packet(sequence: u64, binding: &AudioMediaStreamBinding) -> AudioMediaPacket {
-        assert!(sequence < FRAMES);
+        assert!(sequence < FRAMES + LATE_FRAMES);
         let frequency = if sequence < 200 {
             1_000.0
         } else if sequence < 300 {
@@ -1354,6 +1410,18 @@ mod hosted_pipewire {
     }
 
     pub(super) fn run() {
+        run_scenario(Scenario::Playback);
+    }
+
+    pub(super) fn run_virtual_microphone() {
+        let scenario = std::env::var("CAPYIO_PIPEWIRE_VIRTUAL_MICROPHONE")
+            .ok()
+            .and_then(|value| Scenario::parse(&value))
+            .expect("exact hosted virtual microphone scenario opt-in required");
+        run_scenario(scenario);
+    }
+
+    fn run_scenario(scenario: Scenario) {
         let runtime = private_runtime(); // Fail before any process/socket opens.
         let deadline = Instant::now() + WHOLE_BUDGET;
         // Reserve one ephemeral loopback ingress through consent negotiation,
@@ -1362,13 +1430,60 @@ mod hosted_pipewire {
         let ingress = ingress_reservation.local_addr().unwrap();
         let mut fixture = Fixture::new();
         fixture.config["media"] = json!(ingress.to_string());
-        fixture.config["target"] = json!("capyio.test.null");
+        if scenario.virtual_microphone() {
+            fixture.config.as_object_mut().unwrap().remove("target");
+            fixture.config["endpoint_mode"] = json!("virtual_microphone");
+        } else {
+            fixture.config["target"] = json!("capyio.test.null");
+        }
         fixture.config["duration_secs"] = json!(LIFETIME.as_secs());
         let mut process = Process::playback();
         fixture.bootstrap(&mut process);
         let mut peer = fixture.connect(&mut process);
         let approval = process.event("approval_required");
-        assert_eq!(approval["target"], "capyio.test.null");
+        if scenario.virtual_microphone() {
+            assert!(approval["target"].is_null());
+            assert_eq!(approval["endpoint_mode"], "virtual_microphone");
+            let sink: PortRef = serde_json::from_value(approval["sink"].clone()).unwrap();
+            let expected_name = format!("capyio.virtual-microphone.{}", sink.port_id);
+            assert_eq!(approval["node_name"], expected_name);
+            let catalog = &peer.runtime.snapshot().peers[0];
+            let capability = catalog.capabilities.get(&sink.capability_id).unwrap();
+            assert_eq!(capability.class, CapabilityClass::Microphone);
+            assert_eq!(
+                capability.ports.get(&sink.port_id).unwrap().direction,
+                PortDirection::Sink,
+                "system Source projection does not invert the network Sink"
+            );
+            assert!(
+                !capability
+                    .metadata
+                    .contains_key(NATIVE_AUDIO_INBOUND_DRAFT_METADATA_KEY),
+                "endpoint_mode does not implicitly select incoming proposal mode"
+            );
+            let mut evidence = OpenOptions::new()
+                .write(true)
+                .create_new(true)
+                .open(runtime.join(".capyio-virtual-microphone.json.tmp"))
+                .unwrap();
+            serde_json::to_writer(
+                &mut evidence,
+                &json!({
+                    "node_name": expected_name,
+                    "sink_port_id": sink.port_id,
+                    "owner_pid": process.child.id(),
+                }),
+            )
+            .unwrap();
+            drop(evidence);
+            fs::rename(
+                runtime.join(".capyio-virtual-microphone.json.tmp"),
+                runtime.join(".capyio-virtual-microphone.json"),
+            )
+            .unwrap();
+        } else {
+            assert_eq!(approval["target"], "capyio.test.null");
+        }
         assert_eq!(approval["duration_secs"], LIFETIME.as_secs());
         assert_eq!(approval["format"], "pcm-s16le-48000-mono");
         assert_eq!(
@@ -1380,8 +1495,9 @@ mod hosted_pipewire {
         no_peer_media(&mut peer, id);
         process.command(json!({"version":1,"command":"status"}));
         assert_eq!(process.event("status")["stage"], "awaiting_local_approval");
-        // The harness checks the actual graph has no player and its live
-        // null-sink monitor is silent before allowing this exact nonce approval.
+        // The harness proves the endpoint is absent before either consent. In
+        // playback mode it also obtains silent live null-sink monitor samples;
+        // virtual-microphone mode instead checks the entire graph has no Source.
         checkpoint(
             &runtime,
             ".capyio-before-consent",
@@ -1495,7 +1611,14 @@ mod hosted_pipewire {
         assert_eq!(process.event("status")["packets_written"], 0);
 
         let signal_started = Instant::now();
-        for sequence in 0..FRAMES {
+        // No-consumer mode proves bounded Stop without any graph link. Existing
+        // synthetic full-stdin tests remain the explicit backpressure proof.
+        let frames = match scenario {
+            Scenario::NoConsumer => 50,
+            Scenario::ChildExit | Scenario::ServerDisconnect => 1,
+            Scenario::Playback | Scenario::Waveform => FRAMES,
+        };
+        for sequence in 0..frames {
             let when = signal_started + Duration::from_millis(sequence * 10);
             while Instant::now() < when {
                 assert!(
@@ -1518,7 +1641,7 @@ mod hosted_pipewire {
                 .unwrap();
             sender.send_packet(&packet(sequence, &binding)).unwrap();
         }
-        assert_eq!(sender.metrics().packets_sent, FRAMES);
+        assert_eq!(sender.metrics().packets_sent, frames);
         // Require all packets through the real owner, not merely UDP send success.
         loop {
             assert!(Instant::now() < deadline, "bounded receiver drain");
@@ -1527,22 +1650,55 @@ mod hosted_pipewire {
             assert_eq!(status["route_id"], approval["route_id"]);
             assert_eq!(status["state"], "active");
             let written = status["packets_written"].as_u64().unwrap();
-            assert!(written <= FRAMES);
-            if written == FRAMES {
+            assert!(written <= frames);
+            if written == frames {
                 break;
             }
             thread::sleep(Duration::from_millis(5));
         }
-        // Let the real graph consume its final queued quantum before closing.
-        thread::sleep(Duration::from_millis(150));
+        if scenario.injected_failure() {
+            // The harness may inject failure only after a real bound packet
+            // passed the actual production UDP owner into its pw-cat child.
+            publish_marker(&runtime, ".capyio-fault-ready");
+            process.event("failed");
+            assert!(
+                !process.finish().success(),
+                "lost child/server cannot masquerade as successful playback"
+            );
+            assert!(
+                String::from_utf8_lossy(&process.stderr)
+                    .contains("Linux lab playback launch failed")
+            );
+        } else {
+            // Let the real graph consume its final queued quantum before closing.
+            thread::sleep(Duration::from_millis(150));
+            process.command(json!({"version":1,"command":"stop"}));
+            process.event("stopped");
+            assert!(
+                process.finish().success(),
+                "owner must reap its actual pw-cat child"
+            );
+            assert!(process.stderr.is_empty());
+        }
+        if scenario.virtual_microphone() {
+            // Deliberately bypass the now-stopped Android lifecycle in this
+            // adversarial fixture: correctly bound, fresh UDP after Stop still
+            // cannot recreate a Source, port, link, child or ingress listener.
+            for sequence in FRAMES..FRAMES + LATE_FRAMES {
+                sender.send_packet(&packet(sequence, &binding)).unwrap();
+                thread::sleep(Duration::from_millis(5));
+            }
+            assert_eq!(sender.metrics().packets_sent, frames + LATE_FRAMES);
+            publish_marker(&runtime, ".capyio-after-stop");
+            while !exact_marker(&runtime.join(".capyio-stop-checked")) {
+                assert!(
+                    Instant::now() < deadline,
+                    "bounded post-Stop graph assertion"
+                );
+                thread::sleep(Duration::from_millis(5));
+            }
+        }
         drop(sender);
-        process.command(json!({"version":1,"command":"stop"}));
-        process.event("stopped");
-        assert!(
-            process.finish().success(),
-            "owner must reap its actual pw-cat child"
-        );
-        assert!(process.stderr.is_empty());
         assert!(
             peer.receive_control_message_until(Instant::now() + BOUND)
                 .is_err()
@@ -1575,7 +1731,14 @@ mod hosted_pipewire {
         );
         assert!(UdpSocket::bind(source).is_ok(), "synthetic Source released");
         assert!(Instant::now() < deadline);
-        eprintln!("capyio_pipewire_e2e=passed authorized_udp=true stop=true child_reaped=true");
+        if scenario.virtual_microphone() {
+            eprintln!(
+                "capyio_pipewire_virtual_microphone=passed scenario={} authorized_udp=true stop=true fresh_post_stop=true child_reaped=true",
+                scenario.name()
+            );
+        } else {
+            eprintln!("capyio_pipewire_e2e=passed authorized_udp=true stop=true child_reaped=true");
+        }
     }
 
     #[test]
@@ -1590,6 +1753,22 @@ mod hosted_pipewire {
     }
 
     #[test]
+    fn pure_hosted_virtual_microphone_scenarios_are_explicit_and_separate() {
+        for value in ["waveform", "no_consumer", "child_exit", "server_disconnect"] {
+            let scenario = Scenario::parse(value).unwrap();
+            assert!(scenario.virtual_microphone());
+            assert_eq!(scenario.name(), value);
+        }
+        for value in ["", "1", "playback", "WAVEFORM", "waveform ", "auto"] {
+            assert!(Scenario::parse(value).is_none());
+        }
+        assert!(!Scenario::Playback.virtual_microphone());
+        assert!(!Scenario::NoConsumer.injected_failure());
+        assert!(Scenario::ChildExit.injected_failure());
+        assert!(Scenario::ServerDisconnect.injected_failure());
+    }
+
+    #[test]
     fn pure_hosted_pipewire_signal_preserves_dynamic_binding_and_waveform() {
         let binding = AudioMediaStreamBinding {
             session_id: SessionId::new(),
@@ -1598,7 +1777,7 @@ mod hosted_pipewire {
             stream_epoch: 7,
             selected_spec: AudioStreamSpec::voice_interactive(),
         };
-        for sequence in [0, 199, 200, 299, 300, 499] {
+        for sequence in [0, 199, 200, 299, 300, 499, 500, 519] {
             let packet = packet(sequence, &binding);
             packet.validate_against(&binding).unwrap();
             assert_eq!(packet.first_sample_index, sequence * 480);

@@ -109,6 +109,7 @@ fn connected() -> (
         local: "127.0.0.1:40211".parse().unwrap(),
         duration: Duration::from_secs(30),
         pipewire_target: "synthetic.test.never.opened".into(),
+        endpoint_mode: capyio_linux_audio::EndpointMode::Playback,
     };
     let (server_identity, client_identity) = identities();
     let listener = TcpListener::bind("127.0.0.1:0").unwrap();

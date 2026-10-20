@@ -1181,3 +1181,11 @@ cases without skipping; the Android compile contract still exercises the shared
 JNI coordinator path. The existing PipeWire graph gate continues to validate
 Linux-led playback only. No incoming-mode sound or physical device result should
 be inferred from negotiation/lease tests or Android-target compilation.
+
+ADR 1530 adds pure `virtual_microphone` mode/argv/identity tests plus an explicit
+private real-PipeWire source integration gate. This must prove direct Audio/Source
+output-port readback by a separate recorder, not a renamed null-sink monitor.
+Default playback remains separately gated. An ignored test listing, compilation,
+or synthetic stdin backpressure test is not real virtual-microphone acceptance.
+The new candidate is pending exact-head hosted execution; physical testing and
+PulseAudio/ALSA compatibility are not claimed.

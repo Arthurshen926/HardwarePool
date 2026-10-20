@@ -1,5 +1,5 @@
-//! Explicit trusted-lab Android microphone-compatible PCM playback, not pairing
-//! or a system virtual microphone. No resource is opened merely by importing it.
+//! Explicit trusted-lab PCM playback or PipeWire virtual-microphone projection.
+//! Neither mode performs pairing or opens resources on import.
 use std::{io, net::SocketAddrV4, time::Duration};
 
 use capyio_audio::{AudioMediaPacket, AudioMediaStreamBinding};
@@ -39,12 +39,53 @@ pub trait PcmPlaybackSink {
     fn check_alive(&mut self) -> io::Result<()>;
 }
 
+/// Explicit local projection, independent of network Source/Sink direction.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub enum EndpointMode {
+    #[default]
+    Playback,
+    VirtualMicrophone,
+}
+impl EndpointMode {
+    pub fn name(self) -> &'static str {
+        match self {
+            Self::Playback => "playback",
+            Self::VirtualMicrophone => "virtual_microphone",
+        }
+    }
+}
+
+/// Runtime-owned identity, never a peer-provided device name or default change.
+pub fn virtual_microphone_name(port: capyio_core::PortId) -> String {
+    format!("capyio.virtual-microphone.{port}")
+}
+
+pub(crate) fn validate_endpoint_target(
+    mode: EndpointMode,
+    target: &str,
+) -> Result<(), &'static str> {
+    validate_target(target)?;
+    if mode == EndpointMode::VirtualMicrophone {
+        let suffix = target
+            .strip_prefix("capyio.virtual-microphone.")
+            .ok_or("virtual microphone name must be owned")?;
+        let id: capyio_core::PortId = suffix
+            .parse()
+            .map_err(|_| "invalid virtual microphone identity")?;
+        if id.as_uuid().is_nil() || virtual_microphone_name(id) != target {
+            return Err("invalid virtual microphone identity");
+        }
+    }
+    Ok(())
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct PlaybackConfig {
     pub local: SocketAddrV4,
     pub peer: SocketAddrV4,
     pub duration: Duration,
     pub target: String,
+    pub endpoint_mode: EndpointMode,
 }
 
 impl PlaybackConfig {
@@ -71,6 +112,7 @@ impl PlaybackConfig {
             peer,
             duration: Duration::from_secs(seconds),
             target: args[4].clone(),
+            endpoint_mode: EndpointMode::Playback,
         })
     }
 }

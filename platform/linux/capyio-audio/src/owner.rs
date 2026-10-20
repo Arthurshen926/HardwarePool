@@ -35,6 +35,7 @@ pub struct PlaybackTarget {
     pub local: SocketAddrV4,
     pub duration: Duration,
     pub pipewire_target: String,
+    pub endpoint_mode: crate::EndpointMode,
 }
 /// Trusted host intent, not deserializable peer input. The expected binding must
 /// come from the existing paired-peer admission flow, not from an incoming offer.
@@ -307,6 +308,7 @@ impl AuthenticatedPlaybackOwner {
                     peer: SocketAddrV4::new(self.peer_ip, preparation.peer_port),
                     duration: self.target.duration,
                     target: self.target.pipewire_target.clone(),
+                    endpoint_mode: self.target.endpoint_mode,
                 };
                 // Same full policy validation as the real worker, before the test seam too.
                 PlaybackConfig::parse(&[
@@ -584,7 +586,8 @@ fn validate_admission(
         ));
     }
     crate::parse_lab_endpoint(&target.local.to_string()).map_err(error)?;
-    crate::validate_target(&target.pipewire_target).map_err(error)?;
+    crate::validate_endpoint_target(target.endpoint_mode, &target.pipewire_target)
+        .map_err(error)?;
     if !(Duration::from_secs(1)..=Duration::from_secs(300)).contains(&target.duration)
         || target.duration.subsec_nanos() != 0
         || admission.local_offer.endpoint != NativeAudioEndpoint::Sink
@@ -607,6 +610,13 @@ fn validate_admission(
         ));
     }
     let route = runtime.route(admission.route_id).map_err(error)?;
+    if target.endpoint_mode == crate::EndpointMode::VirtualMicrophone
+        && target.pipewire_target != crate::virtual_microphone_name(route.sink.port_id)
+    {
+        return Err(error(
+            "virtual microphone identity differs from admitted local Sink",
+        ));
+    }
     if route.session_id != actual.session_id
         || route.source.node_id != actual.client_node_id
         || route.sink.node_id != actual.server_node_id
@@ -665,6 +675,7 @@ mod tests {
                 local: "127.0.0.1:40211".parse().unwrap(),
                 duration: Duration::from_secs(10),
                 pipewire_target: "synthetic.test".into(),
+                endpoint_mode: crate::EndpointMode::Playback,
             },
         )
     }
@@ -793,6 +804,28 @@ mod tests {
             .availability = Availability::Busy;
         runtime.replace_local_catalog(local).unwrap();
         assert!(validate_catalog_endpoints(&runtime, admission.route_id, true).is_err());
+    }
+
+    #[test]
+    fn virtual_microphone_admission_binds_owned_name_and_retains_finite_lease() {
+        let (mut runtime, admission, mut target) = fixture();
+        let sink = runtime.route(admission.route_id).unwrap().sink;
+        target.endpoint_mode = crate::EndpointMode::VirtualMicrophone;
+        target.pipewire_target = crate::virtual_microphone_name(capyio_core::PortId::new());
+        assert!(
+            validate_admission(&runtime, admission.expected, admission, &target, 1_000).is_err()
+        );
+        target.pipewire_target = crate::virtual_microphone_name(sink.port_id);
+        validate_admission(&runtime, admission.expected, admission, &target, 1_000).unwrap();
+        assert!(
+            validate_admission(&runtime, admission.expected, admission, &target, 10_000).is_err()
+        );
+        runtime
+            .release_route_port_lease(admission.route_id, sink, admission.expected.session_id)
+            .unwrap();
+        assert!(
+            validate_admission(&runtime, admission.expected, admission, &target, 1_000).is_err()
+        );
     }
 
     #[test]
