@@ -1605,3 +1605,9 @@ CatalogControlLink reciprocal-offer validation and the actual Route worker, not
 serialized Ready assertions. No listener/default-host command or credential flow
 is added. Control receive pauses caller-driven media polling; scheduling and
 complete Linux pairing/local-consent composition remain separate gates.
+
+ADR 1521 adds an explicit Linux host supervision entry for that admitted owner.
+It polls incremental authenticated control and bounded media fairly, observes a
+bounded local Stop channel/owner loss, and cleans on terminal outcomes. The
+inherited-stdio/default CLI remains closed; concrete executable admission and
+credential-provider prerequisites are recorded in the ADR, not synthesized.

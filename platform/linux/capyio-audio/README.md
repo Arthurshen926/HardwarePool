@@ -58,3 +58,9 @@ grant and lease), with trickled framing interrupted by connection shutdown.
 Timeout is terminal. This is not complete Linux pairing or
 continuous scheduled playback. UDP remains unencrypted/unauthenticated. See
 [ADR 1520](../../../docs/adr/1520-linux-authenticated-audio-owner.md).
+
+For a continuously supervised embedding, use the explicit `LinuxPlaybackHost`
+entry from `capyio-linux-host` with an already authenticated/admitted owner.
+The owner's `poll` fairly advances bounded incremental control and media without
+blocking on idle control. Existing blocking calls remain available. See ADR 1521
+for cancellation/expiry semantics and unfinished executable admission steps.

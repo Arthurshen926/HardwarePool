@@ -2439,3 +2439,12 @@ The ADR 1520 hosted gate also requires a paced trickled-frame regression against
 the absolute TCP operation deadline, cancellation of the watcher on success, and
 an actual TLS owner read clamped to the local Sink lease. Per-read timeouts alone
 are not evidence of a bounded whole control operation.
+
+ADR 1521 adds socket-free host-loop/Stop-channel and incremental-frame tests,
+plus hosted-only actual TLS host supervision and audio-owner polling regressions.
+These cover idle control with continued PCM delivery, authenticated polled offer,
+remote Stop, expiry/disconnect and local lifecycle cancellation. Synthetic child
+playback remains `/bin/cat`, not PipeWire. Run only the new host `playback::tests`
+and TLS `incremental_poll` socket-free filters with `--skip ipc_` locally after checking exact names;
+all `ipc_` cases require the socket-capable hosted job. No local skipped case is
+counted as passing. ADR 1521 records the remaining executable/device acceptance.

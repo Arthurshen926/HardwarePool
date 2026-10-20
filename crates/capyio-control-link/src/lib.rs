@@ -365,6 +365,40 @@ impl CatalogControlLink {
                 return Err(error.into());
             }
         };
+        self.decode_control_message(bytes)
+    }
+
+    /// One bounded nonblocking authenticated frame step. Partial frames stay in
+    /// the TLS channel; idle is not disconnect. The caller must keep polling to
+    /// enforce the absolute partial-frame deadline and local authority expiry.
+    pub fn poll_control_message_until(
+        &mut self,
+        deadline: Instant,
+    ) -> Result<Option<ReceivedControlMessage>, CatalogLinkError> {
+        let result = match self.channel.as_mut().ok_or(CatalogLinkError::Closed)? {
+            Channel::Dialed(channel) => channel.poll_envelope_until(deadline),
+            Channel::Accepted(channel) => channel.poll_envelope_until(deadline),
+        };
+        match result {
+            Ok(Some(bytes)) => {
+                let decoded = self.decode_control_message(bytes);
+                if decoded.is_err() {
+                    self.close();
+                }
+                decoded.map(Some)
+            }
+            Ok(None) => Ok(None),
+            Err(error) => {
+                self.close();
+                Err(error.into())
+            }
+        }
+    }
+
+    fn decode_control_message(
+        &mut self,
+        bytes: Vec<u8>,
+    ) -> Result<ReceivedControlMessage, CatalogLinkError> {
         let envelope =
             decode_envelope(&bytes).map_err(|_| CatalogLinkError::InvalidPeerControlMessage)?;
         let message = match envelope.payload {

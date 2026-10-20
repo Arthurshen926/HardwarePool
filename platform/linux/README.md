@@ -102,3 +102,9 @@ The synthetic endpoint gate passed on implementation `4b5db1a342994365dab9ccff93
 [run 39353185940](https://github.com/Arthurshen926/HardwarePool/actions/runs/39353185940/job/118401894752). All 79 focused tests and 34
 success guards passed, including exact UDP-to-child PCM bytes and owned-child
 cleanup. This is not actual PipeWire or Android-device playback acceptance.
+
+`capyio-linux-host::LinuxPlaybackHost::from_admitted_trusted_lab` explicitly
+supervises an already authenticated/admitted playback owner. It adds no CLI
+listener or credential configuration. ADR 1521 lists the remaining executable
+paired identity, catalog, consent and lease composition prerequisites. This is
+still insecure-UDP trusted-lab playback, not completed Linux product integration.

@@ -98,6 +98,25 @@ jobs:
           deadline_tests::ipc_trickled_frame_cannot_renew_whole_operation_deadline
           deadline_tests::ipc_success_cancels_deadline_watcher_without_closing_connection
           owner::tests::ipc_authenticated_owner_read_deadline_is_clamped_to_lease
+          playback::tests::supervision_idle_steps_continue_until_peer_stop
+          playback::tests::supervision_local_stop_and_owner_loss_prevent_offer
+          playback::tests::supervision_stop_after_poll_is_observed_without_another_step
+          playback::tests::supervision_failures_always_cleanup_and_never_report_success
+          playback::tests::supervision_stop_handle_is_bounded_and_idempotent
+          owner::tests::ipc_poll_idle_control_keeps_media_and_remote_stop_live
+          owner::tests::ipc_poll_handshake_uses_authenticated_offer_and_does_not_restart
+          owner::tests::ipc_poll_idle_lease_expiry_and_disconnect_cleanup
+          tests::incremental_poll_preserves_fragments_and_coalesced_frames
+          tests::incremental_poll_bounds_lengths_and_plaintext_work
+          tests::incremental_poll_deadline_is_not_renewed_and_blocking_mix_fails
+          tests::incremental_poll_rejects_malformed_and_truncated_plaintext
+          tests::incremental_poll_transport_enforces_shared_call_byte_and_time_budgets
+          tests::ipc_incremental_poll_real_tls_idle_fragments_and_coalesced_frames
+          tests::ipc_incremental_poll_partial_frame_deadline_and_expired_idle_are_terminal
+          ipc_host_idle_control_survives_read_deadline_then_local_stop_closes_session
+          ipc_host_last_stop_handle_drop_closes_session
+          ipc_host_authenticated_peer_stop_closes_session
+          ipc_host_control_disconnect_fails_closed
           TESTS
           cargo test --locked -p capyio-mock-source -p capyio-mock-sink -p capyio-linux-host -p capyio-node -p capyio-linux-audio -p capyio-native-audio-lan -p capyio-control-tls -p capyio-control-link --all-targets -- --list --color never | tee "$RUNNER_TEMP/linux-test-list.txt"
           while IFS= read -r test_name; do

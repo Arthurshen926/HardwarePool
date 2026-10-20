@@ -382,6 +382,19 @@ impl AuthenticatedControlClientChannel {
         result
     }
 
+    /// Poll one authenticated Envelope without blocking. A partial frame keeps
+    /// its original absolute deadline from the first plaintext byte, even if
+    /// later calls supply a later one. Encrypted-only traffic is work-bounded
+    /// per poll, not assigned an application-frame deadline: the caller must
+    /// also enforce its Session/grant/lease/lifetime deadline.
+    /// `None` means idle or bounded progress; errors permanently close the channel.
+    pub fn poll_envelope_until(
+        &mut self,
+        deadline: Instant,
+    ) -> Result<Option<Vec<u8>>, ControlTlsError> {
+        self.stream.poll_until(deadline)
+    }
+
     pub fn receive_envelope(&mut self) -> Result<Vec<u8>, ControlTlsError> {
         let result = self.stream.receive();
         if self.stream.failed {
@@ -437,6 +450,19 @@ impl AuthenticatedControlServerChannel {
             let _ = self.stream.io.sock.shutdown(Shutdown::Both);
         }
         result
+    }
+
+    /// Poll one authenticated Envelope without blocking. A partial frame keeps
+    /// its original absolute deadline from the first plaintext byte, even if
+    /// later calls supply a later one. Encrypted-only traffic is work-bounded
+    /// per poll, not assigned an application-frame deadline: the caller must
+    /// also enforce its Session/grant/lease/lifetime deadline.
+    /// `None` means idle or bounded progress; errors permanently close the channel.
+    pub fn poll_envelope_until(
+        &mut self,
+        deadline: Instant,
+    ) -> Result<Option<Vec<u8>>, ControlTlsError> {
+        self.stream.poll_until(deadline)
     }
 
     pub fn receive_envelope(&mut self) -> Result<Vec<u8>, ControlTlsError> {
@@ -501,11 +527,16 @@ fn with_socket_deadline<T>(
 struct FramedControl<S> {
     io: S,
     failed: bool,
+    incoming: IncrementalEnvelope,
 }
 
 impl<S: Read + Write> FramedControl<S> {
     fn new(io: S) -> Self {
-        Self { io, failed: false }
+        Self {
+            io,
+            failed: false,
+            incoming: IncrementalEnvelope::default(),
+        }
     }
 
     fn send(&mut self, bytes: &[u8]) -> Result<(), ControlTlsError> {
@@ -523,8 +554,188 @@ impl<S: Read + Write> FramedControl<S> {
         if self.failed {
             return Err(ControlTlsError::ChannelFailed);
         }
+        if self.incoming.deadline.is_some() {
+            self.failed = true;
+            return Err(ControlTlsError::PartialReceiveInProgress);
+        }
         let result = receive_envelope(&mut self.io);
         self.failed = result.is_err();
+        result
+    }
+}
+
+// Each poll has a fixed syscall and plaintext budget, including TLS control
+// records that produce no application bytes. No thread or timer is created.
+const POLL_IO_CALLS: usize = 256;
+const POLL_WIRE_BYTES: usize = 32 * 1024;
+const POLL_PLAINTEXT_READS: usize = 32;
+
+#[derive(Default)]
+struct IncrementalEnvelope {
+    prefix: [u8; 4],
+    prefix_read: usize,
+    body: Vec<u8>,
+    body_read: usize,
+    deadline: Option<Instant>,
+}
+
+impl IncrementalEnvelope {
+    fn effective_deadline(&self, requested: Instant) -> Instant {
+        self.deadline
+            .map_or(requested, |saved| saved.min(requested))
+    }
+
+    fn poll(
+        &mut self,
+        reader: &mut impl Read,
+        deadline: Instant,
+    ) -> Result<Option<Vec<u8>>, ControlTlsError> {
+        for _ in 0..POLL_PLAINTEXT_READS {
+            check_poll_deadline(deadline)?;
+            let destination = if self.prefix_read < self.prefix.len() {
+                &mut self.prefix[self.prefix_read..]
+            } else {
+                &mut self.body[self.body_read..]
+            };
+            let read = match reader.read(destination) {
+                Ok(0) => return Err(std::io::Error::from(std::io::ErrorKind::UnexpectedEof).into()),
+                Ok(read) => read,
+                Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => return Ok(None),
+                Err(error) if error.kind() == std::io::ErrorKind::Interrupted => continue,
+                Err(error) => return Err(error.into()),
+            };
+            self.deadline.get_or_insert(deadline);
+            check_poll_deadline(deadline)?;
+            if self.prefix_read < self.prefix.len() {
+                self.prefix_read += read;
+                if self.prefix_read == self.prefix.len() {
+                    let length = usize::try_from(u32::from_be_bytes(self.prefix))
+                        .map_err(|_| ControlTlsError::RecordTooLarge)?;
+                    if length == 0 || length > MAX_CONTROL_ENVELOPE_BYTES {
+                        return Err(ControlTlsError::RecordTooLarge);
+                    }
+                    self.body.resize(length, 0);
+                }
+            } else {
+                self.body_read += read;
+                if self.body_read == self.body.len() {
+                    validate_envelope_bytes(&self.body)?;
+                    check_poll_deadline(deadline)?;
+                    let result = std::mem::take(&mut self.body);
+                    *self = Self::default();
+                    return Ok(Some(result));
+                }
+            }
+        }
+        Ok(None)
+    }
+}
+
+fn check_poll_deadline(deadline: Instant) -> std::io::Result<()> {
+    if Instant::now() >= deadline {
+        Err(std::io::Error::new(
+            std::io::ErrorKind::TimedOut,
+            "control poll deadline expired",
+        ))
+    } else {
+        Ok(())
+    }
+}
+
+struct BoundedPollIo<'a, S> {
+    io: &'a mut S,
+    calls_left: usize,
+    bytes_left: usize,
+    deadline: Instant,
+}
+
+impl<'a, S> BoundedPollIo<'a, S> {
+    fn new(io: &'a mut S, deadline: Instant) -> Self {
+        Self {
+            io,
+            calls_left: POLL_IO_CALLS,
+            bytes_left: POLL_WIRE_BYTES,
+            deadline,
+        }
+    }
+
+    fn allowance(&mut self, requested: usize) -> std::io::Result<usize> {
+        check_poll_deadline(self.deadline)?;
+        if self.calls_left == 0 || self.bytes_left == 0 {
+            return Err(std::io::ErrorKind::WouldBlock.into());
+        }
+        self.calls_left -= 1;
+        Ok(requested.min(self.bytes_left))
+    }
+}
+
+impl<S: Read> Read for BoundedPollIo<'_, S> {
+    fn read(&mut self, bytes: &mut [u8]) -> std::io::Result<usize> {
+        let allowance = self.allowance(bytes.len())?;
+        let read = self.io.read(&mut bytes[..allowance])?;
+        self.bytes_left -= read;
+        check_poll_deadline(self.deadline)?;
+        Ok(read)
+    }
+}
+
+impl<S: Write> Write for BoundedPollIo<'_, S> {
+    fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+        let allowance = self.allowance(bytes.len())?;
+        let written = self.io.write(&bytes[..allowance])?;
+        self.bytes_left -= written;
+        check_poll_deadline(self.deadline)?;
+        Ok(written)
+    }
+
+    fn flush(&mut self) -> std::io::Result<()> {
+        self.allowance(0)?;
+        self.io.flush()?;
+        check_poll_deadline(self.deadline)
+    }
+}
+
+impl<C, D> FramedControl<StreamOwned<C, TcpStream>>
+where
+    C: std::ops::DerefMut<Target = rustls::ConnectionCommon<D>>,
+    D: rustls::SideData,
+{
+    fn poll_until(&mut self, requested: Instant) -> Result<Option<Vec<u8>>, ControlTlsError> {
+        if self.failed {
+            return Err(ControlTlsError::ChannelFailed);
+        }
+        let deadline = self.incoming.effective_deadline(requested);
+        if self.incoming.deadline.is_some() {
+            self.incoming.deadline = Some(deadline);
+        }
+        let result = (|| {
+            check_poll_deadline(deadline)?;
+            self.io.sock.set_nonblocking(true)?;
+            let mut bounded = BoundedPollIo::new(&mut self.io.sock, deadline);
+            let mut tls = rustls::Stream::new(&mut self.io.conn, &mut bounded);
+            let result = self.incoming.poll(&mut tls, deadline);
+            // Restoration failure is terminal, even if a frame was obtained.
+            self.io.sock.set_nonblocking(false)?;
+            check_poll_deadline(deadline)?;
+            let complete = matches!(result, Ok(Some(_)));
+            // Coalesced next-frame plaintext was already received under this
+            // deadline. Keep it rather than granting a fresh budget next poll.
+            if complete
+                && self
+                    .io
+                    .conn
+                    .reader()
+                    .into_first_chunk()
+                    .is_ok_and(|chunk| !chunk.is_empty())
+            {
+                self.incoming.deadline.get_or_insert(deadline);
+            }
+            result
+        })();
+        if result.is_err() {
+            self.failed = true;
+            let _ = self.io.sock.shutdown(Shutdown::Both);
+        }
         result
     }
 }
@@ -718,6 +929,8 @@ pub enum ControlTlsError {
     PeerCertificateMismatch,
     #[error("control TLS channel failed; a fresh authenticated connection is required")]
     ChannelFailed,
+    #[error("blocking receive cannot resume an incremental control frame")]
+    PartialReceiveInProgress,
     #[error("control TLS endpoint is invalid")]
     InvalidEndpoint,
     #[error("control TLS timeout must be inside 100ms..=30s")]
@@ -757,6 +970,254 @@ mod tests {
     };
 
     use super::*;
+
+    struct FragmentReader {
+        bytes: std::collections::VecDeque<u8>,
+        reads_left: usize,
+        chunk: usize,
+    }
+
+    impl Read for FragmentReader {
+        fn read(&mut self, out: &mut [u8]) -> std::io::Result<usize> {
+            if self.reads_left == 0 || self.bytes.is_empty() {
+                return Err(std::io::ErrorKind::WouldBlock.into());
+            }
+            self.reads_left -= 1;
+            let len = out.len().min(self.bytes.len()).min(self.chunk);
+            for value in &mut out[..len] {
+                *value = self.bytes.pop_front().unwrap();
+            }
+            Ok(len)
+        }
+    }
+
+    #[test]
+    fn incremental_poll_preserves_fragments_and_coalesced_frames() {
+        let payload = envelope(SessionId::new(), "incremental");
+        let mut wire = Vec::new();
+        send_envelope(&mut wire, &payload).unwrap();
+        send_envelope(&mut wire, &payload).unwrap();
+        let mut reader = FragmentReader {
+            bytes: wire.into(),
+            reads_left: 1,
+            chunk: 1,
+        };
+        let mut frame = IncrementalEnvelope::default();
+        let deadline = Instant::now() + Duration::from_secs(5);
+        for _ in 0..2 {
+            loop {
+                reader.reads_left = 1;
+                match frame.poll(&mut reader, deadline).unwrap() {
+                    Some(bytes) => {
+                        assert_eq!(bytes, payload);
+                        break;
+                    }
+                    None => assert!(frame.deadline.is_some()),
+                }
+            }
+        }
+        assert!(reader.bytes.is_empty());
+        assert!(frame.deadline.is_none());
+        assert!(frame.poll(&mut reader, deadline).unwrap().is_none());
+        assert!(
+            frame.deadline.is_none(),
+            "true idle must not start a frame timer"
+        );
+    }
+
+    #[test]
+    fn incremental_poll_bounds_lengths_and_plaintext_work() {
+        let deadline = Instant::now() + Duration::from_secs(5);
+        for length in [0, (MAX_CONTROL_ENVELOPE_BYTES + 1) as u32] {
+            let mut frame = IncrementalEnvelope::default();
+            assert!(matches!(
+                frame.poll(&mut Cursor::new(length.to_be_bytes()), deadline),
+                Err(ControlTlsError::RecordTooLarge)
+            ));
+            assert!(frame.body.is_empty());
+        }
+        let payload = envelope(SessionId::new(), &"bounded".repeat(100));
+        let mut wire = Vec::new();
+        send_envelope(&mut wire, &payload).unwrap();
+        let mut reader = FragmentReader {
+            bytes: wire.into(),
+            reads_left: usize::MAX,
+            chunk: 1,
+        };
+        let mut frame = IncrementalEnvelope::default();
+        assert!(frame.poll(&mut reader, deadline).unwrap().is_none());
+        assert_eq!(reader.reads_left, usize::MAX - POLL_PLAINTEXT_READS);
+        assert_eq!(frame.prefix_read + frame.body_read, POLL_PLAINTEXT_READS);
+    }
+
+    #[test]
+    fn incremental_poll_deadline_is_not_renewed_and_blocking_mix_fails() {
+        let deadline = Instant::now() + Duration::from_secs(5);
+        let mut frame = IncrementalEnvelope::default();
+        let mut reader = FragmentReader {
+            bytes: vec![0].into(),
+            reads_left: 1,
+            chunk: 1,
+        };
+        assert!(frame.poll(&mut reader, deadline).unwrap().is_none());
+        assert_eq!(
+            frame.effective_deadline(deadline + Duration::from_secs(5)),
+            deadline
+        );
+        let earlier = Instant::now() - Duration::from_secs(1);
+        assert_eq!(frame.effective_deadline(earlier), earlier);
+        assert!(
+            matches!(frame.poll(&mut reader, earlier), Err(ControlTlsError::Io(error))
+            if error.kind() == std::io::ErrorKind::TimedOut)
+        );
+        let mut channel = FramedControl::new(Cursor::new(Vec::new()));
+        channel.incoming = frame;
+        assert!(matches!(
+            channel.receive(),
+            Err(ControlTlsError::PartialReceiveInProgress)
+        ));
+        assert!(channel.failed);
+        assert_eq!(channel.io.position(), 0);
+        assert!(matches!(
+            channel.receive(),
+            Err(ControlTlsError::ChannelFailed)
+        ));
+    }
+
+    #[test]
+    fn incremental_poll_rejects_malformed_and_truncated_plaintext() {
+        let deadline = Instant::now() + Duration::from_secs(5);
+        let mut malformed = IncrementalEnvelope::default();
+        assert!(matches!(
+            malformed.poll(&mut Cursor::new([0, 0, 0, 1, 0xff]), deadline),
+            Err(ControlTlsError::InvalidEnvelope(_))
+        ));
+        for bytes in [vec![], vec![0, 0], vec![0, 0, 0, 5, 1, 2]] {
+            let mut frame = IncrementalEnvelope::default();
+            assert!(matches!(frame.poll(&mut Cursor::new(bytes), deadline),
+                Err(ControlTlsError::Io(error)) if error.kind() == std::io::ErrorKind::UnexpectedEof));
+        }
+    }
+
+    #[test]
+    fn incremental_poll_transport_enforces_shared_call_byte_and_time_budgets() {
+        let deadline = Instant::now() + Duration::from_secs(5);
+        let mut io = Cursor::new(vec![7; POLL_WIRE_BYTES + 1]);
+        let mut bounded = BoundedPollIo::new(&mut io, deadline);
+        let mut bytes = vec![0; POLL_WIRE_BYTES + 1];
+        assert_eq!(bounded.read(&mut bytes).unwrap(), POLL_WIRE_BYTES);
+        assert_eq!(
+            bounded.write(&[1]).unwrap_err().kind(),
+            std::io::ErrorKind::WouldBlock
+        );
+        assert_eq!(bounded.io.position(), POLL_WIRE_BYTES as u64);
+        let mut bounded = BoundedPollIo::new(&mut io, deadline);
+        for _ in 0..POLL_IO_CALLS {
+            bounded.flush().unwrap();
+        }
+        assert_eq!(
+            bounded.read(&mut [0]).unwrap_err().kind(),
+            std::io::ErrorKind::WouldBlock
+        );
+        let mut bounded = BoundedPollIo::new(&mut io, Instant::now() - Duration::from_secs(1));
+        assert_eq!(
+            bounded.flush().unwrap_err().kind(),
+            std::io::ErrorKind::TimedOut
+        );
+    }
+
+    fn incremental_tls_pair() -> (
+        AuthenticatedControlServerChannel,
+        AuthenticatedControlClientChannel,
+    ) {
+        let (server_identity, client_identity) = test_identities();
+        let binding = binding();
+        let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).unwrap();
+        let address = listener.local_addr().unwrap();
+        let server = AuthenticatedControlServer::from_listener(
+            listener,
+            server_identity,
+            binding,
+            Duration::from_secs(5),
+        )
+        .unwrap();
+        let accepted = thread::spawn(move || server.accept().unwrap());
+        let client = AuthenticatedControlClientChannel::connect(
+            ControlTlsEndpoint {
+                address,
+                io_timeout: Duration::from_secs(5),
+            },
+            "localhost",
+            client_identity,
+            binding,
+        )
+        .unwrap();
+        (accepted.join().unwrap(), client)
+    }
+
+    #[test]
+    fn ipc_incremental_poll_real_tls_idle_fragments_and_coalesced_frames() {
+        let (mut server, mut client) = incremental_tls_pair();
+        let deadline = Instant::now() + Duration::from_secs(5);
+        assert!(server.poll_envelope_until(deadline).unwrap().is_none());
+        assert!(client.poll_envelope_until(deadline).unwrap().is_none());
+        let payload = envelope(client.binding().session_id, "fragmented TLS");
+        let mut wire = Vec::new();
+        send_envelope(&mut wire, &payload).unwrap();
+        client.stream.io.write_all(&wire[..2]).unwrap();
+        client.stream.io.flush().unwrap();
+        while server.stream.incoming.prefix_read < 2 {
+            assert!(server.poll_envelope_until(deadline).unwrap().is_none());
+            thread::yield_now();
+        }
+        client.stream.io.write_all(&wire[2..]).unwrap();
+        client.stream.io.write_all(&wire).unwrap();
+        client.stream.io.flush().unwrap();
+        for _ in 0..2 {
+            loop {
+                if let Some(actual) = server.poll_envelope_until(deadline).unwrap() {
+                    assert_eq!(actual, payload);
+                    break;
+                }
+                thread::yield_now();
+            }
+        }
+        assert!(server.poll_envelope_until(deadline).unwrap().is_none());
+        // Both directions and legacy blocking receive remain usable after polling.
+        server.send_envelope(&payload).unwrap();
+        assert_eq!(client.receive_envelope().unwrap(), payload);
+    }
+
+    #[test]
+    fn ipc_incremental_poll_partial_frame_deadline_and_expired_idle_are_terminal() {
+        let (mut server, mut client) = incremental_tls_pair();
+        let deadline = Instant::now() + Duration::from_millis(150);
+        client.stream.io.write_all(&[0]).unwrap();
+        client.stream.io.flush().unwrap();
+        while server.stream.incoming.prefix_read == 0 {
+            assert!(server.poll_envelope_until(deadline).unwrap().is_none());
+            thread::yield_now();
+        }
+        thread::sleep(
+            deadline.saturating_duration_since(Instant::now()) + Duration::from_millis(5),
+        );
+        assert!(
+            matches!(server.poll_envelope_until(Instant::now() + Duration::from_secs(5)),
+            Err(ControlTlsError::Io(error)) if error.kind() == std::io::ErrorKind::TimedOut)
+        );
+        assert!(matches!(
+            server.poll_envelope_until(Instant::now() + Duration::from_secs(5)),
+            Err(ControlTlsError::ChannelFailed)
+        ));
+        assert!(
+            matches!(client.poll_envelope_until(Instant::now() - Duration::from_secs(1)),
+            Err(ControlTlsError::Io(error)) if error.kind() == std::io::ErrorKind::TimedOut)
+        );
+        assert!(matches!(
+            client.receive_envelope(),
+            Err(ControlTlsError::ChannelFailed)
+        ));
+    }
 
     #[test]
     fn typed_bundle_maps_to_both_control_identity_roles() {

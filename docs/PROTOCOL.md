@@ -494,3 +494,9 @@ the dedicated channel; it does not promise a graceful wire acknowledgement.
 The opt-in deadline APIs bound whole control-frame operations, not each received
 fragment. Expiry closes that connection; partial frames cannot be retried. No
 wire representation changes, and legacy callers retain their existing API.
+
+ADR 1521 changes no wire format. Opt-in incremental TLS/link polling retains
+bounded prefix/body state, returns at most one authenticated message per step,
+and starts a nonrenewable application-frame deadline at its first plaintext
+byte. Idle returns no message. Existing blocking receive behavior is unchanged
+unless mixed with a partial polled frame, which fails closed.

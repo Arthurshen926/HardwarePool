@@ -56,7 +56,8 @@ pub enum PlaybackOwnerEvent {
 /// its complete expected Session/server/client identity before any send/open.
 /// The caller must have configured that channel with the paired certificate pin.
 ///
-/// Caller-driven: `receive_control` pauses media polling but has an absolute
+/// Caller-driven: prefer `poll` for fair incremental control/media supervision.
+/// `receive_control` pauses media polling but has an absolute
 /// deadline bounded by one second, owner lifetime, grant and lease. A cancellable
 /// socket watcher interrupts trickled frames too. Timeout/disconnect is terminal, not a
 /// retryable idle tick. Poll media between control operations; no persistent
@@ -162,83 +163,137 @@ impl AuthenticatedPlaybackOwner {
                 .link
                 .receive_control_message_until(deadline)
                 .map_err(error)?;
-            self.validate_live()?;
-            match message {
-                ReceivedControlMessage::Heartbeat(heartbeat) => {
-                    if !heartbeat.acknowledgement {
-                        self.link
-                            .send_heartbeat_until(heartbeat.sequence, true, deadline)
-                            .map_err(error)?;
-                    }
-                    Ok(PlaybackOwnerEvent::Heartbeat)
-                }
-                ReceivedControlMessage::RouteCommand(command)
-                    if command.session_id == self.admission.expected.session_id
-                        && command.route_id == self.admission.route_id
-                        && command.action == RouteCommandAction::Stop =>
-                {
-                    self.stop()?;
-                    Ok(PlaybackOwnerEvent::Stopped)
-                }
-                ReceivedControlMessage::RouteStatus(remote) => {
-                    let preparation = self
-                        .link
-                        .prepare_native_audio_worker(
-                            &self.runtime,
-                            self.admission.route_id,
-                            self.admission.local_offer,
-                            &remote,
-                            true,
-                            now_ms()?,
-                        )
-                        .map_err(error)?;
-                    if preparation.local_endpoint != NativeAudioEndpoint::Sink
-                        || preparation.preset != NativeAudioPreset::PcmS16le48000Mono
-                    {
-                        return Err(error("only the admitted mono playback Sink is supported"));
-                    }
-                    if self.worker.is_some() {
-                        if self.peer_port != Some(preparation.peer_port) {
-                            return Err(error("peer changed its active UDP endpoint"));
-                        }
-                        return Ok(PlaybackOwnerEvent::PlaybackReady); // Exact duplicate, no restart.
-                    }
-                    let config = PlaybackConfig {
-                        local: self.target.local,
-                        peer: SocketAddrV4::new(self.peer_ip, preparation.peer_port),
-                        duration: self.target.duration,
-                        target: self.target.pipewire_target.clone(),
-                    };
-                    // Same full policy validation as the real worker, before the test seam too.
-                    PlaybackConfig::parse(&[
-                        "--trusted-lab".into(),
-                        config.local.to_string(),
-                        config.peer.to_string(),
-                        config.duration.as_secs().to_string(),
-                        config.target.clone(),
-                    ])
-                    .map_err(error)?;
-                    let media = self.media();
-                    self.worker = Some(open(&mut self.runtime, media, &config)?);
-                    self.peer_port = Some(preparation.peer_port);
-                    // Report readiness only after the actual worker opened. A
-                    // failed status send closes media and the Session below.
-                    self.link
-                        .send_route_status_until(
-                            self.runtime.route(self.admission.route_id).map_err(error)?,
-                            deadline,
-                        )
-                        .map_err(error)?;
-                    Ok(PlaybackOwnerEvent::PlaybackReady)
-                }
-                _ => Err(error(
-                    "unexpected control message on dedicated playback Session",
-                )),
-            }
+            self.handle_control(message, deadline, open)
         })();
         match outcome {
             Ok(event) => Ok(event),
             Err(reason) => self.fail(reason),
+        }
+    }
+    /// Fair event-loop step: one bounded incremental TLS read, at most one
+    /// authenticated control message, then one bounded media poll. Idle control
+    /// never blocks playback. Partial frame expiry and authority expiry are
+    /// terminal. Replies still have the same <=1 second absolute write bound.
+    pub fn poll(&mut self) -> io::Result<Option<PlaybackOwnerEvent>> {
+        self.poll_with(RuntimePlayback::open_trusted_lab)
+    }
+    fn poll_with(
+        &mut self,
+        open: impl FnOnce(
+            &mut NodeRuntime,
+            AudioMediaStreamBinding,
+            &PlaybackConfig,
+        ) -> io::Result<RuntimePlayback>,
+    ) -> io::Result<Option<PlaybackOwnerEvent>> {
+        self.require_open()?;
+        if !self.offered {
+            return Err(error(
+                "send the local offer before polling playback control",
+            ));
+        }
+        let outcome = (|| {
+            let deadline = self.operation_deadline()?;
+            let event = self
+                .link
+                .poll_control_message_until(deadline)
+                .map_err(error)?
+                .map(|message| self.handle_control(message, deadline, open))
+                .transpose()?;
+            if event != Some(PlaybackOwnerEvent::Stopped) {
+                self.validate_live()?;
+                if let Some(worker) = self.worker.as_mut() {
+                    worker.poll(&mut self.runtime)?;
+                }
+            }
+            Ok(event)
+        })();
+        match outcome {
+            Ok(event) => Ok(event),
+            Err(reason) => self.fail(reason),
+        }
+    }
+    fn handle_control(
+        &mut self,
+        message: ReceivedControlMessage,
+        deadline: Instant,
+        open: impl FnOnce(
+            &mut NodeRuntime,
+            AudioMediaStreamBinding,
+            &PlaybackConfig,
+        ) -> io::Result<RuntimePlayback>,
+    ) -> io::Result<PlaybackOwnerEvent> {
+        self.validate_live()?;
+        match message {
+            ReceivedControlMessage::Heartbeat(heartbeat) => {
+                if !heartbeat.acknowledgement {
+                    self.link
+                        .send_heartbeat_until(heartbeat.sequence, true, deadline)
+                        .map_err(error)?;
+                }
+                Ok(PlaybackOwnerEvent::Heartbeat)
+            }
+            ReceivedControlMessage::RouteCommand(command)
+                if command.session_id == self.admission.expected.session_id
+                    && command.route_id == self.admission.route_id
+                    && command.action == RouteCommandAction::Stop =>
+            {
+                self.stop()?;
+                Ok(PlaybackOwnerEvent::Stopped)
+            }
+            ReceivedControlMessage::RouteStatus(remote) => {
+                let preparation = self
+                    .link
+                    .prepare_native_audio_worker(
+                        &self.runtime,
+                        self.admission.route_id,
+                        self.admission.local_offer,
+                        &remote,
+                        true,
+                        now_ms()?,
+                    )
+                    .map_err(error)?;
+                if preparation.local_endpoint != NativeAudioEndpoint::Sink
+                    || preparation.preset != NativeAudioPreset::PcmS16le48000Mono
+                {
+                    return Err(error("only the admitted mono playback Sink is supported"));
+                }
+                if self.worker.is_some() {
+                    if self.peer_port != Some(preparation.peer_port) {
+                        return Err(error("peer changed its active UDP endpoint"));
+                    }
+                    return Ok(PlaybackOwnerEvent::PlaybackReady); // Exact duplicate, no restart.
+                }
+                let config = PlaybackConfig {
+                    local: self.target.local,
+                    peer: SocketAddrV4::new(self.peer_ip, preparation.peer_port),
+                    duration: self.target.duration,
+                    target: self.target.pipewire_target.clone(),
+                };
+                // Same full policy validation as the real worker, before the test seam too.
+                PlaybackConfig::parse(&[
+                    "--trusted-lab".into(),
+                    config.local.to_string(),
+                    config.peer.to_string(),
+                    config.duration.as_secs().to_string(),
+                    config.target.clone(),
+                ])
+                .map_err(error)?;
+                let media = self.media();
+                self.worker = Some(open(&mut self.runtime, media, &config)?);
+                self.peer_port = Some(preparation.peer_port);
+                // Report readiness only after the actual worker opened. A
+                // failed status send closes media and the Session below.
+                self.link
+                    .send_route_status_until(
+                        self.runtime.route(self.admission.route_id).map_err(error)?,
+                        deadline,
+                    )
+                    .map_err(error)?;
+                Ok(PlaybackOwnerEvent::PlaybackReady)
+            }
+            _ => Err(error(
+                "unexpected control message on dedicated playback Session",
+            )),
         }
     }
     pub fn poll_media(&mut self) -> io::Result<()> {
@@ -774,6 +829,110 @@ mod tests {
                 .state,
             SessionState::Closed
         );
+    }
+
+    #[test]
+    fn ipc_poll_idle_control_keeps_media_and_remote_stop_live() {
+        let (mut owner, mut peer, mut sender) = active();
+        // No control traffic is required for ongoing playback.
+        assert_eq!(owner.poll().unwrap(), None);
+        let media = owner.media();
+        sender
+            .send_packet(&capyio_audio::AudioMediaPacket {
+                stream_id: media.stream_id,
+                stream_epoch: media.stream_epoch,
+                sequence: 1,
+                source_timestamp_micros: 10_000,
+                first_sample_index: 0,
+                sample_count: 480,
+                discontinuity: false,
+                payload: vec![7; 960],
+            })
+            .unwrap();
+        let deadline = Instant::now() + Duration::from_secs(2);
+        while owner.metrics().unwrap().packets_written == 0 {
+            assert!(Instant::now() < deadline);
+            assert_eq!(owner.poll().unwrap(), None);
+        }
+        assert_eq!(owner.metrics().unwrap().bytes_written, 960);
+        peer.send_route_command(owner.admission.route_id, RouteCommandAction::Stop)
+            .unwrap();
+        loop {
+            assert!(Instant::now() < deadline);
+            if owner.poll().unwrap() == Some(PlaybackOwnerEvent::Stopped) {
+                break;
+            }
+        }
+        assert!(owner.snapshot().port_leases.is_empty());
+        assert!(UdpSocket::bind(owner.target.local).is_ok());
+    }
+    #[test]
+    fn ipc_poll_handshake_uses_authenticated_offer_and_does_not_restart() {
+        let (mut owner, mut peer, sender) = connected(Duration::from_secs(2));
+        reciprocal(
+            &mut owner,
+            &mut peer,
+            sender.local_addr().unwrap().port(),
+            false,
+        );
+        let deadline = Instant::now() + Duration::from_secs(2);
+        loop {
+            assert!(Instant::now() < deadline);
+            if owner.poll_with(RuntimePlayback::open_synthetic).unwrap()
+                == Some(PlaybackOwnerEvent::PlaybackReady)
+            {
+                break;
+            }
+        }
+        let ReceivedControlMessage::RouteStatus(ready) = peer.receive_control_message().unwrap()
+        else {
+            panic!("ready");
+        };
+        assert_eq!(ready.route.state, RouteState::Active);
+        peer.send_heartbeat(1, true).unwrap();
+        loop {
+            assert!(Instant::now() < deadline);
+            if owner
+                .poll_with(|_, _, _| panic!("must not reopen"))
+                .unwrap()
+                == Some(PlaybackOwnerEvent::Heartbeat)
+            {
+                break;
+            }
+        }
+        owner.stop().unwrap();
+    }
+    #[test]
+    fn ipc_poll_idle_lease_expiry_and_disconnect_cleanup() {
+        for disconnect in [false, true] {
+            let (mut owner, peer, _sender) = active();
+            let id = owner.admission.route_id;
+            if disconnect {
+                drop(peer);
+            } else {
+                let now = now_ms().unwrap();
+                let sink = owner.runtime.route(id).unwrap().sink;
+                owner
+                    .runtime
+                    .acquire_route_port_lease(id, sink, now + 100, now)
+                    .unwrap();
+                // Keep the peer alive until the owner notices local expiry.
+                let deadline = Instant::now() + Duration::from_secs(2);
+                while owner.poll().is_ok() {
+                    assert!(Instant::now() < deadline);
+                }
+                drop(peer);
+            }
+            if disconnect {
+                let deadline = Instant::now() + Duration::from_secs(2);
+                while owner.poll().is_ok() {
+                    assert!(Instant::now() < deadline);
+                }
+            }
+            assert!(owner.snapshot().port_leases.is_empty());
+            assert_eq!(owner.runtime.route(id).unwrap().state, RouteState::Offline);
+            assert!(UdpSocket::bind(owner.target.local).is_ok());
+        }
     }
 
     fn identities() -> (ControlTlsServerIdentity, ControlTlsClientIdentity) {

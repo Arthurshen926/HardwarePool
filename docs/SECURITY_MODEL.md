@@ -1483,3 +1483,10 @@ offers are read from that channel; peer IP comes from its TCP socket. This does
 not secure UDP media. Timeout/disconnect closes the dedicated Session and media
 at the next driven control I/O; no independent watchdog is claimed. No new
 credential, grant, listener or default device operation is created.
+
+ADR 1521's explicit host supervisor continuously checks local Stop/owner loss and
+finite authority while polling control/media fairly. Incremental application
+frames have nonrenewable deadlines; encrypted-only traffic is work-bounded and
+cannot bypass the host's grant/lease/lifetime checks. No listener or credentials
+are added. This does not secure UDP or create consent from config/peer Ready.
+Executable credential/admission/consent prerequisites are listed in the ADR.

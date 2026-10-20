@@ -1,10 +1,16 @@
 #![forbid(unsafe_code)]
 
 //! Local, inherited-pipe Linux host management. This is not a network or Adapter API.
-//! No hardware, network or credentials. The explicit mock option creates only
+//! The default management host opens no hardware, network or credentials.
+//! The separate opt-in playback host consumes a caller-admitted TLS owner.
+//! The explicit mock option creates only
 //! labeled synthetic peer/session context and mock-only authorization.
 
 mod mock_routes;
+#[cfg(target_os = "linux")]
+mod playback;
+#[cfg(target_os = "linux")]
+pub use playback::{LinuxPlaybackHost, PlaybackExit, PlaybackStopHandle};
 
 use std::io::{self, BufRead, Write};
 
