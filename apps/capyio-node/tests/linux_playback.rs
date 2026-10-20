@@ -354,8 +354,10 @@ fn ipc_linux_playback_wrong_nonce_or_route_rejected_without_offer() {
 fn ipc_linux_playback_launcher_eof_cancels_before_authorization() {
     let (mut process, mut peer, _) = pending();
     drop(process.child.stdin.take());
-    process.event("failed");
+    // EOF poisons the framed launcher channel, including writes. Verify bounded
+    // termination via exit status rather than requiring an event on a closed channel.
     assert!(!process.finish().success());
+    assert!(String::from_utf8_lossy(&process.stderr).contains("Linux lab playback launch failed"));
     assert!(
         peer.receive_control_message_until(Instant::now() + BOUND)
             .is_err(),

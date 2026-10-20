@@ -85,7 +85,9 @@ After bootstrap, only bounded local JSON command frames are accepted:
 Output event names are `listening` (actual bound address), `approval_required`,
 `awaiting_peer_offer`, `status`, `stopped`, and `failed`. No event includes
 credential bytes, paired directory, arbitrary incoming error text or secret
-handles. `approval_required` includes the fresh request ID, Route/Session IDs,
+handles. A `failed` event is best effort only while the launcher channel remains
+usable. EOF/framing failure poisons the channel, so launchers must use bounded
+process exit plus the fixed stderr diagnostic, not require another framed event. `approval_required` includes the fresh request ID, Route/Session IDs,
 exact Source/Sink, explicit target, exact mono format, finite duration, 30-second
 approval timeout and explicit insecure-UDP warning. `awaiting_peer_offer` is not
 readiness. Only actual owned worker opening yields Active in later Route status;
