@@ -126,3 +126,10 @@ and present metadata do not mean ready or authorized. Versions, server liveness
 and actual target availability remain unverified. See [ADR 1523](../../docs/adr/1523-linux-passive-playback-preflight.md)
 and the [real-device acceptance guide](../../docs/reports/LINUX_PLAYBACK_DEVICE_ACCEPTANCE.md)
 before planning any separately approved deployment.
+
+The Linux-led paired path now follows the actual Android Draft proposal, local
+Android consent, matching finite grant, remote lease and Start sequence (ADR 1524).
+Hosted tests call the real Android coordinator rather than a synthesized ready
+peer. Android-initiated Windows-specific selection and physical audio acceptance
+remain outside this slice. Local approval time includes negotiation; it never
+extends itself while waiting for the peer.

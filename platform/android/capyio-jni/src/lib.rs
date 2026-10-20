@@ -14,7 +14,6 @@ use std::{
     time::Duration,
 };
 
-#[cfg(target_os = "android")]
 use std::collections::BTreeMap;
 
 use capyio_android_host::{
@@ -42,6 +41,7 @@ use capyio_runtime::{NodeRuntime, RuntimeError, RuntimeSnapshot};
 
 #[cfg(target_os = "android")]
 mod android_ffi;
+mod audio_negotiation;
 mod control_exchange;
 mod display_catalog;
 mod touchpad_consent;
@@ -418,14 +418,16 @@ impl From<CatalogLinkError> for AndroidCatalogRuntimeError {
     }
 }
 
-#[cfg(target_os = "android")]
 #[derive(Clone, Debug)]
 struct AndroidAudioUse {
     peer_route: capyio_core::Route,
     offer: capyio_protocol::NativeAudioDataOffer,
+    // Consumed by the Android Java DTO projection, not the host policy tests.
+    #[cfg_attr(not(target_os = "android"), allow(dead_code))]
     peer_address: String,
     local_port: Option<u16>,
     offer_pending: bool,
+    #[cfg_attr(not(target_os = "android"), allow(dead_code))]
     observed_state: capyio_core::RouteState,
 }
 
@@ -440,11 +442,9 @@ struct AndroidCameraUse {
 #[derive(Clone, Debug)]
 pub struct AndroidCatalogRuntimeV1 {
     display_use: display_catalog::DisplayUse,
-    #[cfg(target_os = "android")]
     audio_uses: BTreeMap<capyio_core::RouteId, AndroidAudioUse>,
     #[cfg(target_os = "android")]
     camera_use: Option<AndroidCameraUse>,
-    #[cfg(target_os = "android")]
     audio_local_intent: BTreeSet<capyio_core::RouteId>,
     audio_status_pending: BTreeSet<capyio_core::RouteId>,
     #[cfg(target_os = "android")]
@@ -547,9 +547,20 @@ impl AndroidCatalogRuntimeV1 {
             directory_json,
             encoded_credential,
         )?;
+        self.admit_dialed_catalog_exchange(channel, display_name, selected_capabilities)
+            .map_err(AndroidControlDialError::Runtime)
+    }
+
+    /// Complete the real dialed-side catalog exchange for an already pinned,
+    /// mutually authenticated channel. Used by the JNI dial path as well.
+    pub fn admit_dialed_catalog_exchange(
+        &mut self,
+        channel: capyio_control_tls::AuthenticatedControlClientChannel,
+        paired_display_name: String,
+        selected_capabilities: &BTreeSet<CapabilityId>,
+    ) -> Result<CatalogControlLink, AndroidCatalogRuntimeError> {
         let mut link =
-            CatalogControlLink::admit_dialed_peer(&mut self.runtime, channel, display_name)
-                .map_err(|error| AndroidControlDialError::Runtime(error.into()))?;
+            CatalogControlLink::admit_dialed_peer(&mut self.runtime, channel, paired_display_name)?;
         let exchange = (|| -> Result<(), CatalogLinkError> {
             let outgoing = link.prepare_catalog(&self.runtime, selected_capabilities)?;
             link.send_catalog(outgoing)?;
@@ -559,7 +570,7 @@ impl AndroidCatalogRuntimeV1 {
         })();
         if let Err(error) = exchange {
             let _ = link.close_and_reconcile(&mut self.runtime);
-            return Err(AndroidControlDialError::Runtime(error.into()));
+            return Err(AndroidCatalogRuntimeError::ControlLink(error));
         }
         Ok(link)
     }
@@ -624,11 +635,9 @@ impl AndroidCatalogRuntimeV1 {
         Ok(Self {
             display_use: display_catalog::DisplayUse::default(),
             runtime: NodeRuntime::new(node)?,
-            #[cfg(target_os = "android")]
             audio_uses: BTreeMap::new(),
             #[cfg(target_os = "android")]
             camera_use: None,
-            #[cfg(target_os = "android")]
             audio_local_intent: BTreeSet::new(),
             audio_status_pending: BTreeSet::new(),
             touchpad_consent: touchpad_consent::TouchpadConsentGate::default(),

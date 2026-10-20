@@ -4,7 +4,7 @@ use crate::{PlaybackConfig, PlaybackMetrics, RuntimePlayback};
 use capyio_audio::{AudioMediaStreamBinding, AudioStreamSpec};
 use capyio_control_link::{CatalogControlLink, ReceivedControlMessage};
 use capyio_control_tls::{AuthenticatedControlServerChannel, ControlTlsBinding};
-use capyio_core::{RouteId, RouteState};
+use capyio_core::{AuthorizationState, Availability, PortDirection, Route, RouteId, RouteState};
 use capyio_protocol::{
     NativeAudioDataOffer, NativeAudioEndpoint, NativeAudioPreset, RouteCommandAction,
 };
@@ -48,6 +48,8 @@ pub struct PlaybackAdmission {
 pub enum PlaybackOwnerEvent {
     PlaybackReady,
     Heartbeat,
+    /// Authenticated catalog or ordinary status accepted; not media readiness.
+    ControlUpdated,
     Stopped,
 }
 
@@ -256,7 +258,28 @@ impl AuthenticatedPlaybackOwner {
                 self.stop()?;
                 Ok(PlaybackOwnerEvent::Stopped)
             }
+            ReceivedControlMessage::Catalog(catalog) => {
+                self.link
+                    .apply_catalog(&mut self.runtime, catalog)
+                    .map_err(error)?;
+                validate_catalog_endpoints(
+                    &self.runtime,
+                    self.admission.route_id,
+                    self.worker.is_some(),
+                )?;
+                self.validate_live()?;
+                Ok(PlaybackOwnerEvent::ControlUpdated)
+            }
             ReceivedControlMessage::RouteStatus(remote) => {
+                let local = self.runtime.route(self.admission.route_id).map_err(error)?;
+                let terminal = validate_peer_status(local, &remote.route)?;
+                if terminal {
+                    self.stop()?;
+                    return Ok(PlaybackOwnerEvent::Stopped);
+                }
+                if remote.native_audio_data.is_none() {
+                    return Ok(PlaybackOwnerEvent::ControlUpdated);
+                }
                 let preparation = self
                     .link
                     .prepare_native_audio_worker(
@@ -297,6 +320,16 @@ impl AuthenticatedPlaybackOwner {
                 let media = self.media();
                 self.worker = Some(open(&mut self.runtime, media, &config)?);
                 self.peer_port = Some(preparation.peer_port);
+                // Android prepares its endpoint before this command but captures only
+                // after Start. Send once, after our real Sink has opened, and share
+                // the same bounded operation budget with the status below.
+                self.link
+                    .send_route_command_until(
+                        self.admission.route_id,
+                        RouteCommandAction::Start,
+                        deadline,
+                    )
+                    .map_err(error)?;
                 // Report readiness only after the actual worker opened. A
                 // failed status send closes media and the Session below.
                 self.link
@@ -431,6 +464,107 @@ impl Drop for AuthenticatedPlaybackOwner {
     }
 }
 
+/// Ordinary peer status is not a reciprocal offer, consent, or readiness.
+/// Android's Draft acknowledgements retain epoch zero until Start; never copy
+/// them over the negotiated local Route or offer.
+fn validate_peer_status(local: &Route, peer: &Route) -> io::Result<bool> {
+    if peer.id != local.id
+        || peer.session_id != local.session_id
+        || peer.source != local.source
+        || peer.sink != local.sink
+        || peer.profile != local.profile
+        || peer.backend != local.backend
+    {
+        return Err(error("peer status differs from admitted playback Route"));
+    }
+    let terminal = matches!(
+        peer.state,
+        RouteState::Stopped | RouteState::Offline | RouteState::Failed
+    ) || matches!(
+        peer.authorization,
+        AuthorizationState::Denied | AuthorizationState::Revoked
+    );
+    if terminal {
+        // Terminal status can only stop this exact owned Route, never grant or open.
+        return Ok(true);
+    }
+    if peer.authorization != local.authorization {
+        return Err(error("peer status differs from the exact finite grant"));
+    }
+    let draft_ack = peer.state == RouteState::Draft
+        && peer.epoch == 0
+        && peer.selected_format.is_none()
+        && peer.selected_qos_mode.is_none();
+    let running_ack = matches!(peer.state, RouteState::Starting | RouteState::Active)
+        && peer.epoch == local.epoch
+        && peer.selected_format == local.selected_format
+        && peer.selected_qos_mode == local.selected_qos_mode;
+    if !draft_ack && !running_ack {
+        return Err(error(
+            "peer status has an unexpected playback phase or binding",
+        ));
+    }
+    Ok(false)
+}
+
+fn validate_catalog_endpoints(
+    runtime: &NodeRuntime,
+    route_id: RouteId,
+    started_peer: bool,
+) -> io::Result<()> {
+    let route = runtime.route(route_id).map_err(error)?;
+    let snapshot = runtime.snapshot();
+    for (reference, direction) in [
+        (route.source, PortDirection::Source),
+        (route.sink, PortDirection::Sink),
+    ] {
+        let node = if reference.node_id == snapshot.local_node.id {
+            &snapshot.local_node
+        } else {
+            snapshot
+                .peers
+                .iter()
+                .find(|node| node.id == reference.node_id)
+                .ok_or_else(|| error("playback catalog Node disappeared"))?
+        };
+        let capability = node
+            .capabilities
+            .get(&reference.capability_id)
+            .ok_or_else(|| error("playback catalog Capability disappeared"))?;
+        let port = node
+            .port(reference.capability_id, reference.port_id)
+            .map_err(error)?;
+        // AndroidCapabilityModules.audio availability maps an owned foreground
+        // lifecycle (starting/active capture) to BUSY. Only our already-opened
+        // exact Route may retain that remote Source after Start was sent. BUSY
+        // is never admission, permission, or proof that another use is ours.
+        let owned_source = started_peer
+            && direction == PortDirection::Source
+            && reference.node_id != snapshot.local_node.id;
+        let available = |value| {
+            value == Availability::Available || (owned_source && value == Availability::Busy)
+        };
+        if !available(capability.availability)
+            || !available(port.availability)
+            || port.direction != direction
+            || port.profile != route.profile
+            || !route
+                .selected_format
+                .as_ref()
+                .is_some_and(|format| port.formats.contains(format))
+            || !route
+                .selected_qos_mode
+                .as_ref()
+                .is_some_and(|qos| port.qos_modes.contains(qos))
+        {
+            return Err(error(
+                "playback catalog no longer supports the admitted endpoint",
+            ));
+        }
+    }
+    Ok(())
+}
+
 fn validate_admission(
     runtime: &NodeRuntime,
     actual: ControlTlsBinding,
@@ -534,6 +668,133 @@ mod tests {
             },
         )
     }
+    #[test]
+    fn ordinary_peer_status_preserves_exact_authority_without_media_readiness() {
+        let (runtime, admission, _) = fixture();
+        let local = runtime.route(admission.route_id).unwrap();
+        let mut peer = local.clone();
+        peer.state = RouteState::Draft;
+        peer.epoch = 0;
+        peer.selected_format = None;
+        peer.selected_qos_mode = None;
+        assert!(!validate_peer_status(local, &peer).unwrap());
+        let original = peer.clone();
+        for change in 0..8 {
+            let mut peer = original.clone();
+            match change {
+                0 => peer.id = RouteId::new(),
+                1 => peer.session_id = SessionId::new(),
+                2 => peer.source.node_id = NodeId::new(),
+                3 => peer.sink.node_id = NodeId::new(),
+                4 => peer.authorization = AuthorizationState::Pending,
+                5 => {
+                    peer.authorization = AuthorizationState::Authorized {
+                        expires_at_ms: Some(999_999),
+                    }
+                }
+                6 => peer.epoch = 1,
+                _ => peer.selected_format = local.selected_format.clone(),
+            }
+            assert!(
+                validate_peer_status(local, &peer).is_err(),
+                "change {change}"
+            );
+        }
+        assert_eq!(runtime.route(admission.route_id).unwrap(), local);
+    }
+
+    #[test]
+    fn terminal_peer_status_only_stops_exact_owned_route() {
+        let (runtime, admission, _) = fixture();
+        let local = runtime.route(admission.route_id).unwrap();
+        for terminal in 0..5 {
+            let mut peer = local.clone();
+            match terminal {
+                0 => peer.state = RouteState::Stopped,
+                1 => peer.state = RouteState::Offline,
+                2 => peer.state = RouteState::Failed,
+                3 => peer.authorization = AuthorizationState::Denied,
+                _ => peer.authorization = AuthorizationState::Revoked,
+            }
+            assert!(validate_peer_status(local, &peer).unwrap());
+            peer.id = RouteId::new();
+            assert!(validate_peer_status(local, &peer).is_err());
+        }
+    }
+
+    #[test]
+    fn catalog_metadata_must_retain_available_exact_playback_endpoints() {
+        let (mut runtime, admission, _) = fixture();
+        let snapshot = runtime.snapshot();
+        let mut local = snapshot.local_node;
+        let mut peer = snapshot.peers[0].clone();
+        for node in [&mut local, &mut peer] {
+            for capability in node.capabilities.values_mut() {
+                capability.availability = Availability::Available;
+                for port in capability.ports.values_mut() {
+                    port.availability = Availability::Available;
+                }
+            }
+        }
+        runtime.replace_local_catalog(local).unwrap();
+        runtime
+            .accept_peer_catalog(admission.expected.session_id, peer.clone())
+            .unwrap();
+        validate_catalog_endpoints(&runtime, admission.route_id, false).unwrap();
+        validate_catalog_endpoints(&runtime, admission.route_id, true).unwrap();
+        let source = runtime.route(admission.route_id).unwrap().source;
+        for availability in [
+            Availability::Busy,
+            Availability::PermissionRequired,
+            Availability::Offline,
+        ] {
+            let mut candidate = runtime.clone();
+            let capability = peer.capabilities.get_mut(&source.capability_id).unwrap();
+            capability.availability = availability;
+            capability
+                .ports
+                .get_mut(&source.port_id)
+                .unwrap()
+                .availability = availability;
+            candidate
+                .accept_peer_catalog(admission.expected.session_id, peer.clone())
+                .unwrap();
+            assert!(validate_catalog_endpoints(&candidate, admission.route_id, false).is_err());
+            assert_eq!(
+                validate_catalog_endpoints(&candidate, admission.route_id, true).is_ok(),
+                availability == Availability::Busy
+            );
+            if availability == Availability::Busy {
+                assert_eq!(
+                    candidate.route(admission.route_id).unwrap().state,
+                    RouteState::Starting
+                );
+                crate::route::validate_live(
+                    &candidate,
+                    capyio_audio::AudioMediaStreamBinding {
+                        session_id: admission.expected.session_id,
+                        route_id: admission.route_id,
+                        stream_id: admission.local_offer.stream_id,
+                        stream_epoch: 1,
+                        selected_spec: AudioStreamSpec::voice_interactive(),
+                    },
+                    1_001,
+                )
+                .unwrap();
+            }
+        }
+        // Local Sink BUSY is not accepted by this remote capture exception.
+        let mut local = runtime.snapshot().local_node;
+        let sink = runtime.route(admission.route_id).unwrap().sink;
+        local
+            .capabilities
+            .get_mut(&sink.capability_id)
+            .unwrap()
+            .availability = Availability::Busy;
+        runtime.replace_local_catalog(local).unwrap();
+        assert!(validate_catalog_endpoints(&runtime, admission.route_id, true).is_err());
+    }
+
     #[test]
     fn admission_requires_exact_paired_session_and_existing_local_lease() {
         let (mut runtime, admission, target) = fixture();
@@ -696,6 +957,12 @@ mod tests {
             owner.receive_with(RuntimePlayback::open_synthetic).unwrap(),
             PlaybackOwnerEvent::PlaybackReady
         );
+        let ReceivedControlMessage::RouteCommand(start) = peer.receive_control_message().unwrap()
+        else {
+            panic!("Start before readiness status");
+        };
+        assert_eq!(start.action, RouteCommandAction::Start);
+        assert_eq!(start.route_id, owner.admission.route_id);
         let ReceivedControlMessage::RouteStatus(ready) = peer.receive_control_message().unwrap()
         else {
             panic!("readiness status")
@@ -713,6 +980,68 @@ mod tests {
         .unwrap();
         (owner, peer, endpoint)
     }
+    #[test]
+    fn ipc_ordinary_status_never_opens_worker_and_duplicate_offer_never_restarts_peer() {
+        let (mut owner, mut peer, sender) = connected(Duration::from_secs(2));
+        owner.send_local_offer().unwrap();
+        let ReceivedControlMessage::RouteStatus(local) = peer.receive_control_message().unwrap()
+        else {
+            panic!("offer");
+        };
+        let mut draft = local.route.clone();
+        draft.state = RouteState::Draft;
+        draft.epoch = 0;
+        draft.selected_format = None;
+        draft.selected_qos_mode = None;
+        peer.send_route_status(&draft).unwrap();
+        assert_eq!(
+            owner
+                .receive_with(|_, _, _| panic!("ordinary status cannot open"))
+                .unwrap(),
+            PlaybackOwnerEvent::ControlUpdated
+        );
+        assert!(owner.worker.is_none());
+        let mut offer = *local.native_audio_data.unwrap();
+        offer.endpoint = NativeAudioEndpoint::Source;
+        offer.port = sender.local_addr().unwrap().port();
+        peer.send_native_audio_data_offer(&local.route, offer, now_ms().unwrap())
+            .unwrap();
+        assert_eq!(
+            owner.receive_with(RuntimePlayback::open_synthetic).unwrap(),
+            PlaybackOwnerEvent::PlaybackReady
+        );
+        let ReceivedControlMessage::RouteCommand(start) = peer.receive_control_message().unwrap()
+        else {
+            panic!("Start");
+        };
+        assert_eq!(start.action, RouteCommandAction::Start);
+        assert!(matches!(
+            peer.receive_control_message().unwrap(),
+            ReceivedControlMessage::RouteStatus(_)
+        ));
+        peer.send_native_audio_data_offer(&local.route, offer, now_ms().unwrap())
+            .unwrap();
+        assert_eq!(
+            owner
+                .receive_with(|_, _, _| panic!("duplicate must not reopen"))
+                .unwrap(),
+            PlaybackOwnerEvent::PlaybackReady
+        );
+        // A heartbeat roundtrip is an ordering fence: any second Start would
+        // arrive before its acknowledgement and fail this exact assertion.
+        peer.send_heartbeat(42, false).unwrap();
+        assert_eq!(
+            owner.receive_with(|_, _, _| panic!("heartbeat")).unwrap(),
+            PlaybackOwnerEvent::Heartbeat
+        );
+        let ReceivedControlMessage::Heartbeat(ack) = peer.receive_control_message().unwrap() else {
+            panic!("duplicate offer emitted an unexpected command");
+        };
+        assert_eq!(ack.sequence, 42);
+        assert!(ack.acknowledgement);
+        owner.stop().unwrap();
+    }
+
     #[test]
     fn ipc_authenticated_owner_offer_drives_dynamic_pcm_and_stop() {
         let (mut owner, mut peer, mut sender) = active();
@@ -900,6 +1229,12 @@ mod tests {
                 break;
             }
         }
+        let ReceivedControlMessage::RouteCommand(start) = peer.receive_control_message().unwrap()
+        else {
+            panic!("Start before readiness status");
+        };
+        assert_eq!(start.action, RouteCommandAction::Start);
+        assert_eq!(start.route_id, owner.admission.route_id);
         let ReceivedControlMessage::RouteStatus(ready) = peer.receive_control_message().unwrap()
         else {
             panic!("ready");

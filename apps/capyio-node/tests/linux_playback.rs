@@ -1,6 +1,7 @@
 #![cfg(target_os = "linux")]
 //! Hosted executable checks only: ephemeral certificates, loopback control and
 //! inherited FIFO pipes. Never return a media offer or open a device/process.
+use capyio_android_jni::AndroidCatalogRuntimeV1;
 use capyio_control_credentials::ControlCredentialBundle;
 use capyio_control_link::{CatalogControlLink, ReceivedControlMessage};
 use capyio_control_tls::{
@@ -12,11 +13,11 @@ use capyio_pairing::{
     CertificateFingerprint, CredentialHandle, PairedPeerDirectory, PairedPeerRecord,
 };
 use capyio_protocol::{NativeAudioEndpoint, NativeAudioPreset};
-use capyio_runtime::NodeRuntime;
 use serde_json::{Value, json};
 use std::{
     collections::BTreeSet,
     io::{self, Read, Write},
+    ops::{Deref, DerefMut},
     os::fd::AsFd,
     process::{Child, Command, ExitStatus, Stdio},
     thread,
@@ -148,44 +149,35 @@ struct Fixture {
     directory: Vec<u8>,
     bundle: ControlCredentialBundle,
     client: ControlTlsClientIdentity,
-    runtime: NodeRuntime,
+    runtime: AndroidCatalogRuntimeV1,
     source: PortRef,
     nodes: ControlTlsNodeBinding,
 }
 impl Fixture {
     fn new() -> Self {
-        let lab = capyio_testkit::DemoLab::new().unwrap();
-        let source = lab
-            .runtime
-            .route(lab.routes.phone_microphone_to_windows)
-            .unwrap()
-            .source;
-        let mut peer = lab
-            .runtime
-            .snapshot()
-            .peers
-            .into_iter()
-            .find(|peer| peer.id == source.node_id)
+        // Actual Java-produced Android catalog schema and production Runtime.
+        // This fixture represents available platform permission, not Route consent:
+        // the production Android local consent gate remains Pending until resolved.
+        let runtime = AndroidCatalogRuntimeV1::new(include_str!(
+            "../../../platform/android/fixtures/android-core-catalog-v1.json"
+        ))
+        .unwrap();
+        let node = runtime.snapshot().local_node;
+        let microphone = node
+            .capabilities
+            .values()
+            .find(|cap| cap.class == CapabilityClass::Microphone)
             .unwrap();
-        for adapter in peer.adapter_instances.values_mut() {
-            adapter
-                .supported_route_modes
-                .insert(RouteBackend::AdapterManaged);
-        }
-        for capability in peer.capabilities.values_mut() {
-            for port in capability.ports.values_mut() {
-                port.interoperability_mode = InteroperabilityMode::AdapterManaged;
-            }
-        }
-        // DemoLab intentionally starts microphone permission-gated. This fixture
-        // models a peer that already granted capture, not a local permission bypass.
-        let microphone = peer.capabilities.get_mut(&source.capability_id).unwrap();
-        microphone.availability = capyio_core::Availability::Available;
-        microphone
+        let port = microphone
             .ports
-            .get_mut(&source.port_id)
-            .unwrap()
-            .availability = capyio_core::Availability::Available;
+            .values()
+            .find(|port| port.direction == PortDirection::Source)
+            .unwrap();
+        let source = PortRef {
+            node_id: node.id,
+            capability_id: microphone.id,
+            port_id: port.id,
+        };
         let local = NodeId::new();
         let (bundle, client, client_pin) = identities();
         let mut directory = PairedPeerDirectory::new(local).unwrap();
@@ -207,7 +199,7 @@ impl Fixture {
             directory: directory.encode_json().unwrap(),
             bundle,
             client,
-            runtime: NodeRuntime::new(peer).unwrap(),
+            runtime,
             source,
             nodes: ControlTlsNodeBinding::new(local, source.node_id).unwrap(),
         }
@@ -219,7 +211,7 @@ impl Fixture {
         process.frame(&encoded);
         encoded.fill(0);
     }
-    fn connect(mut self, process: &mut Process) -> CatalogControlLink {
+    fn connect(mut self, process: &mut Process) -> AndroidPeer {
         let listening = process.event("listening");
         let client = AuthenticatedControlClientChannel::connect_fresh_session(
             ControlTlsEndpoint {
@@ -231,28 +223,134 @@ impl Fixture {
             self.nodes,
         )
         .unwrap();
-        let mut link = CatalogControlLink::admit_dialed_new_peer(
-            &mut self.runtime,
-            client,
-            "Ephemeral playback".into(),
-        )
-        .unwrap();
-        let catalog = link
-            .prepare_catalog(&self.runtime, &BTreeSet::from([self.source.capability_id]))
+        let link = self
+            .runtime
+            .admit_dialed_catalog_exchange(
+                client,
+                "Ephemeral playback".into(),
+                &BTreeSet::from([self.source.capability_id]),
+            )
             .unwrap();
-        link.send_catalog_until(catalog, Instant::now() + BOUND)
-            .unwrap();
-        let ReceivedControlMessage::Catalog(catalog) = link
+        AndroidPeer {
+            link,
+            runtime: self.runtime,
+        }
+    }
+}
+struct AndroidPeer {
+    link: CatalogControlLink,
+    runtime: AndroidCatalogRuntimeV1,
+}
+impl Deref for AndroidPeer {
+    type Target = CatalogControlLink;
+    fn deref(&self) -> &Self::Target {
+        &self.link
+    }
+}
+impl DerefMut for AndroidPeer {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.link
+    }
+}
+impl AndroidPeer {
+    fn receive_proposal(&mut self, expected: RouteId) {
+        let ReceivedControlMessage::RouteStatus(status) = self
+            .link
             .receive_control_message_until(Instant::now() + BOUND)
             .unwrap()
         else {
-            panic!("expected local catalog")
+            panic!("expected real Draft proposal before any offer")
         };
-        link.apply_catalog(&mut self.runtime, catalog).unwrap();
-        link
+        assert_eq!(status.route.id, expected);
+        assert_eq!(status.route.state, RouteState::Draft);
+        assert_eq!(status.route.authorization, AuthorizationState::Pending);
+        assert!(status.native_audio_data.is_none());
+        let route = self
+            .runtime
+            .receive_audio_route_status(&self.link, &status, "127.0.0.1", now_ms())
+            .unwrap();
+        assert_eq!(route.authorization, AuthorizationState::Pending);
+        assert!(self.runtime.snapshot().port_leases.is_empty());
+        self.link.send_route_status(&route).unwrap();
+        let requests: Value =
+            serde_json::from_slice(&self.runtime.resource_requests_json(now_ms()).unwrap())
+                .unwrap();
+        assert_eq!(
+            requests.as_array().unwrap().len(),
+            1,
+            "actual Android consent request exists"
+        );
+    }
+    fn consent(&mut self, id: RouteId, allow: bool) {
+        self.runtime
+            .resolve_touchpad_request(id, allow, now_ms())
+            .unwrap();
+        self.runtime
+            .publish_audio_control(&mut self.link, now_ms())
+            .unwrap();
+    }
+    fn negotiate_to_offer(&mut self, expected: RouteId) -> capyio_protocol::ValidatedRouteStatus {
+        let deadline = Instant::now() + BOUND;
+        let mut narrowed = false;
+        let mut leased = false;
+        loop {
+            match self.link.receive_control_message_until(deadline).unwrap() {
+                ReceivedControlMessage::RouteStatus(status) => {
+                    assert_eq!(status.route.id, expected);
+                    let route = self
+                        .runtime
+                        .receive_audio_route_status(&self.link, &status, "127.0.0.1", now_ms())
+                        .unwrap();
+                    if status.native_audio_data.is_some() {
+                        assert!(
+                            narrowed && leased,
+                            "offer only after exact finite consent and Source lease"
+                        );
+                        assert_eq!(route.authorization, status.route.authorization);
+                        assert_eq!(
+                            route.state,
+                            RouteState::Draft,
+                            "capture must wait for explicit Start"
+                        );
+                        assert!(
+                            !self.runtime.audio_should_run(expected, now_ms()),
+                            "actual Android lifecycle must not run before endpoint preparation and Start"
+                        );
+                        return *status;
+                    }
+                    assert_eq!(status.route.state, RouteState::Draft);
+                    let AuthorizationState::Authorized {
+                        expires_at_ms: Some(expiry),
+                    } = route.authorization
+                    else {
+                        panic!("finite Android consent retained")
+                    };
+                    assert!(expiry > now_ms() && expiry <= now_ms() + 10_000);
+                    assert_eq!(route.authorization, status.route.authorization);
+                    narrowed = true;
+                    self.link.send_route_status(&route).unwrap();
+                }
+                ReceivedControlMessage::PortLeaseRequest(request) => {
+                    assert!(narrowed, "no remote lease before finite grant agreement");
+                    assert_eq!(request.request().route_id, expected);
+                    self.runtime
+                        .answer_audio_port_lease(&mut self.link, request, now_ms())
+                        .unwrap();
+                    assert!(!self.runtime.snapshot().port_leases.is_empty());
+                    leased = true;
+                }
+                _ => panic!("unexpected message during real Android negotiation"),
+            }
+        }
     }
 }
-fn pending() -> (Process, CatalogControlLink, Value) {
+fn now_ms() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap()
+        .as_millis() as u64
+}
+fn pending() -> (Process, AndroidPeer, Value) {
     let fixture = Fixture::new();
     let mut process = Process::playback();
     fixture.bootstrap(&mut process);
@@ -292,16 +390,24 @@ fn ipc_linux_playback_approved_finite_offer_status_and_stop() {
         .unwrap()
         .as_millis() as u64;
     process.command(approve(&approval));
+    let route_id = serde_json::from_value(approval["route_id"].clone()).unwrap();
+    peer.receive_proposal(route_id);
+    let observation = Instant::now() + Duration::from_millis(150);
+    while Instant::now() < observation {
+        assert!(
+            peer.poll_control_message_until(Instant::now() + BOUND)
+                .unwrap()
+                .is_none(),
+            "no offer/lease before actual Android consent"
+        );
+        thread::sleep(Duration::from_millis(2));
+    }
+    peer.consent(route_id, true);
+    let status = peer.negotiate_to_offer(route_id);
     assert_eq!(
         process.event("awaiting_peer_offer")["route_id"],
         approval["route_id"]
     );
-    let ReceivedControlMessage::RouteStatus(status) = peer
-        .receive_control_message_until(Instant::now() + BOUND)
-        .unwrap()
-    else {
-        panic!("expected authenticated offer")
-    };
     assert_eq!(
         serde_json::to_value(status.route.id).unwrap(),
         approval["route_id"]
@@ -331,6 +437,40 @@ fn ipc_linux_playback_approved_finite_offer_status_and_stop() {
     process.event("stopped");
     assert!(process.finish().success());
     assert!(process.stderr.is_empty());
+}
+
+#[test]
+fn ipc_linux_playback_android_denial_never_acquires_source_or_offers() {
+    let (mut process, mut peer, approval) = pending();
+    process.command(approve(&approval));
+    let id = serde_json::from_value(approval["route_id"].clone()).unwrap();
+    peer.receive_proposal(id);
+    peer.consent(id, false);
+    assert!(peer.runtime.snapshot().port_leases.is_empty());
+    process.event("failed");
+    assert!(!process.finish().success());
+    assert!(
+        peer.receive_control_message_until(Instant::now() + BOUND)
+            .is_err(),
+        "denied Android consent must not produce lease/offer/Start"
+    );
+}
+
+#[test]
+fn ipc_linux_playback_local_stop_while_android_consent_pending() {
+    let (mut process, mut peer, approval) = pending();
+    process.command(approve(&approval));
+    let id = serde_json::from_value(approval["route_id"].clone()).unwrap();
+    peer.receive_proposal(id);
+    process.command(json!({"version":1,"command":"stop"}));
+    process.event("stopped");
+    assert!(process.finish().success());
+    assert!(peer.runtime.snapshot().port_leases.is_empty());
+    assert!(
+        peer.receive_control_message_until(Instant::now() + BOUND)
+            .is_err(),
+        "Stop before Android consent must not produce lease/offer/Start"
+    );
 }
 
 #[test]

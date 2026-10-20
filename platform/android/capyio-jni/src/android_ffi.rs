@@ -787,7 +787,7 @@ pub extern "system" fn Java_dev_capyio_android_AndroidNativeControlListener_nati
                         .lock()
                         .map_err(|_| "Runtime registry poisoned")?;
                     let host = runtimes.get_mut(&runtime_handle).ok_or("unknown Runtime")?;
-                    audio_use::publish(host, link, now_ms)?;
+                    host.publish_audio_control(link, now_ms)?;
                     display_use::publish(host, link)?;
                     if let Some(id) = host.controller_status_pending.take() {
                         if host.publication_revision() != owner.published_catalog_revision {
@@ -919,131 +919,153 @@ pub extern "system" fn Java_dev_capyio_android_AndroidNativeControlListener_nati
                                     runtimes.get_mut(&runtime_handle).ok_or_else(|| {
                                         "unknown native catalog Runtime handle".to_owned()
                                     })?;
-                                let confirm = runtime.resource_requires_confirmation(&status.route);
-                                let mut route = link
-                                    .apply_route_status(&mut runtime.runtime, &status, !confirm)
-                                    .map_err(|error| error.to_string())?;
-                                if let Some(offer) = status.native_audio_data.as_deref() {
-                                    audio_use::receive_offer(
+                                if status.route.profile == capyio_core::ProfileId::audio_frames_v1()
+                                {
+                                    runtime.receive_audio_route_status(
+                                        link,
+                                        &status,
+                                        &owner
+                                            .peer_address
+                                            .ok_or("authenticated peer absent")?
+                                            .to_string(),
+                                        now_ms,
+                                    )?
+                                } else {
+                                    let confirm =
+                                        runtime.resource_requires_confirmation(&status.route);
+                                    let mut route = link
+                                        .apply_route_status(&mut runtime.runtime, &status, !confirm)
+                                        .map_err(|error| error.to_string())?;
+                                    if let Some(offer) = status.native_audio_data.as_deref() {
+                                        crate::audio_negotiation::receive_offer(
+                                            runtime,
+                                            &status.route,
+                                            *offer,
+                                            owner
+                                                .peer_address
+                                                .ok_or("authenticated peer absent")?
+                                                .to_string(),
+                                            now_ms,
+                                        )?;
+                                    }
+                                    camera_use::receive_status(
                                         runtime,
                                         &status.route,
-                                        *offer,
+                                        status.camera_data,
                                         owner
                                             .peer_address
                                             .ok_or("authenticated peer absent")?
                                             .to_string(),
                                         now_ms,
                                     )?;
-                                }
-                                camera_use::receive_status(
-                                    runtime,
-                                    &status.route,
-                                    status.camera_data,
-                                    owner
-                                        .peer_address
-                                        .ok_or("authenticated peer absent")?
-                                        .to_string(),
-                                    now_ms,
-                                )?;
-                                display_use::route_status(runtime, &status.route)?;
-                                if display_use::is_display(&route) {
-                                    route = runtime
+                                    display_use::route_status(runtime, &status.route)?;
+                                    if display_use::is_display(&route) {
+                                        route = runtime
+                                            .runtime
+                                            .route(route.id)
+                                            .map_err(|e| e.to_string())?
+                                            .clone();
+                                    }
+                                    if runtime.controller_use == Some(route.id)
+                                        && status.route.authorization
+                                            == capyio_core::AuthorizationState::Denied
+                                    {
+                                        controller_use::fail(
+                                            runtime,
+                                            route.id,
+                                            "对方拒绝了手柄使用请求",
+                                        )?;
+                                    }
+                                    if confirm
+                                        && status.route.authorization
+                                            != capyio_core::AuthorizationState::Denied
+                                    {
+                                        if runtime.audio_local_intent.contains(&route.id)
+                                            || (display_use::is_display(&route)
+                                                && runtime.display_use.local_intent)
+                                        {
+                                            // The local button already expresses consent. Wait for the
+                                            // remote owner's finite grant before issuing our matching
+                                            // grant; a Pending acknowledgement must not mint an
+                                            // independent eight-hour grant ahead of Windows' reply.
+                                            if route.authorization
+                                                == capyio_core::AuthorizationState::Pending
+                                                && let capyio_core::AuthorizationState::Authorized {
+                                                    expires_at_ms: Some(deadline),
+                                                } = status.route.authorization
+                                            {
+                                                runtime
+                                                    .enqueue_touchpad_request(route.id, now_ms)?;
+                                                runtime.touchpad_consent.resolve_bounded(
+                                                    &mut runtime.runtime,
+                                                    route.id,
+                                                    true,
+                                                    now_ms,
+                                                    Some(deadline),
+                                                )?;
+                                                runtime.audio_status_pending.insert(route.id);
+                                                route = runtime
+                                                    .runtime
+                                                    .route(route.id)
+                                                    .map_err(|e| e.to_string())?
+                                                    .clone();
+                                            }
+                                        } else {
+                                            runtime.enqueue_touchpad_request(route.id, now_ms)?;
+                                            if (runtime.controller_local_intent == Some(route.id)
+                                                || runtime.camera_use.as_ref().is_some_and(
+                                                    |use_| {
+                                                        use_.route_id == route.id
+                                                            && use_.local_intent
+                                                    },
+                                                ))
+                                                && route.authorization
+                                                    == capyio_core::AuthorizationState::Pending
+                                            {
+                                                runtime.resolve_touchpad_request(
+                                                    route.id, true, now_ms,
+                                                )?;
+                                                route = runtime
+                                                    .runtime
+                                                    .route(route.id)
+                                                    .map_err(|e| e.to_string())?
+                                                    .clone();
+                                            }
+                                        }
+                                    }
+                                    if runtime.controller_use == Some(route.id)
+                                        && matches!(
+                                            status.route.state,
+                                            capyio_core::RouteState::Stopped
+                                                | capyio_core::RouteState::Failed
+                                                | capyio_core::RouteState::Offline
+                                        )
+                                        && matches!(
+                                            route.state,
+                                            capyio_core::RouteState::Prepared
+                                                | capyio_core::RouteState::Starting
+                                                | capyio_core::RouteState::Active
+                                        )
+                                    {
+                                        runtime
+                                            .runtime
+                                            .begin_route_stop(route.id)
+                                            .map_err(|e| e.to_string())?;
+                                        runtime
+                                            .runtime
+                                            .stop_route(route.id)
+                                            .map_err(|e| e.to_string())?;
+                                    }
+                                    crate::audio_negotiation::remote_status(
+                                        runtime,
+                                        &status.route,
+                                    )?;
+                                    runtime
                                         .runtime
                                         .route(route.id)
                                         .map_err(|e| e.to_string())?
-                                        .clone();
+                                        .clone()
                                 }
-                                if runtime.controller_use == Some(route.id)
-                                    && status.route.authorization
-                                        == capyio_core::AuthorizationState::Denied
-                                {
-                                    controller_use::fail(
-                                        runtime,
-                                        route.id,
-                                        "对方拒绝了手柄使用请求",
-                                    )?;
-                                }
-                                if confirm
-                                    && status.route.authorization
-                                        != capyio_core::AuthorizationState::Denied
-                                {
-                                    if runtime.audio_local_intent.contains(&route.id)
-                                        || (display_use::is_display(&route)
-                                            && runtime.display_use.local_intent)
-                                    {
-                                        // The local button already expresses consent. Wait for the
-                                        // remote owner's finite grant before issuing our matching
-                                        // grant; a Pending acknowledgement must not mint an
-                                        // independent eight-hour grant ahead of Windows' reply.
-                                        if route.authorization
-                                            == capyio_core::AuthorizationState::Pending
-                                            && let capyio_core::AuthorizationState::Authorized {
-                                                expires_at_ms: Some(deadline),
-                                            } = status.route.authorization
-                                        {
-                                            runtime.enqueue_touchpad_request(route.id, now_ms)?;
-                                            runtime.touchpad_consent.resolve_bounded(
-                                                &mut runtime.runtime,
-                                                route.id,
-                                                true,
-                                                now_ms,
-                                                Some(deadline),
-                                            )?;
-                                            runtime.audio_status_pending.insert(route.id);
-                                            route = runtime
-                                                .runtime
-                                                .route(route.id)
-                                                .map_err(|e| e.to_string())?
-                                                .clone();
-                                        }
-                                    } else {
-                                        runtime.enqueue_touchpad_request(route.id, now_ms)?;
-                                        if (runtime.controller_local_intent == Some(route.id)
-                                            || runtime.camera_use.as_ref().is_some_and(|use_| {
-                                                use_.route_id == route.id && use_.local_intent
-                                            }))
-                                            && route.authorization
-                                                == capyio_core::AuthorizationState::Pending
-                                        {
-                                            runtime
-                                                .resolve_touchpad_request(route.id, true, now_ms)?;
-                                            route = runtime
-                                                .runtime
-                                                .route(route.id)
-                                                .map_err(|e| e.to_string())?
-                                                .clone();
-                                        }
-                                    }
-                                }
-                                if runtime.controller_use == Some(route.id)
-                                    && matches!(
-                                        status.route.state,
-                                        capyio_core::RouteState::Stopped
-                                            | capyio_core::RouteState::Failed
-                                            | capyio_core::RouteState::Offline
-                                    )
-                                    && matches!(
-                                        route.state,
-                                        capyio_core::RouteState::Prepared
-                                            | capyio_core::RouteState::Starting
-                                            | capyio_core::RouteState::Active
-                                    )
-                                {
-                                    runtime
-                                        .runtime
-                                        .begin_route_stop(route.id)
-                                        .map_err(|e| e.to_string())?;
-                                    runtime
-                                        .runtime
-                                        .stop_route(route.id)
-                                        .map_err(|e| e.to_string())?;
-                                }
-                                audio_use::remote_status(runtime, &status.route)?;
-                                runtime
-                                    .runtime
-                                    .route(route.id)
-                                    .map_err(|e| e.to_string())?
-                                    .clone()
                             };
                             link.send_route_status(&route)
                                 .map_err(|error| error.to_string())
@@ -1062,9 +1084,19 @@ pub extern "system" fn Java_dev_capyio_android_AndroidNativeControlListener_nati
                                 .duration_since(UNIX_EPOCH)
                                 .map_err(|_| "system clock is before Unix epoch".to_owned())?
                                 .as_millis() as u64;
-                            runtime.runtime.expire_port_leases(now_ms);
-                            link.answer_port_lease_request(&mut runtime.runtime, request, now_ms)
+                            if runtime.runtime.route(request.request().route_id).is_ok_and(
+                                |route| route.profile == capyio_core::ProfileId::audio_frames_v1(),
+                            ) {
+                                runtime.answer_audio_port_lease(link, request, now_ms)
+                            } else {
+                                runtime.runtime.expire_port_leases(now_ms);
+                                link.answer_port_lease_request(
+                                    &mut runtime.runtime,
+                                    request,
+                                    now_ms,
+                                )
                                 .map_err(|error| error.to_string())
+                            }
                         }
                         Ok(ReceivedControlMessage::RouteCommand(command)) => {
                             let (route, touchpad, haptics, gamepad) = {
@@ -1134,12 +1166,17 @@ pub extern "system" fn Java_dev_capyio_android_AndroidNativeControlListener_nati
                                     .map_err(|e| e.to_string())?
                                     .profile
                                     == capyio_core::ProfileId::video_frames_v1();
-                                let route = if touchpad || haptics || gamepad || audio || camera {
+                                let route = if audio {
+                                    runtime
+                                        .stage_audio_route_command(link, &command, now_ms)
+                                        .map_err(|error| error.to_string())?
+                                } else if touchpad || haptics || gamepad || camera {
                                     link.stage_route_command(&mut runtime.runtime, &command, now_ms)
+                                        .map_err(|error| error.to_string())?
                                 } else {
                                     link.apply_route_command(&mut runtime.runtime, &command, now_ms)
-                                }
-                                .map_err(|error| error.to_string())?;
+                                        .map_err(|error| error.to_string())?
+                                };
                                 (route, touchpad, haptics, gamepad)
                             };
                             if gamepad

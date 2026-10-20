@@ -82,8 +82,14 @@ certificate-authenticated control peer do not authenticate media packets.
    for this exact challenge. Only then send version 1 `approve` with those exact
    `request_id` and `route_id` fields within the 30-second consent window.
    `status` and `stop` are separate commands, never implicit approval.
-5. `awaiting_peer_offer` is not playback readiness. The peer must negotiate the
-   reciprocal authenticated offer; capture must retain its visible device consent
+5. After local approval, Linux sends a Draft proposal and waits for independent
+   Android consent. Both sides must acknowledge the same finite deadline; Linux
+   acquires the remote Source lease before offering media. The local duration
+   includes negotiation time, and the minimum lease plus transit margin can make
+   very short durations fail before playback. See [ADR 1524](../adr/1524-linux-android-audio-negotiation.md).
+   `awaiting_peer_offer` is not playback readiness. The peer must negotiate the
+   reciprocal authenticated offer. Linux sends Android Start only after its local
+   worker opens; capture must retain its visible device consent
    and foreground lifecycle. Confirm rendered sound independently, not from
    packet counts or bytes written to a child pipe.
 6. Request local `stop` and observe bounded owned-resource cleanup. Restart with
@@ -119,3 +125,12 @@ projection/driver and lab workflows; their evidence does not transfer to Linux,
 and this guide does not declare all Windows paths production-ready. Existing
 Windows/Android behavior is unchanged. Closing Linux playback hardware acceptance
 still does not close virtual-device or wider platform parity gates.
+
+## Android compatibility correction
+
+The initial green command tests above used a synthetic peer and missed real
+Android proposal/consent/lease/Start ordering. ADR 1524 corrects that Linux-led
+sequence and exercises the actual Android coordinator on the Rust host. This is
+stronger protocol evidence, not Java hardware execution or physical acceptance.
+Android-initiated audio selection still targets Windows-specific capability IDs;
+use neither that selector nor the static sender as proof of Linux compatibility.

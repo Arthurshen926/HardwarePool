@@ -328,6 +328,39 @@ impl NodeRuntime {
         Ok(())
     }
 
+    /// Local consent owner restricts an already authorized finite Draft grant.
+    /// No retained lease may exist for this Route, even if expired. This never
+    /// creates authority from peer input; caller policy must check the exact
+    /// authenticated binding and absence of a prepared external worker.
+    /// An unchanged deadline is idempotent and emits no event.
+    pub fn restrict_draft_authorization(
+        &mut self,
+        route_id: RouteId,
+        expires_at_ms: u64,
+        now_ms: u64,
+    ) -> Result<(), RuntimeError> {
+        let route = self
+            .routes
+            .get_mut(&route_id)
+            .ok_or(RuntimeError::UnknownRoute(route_id))?;
+        if self
+            .port_leases
+            .claims()
+            .any(|claim| claim.route_id == route_id)
+        {
+            return Err(RuntimeError::DraftAuthorizationLeasePresent(route_id));
+        }
+        let before = route.authorization;
+        route.restrict_draft_authorization(expires_at_ms, now_ms)?;
+        if route.authorization != before {
+            self.emit(RuntimeEventKind::RouteChanged {
+                route_id,
+                state: RouteState::Draft,
+            });
+        }
+        Ok(())
+    }
+
     /// Local consent owner renews an ongoing finite authorization. This does
     /// not renew a port lease or authorize another Route, and keeps the epoch.
     pub fn renew_route_authorization(
@@ -1291,5 +1324,105 @@ fn catalog_problem(
         related_route: Some(route_id),
         human_message: "A Route endpoint is no longer compatible with its catalog".to_owned(),
         technical_detail: Some(issue.detail()),
+    }
+}
+
+#[cfg(test)]
+mod draft_authorization_tests {
+    use super::*;
+    use capyio_core::{CapabilityId, Platform, PortId, ProfileId, ProtocolVersion};
+
+    fn fixture() -> (NodeRuntime, RouteId, PortRef) {
+        let node = NodeDescriptor::new(
+            NodeId::new(),
+            "test",
+            Platform::Linux,
+            "test",
+            "test",
+            [ProtocolVersion::new(1, 0)],
+        );
+        let port = PortRef {
+            node_id: node.id,
+            capability_id: CapabilityId::new(),
+            port_id: PortId::new(),
+        };
+        let mut runtime = NodeRuntime::new(node).unwrap();
+        // A narrowly scoped deterministic state fixture, not an admitted peer.
+        let route = Route {
+            id: RouteId::new(),
+            session_id: SessionId::new(),
+            source: port,
+            sink: PortRef {
+                node_id: NodeId::new(),
+                capability_id: CapabilityId::new(),
+                port_id: PortId::new(),
+            },
+            profile: ProfileId::audio_frames_v1(),
+            backend: RouteBackend::AdapterManaged,
+            compatible_formats: vec![],
+            compatible_qos_modes: Default::default(),
+            selected_format: None,
+            selected_qos_mode: None,
+            state: RouteState::Draft,
+            authorization: AuthorizationState::Authorized {
+                expires_at_ms: Some(300),
+            },
+            epoch: 0,
+            diagnostic_ids: vec![],
+        };
+        let id = route.id;
+        runtime.routes.insert(id, route);
+        (runtime, id, port)
+    }
+
+    #[test]
+    fn restriction_emits_only_on_reduction_and_preserves_other_routes() {
+        let (mut runtime, id, _) = fixture();
+        let mut other = runtime.routes[&id].clone();
+        other.id = RouteId::new();
+        runtime.routes.insert(other.id, other.clone());
+        runtime.restrict_draft_authorization(id, 200, 100).unwrap();
+        assert_eq!(runtime.routes[&other.id], other);
+        let after = runtime.snapshot();
+        assert_eq!(after.events.len(), 1);
+        assert!(
+            matches!(after.events[0].kind, RuntimeEventKind::RouteChanged { route_id, state: RouteState::Draft } if route_id == id)
+        );
+        runtime.restrict_draft_authorization(id, 200, 100).unwrap();
+        assert_eq!(runtime.snapshot(), after);
+        assert!(runtime.restrict_draft_authorization(id, 201, 100).is_err());
+        assert_eq!(runtime.snapshot(), after);
+        assert!(
+            runtime
+                .restrict_draft_authorization(RouteId::new(), 150, 100)
+                .is_err()
+        );
+        assert_eq!(runtime.snapshot(), after);
+    }
+
+    #[test]
+    fn restriction_rejects_even_expired_retained_route_lease_without_mutation() {
+        let (mut runtime, id, port) = fixture();
+        runtime
+            .port_leases
+            .set_policy(port, PortLeasePolicy::Exclusive)
+            .unwrap();
+        runtime
+            .port_leases
+            .claim(
+                PortLeaseClaim {
+                    port,
+                    route_id: id,
+                    session_id: runtime.routes[&id].session_id,
+                    expires_at_ms: 50,
+                },
+                1,
+            )
+            .unwrap();
+        let before = runtime.snapshot();
+        assert!(
+            matches!(runtime.restrict_draft_authorization(id, 200, 100), Err(RuntimeError::DraftAuthorizationLeasePresent(found)) if found == id)
+        );
+        assert_eq!(runtime.snapshot(), before);
     }
 }

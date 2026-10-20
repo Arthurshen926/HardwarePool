@@ -12,7 +12,10 @@ use capyio_linux_audio::{
     AuthenticatedPlaybackOwner, PlaybackAdmission, PlaybackConfig, PlaybackTarget,
 };
 use capyio_pairing::PairedPeerDirectory;
-use capyio_protocol::{NativeAudioDataOffer, NativeAudioEndpoint, NativeAudioPreset};
+use capyio_protocol::{
+    MIN_PORT_LEASE_TTL_MS, NativeAudioDataOffer, NativeAudioEndpoint, NativeAudioPreset,
+    PortLeaseAction, PortLeaseOutcome, ValidatedRouteStatus,
+};
 use capyio_runtime::{NodeRuntime, PortLeasePolicy};
 use serde::Deserialize;
 use serde_json::json;
@@ -313,13 +316,126 @@ fn prepare(
         thread::sleep(Duration::from_millis(2));
     }
     check(consent_deadline)?;
-    let now = now_ms()?;
-    let expiry = now
+    let approved_at = now_ms()?;
+    let approved_expiry = approved_at
         .checked_add(config.duration_secs * 1000)
         .ok_or_else(fail)?;
-    sanitized(runtime.set_local_port_lease_policy(sink, PortLeasePolicy::Exclusive))?;
+    // Local consent alone does not authorize the peer's microphone. Announce
+    // the exact Draft/Pending proposal before any grant, lease or media offer.
+    let negotiation_deadline =
+        (Instant::now() + CONSENT).min(Instant::now() + Duration::from_secs(config.duration_secs));
+    sanitized(link.send_route_status_until(
+        sanitized(runtime.route(route_id))?,
+        negotiation_operation_deadline(negotiation_deadline, approved_expiry)?,
+    ))?;
+    let peer_expiry = loop {
+        let Some(message) = negotiation_message(
+            io,
+            runtime,
+            link,
+            config.source,
+            negotiation_deadline,
+            approved_expiry,
+        )?
+        else {
+            return Ok(None);
+        };
+        let ReceivedControlMessage::RouteStatus(status) = message else {
+            return Err(fail());
+        };
+        validate_draft_peer(runtime, route_id, &status)?;
+        match status.route.authorization {
+            AuthorizationState::Pending => {}
+            AuthorizationState::Authorized {
+                expires_at_ms: Some(expiry),
+            } if expiry > now_ms()? => break expiry,
+            _ => return Err(fail()),
+        }
+    };
+    let expiry = approved_expiry.min(peer_expiry);
     sanitized(runtime.authorize_route(route_id, Some(expiry)))?;
-    sanitized(runtime.acquire_route_port_lease(route_id, sink, expiry, now))?;
+    sanitized(link.send_route_status_until(
+        sanitized(runtime.route(route_id))?,
+        negotiation_operation_deadline(negotiation_deadline, expiry)?,
+    ))?;
+    // Android retains its independently obtained consent and can only narrow
+    // its Draft grant to this deadline. An acknowledgement is not a new grant.
+    loop {
+        let Some(message) = negotiation_message(
+            io,
+            runtime,
+            link,
+            config.source,
+            negotiation_deadline,
+            expiry,
+        )?
+        else {
+            return Ok(None);
+        };
+        let ReceivedControlMessage::RouteStatus(status) = message else {
+            return Err(fail());
+        };
+        validate_draft_peer(runtime, route_id, &status)?;
+        match status.route.authorization {
+            AuthorizationState::Authorized {
+                expires_at_ms: Some(peer),
+            } if peer == expiry => break,
+            AuthorizationState::Authorized {
+                expires_at_ms: Some(peer),
+            } if peer == peer_expiry => {}
+            _ => return Err(fail()),
+        }
+    }
+    // Same one-second transit headroom as the existing Windows lease flow.
+    // Too little remaining lifetime fails closed rather than extending consent.
+    let ttl = lease_ttl(expiry, now_ms()?)?;
+    let request = sanitized(link.send_port_lease_request_until(
+        route_id,
+        config.source,
+        PortLeaseAction::Acquire,
+        ttl,
+        negotiation_operation_deadline(negotiation_deadline, expiry)?,
+    ))?;
+    let lease_expiry = loop {
+        let Some(message) = negotiation_message(
+            io,
+            runtime,
+            link,
+            config.source,
+            negotiation_deadline,
+            expiry,
+        )?
+        else {
+            return Ok(None);
+        };
+        match message {
+            ReceivedControlMessage::RouteStatus(status) => {
+                validate_draft_peer(runtime, route_id, &status)?;
+                if status.route.authorization != sanitized(runtime.route(route_id))?.authorization {
+                    return Err(fail());
+                }
+            }
+            ReceivedControlMessage::PortLeaseResponse(response) => {
+                let lease_expiry = response.expires_at_ms.ok_or_else(fail)?;
+                if response.request_message_id != request
+                    || response.session_id != link.session_id()
+                    || response.route_id != route_id
+                    || response.port != config.source
+                    || response.outcome != PortLeaseOutcome::Acquired
+                    || lease_expiry <= now_ms()?
+                    || lease_expiry > expiry
+                {
+                    return Err(fail());
+                }
+                break lease_expiry;
+            }
+            _ => return Err(fail()),
+        }
+    };
+    let now = now_ms()?;
+    check(negotiation_deadline)?;
+    sanitized(runtime.set_local_port_lease_policy(sink, PortLeasePolicy::Exclusive))?;
+    sanitized(runtime.acquire_route_port_lease(route_id, sink, lease_expiry, now))?;
     sanitized(runtime.prepare_route(
         route_id,
         Some(FormatDescriptor::new("pcm-s16le-48000-mono")),
@@ -342,12 +458,95 @@ fn prepare(
     )))
 }
 
+fn lease_ttl(expiry: u64, now: u64) -> io::Result<u64> {
+    let ttl = expiry.saturating_sub(now).saturating_sub(1_000);
+    if ttl < MIN_PORT_LEASE_TTL_MS {
+        return Err(fail());
+    }
+    Ok(ttl.min(capyio_protocol::MAX_PORT_LEASE_TTL_MS))
+}
+
+fn negotiation_operation_deadline(deadline: Instant, expiry: u64) -> io::Result<Instant> {
+    check(deadline)?;
+    let remaining = expiry
+        .checked_sub(now_ms()?)
+        .filter(|value| *value > 0)
+        .ok_or_else(fail)?;
+    Ok(deadline.min(Instant::now() + Duration::from_millis(remaining.min(1_000))))
+}
+
+fn validate_draft_peer(
+    runtime: &NodeRuntime,
+    route_id: RouteId,
+    status: &ValidatedRouteStatus,
+) -> io::Result<()> {
+    let local = sanitized(runtime.route(route_id))?;
+    let peer = &status.route;
+    if status.session_id != local.session_id
+        || peer.session_id != local.session_id
+        || peer.id != local.id
+        || peer.source != local.source
+        || peer.sink != local.sink
+        || peer.profile != local.profile
+        || peer.backend != local.backend
+        || peer.state != RouteState::Draft
+        || peer.epoch != 0
+        || peer.selected_format.is_some()
+        || peer.selected_qos_mode.is_some()
+        || status.native_audio_data.is_some()
+    {
+        return Err(fail());
+    }
+    Ok(())
+}
+
+/// Progress one bounded authenticated exchange at a time, keeping local Stop
+/// and finite consent live during peer interaction. Catalogs are applied through
+/// the real transactional admission path, never treated as permission.
+fn negotiation_message(
+    io: &mut LauncherIo,
+    runtime: &mut NodeRuntime,
+    link: &mut CatalogControlLink,
+    source: PortRef,
+    deadline: Instant,
+    expiry: u64,
+) -> io::Result<Option<ReceivedControlMessage>> {
+    loop {
+        let operation_deadline = negotiation_operation_deadline(deadline, expiry)?;
+        if local_before_approval(io, "awaiting_peer_consent_or_lease")? {
+            return Ok(None);
+        }
+        match sanitized(link.poll_control_message_until(operation_deadline))? {
+            Some(ReceivedControlMessage::Catalog(catalog)) => {
+                sanitized(link.apply_catalog(runtime, catalog))?;
+                validate_source(runtime, source)?;
+            }
+            Some(ReceivedControlMessage::Heartbeat(heartbeat)) => {
+                if !heartbeat.acknowledgement {
+                    sanitized(link.send_heartbeat_until(
+                        heartbeat.sequence,
+                        true,
+                        negotiation_operation_deadline(deadline, expiry)?,
+                    ))?;
+                }
+            }
+            Some(message) => return Ok(Some(message)),
+            None => thread::sleep(Duration::from_millis(2)),
+        }
+    }
+}
+
 fn prepare_selected_route(
     runtime: &mut NodeRuntime,
     session_id: SessionId,
     source_ref: PortRef,
     sink: PortRef,
 ) -> io::Result<RouteId> {
+    validate_source(runtime, source_ref)?;
+    sanitized(runtime.create_route(session_id, source_ref, sink, RouteBackend::AdapterManaged))
+}
+
+fn validate_source(runtime: &NodeRuntime, source_ref: PortRef) -> io::Result<()> {
     // Real authenticated catalog descriptors, not launch-config/fixture ports.
     let snapshot = runtime.snapshot();
     let peer = snapshot
@@ -366,7 +565,7 @@ fn prepare_selected_route(
     {
         return Err(fail());
     }
-    sanitized(runtime.create_route(session_id, source_ref, sink, RouteBackend::AdapterManaged))
+    Ok(())
 }
 
 /// A single explicit software playback destination, not a hardware probe or
@@ -463,6 +662,18 @@ mod tests {
         }
     }
     #[test]
+    fn negotiation_lease_budget_never_extends_finite_local_approval() {
+        assert!(lease_ttl(1_000, 1_000).is_err());
+        assert!(lease_ttl(2_999, 1_000).is_err());
+        assert_eq!(lease_ttl(3_000, 1_000).unwrap(), 1_000);
+        assert_eq!(lease_ttl(301_000, 1_000).unwrap(), 299_000);
+        assert!(negotiation_operation_deadline(Instant::now(), u64::MAX).is_err());
+        assert!(
+            negotiation_operation_deadline(Instant::now() + Duration::from_secs(1), 1).is_err()
+        );
+    }
+
+    #[test]
     fn local_sink_catalog_requires_no_source_publication_selection() {
         let (runtime, sink) = local_runtime(NodeId::new()).unwrap();
         let local = runtime.snapshot().local_node;
@@ -535,6 +746,21 @@ mod tests {
             AuthorizationState::Pending
         );
         assert!(runtime.snapshot().port_leases.is_empty());
+        let draft = runtime.route(route).unwrap().clone();
+        let bytes = capyio_protocol::encode_route_status(session, &draft).unwrap();
+        let status = capyio_protocol::decode_route_status(&bytes).unwrap();
+        validate_draft_peer(&runtime, route, &status).unwrap();
+        for mutate in [0, 1, 2, 3, 4] {
+            let mut wrong = status.clone();
+            match mutate {
+                0 => wrong.route.id = RouteId::new(),
+                1 => wrong.session_id = SessionId::new(),
+                2 => wrong.route.source.node_id = NodeId::new(),
+                3 => wrong.route.epoch = 1,
+                _ => wrong.route.state = RouteState::Starting,
+            }
+            assert!(validate_draft_peer(&runtime, route, &wrong).is_err());
+        }
         // Existing explicit local approval operations must admit this exact pair.
         runtime
             .set_local_port_lease_policy(sink, PortLeasePolicy::Exclusive)

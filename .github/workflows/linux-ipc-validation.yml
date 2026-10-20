@@ -34,7 +34,7 @@ jobs:
       - name: Check formatting
         run: cargo fmt --all -- --check
       - name: Lint Linux host, node and mock adapters
-        run: cargo clippy --locked -p capyio-mock-source -p capyio-mock-sink -p capyio-linux-host -p capyio-node -p capyio-linux-audio -p capyio-native-audio-lan -p capyio-control-tls -p capyio-control-link --all-targets -- -D warnings
+        run: cargo clippy --locked -p capyio-mock-source -p capyio-mock-sink -p capyio-linux-host -p capyio-node -p capyio-linux-audio -p capyio-native-audio-lan -p capyio-control-tls -p capyio-control-link -p capyio-core -p capyio-runtime -p capyio-android-jni --all-targets -- -D warnings
       - name: Build repository mock adapters
         run: cargo build --locked -p capyio-mock-source -p capyio-mock-sink
       - name: Require finite IPC regression tests
@@ -153,8 +153,22 @@ jobs:
           preflight::tests::preflight_executable_metadata_is_only_an_unverified_candidate
           preflight_cli_tests::passive_preflight_is_separate_from_playback_and_default
           linux_preflight_missing_session_is_json_not_readiness
+          draft_authorization_restriction_only_shortens_prior_finite_consent
+          runtime::draft_authorization_tests::restriction_emits_only_on_reduction_and_preserves_other_routes
+          runtime::draft_authorization_tests::restriction_rejects_even_expired_retained_route_lease_without_mutation
+          owner::tests::ordinary_peer_status_preserves_exact_authority_without_media_readiness
+          owner::tests::terminal_peer_status_only_stops_exact_owned_route
+          owner::tests::catalog_metadata_must_retain_available_exact_playback_endpoints
+          owner::tests::ipc_ordinary_status_never_opens_worker_and_duplicate_offer_never_restarts_peer
+          launch::tests::negotiation_lease_budget_never_extends_finite_local_approval
+          ipc_linux_playback_android_denial_never_acquires_source_or_offers
+          ipc_linux_playback_local_stop_while_android_consent_pending
+          audio_negotiation::tests::audio_policy_requires_explicit_consent_before_finite_narrowing
+          audio_negotiation::tests::audio_policy_rejects_grant_extension_expiry_mismatch_and_existing_lease
+          audio_negotiation::tests::audio_offer_requires_lease_and_preserves_dynamic_binding_without_start
+          audio_negotiation::tests::audio_local_stop_cancels_authorized_draft_and_rejects_delayed_start
           TESTS
-          cargo test --locked -p capyio-mock-source -p capyio-mock-sink -p capyio-linux-host -p capyio-node -p capyio-linux-audio -p capyio-native-audio-lan -p capyio-control-tls -p capyio-control-link --all-targets -- --list --color never | tee "$RUNNER_TEMP/linux-test-list.txt"
+          cargo test --locked -p capyio-mock-source -p capyio-mock-sink -p capyio-linux-host -p capyio-node -p capyio-linux-audio -p capyio-native-audio-lan -p capyio-control-tls -p capyio-control-link -p capyio-core -p capyio-runtime -p capyio-android-jni --all-targets -- --list --color never | tee "$RUNNER_TEMP/linux-test-list.txt"
           while IFS= read -r test_name; do
             grep -Fx -- "$test_name: test" "$RUNNER_TEMP/linux-test-list.txt"
           done < "$RUNNER_TEMP/required-ipc-tests.txt"
@@ -162,7 +176,7 @@ jobs:
         timeout-minutes: 5
         run: |
           set -euo pipefail
-          timeout --signal=TERM --kill-after=10s 240s cargo test --locked -p capyio-mock-source -p capyio-mock-sink -p capyio-linux-host -p capyio-node -p capyio-linux-audio -p capyio-native-audio-lan -p capyio-control-tls -p capyio-control-link --all-targets -- --test-threads=1 --color never | tee "$RUNNER_TEMP/linux-test-results.txt"
+          timeout --signal=TERM --kill-after=10s 240s cargo test --locked -p capyio-mock-source -p capyio-mock-sink -p capyio-linux-host -p capyio-node -p capyio-linux-audio -p capyio-native-audio-lan -p capyio-control-tls -p capyio-control-link -p capyio-core -p capyio-runtime -p capyio-android-jni --all-targets -- --test-threads=1 --color never | tee "$RUNNER_TEMP/linux-test-results.txt"
           while IFS= read -r test_name; do
             grep -Fx -- "test $test_name ... ok" "$RUNNER_TEMP/linux-test-results.txt"
           done < "$RUNNER_TEMP/required-ipc-tests.txt"

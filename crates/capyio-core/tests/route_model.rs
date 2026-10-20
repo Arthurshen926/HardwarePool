@@ -353,3 +353,54 @@ fn one_node_can_own_source_and_sink_ports_without_a_role() {
     node.validate().expect("symmetric Node");
     assert_eq!(node.capabilities.len(), 2);
 }
+
+#[test]
+fn draft_authorization_restriction_only_shortens_prior_finite_consent() {
+    use capyio_core::AuthorizationState;
+    let (_, source) = port(PortDirection::Source, ProfileId::audio_frames_v1());
+    let (_, sink) = port(PortDirection::Sink, ProfileId::audio_frames_v1());
+    let mut value = route(&source, &sink).unwrap();
+    value.authorize(Some(300)).unwrap();
+    let before = value.clone();
+    value.restrict_draft_authorization(200, 100).unwrap();
+    let mut expected = before;
+    expected.authorization = AuthorizationState::Authorized {
+        expires_at_ms: Some(200),
+    };
+    assert_eq!(value, expected);
+    value.restrict_draft_authorization(200, 100).unwrap();
+    assert_eq!(value, expected);
+    for (expiry, now) in [(201, 100), (100, 100), (0, 100), (199, 200)] {
+        assert!(value.restrict_draft_authorization(expiry, now).is_err());
+        assert_eq!(value, expected);
+    }
+    for authorization in [
+        AuthorizationState::Pending,
+        AuthorizationState::Denied,
+        AuthorizationState::Revoked,
+        AuthorizationState::Authorized {
+            expires_at_ms: None,
+        },
+    ] {
+        let mut rejected = value.clone();
+        rejected.authorization = authorization;
+        let before = rejected.clone();
+        assert!(rejected.restrict_draft_authorization(150, 100).is_err());
+        assert_eq!(rejected, before);
+    }
+    for state in [
+        RouteState::Prepared,
+        RouteState::Starting,
+        RouteState::Active,
+        RouteState::Stopping,
+        RouteState::Stopped,
+        RouteState::Failed,
+        RouteState::Offline,
+    ] {
+        let mut rejected = value.clone();
+        rejected.state = state;
+        let before = rejected.clone();
+        assert!(rejected.restrict_draft_authorization(150, 100).is_err());
+        assert_eq!(rejected, before);
+    }
+}

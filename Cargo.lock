@@ -683,6 +683,7 @@ name = "capyio-node"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "capyio-android-jni",
  "capyio-audio",
  "capyio-control-credentials",
  "capyio-control-link",

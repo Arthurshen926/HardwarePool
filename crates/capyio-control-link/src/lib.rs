@@ -713,6 +713,19 @@ impl CatalogControlLink {
         )?)
     }
 
+    /// Whole-operation deadline, shared with the caller's finite negotiation budget.
+    pub fn send_route_command_until(
+        &mut self,
+        route_id: RouteId,
+        action: RouteCommandAction,
+        deadline: Instant,
+    ) -> Result<(), CatalogLinkError> {
+        self.send_bytes_until(
+            &encode_route_command(self.binding.session_id, route_id, action)?,
+            deadline,
+        )
+    }
+
     pub fn send_port_lease_request(
         &mut self,
         route_id: RouteId,
@@ -724,6 +737,22 @@ impl CatalogControlLink {
             encode_port_lease_request(self.binding.session_id, route_id, port, action, ttl_ms)?;
         let message_id = decode_port_lease_request(&bytes)?.message_id;
         self.send_bytes(&bytes)?;
+        Ok(message_id)
+    }
+
+    /// Sends an exact correlated lease request under an absolute operation deadline.
+    pub fn send_port_lease_request_until(
+        &mut self,
+        route_id: RouteId,
+        port: PortRef,
+        action: PortLeaseAction,
+        ttl_ms: u64,
+        deadline: Instant,
+    ) -> Result<MessageId, CatalogLinkError> {
+        let bytes =
+            encode_port_lease_request(self.binding.session_id, route_id, port, action, ttl_ms)?;
+        let message_id = decode_port_lease_request(&bytes)?.message_id;
+        self.send_bytes_until(&bytes, deadline)?;
         Ok(message_id)
     }
 

@@ -47,6 +47,8 @@ pub enum RuntimeError {
     InvalidOperationCompletion(&'static str),
     #[error("Route {route_id} does not use local lease Port {port:?}")]
     LeasePortNotOnRoute { route_id: RouteId, port: PortRef },
+    #[error("Route {0} retains a lease and cannot restrict its Draft authorization")]
+    DraftAuthorizationLeasePresent(RouteId),
     #[error("Route {0} must be authorized before a lease is acquired")]
     LeaseAuthorizationRequired(RouteId),
     #[error("Route {route_id} lease expiry exceeds its authorization")]
