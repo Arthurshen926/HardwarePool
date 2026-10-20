@@ -97,3 +97,8 @@ trusted-lab Android manual-microphone UDP → PipeWire playback path. The defaul
 headless host is unchanged. This is neither virtual microphone nor dynamic paired
 Route integration; no actual playback has been device-verified. See
 [the endpoint README](capyio-audio/README.md) and LINUX-A06 for limits and next gates.
+
+The synthetic endpoint gate passed on implementation `4b5db1a342994365dab9ccff93b670a72fcba49d`:
+[run 39353185940](https://github.com/Arthurshen926/HardwarePool/actions/runs/39353185940/job/118401894752). All 79 focused tests and 34
+success guards passed, including exact UDP-to-child PCM bytes and owned-child
+cleanup. This is not actual PipeWire or Android-device playback acceptance.

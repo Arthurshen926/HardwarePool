@@ -1,6 +1,6 @@
 # ADR 1518: Opt-in Android-compatible Linux PCM playback
 
-Status: implemented; local socket-free checks passed, hosted IPC and device acceptance pending.
+Status: implemented; local socket-free and hosted synthetic IPC checks passed; device acceptance pending.
 Date: 2026-10-20
 Plan: [LINUX-A06](../plans/active/LINUX-A06-audio-playback.md)
 
@@ -110,3 +110,21 @@ session or Android physical-device result exists for this slice.
 Next gates: virtual microphone projection; Runtime-owned dynamic negotiated
 Route/grant/lease lifecycle and reconnect; secure Android-compatible audio
 transport; separately authorized device playback and application-capture tests.
+
+## Hosted synthetic acceptance (2026-10-20)
+
+Exact implementation `4b5db1a342994365dab9ccff93b670a72fcba49d` passed
+[run 39353185940, job 118401894752](https://github.com/Arthurshen926/HardwarePool/actions/runs/39353185940/job/118401894752)
+on GitHub-hosted Ubuntu 24.04.5 with Rust 1.97.1. Formatting, strict Clippy and
+mock binary builds passed. Full logs verify 79 executed tests: 13 Linux audio,
+40 prior Linux host/mock/node tests and 26 existing native LAN tests. There were
+zero failures, ignored tests or filtered tests. All 34 required successful test
+outcomes were checked, including synthetic Android-wire UDP-to-owned-child exact
+PCM bytes, full-stdin Stop/reap, EOF/repeated Stop and early child exit.
+
+This closes the synthetic hosted IPC gate only. No actual `pw-cat`, PipeWire
+session, Android device, physical audio capture or audible playback was tested.
+Virtual microphone, Runtime dynamic Route/grant/lease ownership and authenticated
+media remain separate gates. The restricted cloud environment's local socket
+limits are unchanged. A later documentation-only evidence commit is not the
+tested implementation SHA.

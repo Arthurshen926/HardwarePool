@@ -1,6 +1,6 @@
 # LINUX-A06 — Android-compatible Linux PCM playback
 
-Status: implemented locally; independent review and hosted IPC acceptance pending
+Status: independently reviewed; hosted synthetic IPC accepted on `4b5db1a`; device acceptance pending
 Created: 2026-10-20
 Requirements: `FR-SCEN-001`, `FR-PLAT-004`, `NFR-STAB-002`, `NFR-SEC-005`
 
@@ -34,3 +34,21 @@ compiled and its tests compiled; local socket execution remains excluded.
 The external `pw-cat` executable is absent in this environment. No real session,
 Android device, physical capture or playback was used. See ADR 1518 for exact
 security, dependency and evidence boundaries.
+
+## Hosted synthetic acceptance (2026-10-20)
+
+Exact implementation `4b5db1a342994365dab9ccff93b670a72fcba49d` passed
+[run 39353185940, job 118401894752](https://github.com/Arthurshen926/HardwarePool/actions/runs/39353185940/job/118401894752)
+on GitHub-hosted Ubuntu 24.04.5 with Rust 1.97.1. Formatting, strict Clippy and
+mock binary builds passed. Full logs verify 79 executed tests: 13 Linux audio,
+40 prior Linux host/mock/node tests and 26 existing native LAN tests. There were
+zero failures, ignored tests or filtered tests. All 34 required successful test
+outcomes were checked, including synthetic Android-wire UDP-to-owned-child exact
+PCM bytes, full-stdin Stop/reap, EOF/repeated Stop and early child exit.
+
+This closes the synthetic hosted IPC gate only. No actual `pw-cat`, PipeWire
+session, Android device, physical audio capture or audible playback was tested.
+Virtual microphone, Runtime dynamic Route/grant/lease ownership and authenticated
+media remain separate gates. The restricted cloud environment's local socket
+limits are unchanged. A later documentation-only evidence commit is not the
+tested implementation SHA.
