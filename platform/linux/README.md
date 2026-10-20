@@ -133,3 +133,16 @@ Hosted tests call the real Android coordinator rather than a synthesized ready
 peer. Android-initiated Windows-specific selection and physical audio acceptance
 remain outside this slice. Local approval time includes negotiation; it never
 extends itself while waiting for the peer.
+
+### Optional incoming Android Draft mode
+
+The same explicit one-shot trusted-lab launcher configuration may add
+`"proposal_mode":"incoming_draft"`. Omit it (or use `"linux_led"`) to retain
+existing Linux-led behavior. Incoming mode advertises its versioned mono audio
+receiver contract and waits for the configured paired Android Source to propose
+its actual Route before asking for fresh route-specific local approval. It does
+not approve Android capture, auto-start playback or broaden the configured peer,
+Source, Sink, target or finite duration. No reverse audio or virtual microphone
+is added. See [ADR 1529](../../docs/adr/1529-linux-incoming-audio-draft.md) for
+binding, grant ordering, Stop, timeouts and test limitations. Incoming-mode real
+Android/PipeWire audio acceptance is still unverified.

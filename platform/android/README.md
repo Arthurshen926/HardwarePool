@@ -288,3 +288,11 @@ itself, and incoming Android-led Draft admission remains pending. This does not
 add Linux reverse audio or a virtual microphone. Existing Windows admission,
 independent consent and Stop behavior are retained. See
 [ADR 1528](../../docs/adr/1528-android-audio-catalog-selection.md).
+
+ADR 1529 adds an explicit incoming-mode Linux receiver contract. A peer that
+advertises that implemented version can now be selected through its actual mono
+Sink IDs; default Linux-led peers still show the unsupported-initiation reason.
+JNI and hosted tests use the same `begin_audio_use` coordinator, which records
+local intent and creates only a Pending Draft. Independent Linux approval and
+finite reciprocal grants still precede leases and media. This is software
+negotiation support, not a claim of incoming-mode physical audio acceptance.

@@ -261,3 +261,26 @@ fn unsupported_major_is_rejected() {
         Err(ProtocolError::UnsupportedProtocolMajor { .. })
     ));
 }
+
+#[test]
+fn incoming_audio_contract_metadata_roundtrips_without_granting_permission() {
+    let mut node = android_node();
+    let cap = node.capabilities.values_mut().next().unwrap();
+    let id = cap.id;
+    let permission = cap.permission_requirement;
+    let availability = cap.availability;
+    cap.metadata.insert(
+        capyio_protocol::NATIVE_AUDIO_INBOUND_DRAFT_METADATA_KEY.into(),
+        capyio_protocol::NATIVE_AUDIO_INBOUND_DRAFT_MONO_V1.into(),
+    );
+    let session = SessionId::new();
+    let decoded =
+        decode_catalog_snapshot(&encode_catalog_snapshot(session, &node).unwrap()).unwrap();
+    let cap = &decoded.node.capabilities[&id];
+    assert_eq!(
+        cap.metadata[capyio_protocol::NATIVE_AUDIO_INBOUND_DRAFT_METADATA_KEY],
+        capyio_protocol::NATIVE_AUDIO_INBOUND_DRAFT_MONO_V1
+    );
+    assert_eq!(cap.permission_requirement, permission);
+    assert_eq!(cap.availability, availability);
+}

@@ -507,3 +507,16 @@ Three one-shot bootstrap frames precede authenticated catalog exchange and an
 exact nonce/Route local approval challenge. Stop/status are separate local
 commands. Full field limits/order and fixed error events are specified in ADR1522.
 Existing network protocol and Android/Windows messages are unchanged.
+
+## Explicit incoming native audio Draft contract (ADR 1529)
+
+The existing bounded Capability metadata map may advertise
+`dev.capyio.native-audio.inbound-draft = pcm-s16le-48000-mono-v1` only when its
+Adapter implements the incoming finite-consent mono PCM handshake in
+[ADR 1529](adr/1529-linux-incoming-audio-draft.md). This is not permission or a
+claim that arbitrary audio Profile ports interoperate. Android uses the actual
+compatible advertised Sink IDs, and unknown values remain unsupported. Linux's
+default Linux-led mode omits the key. Exact Pending Draft admission precedes
+independent local approval; finite Linux grant then bounded Android grant precede
+all leases and media. No protobuf field, authentication policy or UDP protection
+is added.

@@ -84,7 +84,7 @@ onUnmounted(() => { disposed = true; readGeneration++; if (timer) clearInterval(
       <p class="use-panel__status" :data-state="state(direction)?.status ?? 'idle'" role="status">{{ statusLabel(direction) }}<span v-if="errors[direction] || state(direction)?.error"> · {{ errors[direction] || state(direction)?.error }}</span></p>
       <p v-if="loaded && !readError && !candidates(direction).length && !running(direction)" class="use-panel__empty">还没有可用的设备。请先连接电脑，并确认它支持此项音频功能。</p>
       <p v-for="peer in unavailable(direction)" :key="peer.nodeId" class="use-panel__empty">{{ peer.displayName }}：{{ peer.reason }}</p>
-      <p>{{ direction === 'microphone' ? '首次录音仍需系统麦克风权限；电脑应用中选择对应虚拟麦克风。' : '在电脑应用中选择 CapyIO Speaker 输出；接收器准备完成不代表已经收到可听见的声音。' }}</p>
+      <p>{{ direction === 'microphone' ? '首次录音仍需系统麦克风权限，接收端独立批准。Windows 可使用对应虚拟麦克风；Linux 当前仅支持指定目标播放，不提供虚拟麦克风。' : '在电脑应用中选择 CapyIO Speaker 输出；接收器准备完成不代表已经收到可听见的声音。' }}</p>
     </article>
     </div>
 

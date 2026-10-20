@@ -11,10 +11,13 @@ test('unsupported audio directions are optional and displayed separately from ac
   assert.match(panel, /v-for="peer in unavailable\(direction\)"/);
   assert.match(panel, /!candidates\(direction\)\.some\(peer => peer\.nodeId === selected\[direction\]\)/);
 });
-test('JNI binds Start from a fresh snapshot through the tested selector', () => {
-  assert.match(native, /select_route\(&snapshot\.local_node, peer_node, &snapshot\.sessions, direction\)/);
-  assert.match(native, /create_route\(session,source,sink,RouteBackend::AdapterManaged\)/);
+const policy = readFileSync(new URL('../platform/android/capyio-jni/src/audio_negotiation.rs', import.meta.url), 'utf8');
+test('JNI binds Start through the same current-catalog initiator tested on the host', () => {
+  assert.match(native, /host\.begin_audio_use\(peer, &direction\)/);
+  assert.match(policy, /crate::audio_selection::select_route/);
+  assert.match(policy, /create_route\(session, source, sink, RouteBackend::AdapterManaged\)/);
   assert.doesNotMatch(native, /d41251b3|suffix|等待 Windows/);
   assert.match(native, /supports_inbound_draft\(peer, endpoint, direction\)/);
   assert.match(native, /unavailableDirections/);
+  assert.match(panel, /Linux 当前仅支持指定目标播放，不提供虚拟麦克风/);
 });

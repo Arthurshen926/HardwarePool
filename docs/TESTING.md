@@ -1172,3 +1172,12 @@ command integration test. Compile it with `cargo test --locked -p capyio-node
 The hosted private graph harness invokes the exact ignored test with opt-in and
 private markers, and requires integrated control/UDP/PipeWire/Stop success. A
 normal test-suite report listing this case as ignored is not acceptance evidence.
+
+ADR 1529 adds incoming-Draft tests under `incoming_draft` in the existing
+`capyio-node --test linux_playback` target, plus pure launcher admission/grant
+predicates, actual Android `begin_audio_use` selection tests and catalog metadata
+roundtrip coverage. Hosted Linux validation must enumerate and execute these
+cases without skipping; the Android compile contract still exercises the shared
+JNI coordinator path. The existing PipeWire graph gate continues to validate
+Linux-led playback only. No incoming-mode sound or physical device result should
+be inferred from negotiation/lease tests or Android-target compilation.

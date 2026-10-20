@@ -1,7 +1,7 @@
 use super::*;
 use crate::audio_negotiation::{authority, fail, fail_message, local_port};
 use crate::audio_selection::{
-    ADMISSION_UNSUPPORTED, AudioDirection, select_endpoint, select_route, supports_inbound_draft,
+    ADMISSION_UNSUPPORTED, AudioDirection, select_endpoint, supports_inbound_draft,
 };
 use capyio_core::*;
 
@@ -50,16 +50,8 @@ pub extern "system" fn Java_dev_capyio_android_AndroidNativeCatalogRuntime_nativ
                 if state!=job.observed_state {job.observed_state=state;host.audio_status_pending.insert(id);}
             }
             if action=="start" {
-                let snapshot=host.runtime.snapshot();
-                if snapshot.routes.iter().any(|r|local_port(host,r).is_some_and(|(_,d)|d==direction)
-                    && !matches!(r.state,RouteState::Stopped|RouteState::Offline|RouteState::Failed)
-                    && r.authorization!=AuthorizationState::Denied) {return Err("audio direction already has a pending or running Route".into());}
-                let direction = AudioDirection::parse(&direction)?;
-                let peer_node = snapshot.peers.iter().find(|node|node.id.to_string()==peer).ok_or("peer catalog is absent")?;
-                // Re-read catalog and Ready Session at Start, never reuse a UI selection's binding.
-                let (session, source, sink) = select_route(&snapshot.local_node, peer_node, &snapshot.sessions, direction)?;
-                let id=host.runtime.create_route(session,source,sink,RouteBackend::AdapterManaged).map_err(|e|e.to_string())?;
-                host.audio_local_intent.insert(id);host.audio_status_pending.insert(id);
+                let peer = peer.parse().map_err(|_|"invalid peer Node")?;
+                host.begin_audio_use(peer, &direction)?;
             } else if action=="prepared" {
                 let id:RouteId=id.parse().map_err(|_|"invalid audio Route")?;
                 host.prepare_audio_endpoint(id, u16::try_from(port).ok().filter(|p|*p>0).ok_or("invalid audio port")?)?;

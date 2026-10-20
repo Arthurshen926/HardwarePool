@@ -14,7 +14,10 @@ use capyio_core::*;
 use capyio_pairing::{
     CertificateFingerprint, CredentialHandle, PairedPeerDirectory, PairedPeerRecord,
 };
-use capyio_protocol::{NativeAudioEndpoint, NativeAudioPreset};
+use capyio_protocol::{
+    NATIVE_AUDIO_INBOUND_DRAFT_METADATA_KEY, NATIVE_AUDIO_INBOUND_DRAFT_MONO_V1,
+    NativeAudioDataOffer, NativeAudioEndpoint, NativeAudioPreset,
+};
 use serde_json::{Value, json};
 use std::{
     collections::BTreeSet,
@@ -367,6 +370,17 @@ fn pending() -> (Process, AndroidPeer, Value) {
     let mut process = Process::playback();
     fixture.bootstrap(&mut process);
     let mut peer = fixture.connect(&mut process);
+    assert!(
+        peer.runtime.snapshot().peers[0]
+            .capabilities
+            .values()
+            .all(|capability| {
+                !capability
+                    .metadata
+                    .contains_key(NATIVE_AUDIO_INBOUND_DRAFT_METADATA_KEY)
+            }),
+        "omitting proposal_mode retains Linux-led admission without inbound advertisement"
+    );
     let approval = process.event("approval_required");
     assert_eq!(approval["target"], "synthetic.test");
     assert_eq!(approval["duration_secs"], 10);
@@ -392,6 +406,537 @@ fn pending() -> (Process, AndroidPeer, Value) {
 }
 fn approve(approval: &Value) -> Value {
     json!({"version":1,"command":"approve","request_id":approval["request_id"],"route_id":approval["route_id"]})
+}
+
+/// Incoming-mode checks use the production Android Start/coordinator, not a
+/// fabricated Ready peer. No ordinary test publishes a reciprocal endpoint,
+/// starts capture, opens UDP, or launches a playback process.
+mod incoming_draft {
+    use super::*;
+
+    fn sink(peer: &AndroidPeer) -> PortRef {
+        let snapshot = peer.runtime.snapshot();
+        assert_eq!(snapshot.peers.len(), 1);
+        let node = &snapshot.peers[0];
+        assert_eq!(node.platform, Platform::Linux);
+        assert_eq!(node.capabilities.len(), 1);
+        let capability = node.capabilities.values().next().unwrap();
+        assert_eq!(capability.class, CapabilityClass::Speaker);
+        assert_eq!(capability.ports.len(), 1);
+        let port = capability.ports.values().next().unwrap();
+        assert_eq!(port.direction, PortDirection::Sink);
+        assert_eq!(port.profile, ProfileId::audio_frames_v1());
+        assert_eq!(
+            port.formats,
+            vec![FormatDescriptor::new("pcm-s16le-48000-mono")]
+        );
+        PortRef {
+            node_id: node.id,
+            capability_id: capability.id,
+            port_id: port.id,
+        }
+    }
+
+    fn no_control_or_capture(peer: &mut AndroidPeer, route: Option<RouteId>) {
+        let deadline = Instant::now() + Duration::from_millis(150);
+        while Instant::now() < deadline {
+            assert!(
+                peer.poll_control_message_until(Instant::now() + BOUND)
+                    .unwrap()
+                    .is_none(),
+                "no lease, media offer or Start before independent finite consent"
+            );
+            assert!(peer.runtime.snapshot().port_leases.is_empty());
+            if let Some(id) = route {
+                assert!(!peer.runtime.audio_should_run(id, now_ms()));
+            }
+            thread::sleep(Duration::from_millis(2));
+        }
+    }
+
+    fn ready() -> (Process, AndroidPeer) {
+        let mut fixture = Fixture::new();
+        fixture.config["proposal_mode"] = json!("incoming_draft");
+        let mut process = Process::playback();
+        fixture.bootstrap(&mut process);
+        let mut peer = fixture.connect(&mut process);
+        let destination = sink(&peer);
+        assert_eq!(
+            peer.runtime.snapshot().peers[0].capabilities[&destination.capability_id]
+                .metadata
+                .get(NATIVE_AUDIO_INBOUND_DRAFT_METADATA_KEY)
+                .map(String::as_str),
+            Some(NATIVE_AUDIO_INBOUND_DRAFT_MONO_V1)
+        );
+        assert!(peer.runtime.snapshot().routes.is_empty());
+        process.command(json!({"version":1,"command":"status"}));
+        // event() also rejects an approval_required event emitted too early.
+        assert_eq!(process.event("status")["stage"], "awaiting_incoming_draft");
+        no_control_or_capture(&mut peer, None);
+        (process, peer)
+    }
+
+    fn begin(peer: &mut AndroidPeer) -> Route {
+        let destination = sink(peer);
+        let route = peer
+            .runtime
+            .begin_audio_use(destination.node_id, "microphone")
+            .unwrap();
+        assert_eq!(route.session_id, peer.session_id());
+        assert_eq!(route.sink, destination);
+        assert_eq!(route.state, RouteState::Draft);
+        assert_eq!(route.authorization, AuthorizationState::Pending);
+        assert_eq!(route.epoch, 0);
+        assert!(route.selected_format.is_none());
+        assert!(route.selected_qos_mode.is_none());
+        assert!(peer.runtime.snapshot().port_leases.is_empty());
+        assert!(!peer.runtime.audio_should_run(route.id, now_ms()));
+        route
+    }
+
+    fn publish(peer: &mut AndroidPeer) {
+        peer.runtime
+            .publish_audio_control(&mut peer.link, now_ms())
+            .unwrap();
+    }
+
+    fn pending() -> (Process, AndroidPeer, Route, Value) {
+        let (mut process, mut peer) = ready();
+        let route = begin(&mut peer);
+        publish(&mut peer);
+        let approval = process.event("approval_required");
+        assert_eq!(approval["route_id"], json!(route.id));
+        assert_eq!(approval["session_id"], json!(route.session_id));
+        assert_eq!(approval["source"], json!(route.source));
+        assert_eq!(approval["sink"], json!(route.sink));
+        assert_eq!(approval["target"], "synthetic.test");
+        assert_eq!(approval["duration_secs"], 10);
+        assert_eq!(approval["format"], "pcm-s16le-48000-mono");
+        process.command(json!({"version":1,"command":"status"}));
+        assert_eq!(process.event("status")["stage"], "awaiting_local_approval");
+        no_control_or_capture(&mut peer, Some(route.id));
+        (process, peer, route, approval)
+    }
+
+    fn receive_local_grant(peer: &mut AndroidPeer, proposal: &Route) -> Route {
+        let ReceivedControlMessage::RouteStatus(status) = peer
+            .receive_control_message_until(Instant::now() + BOUND)
+            .unwrap()
+        else {
+            panic!("Linux must send its finite Draft grant before requesting a Source lease")
+        };
+        assert_eq!(status.route.id, proposal.id);
+        assert_eq!(status.route.session_id, proposal.session_id);
+        assert_eq!(status.route.source, proposal.source);
+        assert_eq!(status.route.sink, proposal.sink);
+        assert_eq!(status.route.state, RouteState::Draft);
+        assert_eq!(status.route.epoch, 0);
+        assert!(status.native_audio_data.is_none());
+        let AuthorizationState::Authorized {
+            expires_at_ms: Some(expiry),
+        } = status.route.authorization
+        else {
+            panic!("incoming Android initiation requires a finite Linux grant first")
+        };
+        assert!(expiry > now_ms() && expiry <= now_ms() + 10_000);
+        let local = peer
+            .runtime
+            .receive_audio_route_status(&peer.link, &status, "127.0.0.1", now_ms())
+            .unwrap();
+        assert_eq!(local.authorization, status.route.authorization);
+        assert_eq!(local.state, RouteState::Draft);
+        assert!(peer.runtime.snapshot().port_leases.is_empty());
+        assert!(!peer.runtime.audio_should_run(local.id, now_ms()));
+        let requests: Value =
+            serde_json::from_slice(&peer.runtime.resource_requests_json(now_ms()).unwrap())
+                .unwrap();
+        assert!(
+            requests.as_array().unwrap().is_empty(),
+            "the actual Android Start is local intent, not a second fabricated consent"
+        );
+        local
+    }
+
+    fn offer(peer: &mut AndroidPeer, expected: &Route) -> capyio_protocol::ValidatedRouteStatus {
+        let deadline = Instant::now() + BOUND;
+        let mut leased = false;
+        loop {
+            match peer.receive_control_message_until(deadline).unwrap() {
+                ReceivedControlMessage::RouteStatus(status) => {
+                    assert_eq!(status.route.id, expected.id);
+                    assert_eq!(status.route.session_id, expected.session_id);
+                    assert_eq!(status.route.source, expected.source);
+                    assert_eq!(status.route.sink, expected.sink);
+                    assert_eq!(status.route.authorization, expected.authorization);
+                    let local = peer
+                        .runtime
+                        .receive_audio_route_status(&peer.link, &status, "127.0.0.1", now_ms())
+                        .unwrap();
+                    assert_eq!(local.authorization, expected.authorization);
+                    assert!(!peer.runtime.audio_should_run(expected.id, now_ms()));
+                    if let Some(offer) = &status.native_audio_data {
+                        assert!(
+                            leased,
+                            "no media offer before owner-authoritative Source lease"
+                        );
+                        assert_eq!(status.route.state, RouteState::Starting);
+                        assert_eq!(status.route.epoch, 1);
+                        assert_eq!(offer.endpoint, NativeAudioEndpoint::Sink);
+                        assert_eq!(offer.preset, NativeAudioPreset::PcmS16le48000Mono);
+                        assert_eq!(offer.port, 40211);
+                        assert_eq!(local.state, RouteState::Draft);
+                        return *status;
+                    }
+                    assert!(!leased, "Draft grant agreement precedes Source lease");
+                    assert_eq!(status.route.state, RouteState::Draft);
+                    assert_eq!(status.route.epoch, 0);
+                    peer.send_route_status(&local).unwrap();
+                }
+                ReceivedControlMessage::PortLeaseRequest(request) => {
+                    assert!(!leased, "one bounded Source lease acquisition");
+                    assert_eq!(request.request().route_id, expected.id);
+                    assert_eq!(request.request().port, expected.source);
+                    peer.runtime
+                        .answer_audio_port_lease(&mut peer.link, request, now_ms())
+                        .unwrap();
+                    assert_eq!(peer.runtime.snapshot().port_leases.len(), 1);
+                    leased = true;
+                }
+                _ => panic!("unexpected message during incoming Android negotiation"),
+            }
+        }
+    }
+
+    fn stopped(process: &mut Process, peer: &mut AndroidPeer) {
+        process.command(json!({"version":1,"command":"stop"}));
+        process.event("stopped");
+        assert!(process.finish().success());
+        assert!(process.stderr.is_empty());
+        assert!(
+            peer.receive_control_message_until(Instant::now() + BOUND)
+                .is_err(),
+            "dedicated Session closes without media or Start after Stop"
+        );
+    }
+
+    fn rejected(process: &mut Process, peer: &mut AndroidPeer) {
+        process.event("failed");
+        assert!(!process.finish().success());
+        assert!(process.stdout.is_empty(), "rejection cannot issue approval");
+        assert!(peer.runtime.snapshot().port_leases.is_empty());
+        assert!(
+            peer.receive_control_message_until(Instant::now() + BOUND)
+                .is_err(),
+            "invalid input cannot produce a grant, lease, offer or Start"
+        );
+    }
+
+    #[test]
+    fn ipc_linux_incoming_actual_android_start_requires_independent_local_approval() {
+        let (mut process, mut peer, proposal, approval) = pending();
+        process.command(approve(&approval));
+        let grant = receive_local_grant(&mut peer, &proposal);
+        // Linux local consent alone cannot acquire the Android microphone.
+        no_control_or_capture(&mut peer, Some(proposal.id));
+        publish(&mut peer);
+        offer(&mut peer, &grant);
+        assert_eq!(
+            process.event("awaiting_peer_offer")["route_id"],
+            json!(proposal.id)
+        );
+        process.command(json!({"version":1,"command":"status"}));
+        let status = process.event("status");
+        assert_eq!(status["route_id"], json!(proposal.id));
+        assert_eq!(status["packets_written"], 0);
+        // Prepare only synthetic endpoint metadata. Do not publish it, bind a
+        // socket, or open a device. Linux must remain waiting for its peer offer.
+        peer.runtime
+            .prepare_audio_endpoint(proposal.id, 40212)
+            .unwrap();
+        assert!(!peer.runtime.audio_should_run(proposal.id, now_ms()));
+        stopped(&mut process, &mut peer);
+        peer.runtime.stop_audio_direction("microphone").unwrap();
+        assert!(peer.runtime.snapshot().port_leases.is_empty());
+        assert!(!peer.runtime.audio_should_run(proposal.id, now_ms()));
+        assert!(
+            peer.runtime
+                .prepare_audio_endpoint(proposal.id, 40212)
+                .is_err(),
+            "Stop must discard the previously prepared endpoint"
+        );
+        let delayed_start = capyio_protocol::ValidatedRouteCommand {
+            message_id: MessageId::new(),
+            session_id: proposal.session_id,
+            route_id: proposal.id,
+            action: capyio_protocol::RouteCommandAction::Start,
+        };
+        assert!(
+            peer.runtime
+                .stage_audio_route_command(&peer.link, &delayed_start, now_ms())
+                .is_err(),
+            "a fresh delayed Start cannot revive stopped Android capture"
+        );
+        assert!(!peer.runtime.audio_should_run(proposal.id, now_ms()));
+        let AndroidPeer { link, mut runtime } = peer;
+        runtime.close_control_link(link).unwrap();
+    }
+
+    #[test]
+    fn ipc_linux_incoming_explicit_linux_led_mode_does_not_advertise_or_accept_start() {
+        let mut fixture = Fixture::new();
+        fixture.config["proposal_mode"] = json!("linux_led");
+        let mut process = Process::playback();
+        fixture.bootstrap(&mut process);
+        let mut peer = fixture.connect(&mut process);
+        let destination = sink(&peer);
+        assert!(
+            !peer.runtime.snapshot().peers[0].capabilities[&destination.capability_id]
+                .metadata
+                .contains_key(NATIVE_AUDIO_INBOUND_DRAFT_METADATA_KEY)
+        );
+        assert!(
+            peer.runtime
+                .begin_audio_use(destination.node_id, "microphone")
+                .is_err(),
+            "a compatible catalog alone must not enable Android-led initiation"
+        );
+        assert!(peer.runtime.snapshot().routes.is_empty());
+        process.event("approval_required");
+        stopped(&mut process, &mut peer);
+    }
+
+    #[test]
+    fn ipc_linux_incoming_smaller_android_grant_is_narrowed_before_lease() {
+        let (mut process, mut peer, proposal, approval) = pending();
+        process.command(approve(&approval));
+        let mut grant = receive_local_grant(&mut peer, &proposal);
+        let AuthorizationState::Authorized {
+            expires_at_ms: Some(expiry),
+        } = grant.authorization
+        else {
+            unreachable!()
+        };
+        grant.authorization = AuthorizationState::Authorized {
+            expires_at_ms: Some(expiry - 2_000),
+        };
+        // Test the peer's right to restrict consent. Its actual Android mirror
+        // adopts the restriction only on Linux's exact Draft acknowledgement.
+        peer.send_route_status(&grant).unwrap();
+        offer(&mut peer, &grant);
+        process.event("awaiting_peer_offer");
+        stopped(&mut process, &mut peer);
+    }
+
+    #[test]
+    fn ipc_linux_incoming_stop_before_draft_or_local_approval_or_peer_grant() {
+        let (mut process, mut peer) = ready();
+        stopped(&mut process, &mut peer);
+        assert!(peer.runtime.snapshot().routes.is_empty());
+
+        let (mut process, mut peer, proposal, _) = pending();
+        stopped(&mut process, &mut peer);
+        assert!(peer.runtime.snapshot().port_leases.is_empty());
+        assert!(!peer.runtime.audio_should_run(proposal.id, now_ms()));
+
+        let (mut process, mut peer, proposal, approval) = pending();
+        process.command(approve(&approval));
+        receive_local_grant(&mut peer, &proposal);
+        stopped(&mut process, &mut peer);
+        assert!(peer.runtime.snapshot().port_leases.is_empty());
+        assert!(!peer.runtime.audio_should_run(proposal.id, now_ms()));
+    }
+
+    #[test]
+    fn ipc_linux_incoming_android_cancellation_before_local_approval_is_terminal() {
+        let (mut process, mut peer, proposal, _) = pending();
+        peer.runtime.stop_audio_direction("microphone").unwrap();
+        publish(&mut peer);
+        rejected(&mut process, &mut peer);
+        assert!(!peer.runtime.audio_should_run(proposal.id, now_ms()));
+    }
+
+    #[test]
+    fn ipc_linux_incoming_launcher_eof_before_local_approval_cannot_grant() {
+        let (mut process, mut peer, _, _) = pending();
+        drop(process.child.stdin.take());
+        assert!(!process.finish().success());
+        assert!(peer.runtime.snapshot().port_leases.is_empty());
+        assert!(
+            peer.receive_control_message_until(Instant::now() + BOUND)
+                .is_err()
+        );
+    }
+
+    #[test]
+    fn ipc_linux_incoming_wrong_nonce_or_route_cannot_approve() {
+        for field in ["request_id", "route_id"] {
+            let (mut process, mut peer, _, approval) = pending();
+            let mut command = approve(&approval);
+            command[field] = json!(MessageId::new());
+            process.command(command);
+            rejected(&mut process, &mut peer);
+        }
+    }
+
+    #[test]
+    fn ipc_linux_incoming_previous_launch_nonce_and_sink_cannot_be_reused() {
+        let (mut previous, mut previous_peer, old_route, old_approval) = pending();
+        stopped(&mut previous, &mut previous_peer);
+        let (mut process, mut peer, route, approval) = pending();
+        assert_ne!(old_route.session_id, route.session_id);
+        assert_ne!(old_route.sink.capability_id, route.sink.capability_id);
+        assert_ne!(old_route.sink.port_id, route.sink.port_id);
+        assert_ne!(old_approval["request_id"], approval["request_id"]);
+        let mut replay = approve(&approval);
+        replay["request_id"] = old_approval["request_id"].clone();
+        process.command(replay);
+        rejected(&mut process, &mut peer);
+    }
+
+    #[test]
+    fn ipc_linux_incoming_rejects_malformed_proposals_before_approval() {
+        for mutation in [
+            "source_node",
+            "source_capability",
+            "source_port",
+            "sink_node",
+            "sink_capability",
+            "sink_port",
+            "profile",
+            "backend",
+            "epoch",
+            "state",
+            "authorized",
+            "denied",
+            "format",
+            "qos",
+            "compatible_formats",
+            "compatible_qos",
+            "diagnostic",
+        ] {
+            let (mut process, mut peer) = ready();
+            let mut proposal = begin(&mut peer);
+            match mutation {
+                "source_node" => proposal.source.node_id = NodeId::new(),
+                "source_capability" => proposal.source.capability_id = CapabilityId::new(),
+                "source_port" => proposal.source.port_id = PortId::new(),
+                "sink_node" => proposal.sink.node_id = NodeId::new(),
+                "sink_capability" => proposal.sink.capability_id = CapabilityId::new(),
+                "sink_port" => proposal.sink.port_id = PortId::new(),
+                "profile" => proposal.profile = ProfileId::video_frames_v1(),
+                "backend" => proposal.backend = RouteBackend::CapyDataPlane,
+                "epoch" => proposal.epoch = 1,
+                "state" => proposal.state = RouteState::Starting,
+                "authorized" => {
+                    proposal.authorization = AuthorizationState::Authorized {
+                        expires_at_ms: Some(now_ms() + 10_000),
+                    }
+                }
+                "denied" => proposal.authorization = AuthorizationState::Denied,
+                "format" => {
+                    proposal.selected_format = Some(FormatDescriptor::new("pcm-s16le-48000-mono"))
+                }
+                "qos" => proposal.selected_qos_mode = Some(QosMode::Interactive),
+                "compatible_formats" => proposal.compatible_formats.clear(),
+                "compatible_qos" => proposal.compatible_qos_modes.clear(),
+                "diagnostic" => proposal.diagnostic_ids.push(ProblemId::new()),
+                _ => unreachable!(),
+            }
+            peer.send_route_status(&proposal).unwrap();
+            rejected(&mut process, &mut peer);
+        }
+    }
+
+    #[test]
+    fn ipc_linux_incoming_unsolicited_media_offer_cannot_create_approval() {
+        let (mut process, mut peer) = ready();
+        let mut proposal = begin(&mut peer);
+        proposal.state = RouteState::Starting;
+        proposal.epoch = 1;
+        proposal.authorization = AuthorizationState::Authorized {
+            expires_at_ms: Some(now_ms() + 10_000),
+        };
+        peer.send_native_audio_data_offer(
+            &proposal,
+            NativeAudioDataOffer {
+                port: 40212,
+                stream_id: StreamId::new(),
+                endpoint: NativeAudioEndpoint::Source,
+                preset: NativeAudioPreset::PcmS16le48000Mono,
+            },
+            now_ms(),
+        )
+        .unwrap();
+        rejected(&mut process, &mut peer);
+    }
+
+    #[test]
+    fn ipc_linux_incoming_duplicate_draft_does_not_create_consent_or_another_approval() {
+        let (mut process, mut peer, proposal, _) = pending();
+        peer.send_route_status(&proposal).unwrap();
+        process.command(json!({"version":1,"command":"status"}));
+        // A second approval event would make this exact event assertion fail.
+        assert_eq!(process.event("status")["stage"], "awaiting_local_approval");
+        no_control_or_capture(&mut peer, Some(proposal.id));
+        assert_eq!(
+            peer.runtime.snapshot().routes[0].authorization,
+            AuthorizationState::Pending
+        );
+        stopped(&mut process, &mut peer);
+    }
+
+    #[test]
+    fn ipc_linux_incoming_second_route_cannot_replace_pending_local_approval() {
+        let (mut process, mut peer, mut proposal, _) = pending();
+        proposal.id = RouteId::new();
+        peer.send_route_status(&proposal).unwrap();
+        rejected(&mut process, &mut peer);
+    }
+
+    #[test]
+    fn ipc_linux_incoming_expired_extended_or_drifted_android_grant_cannot_lease() {
+        for mutation in [
+            "expired",
+            "extended",
+            "unbounded",
+            "source",
+            "sink",
+            "epoch",
+        ] {
+            let (mut process, mut peer, proposal, approval) = pending();
+            process.command(approve(&approval));
+            let mut grant = receive_local_grant(&mut peer, &proposal);
+            let AuthorizationState::Authorized {
+                expires_at_ms: Some(expiry),
+            } = grant.authorization
+            else {
+                unreachable!()
+            };
+            match mutation {
+                "expired" => {
+                    grant.authorization = AuthorizationState::Authorized {
+                        expires_at_ms: Some(now_ms() - 1),
+                    }
+                }
+                "extended" => {
+                    grant.authorization = AuthorizationState::Authorized {
+                        expires_at_ms: Some(expiry + 1),
+                    }
+                }
+                "unbounded" => {
+                    grant.authorization = AuthorizationState::Authorized {
+                        expires_at_ms: None,
+                    }
+                }
+                "source" => grant.source.port_id = PortId::new(),
+                "sink" => grant.sink.port_id = PortId::new(),
+                "epoch" => grant.epoch = 1,
+                _ => unreachable!(),
+            }
+            peer.send_route_status(&grant).unwrap();
+            rejected(&mut process, &mut peer);
+        }
+    }
 }
 
 #[test]

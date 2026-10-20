@@ -18,7 +18,10 @@ pub mod v1 {
     include!(concat!(env!("OUT_DIR"), "/capyio.v1.rs"));
 }
 
-pub use audio_offer::{NativeAudioDataOffer, NativeAudioEndpoint, NativeAudioPreset};
+pub use audio_offer::{
+    NATIVE_AUDIO_INBOUND_DRAFT_METADATA_KEY, NATIVE_AUDIO_INBOUND_DRAFT_MONO_V1,
+    NativeAudioDataOffer, NativeAudioEndpoint, NativeAudioPreset,
+};
 pub use codec::encode_route_status_with_native_audio_data;
 pub use codec::{HapticsDataOffer, encode_route_status_with_haptics_data};
 pub use codec::{

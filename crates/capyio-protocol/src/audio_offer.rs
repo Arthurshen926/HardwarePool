@@ -1,3 +1,9 @@
+/// Capability metadata advertises implemented, finite-consent incoming Draft
+/// admission for the native mono PCM contract. It is not authorization, trust,
+/// encryption, a reverse-audio promise, or generic Profile interoperability.
+pub const NATIVE_AUDIO_INBOUND_DRAFT_METADATA_KEY: &str = "dev.capyio.native-audio.inbound-draft";
+pub const NATIVE_AUDIO_INBOUND_DRAFT_MONO_V1: &str = "pcm-s16le-48000-mono-v1";
+
 use capyio_core::{
     AuthorizationState, NodeId, ProfileId, Route, RouteBackend, RouteState, StreamId,
 };

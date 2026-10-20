@@ -51,6 +51,14 @@ fn check(deadline: Instant) -> io::Result<()> {
     }
 }
 
+#[derive(Clone, Copy, Default, Deserialize, Eq, PartialEq)]
+#[serde(rename_all = "snake_case")]
+enum ProposalMode {
+    #[default]
+    LinuxLed,
+    IncomingDraft,
+}
+
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct LaunchConfig {
@@ -61,6 +69,8 @@ struct LaunchConfig {
     media: SocketAddrV4,
     target: String,
     duration_secs: u64,
+    #[serde(default)]
+    proposal_mode: ProposalMode,
 }
 impl LaunchConfig {
     fn parse(bytes: &[u8]) -> io::Result<Self> {
@@ -150,7 +160,7 @@ fn launch(io: &mut LauncherIo) -> io::Result<()> {
     let credential_bytes = io.read_frame(65_536, bootstrap_deadline)?;
     let credentials = sanitized(ControlCredentialBundle::decode(credential_bytes.as_slice()))?;
     drop(credential_bytes); // Clear the sole encoded secret buffer immediately.
-    let (mut runtime, sink) = local_runtime(config.node_id)?;
+    let (mut runtime, sink) = local_runtime_mode(config.node_id, config.proposal_mode)?;
     let expectation = sanitized(ControlTlsNodeBinding::new(config.node_id, peer.node_id))?;
     let listener = sanitized(TcpListener::bind(config.listen))?;
     let identity = ControlTlsServerIdentity::from_bundle(peer.peer_certificate_sha256, credentials);
@@ -271,7 +281,18 @@ fn prepare(
     let selected = BTreeSet::new();
     let catalog = sanitized(link.prepare_catalog(runtime, &selected))?;
     sanitized(link.send_catalog_until(catalog, deadline))?;
-    let route_id = prepare_selected_route(runtime, link.session_id(), config.source, sink)?;
+    let route_id = match config.proposal_mode {
+        ProposalMode::LinuxLed => {
+            prepare_selected_route(runtime, link.session_id(), config.source, sink)?
+        }
+        ProposalMode::IncomingDraft => {
+            let Some(route_id) = receive_pending_proposal(io, runtime, link, config.source, sink)?
+            else {
+                return Ok(None);
+            };
+            route_id
+        }
+    };
     let request_id = MessageId::new();
     let consent_deadline = Instant::now() + CONSENT;
     io.send_json(&json!({"version":1,"event":"approval_required","request_id":request_id,"route_id":route_id,
@@ -310,6 +331,14 @@ fn prepare(
                     ))?;
                 }
             }
+            Some(ReceivedControlMessage::RouteStatus(status))
+                if config.proposal_mode == ProposalMode::IncomingDraft =>
+            {
+                validate_draft_peer(runtime, route_id, &status)?;
+                if status.route.authorization != AuthorizationState::Pending {
+                    return Err(fail());
+                }
+            }
             Some(_) => return Err(fail()),
             None => {}
         }
@@ -320,72 +349,33 @@ fn prepare(
     let approved_expiry = approved_at
         .checked_add(config.duration_secs * 1000)
         .ok_or_else(fail)?;
-    // Local consent alone does not authorize the peer's microphone. Announce
-    // the exact Draft/Pending proposal before any grant, lease or media offer.
+    // Approval is route-specific and finite. Neither proposal mode grants the
+    // remote microphone permission or acquires any lease before reciprocity.
     let negotiation_deadline =
         (Instant::now() + CONSENT).min(Instant::now() + Duration::from_secs(config.duration_secs));
-    sanitized(link.send_route_status_until(
-        sanitized(runtime.route(route_id))?,
-        negotiation_operation_deadline(negotiation_deadline, approved_expiry)?,
-    ))?;
-    let peer_expiry = loop {
-        let Some(message) = negotiation_message(
+    let expiry = match config.proposal_mode {
+        ProposalMode::LinuxLed => negotiate_linux_led(
             io,
             runtime,
             link,
+            route_id,
             config.source,
             negotiation_deadline,
             approved_expiry,
-        )?
-        else {
-            return Ok(None);
-        };
-        let ReceivedControlMessage::RouteStatus(status) = message else {
-            return Err(fail());
-        };
-        validate_draft_peer(runtime, route_id, &status)?;
-        match status.route.authorization {
-            AuthorizationState::Pending => {}
-            AuthorizationState::Authorized {
-                expires_at_ms: Some(expiry),
-            } if expiry > now_ms()? => break expiry,
-            _ => return Err(fail()),
-        }
-    };
-    let expiry = approved_expiry.min(peer_expiry);
-    sanitized(runtime.authorize_route(route_id, Some(expiry)))?;
-    sanitized(link.send_route_status_until(
-        sanitized(runtime.route(route_id))?,
-        negotiation_operation_deadline(negotiation_deadline, expiry)?,
-    ))?;
-    // Android retains its independently obtained consent and can only narrow
-    // its Draft grant to this deadline. An acknowledgement is not a new grant.
-    loop {
-        let Some(message) = negotiation_message(
+        )?,
+        ProposalMode::IncomingDraft => negotiate_incoming(
             io,
             runtime,
             link,
+            route_id,
             config.source,
             negotiation_deadline,
-            expiry,
-        )?
-        else {
-            return Ok(None);
-        };
-        let ReceivedControlMessage::RouteStatus(status) = message else {
-            return Err(fail());
-        };
-        validate_draft_peer(runtime, route_id, &status)?;
-        match status.route.authorization {
-            AuthorizationState::Authorized {
-                expires_at_ms: Some(peer),
-            } if peer == expiry => break,
-            AuthorizationState::Authorized {
-                expires_at_ms: Some(peer),
-            } if peer == peer_expiry => {}
-            _ => return Err(fail()),
-        }
-    }
+            approved_expiry,
+        )?,
+    };
+    let Some(expiry) = expiry else {
+        return Ok(None);
+    };
     // Same one-second transit headroom as the existing Windows lease flow.
     // Too little remaining lifetime fails closed rather than extending consent.
     let ttl = lease_ttl(expiry, now_ms()?)?;
@@ -458,6 +448,220 @@ fn prepare(
     )))
 }
 
+/// This one-shot receiver never accepts an arbitrary Route or grants local use
+/// while importing a peer proposal. A fresh launcher approval is still required.
+fn validate_pending_proposal(
+    runtime: &NodeRuntime,
+    session_id: SessionId,
+    source: PortRef,
+    sink: PortRef,
+    status: &ValidatedRouteStatus,
+) -> io::Result<()> {
+    validate_source(runtime, source)?;
+    let session = sanitized(runtime.session(session_id))?;
+    let route = &status.route;
+    if session.state != SessionState::Ready
+        || session.local_node_id != sink.node_id
+        || session.remote_node_id != source.node_id
+        || !runtime.snapshot().routes.is_empty()
+        || status.session_id != session_id
+        || route.session_id != session_id
+        || route.source != source
+        || route.sink != sink
+        || route.profile != ProfileId::audio_frames_v1()
+        || route.backend != RouteBackend::AdapterManaged
+        || route.state != RouteState::Draft
+        || route.authorization != AuthorizationState::Pending
+        || route.epoch != 0
+        || route.selected_format.is_some()
+        || route.selected_qos_mode.is_some()
+        || route.compatible_formats != [FormatDescriptor::new("pcm-s16le-48000-mono")]
+        || route.compatible_qos_modes != BTreeSet::from([QosMode::Interactive])
+        || !route.diagnostic_ids.is_empty()
+        || status.native_audio_data.is_some()
+        || status.touchpad_data.is_some()
+        || status.haptics_data.is_some()
+        || status.camera_data.is_some()
+    {
+        return Err(fail());
+    }
+    Ok(())
+}
+
+fn receive_pending_proposal(
+    io: &mut LauncherIo,
+    runtime: &mut NodeRuntime,
+    link: &mut CatalogControlLink,
+    source: PortRef,
+    sink: PortRef,
+) -> io::Result<Option<RouteId>> {
+    let deadline = Instant::now() + CONSENT;
+    loop {
+        check(deadline)?;
+        if local_before_approval(io, "awaiting_incoming_draft")? {
+            return Ok(None);
+        }
+        let step = deadline.min(Instant::now() + Duration::from_secs(1));
+        match sanitized(link.poll_control_message_until(step))? {
+            Some(ReceivedControlMessage::RouteStatus(status)) => {
+                validate_pending_proposal(runtime, link.session_id(), source, sink, &status)?;
+                let route = sanitized(link.apply_route_status(runtime, &status, false))?;
+                return Ok(Some(route.id));
+            }
+            Some(ReceivedControlMessage::Catalog(catalog)) => {
+                sanitized(link.apply_catalog(runtime, catalog))?;
+                validate_source(runtime, source)?;
+            }
+            Some(ReceivedControlMessage::Heartbeat(heartbeat)) => {
+                if !heartbeat.acknowledgement {
+                    sanitized(link.send_heartbeat_until(heartbeat.sequence, true, step))?;
+                }
+            }
+            Some(_) => return Err(fail()),
+            None => thread::sleep(Duration::from_millis(2)),
+        }
+    }
+}
+
+/// The Android initiator waits for this independently approved Linux grant.
+/// Waiting for the Android grant first would deadlock the incoming mode.
+fn negotiate_incoming(
+    io: &mut LauncherIo,
+    runtime: &mut NodeRuntime,
+    link: &mut CatalogControlLink,
+    route_id: RouteId,
+    source: PortRef,
+    deadline: Instant,
+    approved_expiry: u64,
+) -> io::Result<Option<u64>> {
+    validate_source(runtime, source)?;
+    sanitized(runtime.authorize_route(route_id, Some(approved_expiry)))?;
+    sanitized(link.send_route_status_until(
+        sanitized(runtime.route(route_id))?,
+        negotiation_operation_deadline(deadline, approved_expiry)?,
+    ))?;
+    loop {
+        let Some(message) =
+            negotiation_message(io, runtime, link, source, deadline, approved_expiry)?
+        else {
+            return Ok(None);
+        };
+        let ReceivedControlMessage::RouteStatus(status) = message else {
+            return Err(fail());
+        };
+        if let Some(expiry) =
+            accept_incoming_grant(runtime, route_id, &status, approved_expiry, now_ms()?)?
+        {
+            if expiry < approved_expiry {
+                // Acknowledge the peer's already-held narrower finite grant.
+                sanitized(link.send_route_status_until(
+                    sanitized(runtime.route(route_id))?,
+                    negotiation_operation_deadline(deadline, expiry)?,
+                ))?;
+            }
+            return Ok(Some(expiry));
+        }
+    }
+}
+
+fn accept_incoming_grant(
+    runtime: &mut NodeRuntime,
+    route_id: RouteId,
+    status: &ValidatedRouteStatus,
+    approved_expiry: u64,
+    now: u64,
+) -> io::Result<Option<u64>> {
+    validate_draft_peer(runtime, route_id, status)?;
+    if sanitized(runtime.route(route_id))?.authorization
+        != (AuthorizationState::Authorized {
+            expires_at_ms: Some(approved_expiry),
+        })
+        || now >= approved_expiry
+    {
+        return Err(fail());
+    }
+    match status.route.authorization {
+        AuthorizationState::Pending => Ok(None),
+        AuthorizationState::Authorized {
+            expires_at_ms: Some(expiry),
+        } if expiry > now && expiry <= approved_expiry => {
+            if expiry < approved_expiry {
+                sanitized(runtime.restrict_draft_authorization(route_id, expiry, now))?;
+            }
+            Ok(Some(expiry))
+        }
+        _ => Err(fail()),
+    }
+}
+
+fn negotiate_linux_led(
+    io: &mut LauncherIo,
+    runtime: &mut NodeRuntime,
+    link: &mut CatalogControlLink,
+    route_id: RouteId,
+    source: PortRef,
+    negotiation_deadline: Instant,
+    approved_expiry: u64,
+) -> io::Result<Option<u64>> {
+    sanitized(link.send_route_status_until(
+        sanitized(runtime.route(route_id))?,
+        negotiation_operation_deadline(negotiation_deadline, approved_expiry)?,
+    ))?;
+    let peer_expiry = loop {
+        let Some(message) = negotiation_message(
+            io,
+            runtime,
+            link,
+            source,
+            negotiation_deadline,
+            approved_expiry,
+        )?
+        else {
+            return Ok(None);
+        };
+        let ReceivedControlMessage::RouteStatus(status) = message else {
+            return Err(fail());
+        };
+        validate_draft_peer(runtime, route_id, &status)?;
+        match status.route.authorization {
+            AuthorizationState::Pending => {}
+            AuthorizationState::Authorized {
+                expires_at_ms: Some(expiry),
+            } if expiry > now_ms()? => break expiry,
+            _ => return Err(fail()),
+        }
+    };
+    let expiry = approved_expiry.min(peer_expiry);
+    sanitized(runtime.authorize_route(route_id, Some(expiry)))?;
+    sanitized(link.send_route_status_until(
+        sanitized(runtime.route(route_id))?,
+        negotiation_operation_deadline(negotiation_deadline, expiry)?,
+    ))?;
+    // Android retains its independently obtained consent and can only narrow
+    // its Draft grant to this deadline. An acknowledgement is not a new grant.
+    loop {
+        let Some(message) =
+            negotiation_message(io, runtime, link, source, negotiation_deadline, expiry)?
+        else {
+            return Ok(None);
+        };
+        let ReceivedControlMessage::RouteStatus(status) = message else {
+            return Err(fail());
+        };
+        validate_draft_peer(runtime, route_id, &status)?;
+        match status.route.authorization {
+            AuthorizationState::Authorized {
+                expires_at_ms: Some(peer),
+            } if peer == expiry => break,
+            AuthorizationState::Authorized {
+                expires_at_ms: Some(peer),
+            } if peer == peer_expiry => {}
+            _ => return Err(fail()),
+        }
+    }
+    Ok(Some(expiry))
+}
+
 fn lease_ttl(expiry: u64, now: u64) -> io::Result<u64> {
     let ttl = expiry.saturating_sub(now).saturating_sub(1_000);
     if ttl < MIN_PORT_LEASE_TTL_MS {
@@ -494,6 +698,9 @@ fn validate_draft_peer(
         || peer.selected_format.is_some()
         || peer.selected_qos_mode.is_some()
         || status.native_audio_data.is_some()
+        || status.touchpad_data.is_some()
+        || status.haptics_data.is_some()
+        || status.camera_data.is_some()
     {
         return Err(fail());
     }
@@ -570,7 +777,12 @@ fn validate_source(runtime: &NodeRuntime, source_ref: PortRef) -> io::Result<()>
 
 /// A single explicit software playback destination, not a hardware probe or
 /// fabricated remote catalog. IDs are ephemeral per invocation and advertised.
+#[cfg(test)]
 fn local_runtime(node_id: NodeId) -> io::Result<(NodeRuntime, PortRef)> {
+    local_runtime_mode(node_id, ProposalMode::LinuxLed)
+}
+
+fn local_runtime_mode(node_id: NodeId, mode: ProposalMode) -> io::Result<(NodeRuntime, PortRef)> {
     let mut node = NodeDescriptor::new(
         node_id,
         "Linux lab playback",
@@ -614,7 +826,14 @@ fn local_runtime(node_id: NodeId) -> io::Result<(NodeRuntime, PortRef)> {
         class: CapabilityClass::Speaker,
         availability: Availability::Available,
         permission_requirement: PermissionRequirement::None,
-        metadata: BTreeMap::new(),
+        metadata: if mode == ProposalMode::IncomingDraft {
+            BTreeMap::from([(
+                capyio_protocol::NATIVE_AUDIO_INBOUND_DRAFT_METADATA_KEY.into(),
+                capyio_protocol::NATIVE_AUDIO_INBOUND_DRAFT_MONO_V1.into(),
+            )])
+        } else {
+            BTreeMap::new()
+        },
         ports: BTreeMap::from([(port, descriptor)]),
     }))?;
     Ok((
@@ -804,5 +1023,215 @@ mod tests {
             let error = LocalCommand::parse(input).err().unwrap();
             assert_eq!(error.to_string(), "Linux lab playback launch failed");
         }
+    }
+}
+
+#[cfg(test)]
+mod incoming_tests {
+    use super::*;
+
+    fn fixture() -> (NodeRuntime, PortRef, PortRef, ValidatedRouteStatus) {
+        let lab = capyio_testkit::DemoLab::new().unwrap();
+        let source = lab
+            .runtime
+            .route(lab.routes.phone_microphone_to_windows)
+            .unwrap()
+            .source;
+        let mut peer = lab
+            .runtime
+            .snapshot()
+            .peers
+            .into_iter()
+            .find(|peer| peer.id == source.node_id)
+            .unwrap();
+        for adapter in peer.adapter_instances.values_mut() {
+            adapter
+                .supported_route_modes
+                .insert(RouteBackend::AdapterManaged);
+        }
+        let cap = peer.capabilities.get_mut(&source.capability_id).unwrap();
+        cap.availability = Availability::Available;
+        let port = cap.ports.get_mut(&source.port_id).unwrap();
+        port.availability = Availability::Available;
+        port.interoperability_mode = InteroperabilityMode::AdapterManaged;
+        let (mut runtime, sink) =
+            local_runtime_mode(NodeId::new(), ProposalMode::IncomingDraft).unwrap();
+        runtime.register_peer(peer.clone(), true).unwrap();
+        let session = runtime.open_session(peer.id).unwrap();
+        let local = runtime.snapshot().local_node;
+        let source_cap = &peer.capabilities[&source.capability_id];
+        let sink_cap = &local.capabilities[&sink.capability_id];
+        let route = Route::new(
+            RouteId::new(),
+            session,
+            RouteEndpoint::new(
+                source,
+                &source_cap.ports[&source.port_id],
+                &peer.adapter_instances[&source_cap.adapter_instance_id],
+            ),
+            RouteEndpoint::new(
+                sink,
+                &sink_cap.ports[&sink.port_id],
+                &local.adapter_instances[&sink_cap.adapter_instance_id],
+            ),
+            RouteBackend::AdapterManaged,
+        )
+        .unwrap();
+        let status = capyio_protocol::decode_route_status(
+            &capyio_protocol::encode_route_status(session, &route).unwrap(),
+        )
+        .unwrap();
+        (runtime, source, sink, status)
+    }
+
+    #[test]
+    fn incoming_contract_is_explicit_and_not_default() {
+        for mode in [ProposalMode::LinuxLed, ProposalMode::IncomingDraft] {
+            let (runtime, sink) = local_runtime_mode(NodeId::new(), mode).unwrap();
+            let snapshot = runtime.snapshot();
+            let metadata = &snapshot.local_node.capabilities[&sink.capability_id].metadata;
+            assert_eq!(
+                metadata
+                    .get(capyio_protocol::NATIVE_AUDIO_INBOUND_DRAFT_METADATA_KEY)
+                    .map(String::as_str),
+                (mode == ProposalMode::IncomingDraft)
+                    .then_some(capyio_protocol::NATIVE_AUDIO_INBOUND_DRAFT_MONO_V1)
+            );
+            assert!(snapshot.routes.is_empty());
+            assert!(snapshot.port_leases.is_empty());
+        }
+        let config = json!({"version":1,"node_id":NodeId::new(),"source":PortRef { node_id: NodeId::new(), capability_id: CapabilityId::new(), port_id: PortId::new() },"listen":"127.0.0.1:0","media":"127.0.0.1:40211","target":"explicit.test","duration_secs":10});
+        assert!(
+            LaunchConfig::parse(&serde_json::to_vec(&config).unwrap())
+                .unwrap()
+                .proposal_mode
+                == ProposalMode::LinuxLed
+        );
+        let mut unknown = config.clone();
+        unknown["proposal_mode"] = json!("automatic");
+        assert!(LaunchConfig::parse(&serde_json::to_vec(&unknown).unwrap()).is_err());
+    }
+
+    #[test]
+    fn incoming_proposal_is_exact_pending_fresh_and_does_not_authorize() {
+        let (mut runtime, source, sink, status) = fixture();
+        validate_pending_proposal(&runtime, status.session_id, source, sink, &status).unwrap();
+        assert!(runtime.snapshot().routes.is_empty());
+        assert!(runtime.snapshot().port_leases.is_empty());
+        for change in 0..14 {
+            let mut wrong = status.clone();
+            match change {
+                0 => wrong.session_id = SessionId::new(),
+                1 => wrong.route.session_id = SessionId::new(),
+                2 => wrong.route.source.port_id = PortId::new(),
+                3 => wrong.route.sink.port_id = PortId::new(),
+                4 => wrong.route.epoch = 1,
+                5 => {
+                    wrong.route.authorization = AuthorizationState::Authorized {
+                        expires_at_ms: Some(u64::MAX),
+                    }
+                }
+                6 => wrong.route.state = RouteState::Starting,
+                7 => wrong.route.profile = ProfileId::video_frames_v1(),
+                8 => wrong.route.backend = RouteBackend::CapyDataPlane,
+                9 => {
+                    wrong.route.selected_format =
+                        Some(FormatDescriptor::new("pcm-s16le-48000-mono"))
+                }
+                10 => wrong.route.selected_qos_mode = Some(QosMode::Interactive),
+                11 => wrong.route.compatible_formats.clear(),
+                12 => wrong.route.compatible_qos_modes.clear(),
+                _ => {
+                    wrong.native_audio_data = Some(Box::new(NativeAudioDataOffer {
+                        port: 40211,
+                        stream_id: StreamId::new(),
+                        endpoint: NativeAudioEndpoint::Source,
+                        preset: NativeAudioPreset::PcmS16le48000Mono,
+                    }))
+                }
+            }
+            assert!(
+                validate_pending_proposal(&runtime, status.session_id, source, sink, &wrong)
+                    .is_err(),
+                "mutation {change}"
+            );
+            assert!(runtime.snapshot().routes.is_empty());
+            assert!(runtime.snapshot().port_leases.is_empty());
+        }
+        runtime
+            .create_route_with_id(
+                status.route.id,
+                status.session_id,
+                source,
+                sink,
+                RouteBackend::AdapterManaged,
+            )
+            .unwrap();
+        // The one-shot receiver never imports a second proposal or replays one.
+        assert!(
+            validate_pending_proposal(&runtime, status.session_id, source, sink, &status).is_err()
+        );
+        assert_eq!(
+            runtime.route(status.route.id).unwrap().authorization,
+            AuthorizationState::Pending
+        );
+    }
+
+    #[test]
+    fn incoming_peer_grant_only_matches_or_narrows_existing_local_approval() {
+        for peer_expiry in [None, Some(1_000), Some(11_001), Some(10_000), Some(11_000)] {
+            let (mut runtime, source, sink, mut status) = fixture();
+            runtime
+                .create_route_with_id(
+                    status.route.id,
+                    status.session_id,
+                    source,
+                    sink,
+                    RouteBackend::AdapterManaged,
+                )
+                .unwrap();
+            runtime
+                .authorize_route(status.route.id, Some(11_000))
+                .unwrap();
+            status.route.authorization = AuthorizationState::Authorized {
+                expires_at_ms: peer_expiry,
+            };
+            let result =
+                accept_incoming_grant(&mut runtime, status.route.id, &status, 11_000, 1_000);
+            if matches!(peer_expiry, Some(10_000 | 11_000)) {
+                assert_eq!(result.unwrap(), peer_expiry);
+                assert_eq!(
+                    runtime.route(status.route.id).unwrap().authorization,
+                    status.route.authorization
+                );
+            } else {
+                assert!(result.is_err());
+            }
+            assert!(runtime.snapshot().port_leases.is_empty());
+            assert_eq!(
+                runtime.route(status.route.id).unwrap().state,
+                RouteState::Draft
+            );
+        }
+        let (mut runtime, source, sink, status) = fixture();
+        runtime
+            .create_route_with_id(
+                status.route.id,
+                status.session_id,
+                source,
+                sink,
+                RouteBackend::AdapterManaged,
+            )
+            .unwrap();
+        // A peer acknowledgement is never a substitute for local approval.
+        assert!(
+            accept_incoming_grant(&mut runtime, status.route.id, &status, 11_000, 1_000).is_err()
+        );
+        runtime
+            .authorize_route(status.route.id, Some(11_000))
+            .unwrap();
+        assert!(
+            accept_incoming_grant(&mut runtime, status.route.id, &status, 11_000, 11_000).is_err()
+        );
     }
 }

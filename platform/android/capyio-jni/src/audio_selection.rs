@@ -15,6 +15,7 @@ impl AudioDirection {
             _ => Err("unknown audio direction"),
         }
     }
+    #[cfg(any(target_os = "android", test))]
     pub(crate) fn name(self) -> &'static str {
         match self {
             Self::Microphone => "microphone",
@@ -127,6 +128,17 @@ pub(crate) fn supports_inbound_draft(
     let Some(cap) = node.capabilities.get(&endpoint.capability_id) else {
         return false;
     };
+    // Versioned receiver capability is a supported handshake, never consent.
+    // Resolve the exact current endpoint again rather than trusting metadata alone.
+    if direction == AudioDirection::Microphone
+        && cap
+            .metadata
+            .get(capyio_protocol::NATIVE_AUDIO_INBOUND_DRAFT_METADATA_KEY)
+            .is_some_and(|value| value == capyio_protocol::NATIVE_AUDIO_INBOUND_DRAFT_MONO_V1)
+        && select_endpoint(node, direction, false) == Ok(endpoint)
+    {
+        return true;
+    }
     let Some(adapter) = node.adapter_instances.get(&cap.adapter_instance_id) else {
         return false;
     };
@@ -448,5 +460,74 @@ mod tests {
             "microphone"
         );
         assert_eq!(AudioDirection::parse("speaker").unwrap().name(), "speaker");
+    }
+    #[test]
+    fn versioned_incoming_contract_uses_actual_ports_and_only_mono_sink() {
+        let local = node(true, AudioDirection::Microphone, false);
+        let mut remote = node(false, AudioDirection::Microphone, false);
+        let session = Session::new(local.id, remote.id);
+        let cap = remote.capabilities.values_mut().next().unwrap();
+        cap.metadata.insert(
+            capyio_protocol::NATIVE_AUDIO_INBOUND_DRAFT_METADATA_KEY.into(),
+            capyio_protocol::NATIVE_AUDIO_INBOUND_DRAFT_MONO_V1.into(),
+        );
+        let endpoint = select_endpoint(&remote, AudioDirection::Microphone, false).unwrap();
+        assert!(supports_inbound_draft(
+            &remote,
+            endpoint,
+            AudioDirection::Microphone
+        ));
+        let (_, source, sink) = select_route(
+            &local,
+            &remote,
+            std::slice::from_ref(&session),
+            AudioDirection::Microphone,
+        )
+        .unwrap();
+        assert_eq!(sink, endpoint);
+        assert_eq!(source.node_id, local.id);
+        let mut stale = endpoint;
+        stale.port_id = PortId::new();
+        assert!(!supports_inbound_draft(
+            &remote,
+            stale,
+            AudioDirection::Microphone
+        ));
+        remote
+            .capabilities
+            .values_mut()
+            .next()
+            .unwrap()
+            .metadata
+            .insert(
+                capyio_protocol::NATIVE_AUDIO_INBOUND_DRAFT_METADATA_KEY.into(),
+                "pcm-s16le-48000-mono-v2".into(),
+            );
+        assert_eq!(
+            select_route(
+                &local,
+                &remote,
+                std::slice::from_ref(&session),
+                AudioDirection::Microphone
+            ),
+            Err(ADMISSION_UNSUPPORTED)
+        );
+        let mut reverse = node(false, AudioDirection::Speaker, false);
+        reverse
+            .capabilities
+            .values_mut()
+            .next()
+            .unwrap()
+            .metadata
+            .insert(
+                capyio_protocol::NATIVE_AUDIO_INBOUND_DRAFT_METADATA_KEY.into(),
+                capyio_protocol::NATIVE_AUDIO_INBOUND_DRAFT_MONO_V1.into(),
+            );
+        let reverse_port = select_endpoint(&reverse, AudioDirection::Speaker, false).unwrap();
+        assert!(!supports_inbound_draft(
+            &reverse,
+            reverse_port,
+            AudioDirection::Speaker
+        ));
     }
 }

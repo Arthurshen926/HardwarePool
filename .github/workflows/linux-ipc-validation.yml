@@ -34,7 +34,7 @@ jobs:
       - name: Check formatting
         run: cargo fmt --all -- --check
       - name: Lint Linux host, node and mock adapters
-        run: cargo clippy --locked -p capyio-mock-source -p capyio-mock-sink -p capyio-linux-host -p capyio-node -p capyio-linux-audio -p capyio-native-audio-lan -p capyio-control-tls -p capyio-control-link -p capyio-core -p capyio-runtime -p capyio-android-jni --all-targets -- -D warnings
+        run: cargo clippy --locked -p capyio-mock-source -p capyio-mock-sink -p capyio-linux-host -p capyio-node -p capyio-linux-audio -p capyio-native-audio-lan -p capyio-control-tls -p capyio-control-link -p capyio-core -p capyio-runtime -p capyio-android-jni -p capyio-protocol --all-targets -- -D warnings
       - name: Build repository mock adapters
         run: cargo build --locked -p capyio-mock-source -p capyio-mock-sink
       - name: Require finite IPC regression tests
@@ -169,8 +169,26 @@ jobs:
           audio_negotiation::tests::audio_local_stop_cancels_authorized_draft_and_rejects_delayed_start
           hosted_pipewire::pure_hosted_pipewire_requires_both_opt_ins_and_private_remote
           hosted_pipewire::pure_hosted_pipewire_signal_preserves_dynamic_binding_and_waveform
+          incoming_draft::ipc_linux_incoming_actual_android_start_requires_independent_local_approval
+          incoming_draft::ipc_linux_incoming_explicit_linux_led_mode_does_not_advertise_or_accept_start
+          incoming_draft::ipc_linux_incoming_smaller_android_grant_is_narrowed_before_lease
+          incoming_draft::ipc_linux_incoming_stop_before_draft_or_local_approval_or_peer_grant
+          incoming_draft::ipc_linux_incoming_android_cancellation_before_local_approval_is_terminal
+          incoming_draft::ipc_linux_incoming_launcher_eof_before_local_approval_cannot_grant
+          incoming_draft::ipc_linux_incoming_wrong_nonce_or_route_cannot_approve
+          incoming_draft::ipc_linux_incoming_previous_launch_nonce_and_sink_cannot_be_reused
+          incoming_draft::ipc_linux_incoming_rejects_malformed_proposals_before_approval
+          incoming_draft::ipc_linux_incoming_unsolicited_media_offer_cannot_create_approval
+          incoming_draft::ipc_linux_incoming_duplicate_draft_does_not_create_consent_or_another_approval
+          incoming_draft::ipc_linux_incoming_second_route_cannot_replace_pending_local_approval
+          incoming_draft::ipc_linux_incoming_expired_extended_or_drifted_android_grant_cannot_lease
+          launch::incoming_tests::incoming_contract_is_explicit_and_not_default
+          launch::incoming_tests::incoming_proposal_is_exact_pending_fresh_and_does_not_authorize
+          launch::incoming_tests::incoming_peer_grant_only_matches_or_narrows_existing_local_approval
+          audio_selection::tests::versioned_incoming_contract_uses_actual_ports_and_only_mono_sink
+          incoming_audio_contract_metadata_roundtrips_without_granting_permission
           TESTS
-          cargo test --locked -p capyio-mock-source -p capyio-mock-sink -p capyio-linux-host -p capyio-node -p capyio-linux-audio -p capyio-native-audio-lan -p capyio-control-tls -p capyio-control-link -p capyio-core -p capyio-runtime -p capyio-android-jni --all-targets -- --list --color never | tee "$RUNNER_TEMP/linux-test-list.txt"
+          cargo test --locked -p capyio-mock-source -p capyio-mock-sink -p capyio-linux-host -p capyio-node -p capyio-linux-audio -p capyio-native-audio-lan -p capyio-control-tls -p capyio-control-link -p capyio-core -p capyio-runtime -p capyio-android-jni -p capyio-protocol --all-targets -- --list --color never | tee "$RUNNER_TEMP/linux-test-list.txt"
           while IFS= read -r test_name; do
             grep -Fx -- "$test_name: test" "$RUNNER_TEMP/linux-test-list.txt"
           done < "$RUNNER_TEMP/required-ipc-tests.txt"
@@ -178,7 +196,7 @@ jobs:
         timeout-minutes: 5
         run: |
           set -euo pipefail
-          timeout --signal=TERM --kill-after=10s 240s cargo test --locked -p capyio-mock-source -p capyio-mock-sink -p capyio-linux-host -p capyio-node -p capyio-linux-audio -p capyio-native-audio-lan -p capyio-control-tls -p capyio-control-link -p capyio-core -p capyio-runtime -p capyio-android-jni --all-targets -- --test-threads=1 --color never | tee "$RUNNER_TEMP/linux-test-results.txt"
+          timeout --signal=TERM --kill-after=10s 240s cargo test --locked -p capyio-mock-source -p capyio-mock-sink -p capyio-linux-host -p capyio-node -p capyio-linux-audio -p capyio-native-audio-lan -p capyio-control-tls -p capyio-control-link -p capyio-core -p capyio-runtime -p capyio-android-jni -p capyio-protocol --all-targets -- --test-threads=1 --color never | tee "$RUNNER_TEMP/linux-test-results.txt"
           while IFS= read -r test_name; do
             grep -Fx -- "test $test_name ... ok" "$RUNNER_TEMP/linux-test-results.txt"
           done < "$RUNNER_TEMP/required-ipc-tests.txt"
