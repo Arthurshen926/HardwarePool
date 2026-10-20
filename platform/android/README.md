@@ -267,3 +267,14 @@ reuses an active session. If the receiver is absent, it fails closed unless the
 caller explicitly adds `-StartReceiver`, which requests UAC for the separately
 gated VHF wrapper. It never installs an APK or driver and never requests a
 Windows restart.
+
+## Hosted JNI and Java compatibility gate
+
+The experimental Linux feature-branch workflow also cross-compiles the actual
+ARM64 Android JNI library with Rust 1.97.1 and preinstalled NDK 29/API 29. It
+compiles/runs the existing Java 17 dependency-free contracts and compares generated
+AndroidNativeCatalogRuntime native names with exported library symbols. Missing
+pinned tools fail without SDK installation or license acceptance. This is not an
+APK build, Android-framework execution, deployment or physical audio test. See
+[ADR 1525](../../docs/adr/1525-android-target-java-compile-gate.md) for prerequisites
+and exact evidence limits.

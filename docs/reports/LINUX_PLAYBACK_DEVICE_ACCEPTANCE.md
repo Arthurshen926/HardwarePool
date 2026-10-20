@@ -134,3 +134,8 @@ sequence and exercises the actual Android coordinator on the Rust host. This is
 stronger protocol evidence, not Java hardware execution or physical acceptance.
 Android-initiated audio selection still targets Windows-specific capability IDs;
 use neither that selector nor the static sender as proof of Linux compatibility.
+
+The separate [Android compile/Java gate](../adr/1525-android-target-java-compile-gate.md)
+builds the actual ARM64 JNI target and runs existing JVM contracts. Its result
+must be read for the exact tested commit; even a pass does not replace Android
+framework/device or PipeWire capture/render acceptance.

@@ -180,3 +180,67 @@ jobs:
           while IFS= read -r test_name; do
             grep -Fx -- "test $test_name ... ok" "$RUNNER_TEMP/linux-test-results.txt"
           done < "$RUNNER_TEMP/required-ipc-tests.txt"
+
+  android-compile-contracts:
+    # Cross-compile and hardware-free contracts only. No APK signing/deployment,
+    # SDK installation/license acceptance, device connection or credential use.
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    defaults:
+      run:
+        shell: bash
+    env:
+      CARGO_TERM_COLOR: always
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - name: Require preinstalled pinned NDK and JDK
+        run: |
+          set -euo pipefail
+          ndk="${ANDROID_HOME:?Runner Android SDK path is missing}/ndk/29.0.14206865"
+          bin="$ndk/toolchains/llvm/prebuilt/linux-x86_64/bin"
+          jdk="${JAVA_HOME_17_X64:?Runner JDK 17 is missing}"
+          for tool in "$bin/aarch64-linux-android29-clang" "$bin/llvm-ar" "$bin/llvm-nm" "$jdk/bin/javac" "$jdk/bin/java"; do
+            test -x "$tool" || { echo 'Required preinstalled Android/JDK tool is missing; no install fallback.' >&2; exit 1; }
+          done
+          grep -Eq '^Pkg.Revision[[:space:]]*=[[:space:]]*29\.0\.14206865[[:space:]]*$' "$ndk/source.properties"
+          {
+            echo "CARGO_TARGET_AARCH64_LINUX_ANDROID_LINKER=$bin/aarch64-linux-android29-clang"
+            echo "CC_aarch64_linux_android=$bin/aarch64-linux-android29-clang"
+            echo "AR_aarch64_linux_android=$bin/llvm-ar"
+            echo "ANDROID_CONTRACT_NM=$bin/llvm-nm"
+            echo "JAVA_HOME=$jdk"
+          } >> "$GITHUB_ENV"
+          echo "$jdk/bin" >> "$GITHUB_PATH"
+          "$jdk/bin/javac" -version
+          "$bin/aarch64-linux-android29-clang" --version
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: 1.97.1
+          targets: aarch64-linux-android
+      - name: Compile actual Android JNI target and shared library
+        run: |
+          set -euo pipefail
+          timeout --signal=TERM --kill-after=10s 900s cargo build --locked --target aarch64-linux-android -p capyio-android-jni --release
+          test -s target/aarch64-linux-android/release/libcapyio_android_jni.so
+      - name: Compile dependency-free Java contracts and native declarations
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/android-contract-classes" "$RUNNER_TEMP/android-jni-headers"
+          find platform/android/node-contract/src/main/java platform/android/native-lan-contract/src/main/java platform/android/node-contract/src/contractTest/java -name '*.java' -print | sort > "$RUNNER_TEMP/android-java-sources.txt"
+          echo 'platform/android/app/src/main/java/dev/capyio/android/AndroidNativeCatalogRuntime.java' >> "$RUNNER_TEMP/android-java-sources.txt"
+          timeout --signal=TERM --kill-after=10s 120s javac --release 17 -h "$RUNNER_TEMP/android-jni-headers" -d "$RUNNER_TEMP/android-contract-classes" @"$RUNNER_TEMP/android-java-sources.txt"
+      - name: Check generated Java native names against Android exports
+        run: |
+          set -euo pipefail
+          python -m unittest discover -s scripts -p 'test_android_jni_exports.py'
+          "$ANDROID_CONTRACT_NM" --defined-only --dynamic target/aarch64-linux-android/release/libcapyio_android_jni.so > "$RUNNER_TEMP/android-jni-exports.txt"
+          python scripts/check_android_jni_exports.py "$RUNNER_TEMP/android-jni-headers/dev_capyio_android_AndroidNativeCatalogRuntime.h" "$RUNNER_TEMP/android-jni-exports.txt"
+      - name: Run existing Java lifecycle and native LAN contracts
+        run: |
+          set -euo pipefail
+          for main in dev.capyio.android.contract.AudioNodeContractTest dev.capyio.android.contract.CapabilityCatalogContractTest dev.capyio.android.contract.CapabilityLifecycleContractTest dev.capyio.android.lan.NativeLanContractTest; do
+            timeout --signal=TERM --kill-after=10s 60s java -ea -Dcapyio.nativeLanFixture="$GITHUB_WORKSPACE/fixtures/audio/native_lan_v1_opus_single.hex" -cp "$RUNNER_TEMP/android-contract-classes" "$main"
+          done
