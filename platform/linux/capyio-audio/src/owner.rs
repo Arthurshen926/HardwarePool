@@ -85,9 +85,25 @@ impl AuthenticatedPlaybackOwner {
         admission: PlaybackAdmission,
         target: PlaybackTarget,
     ) -> io::Result<Self> {
+        Self::from_admitted_link_trusted_lab(
+            runtime,
+            CatalogControlLink::from_accepted(channel),
+            admission,
+            target,
+        )
+    }
+    /// Preserve an existing authenticated catalog/admission link. This does not
+    /// create authority: the same exact binding, current grant and lease checks
+    /// apply as for a newly accepted channel.
+    pub fn from_admitted_link_trusted_lab(
+        runtime: NodeRuntime,
+        link: CatalogControlLink,
+        admission: PlaybackAdmission,
+        target: PlaybackTarget,
+    ) -> io::Result<Self> {
         let now = now_ms()?;
-        validate_admission(&runtime, channel.binding(), admission, &target, now)?;
-        let SocketAddr::V4(peer) = channel.peer_addr().map_err(error)? else {
+        validate_admission(&runtime, link.tls_binding(), admission, &target, now)?;
+        let SocketAddr::V4(peer) = link.accepted_peer_addr().map_err(error)? else {
             return Err(error(
                 "Linux lab playback requires an IPv4 authenticated peer",
             ));
@@ -96,7 +112,7 @@ impl AuthenticatedPlaybackOwner {
         crate::parse_lab_endpoint(&peer.to_string()).map_err(error)?;
         Ok(Self {
             runtime,
-            link: CatalogControlLink::from_accepted(channel),
+            link,
             admission,
             target,
             peer_ip: *peer.ip(),

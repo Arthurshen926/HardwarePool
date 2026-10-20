@@ -11,7 +11,7 @@ pub mod touchpad;
 use std::{
     io::{Read, Write},
     net::{Shutdown, SocketAddr, TcpListener, TcpStream},
-    sync::Arc,
+    sync::{Arc, Mutex, TryLockError},
     time::{Duration, Instant},
 };
 
@@ -171,6 +171,7 @@ impl ControlTlsClientIdentity {
 pub struct AuthenticatedControlServer {
     expected_peer_certificate: CertificateFingerprint,
     listener: TcpListener,
+    accept_lock: Mutex<()>,
     config: Arc<ServerConfig>,
     expected: ServerBindingExpectation,
     io_timeout: Duration,
@@ -212,6 +213,7 @@ impl AuthenticatedControlServer {
         validate_timeout(io_timeout)?;
         Ok(Self {
             listener,
+            accept_lock: Mutex::new(()),
             expected_peer_certificate: identity.expected_peer_certificate,
             config: build_server_config(identity)?,
             expected: ServerBindingExpectation::Exact(expected),
@@ -238,6 +240,7 @@ impl AuthenticatedControlServer {
         validate_timeout(io_timeout)?;
         Ok(Self {
             listener,
+            accept_lock: Mutex::new(()),
             expected_peer_certificate: identity.expected_peer_certificate,
             config: build_server_config(identity)?,
             expected: ServerBindingExpectation::FreshSession(expected_nodes),
@@ -250,7 +253,73 @@ impl AuthenticatedControlServer {
     }
 
     pub fn accept(&self) -> Result<AuthenticatedControlServerChannel, ControlTlsError> {
-        let (socket, _) = self.listener.accept()?;
+        let socket = {
+            let _guard = self
+                .accept_lock
+                .lock()
+                .map_err(|_| std::io::Error::other("control accept lock poisoned"))?;
+            self.listener.accept()?.0
+        };
+        self.authenticate_socket(socket)
+    }
+
+    /// Poll once without waiting for a connection. Once accepted, the entire
+    /// TLS handshake and authenticated binding exchange share `deadline`.
+    /// Callers must clamp it to their own lifetime/cancellation polling budget.
+    /// An expired deadline is an error even when the listener is idle. Any
+    /// accepted connection failure is terminal; it is shut down, not retried.
+    pub fn try_accept_until(
+        &self,
+        deadline: Instant,
+    ) -> Result<Option<AuthenticatedControlServerChannel>, ControlTlsError> {
+        check_poll_deadline(deadline)?;
+        let socket = {
+            let _guard = match self.accept_lock.try_lock() {
+                Ok(guard) => guard,
+                Err(TryLockError::WouldBlock) => {
+                    check_poll_deadline(deadline)?;
+                    return Ok(None);
+                }
+                Err(TryLockError::Poisoned(_)) => {
+                    return Err(std::io::Error::other("control accept lock poisoned").into());
+                }
+            };
+            self.listener.set_nonblocking(true)?;
+            let accepted = self.listener.accept();
+            // Restore before inspecting the result, including WouldBlock/error.
+            if let Err(error) = self.listener.set_nonblocking(false) {
+                if let Ok((socket, _)) = accepted {
+                    let _ = socket.shutdown(Shutdown::Both);
+                }
+                return Err(error.into());
+            }
+            match accepted {
+                Ok((socket, _)) => socket,
+                Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
+                    check_poll_deadline(deadline)?;
+                    return Ok(None);
+                }
+                Err(error) => return Err(error.into()),
+            }
+        };
+        // Keep the original socket for terminal cleanup even if cloning,
+        // watcher startup, authentication or its final deadline check fails.
+        let result = (|| {
+            let watchdog_socket = socket.try_clone()?;
+            with_socket_deadline(watchdog_socket, deadline, || {
+                self.authenticate_socket(socket.try_clone()?)
+            })
+        })();
+        if result.is_err() {
+            let _ = socket.shutdown(Shutdown::Both);
+        }
+        result.map(Some)
+    }
+
+    fn authenticate_socket(
+        &self,
+        socket: TcpStream,
+    ) -> Result<AuthenticatedControlServerChannel, ControlTlsError> {
         // A nonblocking accept loop may yield nonblocking sockets on Windows.
         // TLS framing uses bounded blocking reads/writes after acceptance.
         socket.set_nonblocking(false)?;
@@ -855,11 +924,42 @@ fn require_tls13_alpn(
     }
 }
 
+// Best-effort cleanup of caller-owned transient DER before handing ownership
+// to rustls. This is not a cryptographic-erasure or rustls-memory guarantee.
+struct SecretDer(Vec<u8>);
+
+impl SecretDer {
+    fn into_private_key(mut self) -> Result<PrivateKeyDer<'static>, ControlTlsError> {
+        // Validate borrowed bytes first: a failed owned TryFrom<Vec<u8>> would
+        // drop its input without giving this guard an opportunity to clear it.
+        let parsed = PrivateKeyDer::try_from(self.0.as_slice())
+            .map_err(|_| ControlTlsError::InvalidCredential)?;
+        let key = match parsed {
+            PrivateKeyDer::Pkcs1(_) => PrivateKeyDer::Pkcs1(std::mem::take(&mut self.0).into()),
+            PrivateKeyDer::Sec1(_) => PrivateKeyDer::Sec1(std::mem::take(&mut self.0).into()),
+            PrivateKeyDer::Pkcs8(_) => PrivateKeyDer::Pkcs8(std::mem::take(&mut self.0).into()),
+            _ => return Err(ControlTlsError::InvalidCredential),
+        };
+        Ok(key)
+    }
+
+    fn clear(&mut self) {
+        self.0.fill(0);
+    }
+}
+
+impl Drop for SecretDer {
+    fn drop(&mut self) {
+        self.clear();
+    }
+}
+
 fn build_server_config(
     identity: ControlTlsServerIdentity,
 ) -> Result<Arc<ServerConfig>, ControlTlsError> {
+    let secret = SecretDer(identity.private_key_der);
     if identity.certificate_chain_der.is_empty()
-        || identity.private_key_der.is_empty()
+        || secret.0.is_empty()
         || identity.client_ca_der.is_empty()
     {
         return Err(ControlTlsError::InvalidCredential);
@@ -877,8 +977,7 @@ fn build_server_config(
         .into_iter()
         .map(CertificateDer::from)
         .collect();
-    let key = PrivateKeyDer::try_from(identity.private_key_der)
-        .map_err(|_| ControlTlsError::InvalidCredential)?;
+    let key = secret.into_private_key()?;
     let mut config = ServerConfig::builder_with_provider(provider)
         .with_protocol_versions(&[&TLS13])
         .map_err(|_| ControlTlsError::InvalidCredential)?
@@ -1123,6 +1222,231 @@ mod tests {
         assert_eq!(
             bounded.flush().unwrap_err().kind(),
             std::io::ErrorKind::TimedOut
+        );
+    }
+
+    #[test]
+    fn secret_der_cleanup_clears_entire_transient_buffer() {
+        let mut secret = SecretDer(vec![7, 11, 19, 31]);
+        secret.clear();
+        assert_eq!(secret.0, [0, 0, 0, 0]);
+    }
+
+    #[test]
+    fn secret_der_rejects_invalid_borrowed_encoding() {
+        assert!(matches!(
+            SecretDer(vec![0xff; 32]).into_private_key(),
+            Err(ControlTlsError::InvalidCredential)
+        ));
+    }
+
+    #[test]
+    fn secret_der_server_rejects_invalid_ca_before_key_handoff() {
+        let (mut identity, _) = test_identities();
+        identity.client_ca_der = vec![0xff; 32];
+        assert!(matches!(
+            build_server_config(identity),
+            Err(ControlTlsError::InvalidCredential)
+        ));
+    }
+
+    #[test]
+    fn accept_deadline_check_rejects_expired_budget_without_io() {
+        assert_eq!(
+            check_poll_deadline(Instant::now() - Duration::from_millis(1))
+                .unwrap_err()
+                .kind(),
+            std::io::ErrorKind::TimedOut
+        );
+        assert!(check_poll_deadline(Instant::now() + Duration::from_secs(1)).is_ok());
+    }
+
+    #[test]
+    fn ipc_try_accept_idle_is_immediate_and_expired_idle_is_error() {
+        let (identity, _) = test_identities();
+        let server = AuthenticatedControlServer::from_listener(
+            TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).unwrap(),
+            identity,
+            binding(),
+            Duration::from_secs(2),
+        )
+        .unwrap();
+        let start = Instant::now();
+        assert!(
+            server
+                .try_accept_until(start + Duration::from_secs(2))
+                .unwrap()
+                .is_none()
+        );
+        assert!(start.elapsed() < Duration::from_millis(500));
+        assert!(matches!(
+            server.try_accept_until(Instant::now() - Duration::from_millis(1)),
+            Err(ControlTlsError::Io(error)) if error.kind() == std::io::ErrorKind::TimedOut
+        ));
+        // A delayed client must still be accepted by the legacy blocking API.
+        let address = server.local_addr().unwrap();
+        let connector = thread::spawn(move || {
+            thread::sleep(Duration::from_millis(50));
+            TcpStream::connect(address).unwrap()
+        });
+        // The listener itself proves restoration without waiting for TLS.
+        assert!(server.listener.accept().is_ok());
+        connector.join().unwrap();
+    }
+
+    #[test]
+    fn ipc_try_accept_pinned_tls_exact_and_fresh_binding_succeed() {
+        for fresh in [false, true] {
+            let (server_identity, client_identity) = test_identities();
+            let binding = binding();
+            let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).unwrap();
+            let address = listener.local_addr().unwrap();
+            let server = if fresh {
+                AuthenticatedControlServer::from_listener_fresh_session(
+                    listener,
+                    server_identity,
+                    ControlTlsNodeBinding::new(binding.server_node_id, binding.client_node_id)
+                        .unwrap(),
+                    Duration::from_secs(2),
+                )
+            } else {
+                AuthenticatedControlServer::from_listener(
+                    listener,
+                    server_identity,
+                    binding,
+                    Duration::from_secs(2),
+                )
+            }
+            .unwrap();
+            let client = thread::spawn(move || {
+                AuthenticatedControlClientChannel::connect(
+                    ControlTlsEndpoint {
+                        address,
+                        io_timeout: Duration::from_secs(2),
+                    },
+                    "localhost",
+                    client_identity,
+                    binding,
+                )
+                .unwrap()
+            });
+            let deadline = Instant::now() + Duration::from_secs(2);
+            let mut accepted = loop {
+                if let Some(channel) = server.try_accept_until(deadline).unwrap() {
+                    break channel;
+                }
+                thread::yield_now();
+            };
+            let mut client = client.join().unwrap();
+            assert_eq!(accepted.binding(), binding);
+            assert_eq!(client.binding(), binding);
+            // Success leaves the connection usable after watcher cancellation.
+            assert!(accepted.poll_envelope_until(deadline).unwrap().is_none());
+            assert!(client.poll_envelope_until(deadline).unwrap().is_none());
+        }
+    }
+
+    #[test]
+    fn ipc_try_accept_trickled_handshake_cannot_renew_whole_deadline() {
+        let (server_identity, client_identity) = test_identities();
+        let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).unwrap();
+        let address = listener.local_addr().unwrap();
+        let server = AuthenticatedControlServer::from_listener(
+            listener,
+            server_identity,
+            binding(),
+            Duration::from_secs(2),
+        )
+        .unwrap();
+        let mut client = ClientConnection::new(
+            build_client_config(client_identity).unwrap(),
+            ServerName::try_from("localhost").unwrap(),
+        )
+        .unwrap();
+        let mut hello = Vec::new();
+        client.write_tls(&mut hello).unwrap();
+        assert!(hello.len() > 30);
+        let mut socket = TcpStream::connect(address).unwrap();
+        socket
+            .set_write_timeout(Some(Duration::from_secs(1)))
+            .unwrap();
+        let writer = thread::spawn(move || {
+            for byte in hello {
+                if socket.write_all(&[byte]).is_err() {
+                    break;
+                }
+                thread::sleep(Duration::from_millis(20));
+            }
+        });
+        let start = Instant::now();
+        let result = server.try_accept_until(start + Duration::from_millis(250));
+        let elapsed = start.elapsed();
+        assert!(matches!(result, Err(ControlTlsError::Io(error))
+            if error.kind() == std::io::ErrorKind::TimedOut));
+        assert!(elapsed >= Duration::from_millis(250));
+        assert!(elapsed < Duration::from_secs(1));
+        writer.join().unwrap();
+    }
+
+    #[test]
+    fn ipc_try_accept_trickled_binding_shares_handshake_deadline() {
+        let (server_identity, client_identity) = test_identities();
+        let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).unwrap();
+        let address = listener.local_addr().unwrap();
+        let binding = binding();
+        let server = AuthenticatedControlServer::from_listener(
+            listener,
+            server_identity,
+            binding,
+            Duration::from_secs(2),
+        )
+        .unwrap();
+        let socket = TcpStream::connect(address).unwrap();
+        socket
+            .set_read_timeout(Some(Duration::from_secs(2)))
+            .unwrap();
+        socket
+            .set_write_timeout(Some(Duration::from_secs(2)))
+            .unwrap();
+        let writer = thread::spawn(move || {
+            let connection = ClientConnection::new(
+                build_client_config(client_identity).unwrap(),
+                ServerName::try_from("localhost").unwrap(),
+            )
+            .unwrap();
+            let mut stream = StreamOwned::new(connection, socket);
+            while stream.conn.is_handshaking() {
+                stream.conn.complete_io(&mut stream.sock).unwrap();
+            }
+            let mut sent = 0;
+            for byte in encode_bind(binding, BIND_REQUEST) {
+                if stream
+                    .write_all(&[byte])
+                    .and_then(|()| stream.flush())
+                    .is_err()
+                {
+                    break;
+                }
+                sent += 1;
+                thread::sleep(Duration::from_millis(20));
+            }
+            sent
+        });
+        let start = Instant::now();
+        let result = server.try_accept_until(start + Duration::from_millis(400));
+        let elapsed = start.elapsed();
+        assert!(matches!(result, Err(ControlTlsError::Io(error))
+            if error.kind() == std::io::ErrorKind::TimedOut));
+        assert!(elapsed >= Duration::from_millis(400));
+        assert!(elapsed < Duration::from_secs(1));
+        let sent = writer.join().unwrap();
+        assert!(
+            sent > 0,
+            "the peer reached the authenticated binding exchange"
+        );
+        assert!(
+            sent < CONTROL_BIND_BYTES,
+            "the peer observed terminal shutdown"
         );
     }
 

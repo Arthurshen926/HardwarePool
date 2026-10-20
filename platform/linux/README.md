@@ -108,3 +108,11 @@ supervises an already authenticated/admitted playback owner. It adds no CLI
 listener or credential configuration. ADR 1521 lists the remaining executable
 paired identity, catalog, consent and lease composition prerequisites. This is
 still insecure-UDP trusted-lab playback, not completed Linux product integration.
+
+The separately invoked `capyio-node linux-playback --trusted-lab` now composes
+one-shot existing credential/paired-record FIFO handoff, actual TLS/catalog,
+exact local approval and supervised playback. Default commands remain closed.
+Read ADR1522 before using it: inherited stdin is not inherently secure, the
+launcher must be trusted/exclusive, and actual credential access/deployment/device
+setup requires separate authorization. The ADR defines the complete framed input
+schema. No key files, environment-secret loading or enrollment are provided.

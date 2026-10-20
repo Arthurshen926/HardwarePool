@@ -2448,3 +2448,12 @@ playback remains `/bin/cat`, not PipeWire. Run only the new host `playback::test
 and TLS `incremental_poll` socket-free filters with `--skip ipc_` locally after checking exact names;
 all `ipc_` cases require the socket-capable hosted job. No local skipped case is
 counted as passing. ADR 1521 records the remaining executable/device acceptance.
+
+ADR 1522 adds pure launcher config/framing/timer/key-cleanup checks and hosted-only
+`linux_playback` subprocess tests. The latter use FIFO pipes and ephemeral test
+credentials for real pinned TLS/catalog, nonce-bound consent, finite offer,
+redaction and default CLI regression; no reciprocal media offer or PipeWire is
+used. Additional `ipc_try_accept_*` cases verify whole handshake/bind deadlines.
+Compile-only checks are not IPC passes. Run only `launch`, `launcher_io`,
+`secret_der`, and `accept_deadline_check` pure filters locally; exact-head hosted
+CI is the execution gate.

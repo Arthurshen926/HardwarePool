@@ -16,11 +16,15 @@ capyio-adapter-host = { path = "../../../crates/capyio-adapter-host" }
 capyio-adapter-sdk = { path = "../../../crates/capyio-adapter-sdk" }
 
 [dev-dependencies]
-capyio-control-link = { path = "../../../crates/capyio-control-link" }
-capyio-control-tls = { path = "../../../crates/capyio-control-tls" }
-capyio-protocol = { path = "../../../crates/capyio-protocol" }
 rcgen = { version = "=0.14.5", default-features = false, features = ["ring"] }
 capyio-testkit = { path = "../../../crates/capyio-testkit" }
 
 [target.'cfg(target_os = "linux")'.dependencies]
 capyio-linux-audio = { path = "../capyio-audio" }
+rustix = { version = "=1.1.4", default-features = false, features = ["fs", "std"] }
+
+capyio-control-link = { path = "../../../crates/capyio-control-link" }
+capyio-control-tls = { path = "../../../crates/capyio-control-tls" }
+capyio-protocol = { path = "../../../crates/capyio-protocol" }
+capyio-control-credentials = { path = "../../../crates/capyio-control-credentials" }
+capyio-pairing = { path = "../../../crates/capyio-pairing" }

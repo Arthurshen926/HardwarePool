@@ -500,3 +500,10 @@ bounded prefix/body state, returns at most one authenticated message per step,
 and starts a nonrenewable application-frame deadline at its first plaintext
 byte. Idle returns no message. Existing blocking receive behavior is unchanged
 unless mixed with a partial polled frame, which fails closed.
+
+ADR 1522's separate opt-in launcher protocol uses bounded u32 big-endian framed
+stdin/stdout, not the inherited-stdio management protocol or network Envelopes.
+Three one-shot bootstrap frames precede authenticated catalog exchange and an
+exact nonce/Route local approval challenge. Stop/status are separate local
+commands. Full field limits/order and fixed error events are specified in ADR1522.
+Existing network protocol and Android/Windows messages are unchanged.

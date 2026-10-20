@@ -52,6 +52,14 @@ impl LinuxPlaybackHost {
     pub fn run(&mut self) -> io::Result<PlaybackExit> {
         run_owned(&mut self.owner, &self.stop)
     }
+    /// The executable supplies a nonblocking private-launcher poll. This stays
+    /// on the owner thread; callbacks must obey their own bounded I/O contract.
+    pub(crate) fn run_with_local_control(
+        &mut self,
+        control: impl FnMut(&AuthenticatedPlaybackOwner) -> io::Result<bool>,
+    ) -> io::Result<PlaybackExit> {
+        run_owned_with_control(&mut self.owner, &self.stop, control)
+    }
     pub fn snapshot(&self) -> RuntimeSnapshot {
         self.owner.snapshot()
     }
@@ -84,12 +92,25 @@ fn local_stop(stop: &Receiver<()>) -> Option<PlaybackExit> {
     }
 }
 fn run_owned(driver: &mut impl PlaybackDriver, stop: &Receiver<()>) -> io::Result<PlaybackExit> {
+    run_owned_with_control(driver, stop, |_| Ok(false))
+}
+fn run_owned_with_control<T: PlaybackDriver>(
+    driver: &mut T,
+    stop: &Receiver<()>,
+    mut control: impl FnMut(&T) -> io::Result<bool>,
+) -> io::Result<PlaybackExit> {
     let result = (|| {
+        if control(driver)? {
+            return Ok(PlaybackExit::LocalStop);
+        }
         if let Some(reason) = local_stop(stop) {
             return Ok(reason);
         }
         driver.offer()?;
         loop {
+            if control(driver)? {
+                return Ok(PlaybackExit::LocalStop);
+            }
             if let Some(reason) = local_stop(stop) {
                 return Ok(reason);
             }

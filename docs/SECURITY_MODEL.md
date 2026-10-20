@@ -1490,3 +1490,12 @@ frames have nonrenewable deadlines; encrypted-only traffic is work-bounded and
 cannot bypass the host's grant/lease/lifetime checks. No listener or credentials
 are added. This does not secure UDP or create consent from config/peer Ready.
 Executable credential/admission/consent prerequisites are listed in the ADR.
+
+ADR 1522 requires an explicitly invoked lab command and an exclusive trusted
+FIFO launcher. Stdin inheritance is not authentication or confidentiality from
+its invoker. Existing credential/paired-record handoff is one-shot, bounded and
+nonpersistent; diagnostics never echo secret/parser content. Only fresh exact
+local approval after real paired TLS/catalog creates finite grant/lease.
+Transient clearing is best effort, not secure erasure of Rustls/process memory.
+Actual credential access, deployment and device setup require separate approval;
+the source milestone does not provide it. UDP remains unauthenticated lab media.

@@ -117,6 +117,32 @@ jobs:
           ipc_host_last_stop_handle_drop_closes_session
           ipc_host_authenticated_peer_stop_closes_session
           ipc_host_control_disconnect_fails_closed
+          launcher_io::tests::fragmented_frames_do_not_overread
+          launcher_io::tests::oversized_zero_and_eof_are_terminal_and_clear
+          launcher_io::tests::nonblocking_and_interrupted_preserve_partial_state
+          launcher_io::tests::partial_frame_timer_is_nonrenewable_but_idle_has_no_timer
+          launcher_io::tests::partial_body_is_erased_on_read_error
+          launcher_io::tests::write_backpressure_and_trickle_cannot_extend_deadline
+          launcher_io::tests::serialization_is_length_prefixed_and_bounded
+          launcher_io::tests::writes_are_bounded_and_errors_sanitized
+          launch::tests::launch_config_is_explicit_finite_and_not_a_secret_error_or_authorization
+          launch::tests::local_command_rejects_unknown_fields_and_keeps_stop_separate_from_approval
+          ipc_linux_playback_approved_finite_offer_status_and_stop
+          ipc_linux_playback_wrong_nonce_or_route_rejected_without_offer
+          ipc_linux_playback_launcher_eof_cancels_before_authorization
+          ipc_linux_playback_blocked_stdout_exits_within_write_deadlines
+          ipc_linux_playback_previous_invocation_approval_cannot_be_replayed
+          ipc_linux_playback_preplayed_approval_rejected_before_peer
+          ipc_linux_playback_malformed_secret_bootstrap_is_redacted
+          ipc_linux_playback_requires_explicit_opt_in_and_default_remains_demo
+          tests::secret_der_cleanup_clears_entire_transient_buffer
+          tests::secret_der_rejects_invalid_borrowed_encoding
+          tests::secret_der_server_rejects_invalid_ca_before_key_handoff
+          tests::accept_deadline_check_rejects_expired_budget_without_io
+          tests::ipc_try_accept_idle_is_immediate_and_expired_idle_is_error
+          tests::ipc_try_accept_pinned_tls_exact_and_fresh_binding_succeed
+          tests::ipc_try_accept_trickled_handshake_cannot_renew_whole_deadline
+          tests::ipc_try_accept_trickled_binding_shares_handshake_deadline
           TESTS
           cargo test --locked -p capyio-mock-source -p capyio-mock-sink -p capyio-linux-host -p capyio-node -p capyio-linux-audio -p capyio-native-audio-lan -p capyio-control-tls -p capyio-control-link --all-targets -- --list --color never | tee "$RUNNER_TEMP/linux-test-list.txt"
           while IFS= read -r test_name; do

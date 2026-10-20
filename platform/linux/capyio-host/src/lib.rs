@@ -6,6 +6,12 @@
 //! The explicit mock option creates only
 //! labeled synthetic peer/session context and mock-only authorization.
 
+#[cfg(target_os = "linux")]
+mod launch;
+#[cfg(target_os = "linux")]
+mod launcher_io;
+#[cfg(target_os = "linux")]
+pub use launch::run_trusted_lab_playback_stdio;
 mod mock_routes;
 #[cfg(target_os = "linux")]
 mod playback;

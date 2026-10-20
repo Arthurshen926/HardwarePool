@@ -1611,3 +1611,10 @@ It polls incremental authenticated control and bounded media fairly, observes a
 bounded local Stop channel/owner loss, and cleans on terminal outcomes. The
 inherited-stdio/default CLI remains closed; concrete executable admission and
 credential-provider prerequisites are recorded in the ADR, not synthesized.
+
+ADR 1522 adds the explicit `linux-playback --trusted-lab` executable composition:
+bounded inherited FIFO bootstrap, actual paired TLS/catalog, fresh exact-Route
+local approval, finite grant/lease, then the existing supervisor. No default
+listener or persistent credentials are introduced. Trusted launcher and deployment
+credential/device approval remain separate gates; schema and limitations are in
+the ADR.

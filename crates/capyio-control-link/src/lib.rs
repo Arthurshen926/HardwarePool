@@ -121,6 +121,14 @@ impl CatalogControlLink {
     pub const fn peer_node_id(&self) -> NodeId {
         self.peer_node_id
     }
+    /// Address of the authenticated accepted peer. Dialed links deliberately do
+    /// not satisfy the server-side Linux playback owner contract.
+    pub fn accepted_peer_addr(&self) -> Result<std::net::SocketAddr, CatalogLinkError> {
+        match self.channel.as_ref().ok_or(CatalogLinkError::Closed)? {
+            Channel::Accepted(channel) => channel.peer_addr().map_err(Into::into),
+            Channel::Dialed(_) => Err(CatalogLinkError::BindingMismatch),
+        }
+    }
     /// Admits either the first connection or an explicit reconnect after every
     /// earlier Session for this peer is closed.
     pub fn admit_dialed_peer(
@@ -315,6 +323,21 @@ impl CatalogControlLink {
             self.close();
         }
         result.map_err(Into::into)
+    }
+
+    /// Same catalog binding checks, with an absolute whole-write deadline.
+    pub fn send_catalog_until(
+        &mut self,
+        catalog: PreparedCatalog,
+        deadline: Instant,
+    ) -> Result<(), CatalogLinkError> {
+        if catalog.instance_id != self.instance_id
+            || catalog.binding != self.binding
+            || catalog.local_node_id != self.local_node_id
+        {
+            return Err(CatalogLinkError::BindingMismatch);
+        }
+        self.send_bytes_until(&catalog.bytes, deadline)
     }
 
     /// Receives exactly one CatalogSnapshot; unsupported payloads and wrong

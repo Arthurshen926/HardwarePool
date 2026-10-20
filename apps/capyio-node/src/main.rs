@@ -36,6 +36,12 @@ enum Command {
         #[arg(long, requires = "mock_routes", conflicts_with = "mock_payload")]
         mock_batch: bool,
     },
+    /// Explicit one-shot trusted-lab playback. Private inherited FIFO bootstrap;
+    /// no credentials in arguments, no enrollment, no listener without this command.
+    LinuxPlayback {
+        #[arg(long, required = true)]
+        trusted_lab: bool,
+    },
     /// Runs four independent mock Routes across audio, motion and video Profiles.
     Demo,
     /// Prints the initial deterministic Runtime snapshot as JSON.
@@ -58,7 +64,26 @@ fn main() -> anyhow::Result<()> {
         .compact()
         .init();
 
-    let cli = Cli::parse();
+    // This opt-in command accepts secret material only through framed stdin.
+    // Never echo even accidentally supplied argv values on its syntax errors.
+    let lab_command = std::env::args_os()
+        .nth(1)
+        .is_some_and(|arg| arg == "linux-playback");
+    let cli = match Cli::try_parse() {
+        Ok(cli) => cli,
+        Err(error)
+            if lab_command
+                && !matches!(
+                    error.kind(),
+                    clap::error::ErrorKind::DisplayHelp | clap::error::ErrorKind::DisplayVersion
+                ) =>
+        {
+            anyhow::bail!(
+                "invalid Linux lab playback command; --trusted-lab is required; credentials must not be supplied in arguments"
+            )
+        }
+        Err(error) => error.exit(),
+    };
     match cli.command.unwrap_or(Command::Demo) {
         Command::LinuxHost {
             node_id,
@@ -85,6 +110,18 @@ fn main() -> anyhow::Result<()> {
             }
             host.serve(std::io::stdin().lock(), std::io::stdout().lock())?;
             Ok(())
+        }
+        Command::LinuxPlayback { trusted_lab } => {
+            anyhow::ensure!(trusted_lab, "explicit trusted-lab opt-in required");
+            #[cfg(target_os = "linux")]
+            {
+                capyio_linux_host::run_trusted_lab_playback_stdio()
+                    .map_err(|_| anyhow::anyhow!("Linux lab playback launch failed"))
+            }
+            #[cfg(not(target_os = "linux"))]
+            {
+                anyhow::bail!("Linux lab playback requires Linux")
+            }
         }
         Command::Demo => run_demo(),
         Command::Snapshot => print_snapshot(),
