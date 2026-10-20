@@ -1,6 +1,8 @@
 #![cfg(target_os = "linux")]
 //! Hosted executable checks only: ephemeral certificates, loopback control and
-//! inherited FIFO pipes. Never return a media offer or open a device/process.
+//! inherited FIFO pipes. Ordinary tests never return a media offer or open an
+//! audio process. The explicitly ignored end-to-end case additionally requires
+//! the hosted harness's private synthetic PipeWire graph and opt-in markers.
 use capyio_android_jni::AndroidCatalogRuntimeV1;
 use capyio_control_credentials::ControlCredentialBundle;
 use capyio_control_link::{CatalogControlLink, ReceivedControlMessage};
@@ -290,6 +292,13 @@ impl AndroidPeer {
             .unwrap();
     }
     fn negotiate_to_offer(&mut self, expected: RouteId) -> capyio_protocol::ValidatedRouteStatus {
+        self.negotiate_to_offer_with_lifetime(expected, Duration::from_secs(10))
+    }
+    fn negotiate_to_offer_with_lifetime(
+        &mut self,
+        expected: RouteId,
+        lifetime: Duration,
+    ) -> capyio_protocol::ValidatedRouteStatus {
         let deadline = Instant::now() + BOUND;
         let mut narrowed = false;
         let mut leased = false;
@@ -325,7 +334,10 @@ impl AndroidPeer {
                     else {
                         panic!("finite Android consent retained")
                     };
-                    assert!(expiry > now_ms() && expiry <= now_ms() + 10_000);
+                    assert!(
+                        expiry > now_ms()
+                            && expiry <= now_ms() + u64::try_from(lifetime.as_millis()).unwrap()
+                    );
                     assert_eq!(route.authorization, status.route.authorization);
                     narrowed = true;
                     self.link.send_route_status(&route).unwrap();
@@ -618,6 +630,451 @@ fn ipc_linux_playback_requires_explicit_opt_in_and_default_remains_demo() {
     let snapshot: Value = serde_json::from_slice(&default.stdout).unwrap();
     assert_eq!(snapshot["routes"].as_array().unwrap().len(), 4);
     assert!(!String::from_utf8_lossy(&default.stdout).contains("approval_required"));
+}
+
+/// Only scripts/run_pipewire_loopback.py --e2e-fixture may run this case. The
+/// ordinary suite must report it as ignored, not silently treat a missing daemon
+/// or environment opt-in as success. No physical Android/audio hardware is used.
+#[test]
+#[ignore = "requires the dedicated hosted private-PipeWire end-to-end harness"]
+fn hosted_pipewire_android_source_end_to_end() {
+    hosted_pipewire::run();
+}
+
+mod hosted_pipewire {
+    use super::*;
+    use capyio_audio::{AudioMediaPacket, AudioMediaStreamBinding, AudioStreamSpec};
+    use capyio_native_audio_lan::{
+        NativeLanEndpointConfig, NativeLanRouteBinding, NativeLanUdpEndpoint,
+    };
+    use capyio_protocol::RouteCommandAction;
+    use std::{
+        ffi::OsStr,
+        fs::{self, OpenOptions},
+        net::{Ipv4Addr, UdpSocket},
+        os::unix::fs::{FileTypeExt, PermissionsExt},
+        path::{Path, PathBuf},
+    };
+
+    const MARKER: &[u8] = b"capyio-hosted-pipewire-loopback-v1\n";
+    const LIFETIME: Duration = Duration::from_secs(30);
+    const WHOLE_BUDGET: Duration = Duration::from_secs(20);
+    const FRAME_SAMPLES: u32 = 480;
+    const FRAMES: u64 = 500;
+
+    fn opted_in(test: Option<&OsStr>, e2e: Option<&OsStr>, remote: Option<&OsStr>) -> bool {
+        test == Some(OsStr::new("1"))
+            && e2e == Some(OsStr::new("1"))
+            && remote == Some(OsStr::new("capyio-test"))
+    }
+
+    fn exact_marker(path: &Path) -> bool {
+        let metadata = match fs::symlink_metadata(path) {
+            Ok(metadata) => metadata,
+            Err(error) if error.kind() == io::ErrorKind::NotFound => return false,
+            Err(error) => panic!("cannot inspect hosted marker: {error}"),
+        };
+        assert!(
+            metadata.is_file(),
+            "marker must not be a link or special file"
+        );
+        assert_eq!(metadata.len(), MARKER.len() as u64);
+        assert_eq!(fs::read(path).unwrap(), MARKER);
+        true
+    }
+
+    fn private_runtime() -> PathBuf {
+        assert!(
+            opted_in(
+                std::env::var_os("CAPYIO_PIPEWIRE_TEST").as_deref(),
+                std::env::var_os("CAPYIO_PIPEWIRE_E2E").as_deref(),
+                std::env::var_os("PIPEWIRE_REMOTE").as_deref(),
+            ),
+            "requires deliberate hosted synthetic end-to-end opt-in"
+        );
+        let runtime = std::env::var_os("XDG_RUNTIME_DIR").expect("private runtime required");
+        for key in [
+            "PIPEWIRE_RUNTIME_DIR",
+            "PIPEWIRE_CONFIG_DIR",
+            "XDG_CONFIG_HOME",
+            "HOME",
+        ] {
+            assert_eq!(std::env::var_os(key).as_ref(), Some(&runtime));
+        }
+        let runtime = PathBuf::from(runtime);
+        let metadata = fs::symlink_metadata(&runtime).unwrap();
+        assert!(runtime.is_absolute() && metadata.is_dir());
+        assert_eq!(metadata.permissions().mode() & 0o777, 0o700);
+        assert!(exact_marker(&runtime.join(".capyio-pipewire-loopback")));
+        assert!(
+            fs::symlink_metadata(runtime.join("capyio-test"))
+                .unwrap()
+                .file_type()
+                .is_socket(),
+            "private PipeWire daemon must already be listening"
+        );
+        for name in [
+            ".capyio-before-consent",
+            ".capyio-consent-checked",
+            ".capyio-before-android-consent",
+            ".capyio-android-consent-checked",
+            ".capyio-links-ready",
+        ] {
+            assert!(
+                !runtime.join(name).try_exists().unwrap(),
+                "fresh handshake markers required"
+            );
+        }
+        runtime
+    }
+
+    fn checkpoint(
+        runtime: &Path,
+        announce: &str,
+        acknowledged: &str,
+        process: &mut Process,
+        deadline: Instant,
+    ) {
+        let temporary = runtime.join(format!("{announce}.tmp"));
+        let destination = runtime.join(announce);
+        assert!(!destination.try_exists().unwrap());
+        let mut marker = OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&temporary)
+            .unwrap();
+        marker.write_all(MARKER).unwrap();
+        drop(marker);
+        fs::rename(temporary, destination).unwrap();
+        wait_marker(runtime, acknowledged, process, deadline);
+    }
+
+    fn wait_marker(runtime: &Path, name: &str, process: &mut Process, deadline: Instant) {
+        while !exact_marker(&runtime.join(name)) {
+            assert!(Instant::now() < deadline, "bounded hosted graph handshake");
+            assert!(
+                process.child.try_wait().unwrap().is_none(),
+                "playback owner exited during hosted graph handshake"
+            );
+            process.collect();
+            thread::sleep(Duration::from_millis(5));
+        }
+    }
+
+    // The same five-second waveform as the component fixture: two seconds of
+    // 1 kHz, one second of exact zero PCM, two seconds of 2 kHz, 48 kHz S16LE.
+    fn packet(sequence: u64, binding: &AudioMediaStreamBinding) -> AudioMediaPacket {
+        assert!(sequence < FRAMES);
+        let frequency = if sequence < 200 {
+            1_000.0
+        } else if sequence < 300 {
+            0.0
+        } else {
+            2_000.0
+        };
+        let first_sample = sequence * u64::from(FRAME_SAMPLES);
+        let payload = (0..FRAME_SAMPLES)
+            .flat_map(|index| {
+                let angle =
+                    std::f64::consts::TAU * frequency * (first_sample + u64::from(index)) as f64
+                        / 48_000.0;
+                ((angle.sin() * 8_192.0).round() as i16).to_le_bytes()
+            })
+            .collect();
+        AudioMediaPacket {
+            stream_id: binding.stream_id,
+            stream_epoch: binding.stream_epoch,
+            sequence,
+            source_timestamp_micros: sequence * 10_000 + 1,
+            first_sample_index: first_sample,
+            sample_count: FRAME_SAMPLES,
+            discontinuity: false,
+            payload,
+        }
+    }
+
+    fn no_peer_media(peer: &mut AndroidPeer, id: RouteId) {
+        let deadline = Instant::now() + Duration::from_millis(150);
+        while Instant::now() < deadline {
+            assert!(
+                peer.poll_control_message_until(Instant::now() + BOUND)
+                    .unwrap()
+                    .is_none(),
+                "no lease, endpoint offer or Start before independent consent"
+            );
+            assert!(!peer.runtime.audio_should_run(id, now_ms()));
+            assert!(peer.runtime.snapshot().port_leases.is_empty());
+            thread::sleep(Duration::from_millis(2));
+        }
+    }
+
+    pub(super) fn run() {
+        let runtime = private_runtime(); // Fail before any process/socket opens.
+        let deadline = Instant::now() + WHOLE_BUDGET;
+        // Reserve one ephemeral loopback ingress through consent negotiation,
+        // then release it immediately before the production owner needs to bind.
+        let ingress_reservation = UdpSocket::bind((Ipv4Addr::LOCALHOST, 0)).unwrap();
+        let ingress = ingress_reservation.local_addr().unwrap();
+        let mut fixture = Fixture::new();
+        fixture.config["media"] = json!(ingress.to_string());
+        fixture.config["target"] = json!("capyio.test.null");
+        fixture.config["duration_secs"] = json!(LIFETIME.as_secs());
+        let mut process = Process::playback();
+        fixture.bootstrap(&mut process);
+        let mut peer = fixture.connect(&mut process);
+        let approval = process.event("approval_required");
+        assert_eq!(approval["target"], "capyio.test.null");
+        assert_eq!(approval["duration_secs"], LIFETIME.as_secs());
+        assert_eq!(approval["format"], "pcm-s16le-48000-mono");
+        assert_eq!(
+            approval["session_id"],
+            serde_json::to_value(peer.session_id()).unwrap()
+        );
+        let id: RouteId = serde_json::from_value(approval["route_id"].clone()).unwrap();
+        assert!(peer.runtime.snapshot().routes.is_empty());
+        no_peer_media(&mut peer, id);
+        process.command(json!({"version":1,"command":"status"}));
+        assert_eq!(process.event("status")["stage"], "awaiting_local_approval");
+        // The harness checks the actual graph has no player and its live
+        // null-sink monitor is silent before allowing this exact nonce approval.
+        checkpoint(
+            &runtime,
+            ".capyio-before-consent",
+            ".capyio-consent-checked",
+            &mut process,
+            deadline,
+        );
+        process.command(approve(&approval));
+        peer.receive_proposal(id);
+        no_peer_media(&mut peer, id);
+        checkpoint(
+            &runtime,
+            ".capyio-before-android-consent",
+            ".capyio-android-consent-checked",
+            &mut process,
+            deadline,
+        );
+        peer.consent(id, true);
+        let offered = peer.negotiate_to_offer_with_lifetime(id, LIFETIME);
+        assert_eq!(
+            process.event("awaiting_peer_offer")["route_id"],
+            approval["route_id"]
+        );
+        let offer = *offered.native_audio_data.as_ref().unwrap().as_ref();
+        assert_eq!(offer.endpoint, NativeAudioEndpoint::Sink);
+        assert_eq!(offer.preset, NativeAudioPreset::PcmS16le48000Mono);
+        assert_eq!(offer.port, ingress.port());
+        assert_eq!(offered.route.state, RouteState::Starting);
+        assert!(!peer.runtime.audio_should_run(id, now_ms()));
+        assert_eq!(peer.runtime.snapshot().port_leases.len(), 1);
+
+        // This is the synthetic platform endpoint. The real Android coordinator
+        // must prepare and publish its own reciprocal Source offer, preserving
+        // the actual Session/Route/Stream/epoch instead of fabricating Ready.
+        let source_socket = UdpSocket::bind((Ipv4Addr::LOCALHOST, 0)).unwrap();
+        let source = source_socket.local_addr().unwrap();
+        peer.runtime
+            .prepare_audio_endpoint(id, source.port())
+            .unwrap();
+        assert!(!peer.runtime.audio_should_run(id, now_ms()));
+        drop(ingress_reservation);
+        let AndroidPeer {
+            link,
+            runtime: host,
+        } = &mut peer;
+        host.publish_audio_control(link, now_ms()).unwrap();
+        let ReceivedControlMessage::RouteCommand(start) = peer
+            .receive_control_message_until(deadline.min(Instant::now() + BOUND))
+            .unwrap()
+        else {
+            panic!("real Linux owner must explicitly Start the prepared Source")
+        };
+        assert_eq!(start.route_id, id);
+        assert_eq!(start.action, RouteCommandAction::Start);
+        let AndroidPeer {
+            link,
+            runtime: host,
+        } = &mut peer;
+        let started = host
+            .stage_audio_route_command(link, &start, now_ms())
+            .unwrap();
+        assert_eq!(started.state, RouteState::Starting);
+        assert_eq!(started.epoch, offered.route.epoch);
+        assert!(host.audio_should_run(id, now_ms()));
+        link.send_route_status(&started).unwrap();
+        let ReceivedControlMessage::RouteStatus(ready) = peer
+            .receive_control_message_until(deadline.min(Instant::now() + BOUND))
+            .unwrap()
+        else {
+            panic!("actual Linux worker readiness status required")
+        };
+        assert_eq!(ready.route.id, id);
+        assert_eq!(ready.route.state, RouteState::Active);
+        assert!(ready.native_audio_data.is_none());
+        let AndroidPeer {
+            link,
+            runtime: host,
+        } = &mut peer;
+        host.receive_audio_route_status(link, &ready, "127.0.0.1", now_ms())
+            .unwrap();
+        let snapshot = host.snapshot();
+        let route = snapshot.routes.iter().find(|route| route.id == id).unwrap();
+        let session = snapshot
+            .sessions
+            .iter()
+            .find(|session| session.id == route.session_id)
+            .unwrap();
+        let binding = AudioMediaStreamBinding {
+            session_id: route.session_id,
+            route_id: route.id,
+            stream_id: offer.stream_id,
+            stream_epoch: u32::try_from(route.epoch).unwrap(),
+            selected_spec: AudioStreamSpec::voice_interactive(),
+        };
+        let guarded =
+            NativeLanRouteBinding::from_live_context(binding.clone(), route, session, now_ms())
+                .unwrap();
+        let mut sender = NativeLanUdpEndpoint::from_socket(
+            source_socket,
+            NativeLanEndpointConfig {
+                peer: ingress,
+                read_timeout: Duration::from_millis(10),
+                inflight_packet_capacity: 2,
+            },
+            binding.clone(),
+        )
+        .unwrap();
+        assert_eq!(sender.metrics().packets_sent, 0);
+        wait_marker(&runtime, ".capyio-links-ready", &mut process, deadline);
+        process.command(json!({"version":1,"command":"status"}));
+        assert_eq!(process.event("status")["packets_written"], 0);
+
+        let signal_started = Instant::now();
+        for sequence in 0..FRAMES {
+            let when = signal_started + Duration::from_millis(sequence * 10);
+            while Instant::now() < when {
+                assert!(
+                    Instant::now() < deadline,
+                    "bounded five-second media signal"
+                );
+                thread::sleep(Duration::from_millis(1));
+            }
+            assert!(Instant::now() < deadline);
+            let snapshot = peer.runtime.snapshot();
+            let route = snapshot.routes.iter().find(|route| route.id == id).unwrap();
+            let session = snapshot
+                .sessions
+                .iter()
+                .find(|session| session.id == route.session_id)
+                .unwrap();
+            assert!(peer.runtime.audio_should_run(id, now_ms()));
+            guarded
+                .require_live_context(route, session, now_ms())
+                .unwrap();
+            sender.send_packet(&packet(sequence, &binding)).unwrap();
+        }
+        assert_eq!(sender.metrics().packets_sent, FRAMES);
+        // Require all packets through the real owner, not merely UDP send success.
+        loop {
+            assert!(Instant::now() < deadline, "bounded receiver drain");
+            process.command(json!({"version":1,"command":"status"}));
+            let status = process.event("status");
+            assert_eq!(status["route_id"], approval["route_id"]);
+            assert_eq!(status["state"], "active");
+            let written = status["packets_written"].as_u64().unwrap();
+            assert!(written <= FRAMES);
+            if written == FRAMES {
+                break;
+            }
+            thread::sleep(Duration::from_millis(5));
+        }
+        // Let the real graph consume its final queued quantum before closing.
+        thread::sleep(Duration::from_millis(150));
+        drop(sender);
+        process.command(json!({"version":1,"command":"stop"}));
+        process.event("stopped");
+        assert!(
+            process.finish().success(),
+            "owner must reap its actual pw-cat child"
+        );
+        assert!(process.stderr.is_empty());
+        assert!(
+            peer.receive_control_message_until(Instant::now() + BOUND)
+                .is_err()
+        );
+        let AndroidPeer { link, mut runtime } = peer;
+        runtime.close_control_link(link).unwrap();
+        runtime.stop_audio_direction("microphone").unwrap();
+        assert!(!runtime.audio_should_run(id, now_ms()));
+        assert!(
+            runtime.prepare_audio_endpoint(id, source.port()).is_err(),
+            "audio job released"
+        );
+        let stopped = runtime.snapshot();
+        assert!(stopped.port_leases.is_empty());
+        assert!(
+            stopped
+                .sessions
+                .iter()
+                .all(|session| session.state == SessionState::Closed)
+        );
+        assert!(
+            stopped
+                .routes
+                .iter()
+                .all(|route| matches!(route.state, RouteState::Stopped | RouteState::Offline))
+        );
+        assert!(
+            UdpSocket::bind(ingress).is_ok(),
+            "production ingress released"
+        );
+        assert!(UdpSocket::bind(source).is_ok(), "synthetic Source released");
+        assert!(Instant::now() < deadline);
+        eprintln!("capyio_pipewire_e2e=passed authorized_udp=true stop=true child_reaped=true");
+    }
+
+    #[test]
+    fn pure_hosted_pipewire_requires_both_opt_ins_and_private_remote() {
+        let enabled = Some(OsStr::new("1"));
+        let private = Some(OsStr::new("capyio-test"));
+        assert!(opted_in(enabled, enabled, private));
+        assert!(!opted_in(None, enabled, private));
+        assert!(!opted_in(enabled, None, private));
+        assert!(!opted_in(enabled, enabled, Some(OsStr::new("pipewire-0"))));
+        assert!(!opted_in(Some(OsStr::new("true")), enabled, private));
+    }
+
+    #[test]
+    fn pure_hosted_pipewire_signal_preserves_dynamic_binding_and_waveform() {
+        let binding = AudioMediaStreamBinding {
+            session_id: SessionId::new(),
+            route_id: RouteId::new(),
+            stream_id: StreamId::new(),
+            stream_epoch: 7,
+            selected_spec: AudioStreamSpec::voice_interactive(),
+        };
+        for sequence in [0, 199, 200, 299, 300, 499] {
+            let packet = packet(sequence, &binding);
+            packet.validate_against(&binding).unwrap();
+            assert_eq!(packet.first_sample_index, sequence * 480);
+            assert_eq!(packet.source_timestamp_micros, sequence * 10_000 + 1);
+            let samples: Vec<_> = packet
+                .payload
+                .chunks_exact(2)
+                .map(|bytes| i16::from_le_bytes([bytes[0], bytes[1]]))
+                .collect();
+            if (200..300).contains(&sequence) {
+                assert!(samples.iter().all(|sample| *sample == 0));
+            } else {
+                assert!(samples.iter().any(|sample| sample.abs() >= 8_000));
+                let rising = samples
+                    .windows(2)
+                    .filter(|pair| pair[0] <= 0 && pair[1] > 0)
+                    .count();
+                assert_eq!(rising, if sequence < 200 { 10 } else { 20 });
+            }
+        }
+    }
 }
 
 fn identities() -> (

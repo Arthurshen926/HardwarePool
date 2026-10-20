@@ -167,6 +167,8 @@ jobs:
           audio_negotiation::tests::audio_policy_rejects_grant_extension_expiry_mismatch_and_existing_lease
           audio_negotiation::tests::audio_offer_requires_lease_and_preserves_dynamic_binding_without_start
           audio_negotiation::tests::audio_local_stop_cancels_authorized_draft_and_rejects_delayed_start
+          hosted_pipewire::pure_hosted_pipewire_requires_both_opt_ins_and_private_remote
+          hosted_pipewire::pure_hosted_pipewire_signal_preserves_dynamic_binding_and_waveform
           TESTS
           cargo test --locked -p capyio-mock-source -p capyio-mock-sink -p capyio-linux-host -p capyio-node -p capyio-linux-audio -p capyio-native-audio-lan -p capyio-control-tls -p capyio-control-link -p capyio-core -p capyio-runtime -p capyio-android-jni --all-targets -- --list --color never | tee "$RUNNER_TEMP/linux-test-list.txt"
           while IFS= read -r test_name; do
@@ -279,3 +281,27 @@ jobs:
             | tee "$RUNNER_TEMP/pipewire-loopback-result.txt"
           grep -Fx 'capyio_pipewire_loopback=passed real_graph=true ordered_pcm=true cleanup=true' \
             "$RUNNER_TEMP/pipewire-loopback-result.txt"
+      - name: Build integrated Android-policy command fixture without executing IPC
+        run: |
+          set -euo pipefail
+          cargo test --locked -p capyio-node --test linux_playback --no-run \
+            --message-format=json > "$RUNNER_TEMP/pipewire-e2e-build.jsonl"
+      - name: Require one integrated pinned-control UDP PipeWire and Stop run
+        run: |
+          set -euo pipefail
+          fixture="$(python3 - "$RUNNER_TEMP/pipewire-e2e-build.jsonl" <<'PY'
+          import json, sys
+          items = [json.loads(line) for line in open(sys.argv[1])]
+          matches = [item['executable'] for item in items
+                     if item.get('reason') == 'compiler-artifact'
+                     and item.get('target', {}).get('name') == 'linux_playback'
+                     and item.get('executable')]
+          assert len(matches) == 1, 'exact integration executable required'
+          print(matches[0])
+          PY
+          )"
+          timeout --signal=TERM --kill-after=15s 75s python3 scripts/run_pipewire_loopback.py \
+            --hosted-pipewire-loopback --e2e-fixture "$fixture" \
+            | tee "$RUNNER_TEMP/pipewire-e2e-result.txt"
+          grep -Fx 'capyio_pipewire_e2e=passed pinned_tls=true consent=true dynamic_udp=true real_graph=true stop=true cleanup=true' \
+            "$RUNNER_TEMP/pipewire-e2e-result.txt"

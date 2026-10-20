@@ -157,3 +157,18 @@ permission/foreground lifecycle, actual UDP media, and physical output acceptanc
 must still be reported separately. A headless user host can eventually run the
 same playback path with an appropriate user PipeWire session and target, but no
 server configuration or access is authorized or performed by this test.
+
+## Single-run software end-to-end gate
+
+ADR 1527 extends the same private graph job with an integrated test. Require its
+exact-head success marker containing `pinned_tls=true consent=true dynamic_udp=true
+real_graph=true stop=true cleanup=true`. It uses the actual Android coordinator,
+ephemeral pinned TLS, both local consent decisions and negotiated loopback UDP,
+then reads synthetic audio back from real PipeWire. It additionally checks no
+playback before approval and silence/graph removal after explicit Stop.
+
+A successful integrated marker closes the software composition gap; it does not
+replace real-phone microphone/permission/foreground lifecycle, real network or
+physical speaker acceptance. The UDP media remains trusted-lab only. No user
+server deployment, persistent pairing credentials or hardware access is part of
+this gate.

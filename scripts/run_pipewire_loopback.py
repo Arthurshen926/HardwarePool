@@ -65,6 +65,13 @@ context.objects = [
 '''
 
 
+def publish_marker(path):
+    temporary = path.with_name(path.name + '.tmp')
+    with temporary.open('x') as marker:
+        marker.write('capyio-hosted-pipewire-loopback-v1\n')
+    temporary.replace(path)
+
+
 def verify_signal(raw):
     """Require ordered sustained tone/silence/tone, not mere bytes or energy."""
     if len(raw) > LIMIT or len(raw) % 2:
@@ -102,7 +109,17 @@ def verify_signal(raw):
     raise ValueError('ordered sustained PCM signature absent')
 
 
-def select_ports(objects):
+def verify_silence(raw, minimum_samples):
+    if len(raw) > LIMIT or len(raw) % 2 or len(raw) < minimum_samples * 2:
+        raise ValueError('bounded silence evidence absent')
+    samples = array.array('h', raw)
+    if sys.byteorder != 'little':
+        samples.byteswap()
+    if math.sqrt(sum(x * x for x in samples) / len(samples)) >= 100:
+        raise ValueError('unexpected audio outside authorized playback')
+
+
+def select_ports(objects, monitor_only=False):
     nodes = {o['id']: o.get('info', {}).get('props', {}) for o in objects
              if o.get('type') == 'PipeWire:Interface:Node'}
     def node(predicate):
@@ -112,7 +129,6 @@ def select_ports(objects):
         return matches[0]
     sink = node(lambda p: p.get('node.name') == 'capyio.test.null')
     recorder = node(lambda p: p.get('node.name') == 'capyio.test.monitor')
-    player = node(lambda p: p.get('target.object') == 'capyio.test.null')
     def port(owner, direction):
         matches = [o['id'] for o in objects if o.get('type') == 'PipeWire:Interface:Port'
                    and str(o.get('info', {}).get('props', {}).get('node.id')) == str(owner)
@@ -120,22 +136,26 @@ def select_ports(objects):
         if len(matches) != 1:
             raise ValueError('graph ports not uniquely ready')
         return matches[0]
-    return [(port(player, 'out'), port(sink, 'in')),
-            (port(sink, 'out'), port(recorder, 'in'))]
+    monitor = (port(sink, 'out'), port(recorder, 'in'))
+    if monitor_only:
+        return [monitor]
+    player = node(lambda p: p.get('target.object') == 'capyio.test.null')
+    return [(port(player, 'out'), port(sink, 'in')), monitor]
 
 
 class Harness:
-    def __init__(self, root):
+    def __init__(self, root, e2e=False):
         self.root = root
+        self.e2e = e2e
         self.children = []
         self.files = []
-        self.deadline = time.monotonic() + 30
+        self.deadline = time.monotonic() + (45 if e2e else 30)
         # No inherited PipeWire config, remote, preload, session bus or user home.
         self.env = {'PATH': '/usr/bin:/bin', 'LANG': 'C.UTF-8',
                     'HOME': str(root), 'XDG_CONFIG_HOME': str(root),
                     'XDG_RUNTIME_DIR': str(root), 'PIPEWIRE_RUNTIME_DIR': str(root),
                     'PIPEWIRE_CONFIG_DIR': str(root), 'PIPEWIRE_REMOTE': 'capyio-test',
-                    'CAPYIO_PIPEWIRE_TEST': '1'}
+                    'CAPYIO_PIPEWIRE_TEST': '1', 'CAPYIO_PIPEWIRE_E2E': '1'}
 
     def check(self):
         if time.monotonic() >= self.deadline:
@@ -222,8 +242,46 @@ class Harness:
         record = self.spawn(['/usr/bin/pw-cat', '--record', '--rate=48000', '--channels=1',
                              '--format=s16', '--channel-map=mono', '--latency=20ms', '--target=0',
                              '--properties={"node.name":"capyio.test.monitor"}', '-'], 'capture')
-        producer = self.spawn([str(fixture), '--hosted-pipewire-loopback'], 'producer')
-        ready = time.monotonic() + 6
+        producer_args = ([str(fixture), '--ignored', '--exact',
+                          'hosted_pipewire_android_source_end_to_end', '--nocapture',
+                          '--test-threads=1'] if self.e2e else
+                         [str(fixture), '--hosted-pipewire-loopback'])
+        producer = self.spawn(producer_args, 'producer')
+        existing_links = set()
+        if self.e2e:
+            pending = time.monotonic() + 10
+            while not (self.root / '.capyio-before-consent').exists():
+                self.check()
+                if producer.poll() is not None or time.monotonic() >= pending:
+                    raise ValueError('authenticated preconsent checkpoint absent')
+                time.sleep(.02)
+            objects = json.loads(self.command(['/usr/bin/pw-dump']))
+            if any(o.get('info', {}).get('props', {}).get('target.object') == 'capyio.test.null'
+                   for o in objects):
+                raise ValueError('playback appeared before exact local consent')
+            for source, target in select_ports(objects, monitor_only=True):
+                self.command(['/usr/bin/pw-link', str(source), str(target)])
+                existing_links.add((source, target))
+            time.sleep(.4)
+            baseline = (self.root / 'capture.out').read_bytes()
+            verify_silence(baseline, minimum_samples=4800)
+            publish_marker(self.root / '.capyio-consent-checked')
+            pending = time.monotonic() + 10
+            while not (self.root / '.capyio-before-android-consent').exists():
+                self.check()
+                if producer.poll() is not None or time.monotonic() >= pending:
+                    raise ValueError('independent Android consent checkpoint absent')
+                time.sleep(.02)
+            objects = json.loads(self.command(['/usr/bin/pw-dump']))
+            if any(o.get('info', {}).get('props', {}).get('target.object') == 'capyio.test.null'
+                   for o in objects):
+                raise ValueError('playback appeared before Android consent')
+            pending_offset = (self.root / 'capture.out').stat().st_size
+            time.sleep(.4)
+            verify_silence((self.root / 'capture.out').read_bytes()[pending_offset:],
+                           minimum_samples=4800)
+            publish_marker(self.root / '.capyio-android-consent-checked')
+        ready = time.monotonic() + (10 if self.e2e else 6)
         while True:
             self.check()
             if any(c.poll() is not None for c in (daemon, record, producer)):
@@ -237,13 +295,15 @@ class Harness:
                     raise
                 time.sleep(.05)
         for source, target in links:
+            if (source, target) in existing_links:
+                continue
             self.command(['/usr/bin/pw-link', str(source), str(target)])
         objects = json.loads(self.command(['/usr/bin/pw-dump']))
         actual = {(o.get('info', {}).get('output-port-id'), o.get('info', {}).get('input-port-id'))
                   for o in objects if o.get('type') == 'PipeWire:Interface:Link'}
         if not set(links).issubset(actual):
             raise ValueError('explicit links absent')
-        (self.root / '.capyio-links-ready').write_text('capyio-hosted-pipewire-loopback-v1\n')
+        publish_marker(self.root / '.capyio-links-ready')
         while producer.poll() is None:
             self.check()
             if daemon.poll() is not None or record.poll() is not None:
@@ -251,11 +311,25 @@ class Harness:
             time.sleep(.02)
         if producer.returncode or 'child_reaped=true' not in (self.root / 'producer.err').read_text():
             raise ValueError('production fixture failed or did not reap pw-cat')
-        time.sleep(.25)
+        if self.e2e:
+            marker = 'capyio_pipewire_e2e=passed authorized_udp=true stop=true child_reaped=true'
+            if marker not in (self.root / 'producer.err').read_text():
+                raise ValueError('integrated authorization/Stop evidence absent')
+            objects = json.loads(self.command(['/usr/bin/pw-dump']))
+            if any(o.get('info', {}).get('props', {}).get('target.object') == 'capyio.test.null'
+                   for o in objects):
+                raise ValueError('playback graph survived owner Stop')
+            # Allow the already queued graph quantum to drain, then require NEW samples.
+            time.sleep(.1)
+            stopped_offset = (self.root / 'capture.out').stat().st_size
+        time.sleep(.5)
         self.check()
         self.stop(record)
         self.children.remove(record)
-        verify_signal((self.root / 'capture.out').read_bytes())
+        capture = (self.root / 'capture.out').read_bytes()
+        verify_signal(capture)
+        if self.e2e:
+            verify_silence(capture[stopped_offset:], minimum_samples=14400)
 
 
 def interrupted(_signum, _frame):
@@ -265,7 +339,9 @@ def interrupted(_signum, _frame):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--hosted-pipewire-loopback', action='store_true', required=True)
-    parser.add_argument('--fixture', type=Path, required=True)
+    fixtures = parser.add_mutually_exclusive_group(required=True)
+    fixtures.add_argument('--fixture', type=Path)
+    fixtures.add_argument('--e2e-fixture', type=Path)
     args = parser.parse_args()
     if os.environ.get('GITHUB_ACTIONS') != 'true':
         parser.error('requires explicit disposable hosted CI environment')
@@ -275,9 +351,9 @@ def main():
     signal.signal(signal.SIGTERM, interrupted)
     signal.signal(signal.SIGINT, interrupted)
     with tempfile.TemporaryDirectory(prefix='capyio-pipewire-') as directory:
-        harness = Harness(Path(directory))
+        harness = Harness(Path(directory), e2e=args.e2e_fixture is not None)
         try:
-            harness.run(args.fixture.resolve(strict=True))
+            harness.run((args.fixture or args.e2e_fixture).resolve(strict=True))
         except Exception:
             # All processes/configurations are owned synthetic fixtures, no user data.
             for name in ('daemon.err', 'producer.err', 'capture.err', 'command.err'):
@@ -291,7 +367,10 @@ def main():
             signal.signal(signal.SIGTERM, signal.SIG_IGN)
             signal.signal(signal.SIGINT, signal.SIG_IGN)
             harness.close()
-    print('capyio_pipewire_loopback=passed real_graph=true ordered_pcm=true cleanup=true')
+    if args.e2e_fixture:
+        print('capyio_pipewire_e2e=passed pinned_tls=true consent=true dynamic_udp=true real_graph=true stop=true cleanup=true')
+    else:
+        print('capyio_pipewire_loopback=passed real_graph=true ordered_pcm=true cleanup=true')
 
 
 if __name__ == '__main__':

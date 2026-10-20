@@ -4,7 +4,7 @@ import struct
 import unittest
 from unittest.mock import Mock, patch, call
 import signal
-from run_pipewire_loopback import LIMIT, verify_signal, select_ports, Harness, interrupted
+from run_pipewire_loopback import LIMIT, verify_signal, select_ports, Harness, interrupted, verify_silence
 
 
 def tone(hz, seconds):
@@ -29,6 +29,12 @@ class SignalTests(unittest.TestCase):
             with self.assertRaises(ValueError):
                 verify_signal(raw)
 
+    def test_preconsent_and_stop_silence_needs_actual_samples(self):
+        verify_silence(bytes(9600), minimum_samples=4800)
+        for raw in (b'', bytes(9598), tone(1000, .1)):
+            with self.assertRaises(ValueError):
+                verify_silence(raw, minimum_samples=4800)
+
     def test_graph_requires_unique_exact_nodes(self):
         with self.assertRaises(ValueError):
             select_ports([])
@@ -41,6 +47,7 @@ class SignalTests(unittest.TestCase):
                  for i, (owner, direction) in enumerate(((2, 'out'), (0, 'in'),
                                                         (0, 'out'), (1, 'in')))]
         self.assertEqual(select_ports(nodes + ports), [(10, 11), (12, 13)])
+        self.assertEqual(select_ports(nodes[:2] + ports, monitor_only=True), [(12, 13)])
         with self.assertRaises(ValueError):
             select_ports(nodes + ports + [ports[0]])
 

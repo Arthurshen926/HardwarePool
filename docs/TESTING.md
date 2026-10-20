@@ -1165,3 +1165,10 @@ hosted `pipewire-loopback` job. They start a private actual PipeWire daemon and
 synthetic null-sink graph, never hardware or a user's session. Do not run the
 fixture main locally when IPC is sandbox-denied. Only the hosted waveform and
 cleanup success marker proves software graph traversal; see ADR 1526 for limits.
+
+ADR 1527 adds the explicitly ignored `hosted_pipewire_android_source_end_to_end`
+command integration test. Compile it with `cargo test --locked -p capyio-node
+--test linux_playback --no-run`; do not execute it locally under IPC restrictions.
+The hosted private graph harness invokes the exact ignored test with opt-in and
+private markers, and requires integrated control/UDP/PipeWire/Stop success. A
+normal test-suite report listing this case as ignored is not acceptance evidence.

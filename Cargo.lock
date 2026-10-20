@@ -691,6 +691,7 @@ dependencies = [
  "capyio-core",
  "capyio-data-plane",
  "capyio-linux-host",
+ "capyio-native-audio-lan",
  "capyio-pairing",
  "capyio-protocol",
  "capyio-runtime",
