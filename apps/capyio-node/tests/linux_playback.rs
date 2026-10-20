@@ -177,6 +177,15 @@ impl Fixture {
                 port.interoperability_mode = InteroperabilityMode::AdapterManaged;
             }
         }
+        // DemoLab intentionally starts microphone permission-gated. This fixture
+        // models a peer that already granted capture, not a local permission bypass.
+        let microphone = peer.capabilities.get_mut(&source.capability_id).unwrap();
+        microphone.availability = capyio_core::Availability::Available;
+        microphone
+            .ports
+            .get_mut(&source.port_id)
+            .unwrap()
+            .availability = capyio_core::Availability::Available;
         let local = NodeId::new();
         let (bundle, client, client_pin) = identities();
         let mut directory = PairedPeerDirectory::new(local).unwrap();

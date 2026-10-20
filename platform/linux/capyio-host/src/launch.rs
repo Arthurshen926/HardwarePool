@@ -268,30 +268,7 @@ fn prepare(
     let selected = BTreeSet::new();
     let catalog = sanitized(link.prepare_catalog(runtime, &selected))?;
     sanitized(link.send_catalog_until(catalog, deadline))?;
-    // Real authenticated catalog descriptors, not launch-config/fixture ports.
-    let snapshot = runtime.snapshot();
-    let peer = snapshot
-        .peers
-        .iter()
-        .find(|peer| peer.id == config.source.node_id)
-        .ok_or_else(fail)?;
-    let source = sanitized(peer.port(config.source.capability_id, config.source.port_id))?;
-    if source.direction != PortDirection::Source
-        || source.profile != ProfileId::audio_frames_v1()
-        || source.availability != Availability::Available
-        || !source
-            .formats
-            .contains(&FormatDescriptor::new("pcm-s16le-48000-mono"))
-        || !source.qos_modes.contains(&QosMode::Interactive)
-    {
-        return Err(fail());
-    }
-    let route_id = sanitized(runtime.create_route(
-        link.session_id(),
-        config.source,
-        sink,
-        RouteBackend::AdapterManaged,
-    ))?;
+    let route_id = prepare_selected_route(runtime, link.session_id(), config.source, sink)?;
     let request_id = MessageId::new();
     let consent_deadline = Instant::now() + CONSENT;
     io.send_json(&json!({"version":1,"event":"approval_required","request_id":request_id,"route_id":route_id,
@@ -363,6 +340,33 @@ fn prepare(
             },
         },
     )))
+}
+
+fn prepare_selected_route(
+    runtime: &mut NodeRuntime,
+    session_id: SessionId,
+    source_ref: PortRef,
+    sink: PortRef,
+) -> io::Result<RouteId> {
+    // Real authenticated catalog descriptors, not launch-config/fixture ports.
+    let snapshot = runtime.snapshot();
+    let peer = snapshot
+        .peers
+        .iter()
+        .find(|peer| peer.id == source_ref.node_id)
+        .ok_or_else(fail)?;
+    let source = sanitized(peer.port(source_ref.capability_id, source_ref.port_id))?;
+    if source.direction != PortDirection::Source
+        || source.profile != ProfileId::audio_frames_v1()
+        || source.availability != Availability::Available
+        || !source
+            .formats
+            .contains(&FormatDescriptor::new("pcm-s16le-48000-mono"))
+        || !source.qos_modes.contains(&QosMode::Interactive)
+    {
+        return Err(fail());
+    }
+    sanitized(runtime.create_route(session_id, source_ref, sink, RouteBackend::AdapterManaged))
 }
 
 /// A single explicit software playback destination, not a hardware probe or
@@ -475,6 +479,80 @@ mod tests {
             capyio_control_host::project_publication_catalog(&local, &BTreeSet::from([sink.capability_id])),
             Err(capyio_control_host::PublicationError::NotSourceCapability(id)) if id == sink.capability_id
         ));
+    }
+    #[test]
+    fn preconsent_requires_available_source_and_keeps_route_unauthorized() {
+        let lab = capyio_testkit::DemoLab::new().unwrap();
+        let source = lab
+            .runtime
+            .route(lab.routes.phone_microphone_to_windows)
+            .unwrap()
+            .source;
+        let mut peer = lab
+            .runtime
+            .snapshot()
+            .peers
+            .into_iter()
+            .find(|peer| peer.id == source.node_id)
+            .unwrap();
+        for adapter in peer.adapter_instances.values_mut() {
+            adapter
+                .supported_route_modes
+                .insert(RouteBackend::AdapterManaged);
+        }
+        for capability in peer.capabilities.values_mut() {
+            for port in capability.ports.values_mut() {
+                port.interoperability_mode = InteroperabilityMode::AdapterManaged;
+            }
+        }
+        assert_eq!(
+            peer.port(source.capability_id, source.port_id)
+                .unwrap()
+                .availability,
+            Availability::PermissionRequired
+        );
+        let (mut runtime, sink) = local_runtime(NodeId::new()).unwrap();
+        runtime.register_peer(peer.clone(), true).unwrap();
+        let session = runtime.open_session(peer.id).unwrap();
+        assert!(prepare_selected_route(&mut runtime, session, source, sink).is_err());
+        assert!(runtime.snapshot().routes.is_empty());
+        assert!(runtime.snapshot().port_leases.is_empty());
+        // Only this synthetic fixture simulates a remote granted capture state.
+        let capability = peer.capabilities.get_mut(&source.capability_id).unwrap();
+        capability.availability = Availability::Available;
+        capability
+            .ports
+            .get_mut(&source.port_id)
+            .unwrap()
+            .availability = Availability::Available;
+        let (mut runtime, sink) = local_runtime(NodeId::new()).unwrap();
+        runtime.register_peer(peer, true).unwrap();
+        let session = runtime.open_session(source.node_id).unwrap();
+        let route = prepare_selected_route(&mut runtime, session, source, sink).unwrap();
+        assert_eq!(runtime.route(route).unwrap().state, RouteState::Draft);
+        assert_eq!(
+            runtime.route(route).unwrap().authorization,
+            AuthorizationState::Pending
+        );
+        assert!(runtime.snapshot().port_leases.is_empty());
+        // Existing explicit local approval operations must admit this exact pair.
+        runtime
+            .set_local_port_lease_policy(sink, PortLeasePolicy::Exclusive)
+            .unwrap();
+        runtime.authorize_route(route, Some(11_000)).unwrap();
+        runtime
+            .acquire_route_port_lease(route, sink, 11_000, 1_000)
+            .unwrap();
+        runtime
+            .prepare_route(
+                route,
+                Some(FormatDescriptor::new("pcm-s16le-48000-mono")),
+                QosMode::Interactive,
+                1_000,
+            )
+            .unwrap();
+        runtime.begin_route_start(route, 1_000).unwrap();
+        assert_eq!(runtime.route(route).unwrap().state, RouteState::Starting);
     }
     #[test]
     fn local_command_rejects_unknown_fields_and_keeps_stop_separate_from_approval() {
