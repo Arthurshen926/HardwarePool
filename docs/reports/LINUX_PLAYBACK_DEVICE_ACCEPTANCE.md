@@ -139,3 +139,21 @@ The separate [Android compile/Java gate](../adr/1525-android-target-java-compile
 builds the actual ARM64 JNI target and runs existing JVM contracts. Its result
 must be read for the exact tested commit; even a pass does not replace Android
 framework/device or PipeWire capture/render acceptance.
+
+## Headless software graph gate
+
+ADR 1526 adds an isolated hosted PipeWire loopback job. It needs no GUI, sound
+card, Android phone or user server. Official distro tools run against a private
+null sink and monitor; generated tones pass through the production Linux PCM
+pump and actual `pw-cat`, and returned samples must match the ordered signal.
+Check the exact commit's `pipewire-loopback` job and its final
+`real_graph=true ordered_pcm=true cleanup=true` marker before recording a pass.
+A build-only result is not a pass. This test does not install or deploy anything
+on eden, pakka, radio, iclpose or any other user host.
+
+This closes only the software PipeWire graph boundary. The authenticated
+Android-to-Linux control tests, ARM64/JVM compile gate, real phone microphone
+permission/foreground lifecycle, actual UDP media, and physical output acceptance
+must still be reported separately. A headless user host can eventually run the
+same playback path with an appropriate user PipeWire session and target, but no
+server configuration or access is authorized or performed by this test.
