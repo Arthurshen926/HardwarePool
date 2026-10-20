@@ -1592,3 +1592,9 @@ ADR 1518 adds a separate opt-in Linux lab playback executable using the existing
 native microphone UDP wire and a bounded nonblocking PipeWire process endpoint.
 It does not alter the default host, pair peers, compose Runtime Routes, or create
 a virtual microphone. See LINUX-A06 for the staged hardware/control follow-up.
+
+ADR 1519 adds a Runtime-driven Linux playback library worker for already admitted
+dynamic AdapterManaged Routes, using the existing native audio binding and local
+Sink lease checks. It owns real UDP/PipeWire resources but requires caller-driven
+polling and explicit shutdown; it does not add Linux authenticated control or
+change the default host. Active remains readiness, not physical audio evidence.

@@ -478,3 +478,9 @@ opt-in Linux PCM playback. It adds no Envelope, control or data wire. Fixed a200
 lab identities are not the Android integrated dynamic Route workflow. Local CLI
 stdin is Stop/EOF lifecycle only, never media; evidence is forwarded PCM bytes,
 not a Runtime Active transition or authenticated peer.
+
+ADR 1519 adds no control or wire messages. A Linux library worker consumes the
+existing dynamic AudioMediaStreamBinding and live Runtime/lease state, without
+accepting those assertions from serialized peer input. The unchanged static CLI
+and inherited-stdio host cannot start this worker. Authenticated Linux control
+composition and secure media remain separate gates.

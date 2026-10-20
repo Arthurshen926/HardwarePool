@@ -10,6 +10,11 @@ mod pipewire;
 #[cfg(target_os = "linux")]
 pub use pipewire::PipeWirePlayback;
 
+#[cfg(target_os = "linux")]
+mod route;
+#[cfg(target_os = "linux")]
+pub use route::RuntimePlayback;
+
 pub const PCM_PACKET_BYTES: usize = 960;
 pub const MAX_STALL: Duration = Duration::from_millis(250);
 
@@ -124,8 +129,22 @@ impl PlaybackPump {
                 "playback lifetime must be 1..300 seconds",
             ));
         }
+        Self::with_binding(lifetime, microphone_lab_binding())
+    }
+
+    /// Exact dynamic binding from the owning Runtime; this does not grant access.
+    pub fn with_binding(lifetime: Duration, binding: AudioMediaStreamBinding) -> io::Result<Self> {
+        if !(Duration::from_secs(1)..=Duration::from_secs(300)).contains(&lifetime)
+            || binding.selected_spec != capyio_audio::AudioStreamSpec::voice_interactive()
+            || binding.validate().is_err()
+        {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "invalid PCM binding or lifetime",
+            ));
+        }
         Ok(Self {
-            binding: microphone_lab_binding(),
+            binding,
             pending: [0; PCM_PACKET_BYTES],
             offset: 0,
             pending_since: None,

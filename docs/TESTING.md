@@ -2418,3 +2418,12 @@ regression. Synthetic UDP-to-child byte equality, EOF, early exit and full stdin
 cleanup are not physical PipeWire or Android device acceptance. On the restricted
 cloud host run `cargo test -p capyio-linux-audio --lib -- --skip ipc_` only; compile
 the full suite without executing sockets. No actual audio was captured or played.
+
+ADR 1519's Runtime-driven Linux audio tests exercise dynamic bindings, grant/lease
+expiry across open/receive, lost lease, closed Session, changed grant, clock
+regression, finite lifetime, stale owners and cleanup errors without sockets.
+Use `cargo test -p capyio-linux-audio --lib -- --skip ipc_` in the restricted cloud.
+The additional `ipc_dynamic_route_udp_pcm_stop_releases_socket_and_lease` test
+must execute in hosted CI: real UDP and a synthetic child do not prove Android,
+PipeWire, cryptographic admission or audible playback. Local all-target compile
+is not an IPC pass. The caller-driven worker has no independent expiry watchdog.

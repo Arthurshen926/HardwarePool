@@ -596,7 +596,10 @@ name = "capyio-linux-audio"
 version = "0.1.0"
 dependencies = [
  "capyio-audio",
+ "capyio-core",
  "capyio-native-audio-lan",
+ "capyio-runtime",
+ "capyio-testkit",
 ]
 
 [[package]]

@@ -75,6 +75,18 @@ jobs:
           single_fragment_round_trip_preserves_every_wire_field
           malformed_and_conflicting_fragments_fail_closed
           udp_loopback_delivers_fragmented_stereo_and_rejects_another_peer
+          route::tests::route_preflight_rejects_missing_lease_before_open
+          route::tests::route_dynamic_pcm_start_stop_and_drop_are_owned
+          route::tests::route_expiry_during_receive_does_not_forward_pcm
+          route::tests::route_open_failure_releases_lease_and_reports_offline
+          route::tests::route_expiry_during_open_rolls_back_resources
+          route::tests::route_grant_change_disconnect_and_clock_regression_fail_closed
+          route::tests::route_stale_owner_cannot_stop_restarted_epoch
+          route::tests::route_media_and_cleanup_failures_are_not_success
+          route::tests::route_wrong_binding_and_finite_lifetime_fail_closed
+          route::tests::ipc_dynamic_route_udp_pcm_stop_releases_socket_and_lease
+          route::tests::route_stop_cleanup_failure_is_stopping_not_active
+          route::tests::route_runtime_stop_request_cleans_before_more_media
           TESTS
           cargo test --locked -p capyio-mock-source -p capyio-mock-sink -p capyio-linux-host -p capyio-node -p capyio-linux-audio -p capyio-native-audio-lan --all-targets -- --list --color never | tee "$RUNNER_TEMP/linux-test-list.txt"
           while IFS= read -r test_name; do

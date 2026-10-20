@@ -33,3 +33,14 @@ and bytes forwarded to a local pipe, not audible sound or rendered frames.
 See [ADR 1518](../../../docs/adr/1518-linux-audio-playback.md) for limits and
 [LINUX-A06](../../../docs/plans/active/LINUX-A06-audio-playback.md) for subsequent
 virtual microphone, control/security and physical acceptance gates.
+
+## Dynamic Runtime worker (library only)
+
+`RuntimePlayback::open_trusted_lab` connects an already admitted Starting Route
+to this real UDP/PipeWire endpoint using its dynamic binding and local Sink
+lease. The owner must poll it, apply authenticated control/local consent changes
+to its Runtime, and call Stop on shutdown. It does not authenticate peers, grant
+consent, create leases or expose a new host command. Paused polling forwards no
+PCM but does not independently close resources. See
+[ADR 1519](../../../docs/adr/1519-linux-runtime-audio-worker.md) for exact caller,
+security, cleanup and evidence boundaries. The CLI above is still static-lab-only.

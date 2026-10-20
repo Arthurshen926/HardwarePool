@@ -1468,3 +1468,11 @@ IPv4 endpoints and an expected UDP peer. These are scope limits, not authenticat
 static lab bindings remain spoofable and replayable across launches. Existing
 Windows/Android policies are unchanged. No default Linux listener or device action
 is enabled. PipeWire child IPC is bounded; no media enters control messages/logs.
+
+ADR 1519 checks dynamic Linux audio Route grants and local Sink leases before
+resource creation and each PCM delivery, including after receive. A Ready
+Session is not authentication; the trusted caller still owns peer admission,
+negotiation and local consent. The library is not a remote authorization API.
+UDP remains insecure lab transport, with no automatic static-binding fallback.
+Default Linux management opens no listener. Paused polling stops data forwarding
+but resource expiry/closure is caller-driven, not an independent watchdog.

@@ -8,9 +8,14 @@ license.workspace = true
 publish = false
 
 [dependencies]
+capyio-core = { path = "../../../crates/capyio-core" }
+capyio-runtime = { path = "../../../crates/capyio-runtime" }
 capyio-audio = { path = "../../../crates/capyio-audio" }
 capyio-native-audio-lan = { path = "../../../adapters/native-audio-lan" }
 
 [[bin]]
 name = "capyio-linux-audio-playback"
 path = "src/main.rs"
+
+[dev-dependencies]
+capyio-testkit = { path = "../../../crates/capyio-testkit" }

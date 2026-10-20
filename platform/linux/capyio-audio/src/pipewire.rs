@@ -26,6 +26,11 @@ impl PipeWirePlayback {
         Self::spawn(command)
     }
 
+    #[cfg(test)]
+    pub(crate) fn synthetic_cat() -> io::Result<Self> {
+        Self::spawn(Command::new("/bin/cat"))
+    }
+
     fn spawn(mut command: Command) -> io::Result<Self> {
         let (input, child_input) = UnixStream::pair()?;
         input.set_nonblocking(true)?;
