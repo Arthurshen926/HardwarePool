@@ -14,6 +14,10 @@ mod launcher_io;
 pub use launch::run_trusted_lab_playback_stdio;
 mod mock_routes;
 #[cfg(target_os = "linux")]
+mod preflight;
+#[cfg(target_os = "linux")]
+pub use preflight::{PlaybackPreflightReport, inspect_playback_prerequisites};
+#[cfg(target_os = "linux")]
 mod playback;
 #[cfg(target_os = "linux")]
 pub use playback::{LinuxPlaybackHost, PlaybackExit, PlaybackStopHandle};

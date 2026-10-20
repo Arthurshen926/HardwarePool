@@ -116,3 +116,13 @@ Read ADR1522 before using it: inherited stdin is not inherently secure, the
 launcher must be trusted/exclusive, and actual credential access/deployment/device
 setup requires separate authorization. The ADR defines the complete framed input
 schema. No key files, environment-secret loading or enrollment are provided.
+
+## Passive prerequisite report
+
+`capyio-node linux-playback-preflight [--target <name-or-serial>]` reports JSON
+without starting playback, executing tools, connecting to PipeWire, reading
+credentials or listening. Missing prerequisites are diagnostics; successful exit
+and present metadata do not mean ready or authorized. Versions, server liveness
+and actual target availability remain unverified. See [ADR 1523](../../docs/adr/1523-linux-passive-playback-preflight.md)
+and the [real-device acceptance guide](../../docs/reports/LINUX_PLAYBACK_DEVICE_ACCEPTANCE.md)
+before planning any separately approved deployment.

@@ -42,6 +42,12 @@ enum Command {
         #[arg(long, required = true)]
         trusted_lab: bool,
     },
+    /// Reports passive Linux playback prerequisites as JSON; never starts playback or connects.
+    LinuxPlaybackPreflight {
+        /// Optional intended PipeWire target; syntax only, not discovery or authorization.
+        #[arg(long)]
+        target: Option<String>,
+    },
     /// Runs four independent mock Routes across audio, motion and video Profiles.
     Demo,
     /// Prints the initial deterministic Runtime snapshot as JSON.
@@ -121,6 +127,21 @@ fn main() -> anyhow::Result<()> {
             #[cfg(not(target_os = "linux"))]
             {
                 anyhow::bail!("Linux lab playback requires Linux")
+            }
+        }
+        Command::LinuxPlaybackPreflight { target } => {
+            #[cfg(target_os = "linux")]
+            {
+                let report = capyio_linux_host::inspect_playback_prerequisites(target.as_deref());
+                let mut output = std::io::stdout().lock();
+                serde_json::to_writer(&mut output, &report)?;
+                std::io::Write::write_all(&mut output, b"\n")?;
+                Ok(())
+            }
+            #[cfg(not(target_os = "linux"))]
+            {
+                let _ = target;
+                anyhow::bail!("Linux playback preflight requires Linux")
             }
         }
         Command::Demo => run_demo(),
@@ -250,4 +271,36 @@ fn imu_fixture_demo() -> anyhow::Result<()> {
     print!("{}", recorder.as_jsonl());
     println!("recorder_jsonl_end");
     Ok(())
+}
+
+#[cfg(test)]
+mod preflight_cli_tests {
+    use super::*;
+
+    #[test]
+    fn passive_preflight_is_separate_from_playback_and_default() {
+        assert!(
+            Cli::try_parse_from(["capyio-node"])
+                .unwrap()
+                .command
+                .is_none()
+        );
+        assert!(matches!(
+            Cli::try_parse_from(["capyio-node", "linux-playback-preflight"])
+                .unwrap()
+                .command,
+            Some(Command::LinuxPlaybackPreflight { target: None })
+        ));
+        assert!(matches!(
+            Cli::try_parse_from(["capyio-node", "linux-playback-preflight", "--target", "42"])
+                .unwrap()
+                .command,
+            Some(Command::LinuxPlaybackPreflight { target: Some(target) }) if target == "42"
+        ));
+        assert!(Cli::try_parse_from(["capyio-node", "linux-playback"]).is_err());
+        assert!(
+            Cli::try_parse_from(["capyio-node", "linux-playback-preflight", "--trusted-lab"])
+                .is_err()
+        );
+    }
 }

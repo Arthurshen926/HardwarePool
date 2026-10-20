@@ -145,6 +145,14 @@ jobs:
           tests::ipc_try_accept_trickled_binding_shares_handshake_deadline
           launch::tests::local_sink_catalog_requires_no_source_publication_selection
           launch::tests::preconsent_requires_available_source_and_keeps_route_unauthorized
+          preflight::tests::preflight_missing_environment_is_structured_and_never_ready
+          preflight::tests::preflight_target_uses_existing_playback_policy_without_echo
+          preflight::tests::preflight_absent_and_denied_tool_metadata_are_distinct
+          preflight::tests::preflight_runtime_directory_input_is_bounded
+          preflight::tests::preflight_regular_file_is_not_a_pipewire_session
+          preflight::tests::preflight_executable_metadata_is_only_an_unverified_candidate
+          preflight_cli_tests::passive_preflight_is_separate_from_playback_and_default
+          linux_preflight_missing_session_is_json_not_readiness
           TESTS
           cargo test --locked -p capyio-mock-source -p capyio-mock-sink -p capyio-linux-host -p capyio-node -p capyio-linux-audio -p capyio-native-audio-lan -p capyio-control-tls -p capyio-control-link --all-targets -- --list --color never | tee "$RUNNER_TEMP/linux-test-list.txt"
           while IFS= read -r test_name; do
