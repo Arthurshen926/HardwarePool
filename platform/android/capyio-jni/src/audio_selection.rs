@@ -317,7 +317,7 @@ mod tests {
             let remote = node(false, direction, true);
             let session = Session::new(local.id, remote.id);
             let (session_id, source, sink) =
-                select_route(&local, &remote, &[session.clone()], direction).unwrap();
+                select_route(&local, &remote, std::slice::from_ref(&session), direction).unwrap();
             assert_eq!(session_id, session.id);
             assert_eq!(
                 if direction == AudioDirection::Microphone {
@@ -408,7 +408,7 @@ mod tests {
             select_route(
                 &local,
                 &remote,
-                &[session.clone()],
+                std::slice::from_ref(&session),
                 AudioDirection::Microphone
             )
             .is_ok()
@@ -418,7 +418,7 @@ mod tests {
             select_route(
                 &local,
                 &remote,
-                &[session.clone()],
+                std::slice::from_ref(&session),
                 AudioDirection::Microphone
             )
             .is_err()
