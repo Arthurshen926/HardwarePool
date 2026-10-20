@@ -1,6 +1,10 @@
-# Experimental Linux lab PCM playback
+# Standalone experimental Linux lab PCM playback
 
-This is the first Linux real transport/endpoint implementation, not a mock batch.
+This section describes the original ADR 1518 standalone CLI, not the full current
+audio library/launcher. The later explicit launcher adds paired admission and an
+owned virtual Audio/Source; see the [current Linux boundary](../README.md).
+
+The standalone CLI is a real transport/endpoint implementation, not a mock batch.
 It reuses Android's **manual native microphone lab** wire and launches an already
 installed `/usr/bin/pw-cat` for raw mono 48 kHz S16LE playback. It does not create
 a system microphone, pair peers, negotiate Routes or integrate the Android

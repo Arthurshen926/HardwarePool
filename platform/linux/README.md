@@ -1,5 +1,24 @@
 # Linux platform boundary
 
+## Current software-validated scope — 2026-10-20
+
+Implementation `510aea94` passed all three hosted gates in
+[run 39453132776](https://github.com/Arthurshen926/HardwarePool/actions/runs/39453132776).
+The explicit, finite one-peer launcher supports mono 48 kHz S16LE
+Android-compatible PCM into native PipeWire playback or an owned Audio/Source.
+The private graph proves direct independent-recorder readback, no-consumer Stop,
+owned-child exit and server disconnect, with consent and cleanup checks.
+
+These graph cases use Linux-led proposals. Android advertised-capability
+selection and incoming-Draft admission have separate IPC/JNI software evidence,
+not combined incoming-Draft real-graph acceptance. Physical Android capture and
+user-session testing remain deferred. There is no PulseAudio/ALSA compatibility,
+reverse audio, complete Linux pairing UI, autodiscovery or provisioning claim.
+Media is still unauthenticated, unencrypted trusted-lab UDP; existing paired TLS,
+independent consent, exact binding, finite grants and leases remain mandatory.
+
+## Default headless host and earlier increments
+
 `capyio-host` owns a hardware-free Linux NodeRuntime through bounded inherited-pipe
 management. Start with an explicitly supplied stable identity:
 
@@ -22,7 +41,8 @@ The default catalog is empty by design. Without explicit mock opt-in this host
 does not compose Routes. It does not pair with another device, persist an identity, open hardware, install a service or expose
 a network listener. Existing demo commands remain explicitly Windows/Android fixtures.
 Future Linux Adapters may use PipeWire, v4l2loopback, uinput/uhid and USB/IP; none of
-those Linux hardware or system Projection implementations exists in this slice.
+those implementations is enabled by this default headless-host command. The
+separate explicit audio launcher described above is the current PipeWire exception.
 
 ## Opt-in mock subprocess lifecycle
 
@@ -94,8 +114,9 @@ commits are not the tested implementation SHA.
 
 ADR 1518 adds `capyio-linux-audio-playback`, explicitly enabled for a finite
 trusted-lab Android manual-microphone UDP → PipeWire playback path. The default
-headless host is unchanged. This is neither virtual microphone nor dynamic paired
-Route integration; no actual playback has been device-verified. See
+headless host is unchanged. This original standalone CLI does not create a
+virtual microphone or negotiate dynamic paired Routes; later launcher increments
+are described below. No physical-device playback is claimed. See
 [the endpoint README](capyio-audio/README.md) and LINUX-A06 for limits and next gates.
 
 The synthetic endpoint gate passed on implementation `4b5db1a342994365dab9ccff93b670a72fcba49d`:
@@ -130,8 +151,9 @@ before planning any separately approved deployment.
 The Linux-led paired path now follows the actual Android Draft proposal, local
 Android consent, matching finite grant, remote lease and Start sequence (ADR 1524).
 Hosted tests call the real Android coordinator rather than a synthesized ready
-peer. Android-initiated Windows-specific selection and physical audio acceptance
-remain outside this slice. Local approval time includes negotiation; it never
+peer. The subsequent advertised-capability selector and incoming-Draft admission
+remove the old Windows-only selection restriction; physical acceptance remains
+unverified. Local approval time includes negotiation; it never
 extends itself while waiting for the peer.
 
 ### Optional incoming Android Draft mode
@@ -142,8 +164,9 @@ existing Linux-led behavior. Incoming mode advertises its versioned mono audio
 receiver contract and waits for the configured paired Android Source to propose
 its actual Route before asking for fresh route-specific local approval. It does
 not approve Android capture, auto-start playback or broaden the configured peer,
-Source, Sink, target or finite duration. No reverse audio or virtual microphone
-is added. See [ADR 1529](../../docs/adr/1529-linux-incoming-audio-draft.md) for
+Source, Sink, endpoint mode or finite duration. Proposal mode itself adds no
+reverse audio or OS projection; virtual microphone projection is a separate
+endpoint mode below. See [ADR 1529](../../docs/adr/1529-linux-incoming-audio-draft.md) for
 binding, grant ordering, Stop, timeouts and test limitations. Incoming-mode real
 Android/PipeWire audio acceptance is still unverified.
 
@@ -159,6 +182,23 @@ The advertised capability is Microphone, but its network port is Sink. Only afte
 existing independent consent, finite grants and leases can the owned pw-cat
 process expose an Audio/Source for an application to select. No autolinking,
 default-device change, service installation, PulseAudio/ALSA compatibility or
-reverse capture is implied. This candidate requires the private real-PipeWire
-source/readback/cleanup gate; argument tests alone are not readiness evidence.
+reverse capture is implied. The four private real-PipeWire scenarios passed at
+`510aea94` in the run linked above. This establishes bounded native software graph
+behavior, not physical-device or incoming-Draft real-graph acceptance.
 See [ADR 1530](../../docs/adr/1530-linux-owned-virtual-microphone.md).
+
+
+## Next bounded backlog
+
+1. Linux → Android stereo audio, with a distinct local Source and existing
+   independent consent, finite binding and Stop guarantees. It is not implemented
+   by the current mono receive-only path.
+2. Camera, then touchpad, following the Alpha primary capability scope. Each needs
+   its own platform projection, permission boundary and software acceptance gate.
+3. Gamepad, haptics, display and IMU remain experimental tracks, not mandatory
+   full-platform parity for closing this audio milestone.
+
+The Alpha's primary Speaker/Microphone/Camera/Touchpad versus experimental split
+is recorded in [current status](../../docs/CURRENT_STATUS.md). This backlog is
+planning only, not implementation or deployment evidence. Physical tests remain
+postponed until the separate software work is ready for consolidated acceptance.

@@ -1187,5 +1187,10 @@ private real-PipeWire source integration gate. This must prove direct Audio/Sour
 output-port readback by a separate recorder, not a renamed null-sink monitor.
 Default playback remains separately gated. An ignored test listing, compilation,
 or synthetic stdin backpressure test is not real virtual-microphone acceptance.
-The new candidate is pending exact-head hosted execution; physical testing and
-PulseAudio/ALSA compatibility are not claimed.
+Implementation `510aea94` passed all three hosted gates in
+[run 39453132776](https://github.com/Arthurshen926/HardwarePool/actions/runs/39453132776),
+including all four virtual-source scenarios: waveform, no-consumer Stop, owned
+child exit and server disconnect. These use Linux-led proposals; incoming-Draft
+real-graph audio, physical testing and PulseAudio/ALSA compatibility remain
+unverified. The ignored test is explicitly executed by the hosted harness; its
+ordinary ignored listing alone remains insufficient evidence.

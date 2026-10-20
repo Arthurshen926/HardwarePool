@@ -1,6 +1,6 @@
 # ADR 1530: Explicit owned PipeWire virtual microphone
 
-Status: experimental candidate; exact-head hosted graph acceptance pending.
+Status: bounded native software graph accepted at `510aea94`; physical acceptance deferred.
 Date: 2026-10-20
 Base: ff0f0a261a53e26fc2260ca7d09033f5be648299
 
@@ -54,10 +54,10 @@ No-consumer Stop, early owned-child exit and private-server disconnect must be
 bounded; synthetic full-stdin tests remain the separate backpressure proof.
 
 A null-sink monitor with a microphone label is not acceptance. Neither correct
-arguments nor an ignored integration test proves a source works. Local execution
-is blocked by unavailable pw-cat, sandbox IPC restrictions and an uncached Rust
-dependency; hosted exact-head results are required before software readiness is
-reported. Physical Android capture, user-session compatibility and real-device
+arguments nor an ignored integration test proves a source works. The original local execution
+was blocked by unavailable pw-cat, sandbox IPC restrictions and an uncached Rust
+dependency; the exact-head hosted result below supplies the bounded software
+evidence instead. Physical Android capture, user-session compatibility and real-device
 acceptance remain postponed and unclaimed. Native UDP remains the existing
 unencrypted, unauthenticated trusted-lab transport.
 
@@ -71,3 +71,23 @@ clears autoconnect for target `0`; the corresponding
 retains an explicitly supplied media class. These support the candidate design,
 not a substitute for the hosted topology and PCM acceptance gate. No upstream
 code is imported or modified.
+
+
+## Software acceptance — 2026-10-20
+
+Implementation `510aea94` passed Linux validation, Android contracts and private
+PipeWire validation in [run 39453132776](https://github.com/Arthurshen926/HardwarePool/actions/runs/39453132776).
+All four new source scenarios passed: ordered PCM readback by an independent
+recorder, no-consumer Stop, owned-child exit and private-server disconnect. The
+prior playback graph gates also passed. The graph sequence is Linux-led;
+incoming-Draft admission remains separate IPC evidence, not combined real-graph
+proof. Physical testing remains deferred, and native-only compatibility and
+trusted-lab UDP limits above remain unchanged.
+
+The first candidate `886580a` failed its ownership assertion before waveform
+acceptance because the harness expected process identity on the Node. The bounded
+follow-up resolves the exact Node `client.id` to a unique Client and verifies its
+PID against the production child's executable and direct parent. It retains the
+graph, consent, waveform and cleanup assertions. This correction is test-schema
+alignment, not relaxed process ownership. The failed run did not retain its Client
+properties; the successful run is the acceptance evidence, not that earlier run.
