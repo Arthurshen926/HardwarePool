@@ -457,6 +457,46 @@ impl AndroidCatalogRuntimeV1 {
     }
 }
 
+impl AndroidCatalogRuntimeV1 {
+    /// Explicit local user intent only: select the current advertised binding and
+    /// queue a Pending Draft. This never grants the peer's Sink or starts media.
+    pub fn begin_audio_use(&mut self, peer: NodeId, direction: &str) -> Result<Route, String> {
+        let snapshot = self.runtime.snapshot();
+        if snapshot.routes.iter().any(|route| {
+            local_port(self, route).is_some_and(|(_, current)| current == direction)
+                && !matches!(
+                    route.state,
+                    RouteState::Stopped | RouteState::Offline | RouteState::Failed
+                )
+                && route.authorization != AuthorizationState::Denied
+        }) {
+            return Err("audio direction already has a pending or running Route".into());
+        }
+        let direction = crate::audio_selection::AudioDirection::parse(direction)?;
+        let peer = snapshot
+            .peers
+            .iter()
+            .find(|node| node.id == peer)
+            .ok_or("peer catalog is absent")?;
+        let (session, source, sink) = crate::audio_selection::select_route(
+            &snapshot.local_node,
+            peer,
+            &snapshot.sessions,
+            direction,
+        )?;
+        let id = self
+            .runtime
+            .create_route(session, source, sink, RouteBackend::AdapterManaged)
+            .map_err(|error| error.to_string())?;
+        self.audio_local_intent.insert(id);
+        self.audio_status_pending.insert(id);
+        self.runtime
+            .route(id)
+            .cloned()
+            .map_err(|error| error.to_string())
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -649,45 +689,5 @@ mod tests {
         assert!(!host.audio_should_run(id, 104));
         assert!(receive_offer(&mut host, &peer, offer, "127.0.0.1".into(), 104).is_err());
         host.stop_audio_direction("microphone").unwrap();
-    }
-}
-
-impl AndroidCatalogRuntimeV1 {
-    /// Explicit local user intent only: select the current advertised binding and
-    /// queue a Pending Draft. This never grants the peer's Sink or starts media.
-    pub fn begin_audio_use(&mut self, peer: NodeId, direction: &str) -> Result<Route, String> {
-        let snapshot = self.runtime.snapshot();
-        if snapshot.routes.iter().any(|route| {
-            local_port(self, route).is_some_and(|(_, current)| current == direction)
-                && !matches!(
-                    route.state,
-                    RouteState::Stopped | RouteState::Offline | RouteState::Failed
-                )
-                && route.authorization != AuthorizationState::Denied
-        }) {
-            return Err("audio direction already has a pending or running Route".into());
-        }
-        let direction = crate::audio_selection::AudioDirection::parse(direction)?;
-        let peer = snapshot
-            .peers
-            .iter()
-            .find(|node| node.id == peer)
-            .ok_or("peer catalog is absent")?;
-        let (session, source, sink) = crate::audio_selection::select_route(
-            &snapshot.local_node,
-            peer,
-            &snapshot.sessions,
-            direction,
-        )?;
-        let id = self
-            .runtime
-            .create_route(session, source, sink, RouteBackend::AdapterManaged)
-            .map_err(|error| error.to_string())?;
-        self.audio_local_intent.insert(id);
-        self.audio_status_pending.insert(id);
-        self.runtime
-            .route(id)
-            .cloned()
-            .map_err(|error| error.to_string())
     }
 }
