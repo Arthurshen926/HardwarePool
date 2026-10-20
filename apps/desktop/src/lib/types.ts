@@ -484,7 +484,7 @@ export interface UiCameraUse {
   error?: string | null;
 }
 export type AudioUseDirection = 'microphone' | 'speaker';
-export interface UiAudioPeer { nodeId: string; displayName: string; directions: AudioUseDirection[]; }
+export interface UiAudioPeer { nodeId: string; displayName: string; directions: AudioUseDirection[]; unavailableDirections?: { direction: AudioUseDirection; reason: string }[]; }
 export interface UiAudioUse {
   peerNodeId: string;
   direction: AudioUseDirection;

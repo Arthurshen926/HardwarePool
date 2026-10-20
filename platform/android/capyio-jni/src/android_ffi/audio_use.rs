@@ -1,5 +1,8 @@
 use super::*;
 use crate::audio_negotiation::{authority, fail, fail_message, local_port};
+use crate::audio_selection::{
+    ADMISSION_UNSUPPORTED, AudioDirection, select_endpoint, select_route, supports_inbound_draft,
+};
 use capyio_core::*;
 
 #[unsafe(no_mangle)]
@@ -23,10 +26,18 @@ pub extern "system" fn Java_dev_capyio_android_AndroidNativeCatalogRuntime_nativ
             if action=="peers" {
                 let snapshot=host.runtime.snapshot();
                 let peers:Vec<_>=snapshot.peers.iter().filter(|peer|snapshot.sessions.iter().any(|s|s.remote_node_id==peer.id&&s.state==SessionState::Ready)).filter_map(|peer|{
-                    let directions:Vec<_>=[("microphone","d41251b3-63ed-4e83-807e-4c4ab9b20d21",PortDirection::Sink),("speaker","d41251b3-63ed-4e83-807e-4c4ab9b20d22",PortDirection::Source)].into_iter()
-                        .filter(|(_,id,direction)|peer.capabilities.values().any(|cap|cap.id.to_string()==*id&&cap.ports.values().any(|p|p.direction==*direction&&p.profile==ProfileId::audio_frames_v1())))
-                        .map(|(direction,_,_)|direction).collect();
-                    (!directions.is_empty()).then(||serde_json::json!({"nodeId":peer.id.to_string(),"displayName":peer.display_name,"directions":directions}))
+                    let mut directions = Vec::new();
+                    let mut unavailable_directions = Vec::new();
+                    for direction in [AudioDirection::Microphone, AudioDirection::Speaker] {
+                        if let Ok(endpoint) = select_endpoint(peer, direction, false) {
+                            if supports_inbound_draft(peer, endpoint, direction) {
+                                directions.push(direction.name());
+                            } else {
+                                unavailable_directions.push(serde_json::json!({"direction":direction.name(),"reason":ADMISSION_UNSUPPORTED}));
+                            }
+                        }
+                    }
+                    (!directions.is_empty() || !unavailable_directions.is_empty()).then(||serde_json::json!({"nodeId":peer.id.to_string(),"displayName":peer.display_name,"directions":directions,"unavailableDirections":unavailable_directions}))
                 }).collect();
                 return serde_json::to_vec(&peers).map_err(|e|e.to_string());
             }
@@ -43,14 +54,11 @@ pub extern "system" fn Java_dev_capyio_android_AndroidNativeCatalogRuntime_nativ
                 if snapshot.routes.iter().any(|r|local_port(host,r).is_some_and(|(_,d)|d==direction)
                     && !matches!(r.state,RouteState::Stopped|RouteState::Offline|RouteState::Failed)
                     && r.authorization!=AuthorizationState::Denied) {return Err("audio direction already has a pending or running Route".into());}
-                let session=snapshot.sessions.iter().find(|s|s.remote_node_id.to_string()==peer && s.state==SessionState::Ready).ok_or("peer is not connected")?;
-                let (class,suffix)=match direction.as_str(){"microphone"=>(CapabilityClass::Microphone,("21","31")),"speaker"=>(CapabilityClass::Speaker,("22","32")),_=>return Err("unknown audio direction".into())};
-                let cap=snapshot.local_node.capabilities.values().find(|c|c.class==class).ok_or("audio hardware not published")?;
-                let endpoint=cap.ports.values().find(|p|p.profile==ProfileId::audio_frames_v1()).ok_or("audio Port absent")?;
-                let local=PortRef{node_id:snapshot.local_node.id,capability_id:cap.id,port_id:endpoint.id};
-                let remote=PortRef{node_id:session.remote_node_id,capability_id:format!("d41251b3-63ed-4e83-807e-4c4ab9b20d{}",suffix.0).parse().map_err(|_|"invalid cap")?,port_id:format!("d41251b3-63ed-4e83-807e-4c4ab9b20d{}",suffix.1).parse().map_err(|_|"invalid port")?};
-                let (source,sink)=if direction=="microphone"{(local,remote)}else{(remote,local)};
-                let id=host.runtime.create_route(session.id,source,sink,RouteBackend::AdapterManaged).map_err(|e|e.to_string())?;
+                let direction = AudioDirection::parse(&direction)?;
+                let peer_node = snapshot.peers.iter().find(|node|node.id.to_string()==peer).ok_or("peer catalog is absent")?;
+                // Re-read catalog and Ready Session at Start, never reuse a UI selection's binding.
+                let (session, source, sink) = select_route(&snapshot.local_node, peer_node, &snapshot.sessions, direction)?;
+                let id=host.runtime.create_route(session,source,sink,RouteBackend::AdapterManaged).map_err(|e|e.to_string())?;
                 host.audio_local_intent.insert(id);host.audio_status_pending.insert(id);
             } else if action=="prepared" {
                 let id:RouteId=id.parse().map_err(|_|"invalid audio Route")?;
@@ -77,7 +85,7 @@ pub extern "system" fn Java_dev_capyio_android_AndroidNativeCatalogRuntime_nativ
                     "status":if route.authorization==AuthorizationState::Denied{"idle"}else{match route.state{RouteState::Draft=>if route.authorization==AuthorizationState::Pending{"awaiting_consent"}else{"starting"},RouteState::Prepared|RouteState::Starting=>"starting",RouteState::Active=>"active",RouteState::Stopping=>"stopping",RouteState::Stopped=>"idle",_=>"failed"}},
                     "endpointPrepared":job.is_some_and(|job|job.local_port.is_some()),
                     "waitingMedia":direction=="speaker"&&route.state==RouteState::Starting,
-                    "message":if direction=="speaker"&&route.state==RouteState::Starting{Some("扬声器已就绪，等待 Windows 播放音频；尚未收到媒体帧")}else{None},
+                    "message":if direction=="speaker"&&route.state==RouteState::Starting{Some("扬声器已就绪，等待对端发送音频；尚未收到媒体帧")}else{None},
                     "shouldPrepare":live&&job.is_some(),"shouldRun":live&&host.audio_should_run(route.id,now),"expiresAtMs":expires,
                     "error":snapshot.problems.iter().rev().find(|p|p.related_route==Some(route.id)).map(|p|format!("{}: {}",p.code,p.human_message)),
                     "config":job.map(|job|serde_json::json!({"host":job.peer_address,"peerPort":job.offer.port,"streamId":job.offer.stream_id.to_string(),"epoch":job.peer_route.epoch}))}));

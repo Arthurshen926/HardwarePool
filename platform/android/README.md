@@ -278,3 +278,13 @@ pinned tools fail without SDK installation or license acceptance. This is not an
 APK build, Android-framework execution, deployment or physical audio test. See
 [ADR 1525](../../docs/adr/1525-android-target-java-compile-gate.md) for prerequisites
 and exact evidence limits.
+
+### Audio selection boundary (ADR 1528)
+
+Android discovers compatible advertised audio Ports and revalidates their exact
+binding at Start. Compatible Linux playback Sinks appear with an unsupported
+initiation explanation, not a Start action: Linux currently initiates playback
+itself, and incoming Android-led Draft admission remains pending. This does not
+add Linux reverse audio or a virtual microphone. Existing Windows admission,
+independent consent and Stop behavior are retained. See
+[ADR 1528](../../docs/adr/1528-android-audio-catalog-selection.md).

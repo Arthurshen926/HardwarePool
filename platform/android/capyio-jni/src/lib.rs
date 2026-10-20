@@ -42,6 +42,8 @@ use capyio_runtime::{NodeRuntime, RuntimeError, RuntimeSnapshot};
 #[cfg(target_os = "android")]
 mod android_ffi;
 mod audio_negotiation;
+#[cfg(any(target_os = "android", test))]
+mod audio_selection;
 mod control_exchange;
 mod display_catalog;
 mod touchpad_consent;

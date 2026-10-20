@@ -26,6 +26,11 @@ function statusLabel(direction: AudioUseDirection) {
 }
 function running(direction: AudioUseDirection) { const use = state(direction); return !!use && !['idle', 'failed'].includes(use.status); }
 function candidates(direction: AudioUseDirection) { return peers.value.filter(peer => peer.directions.includes(direction)); }
+function unavailable(direction: AudioUseDirection) {
+  return peers.value.flatMap(peer => (peer.unavailableDirections ?? [])
+    .filter(item => item.direction === direction)
+    .map(item => ({ nodeId: peer.nodeId, displayName: peer.displayName, reason: item.reason })));
+}
 async function refresh(force = false) {
   if (disposed || (!force && (polling || busy.value))) return;
   const generation = ++readGeneration;
@@ -78,6 +83,7 @@ onUnmounted(() => { disposed = true; readGeneration++; if (timer) clearInterval(
       <button :class="running(direction) ? 'danger-button' : 'primary-button'" :disabled="!!busy || state(direction)?.status === 'stopping' || (!running(direction) && !candidates(direction).some(peer => peer.nodeId === selected[direction]))" @click="change(direction)">{{ busy === direction ? '正在提交…' : running(direction) ? state(direction)?.status === 'awaiting_consent' ? '取消申请' : '停止使用' : '开始使用' }}</button></div>
       <p class="use-panel__status" :data-state="state(direction)?.status ?? 'idle'" role="status">{{ statusLabel(direction) }}<span v-if="errors[direction] || state(direction)?.error"> · {{ errors[direction] || state(direction)?.error }}</span></p>
       <p v-if="loaded && !readError && !candidates(direction).length && !running(direction)" class="use-panel__empty">还没有可用的设备。请先连接电脑，并确认它支持此项音频功能。</p>
+      <p v-for="peer in unavailable(direction)" :key="peer.nodeId" class="use-panel__empty">{{ peer.displayName }}：{{ peer.reason }}</p>
       <p>{{ direction === 'microphone' ? '首次录音仍需系统麦克风权限；电脑应用中选择对应虚拟麦克风。' : '在电脑应用中选择 CapyIO Speaker 输出；接收器准备完成不代表已经收到可听见的声音。' }}</p>
     </article>
     </div>
