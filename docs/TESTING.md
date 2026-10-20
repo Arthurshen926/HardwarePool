@@ -2408,3 +2408,13 @@ filtered tests, and all 17 mandatory IPC guards including the paced whole-budget
 regression. This is finite four-record batch acceptance, not continuous streaming,
 hardware or production networking evidence. No restricted local socket retry is
 allowed. A later documentation-only evidence commit is not the tested SHA.
+
+## Linux Android-compatible lab playback
+
+ADR 1518 adds nine socket-free Linux playback configuration/pump/argv tests and
+four socket-capable subprocess/UDP tests. The dedicated Linux IPC workflow
+requires their successful outcomes and the existing shared Rust/Java golden wire
+regression. Synthetic UDP-to-child byte equality, EOF, early exit and full stdin
+cleanup are not physical PipeWire or Android device acceptance. On the restricted
+cloud host run `cargo test -p capyio-linux-audio --lib -- --skip ipc_` only; compile
+the full suite without executing sockets. No actual audio was captured or played.

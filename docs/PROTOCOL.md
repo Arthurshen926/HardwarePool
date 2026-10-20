@@ -472,3 +472,9 @@ unchanged one-record receipt. Count must be four, total token bytes 84 and the
 checksum must match ordered sequence/token consumption before Active. The private
 `dev.capyio.test.unix-batch-v1` datagrams remain separate from JSON-RPC payloads
 and do not extend the cross-device protocol or claim continuous streaming.
+
+ADR 1518 reuses the existing native microphone lab UDP framing unchanged for
+opt-in Linux PCM playback. It adds no Envelope, control or data wire. Fixed a200
+lab identities are not the Android integrated dynamic Route workflow. Local CLI
+stdin is Stop/EOF lifecycle only, never media; evidence is forwarded PCM bytes,
+not a Runtime Active transition or authenticated peer.

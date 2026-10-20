@@ -1587,3 +1587,8 @@ See `adr/1515-linux-mock-route-lifecycle.md` for cleanup and trust boundaries.
 ADR 1517 adds separately opted-in fixed four-record Linux mock batches. One
 stateful bounded receiver validates exact sequence/timing and complete consumption
 before Active. It introduces no background worker or continuous stream.
+
+ADR 1518 adds a separate opt-in Linux lab playback executable using the existing
+native microphone UDP wire and a bounded nonblocking PipeWire process endpoint.
+It does not alter the default host, pair peers, compose Runtime Routes, or create
+a virtual microphone. See LINUX-A06 for the staged hardware/control follow-up.

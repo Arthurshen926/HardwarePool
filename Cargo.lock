@@ -592,6 +592,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "capyio-linux-audio"
+version = "0.1.0"
+dependencies = [
+ "capyio-audio",
+ "capyio-native-audio-lan",
+]
+
+[[package]]
 name = "capyio-linux-host"
 version = "0.1.0"
 dependencies = [

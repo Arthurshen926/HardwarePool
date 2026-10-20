@@ -89,3 +89,11 @@ not new subprocess lifecycle or continuous-streaming proof. See
 [LINUX-A05](../../docs/plans/active/LINUX-A05-kernel-queue-acceptance.md) for the
 failed first fixture attempt, correction and evidence limits. Later docs-only
 commits are not the tested implementation SHA.
+
+## Separate experimental PCM playback endpoint
+
+ADR 1518 adds `capyio-linux-audio-playback`, explicitly enabled for a finite
+trusted-lab Android manual-microphone UDP → PipeWire playback path. The default
+headless host is unchanged. This is neither virtual microphone nor dynamic paired
+Route integration; no actual playback has been device-verified. See
+[the endpoint README](capyio-audio/README.md) and LINUX-A06 for limits and next gates.

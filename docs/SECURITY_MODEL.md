@@ -1462,3 +1462,9 @@ four-record batches. Count, token, ordering and timestamps are fixed; records
 remain at most 2048 bytes. Complete receipt validation precedes Active, and
 partial/error paths retain child-before-path cleanup. No peer authentication,
 IP networking, hardware access or asynchronous Stop guarantee is added.
+
+ADR 1518 adds explicit finite Linux playback lab opt-in, private/loopback/overlay
+IPv4 endpoints and an expected UDP peer. These are scope limits, not authentication:
+static lab bindings remain spoofable and replayable across launches. Existing
+Windows/Android policies are unchanged. No default Linux listener or device action
+is enabled. PipeWire child IPC is bounded; no media enters control messages/logs.

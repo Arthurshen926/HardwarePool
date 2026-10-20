@@ -34,7 +34,7 @@ jobs:
       - name: Check formatting
         run: cargo fmt --all -- --check
       - name: Lint Linux host, node and mock adapters
-        run: cargo clippy --locked -p capyio-mock-source -p capyio-mock-sink -p capyio-linux-host -p capyio-node --all-targets -- -D warnings
+        run: cargo clippy --locked -p capyio-mock-source -p capyio-mock-sink -p capyio-linux-host -p capyio-node -p capyio-linux-audio -p capyio-native-audio-lan --all-targets -- -D warnings
       - name: Build repository mock adapters
         run: cargo build --locked -p capyio-mock-source -p capyio-mock-sink
       - name: Require finite IPC regression tests
@@ -59,8 +59,24 @@ jobs:
           mock_routes::tests::batch_faults_drop_both_children_and_remove_owned_directory
           batch_requires_opt_in_and_rejects_payload_conflict
           batch_crosses_real_children_once_per_epoch_and_cleans_on_every_exit
+          tests::owner_stdin_eof_byte_or_error_requests_stop
+          tests::launch_requires_explicit_lab_addresses_target_and_finite_duration
+          tests::partial_writes_preserve_exact_pcm_without_interleaving
+          tests::replay_reset_reorder_and_wrong_binding_are_rejected_but_gaps_allowed
+          tests::congestion_and_trickled_writes_cannot_renew_stall_budget
+          tests::expiry_and_clock_regression_do_not_write_pending_pcm
+          tests::child_failure_is_checked_even_without_a_pending_packet
+          tests::sequence_overflow_cannot_wrap_to_a_fresh_stream
+          pipewire::tests::exact_pipewire_arguments_never_use_a_shell_or_default_target
+          pipewire::tests::ipc_child_eof_and_repeated_stop_reap_owned_process
+          pipewire::tests::ipc_early_child_exit_is_not_playback_readiness
+          pipewire::tests::ipc_full_stdin_never_blocks_stop_and_child_is_reaped
+          pipewire::tests::ipc_android_wire_udp_to_owned_pcm_process_preserves_exact_bytes
+          single_fragment_round_trip_preserves_every_wire_field
+          malformed_and_conflicting_fragments_fail_closed
+          udp_loopback_delivers_fragmented_stereo_and_rejects_another_peer
           TESTS
-          cargo test --locked -p capyio-mock-source -p capyio-mock-sink -p capyio-linux-host -p capyio-node --all-targets -- --list --color never | tee "$RUNNER_TEMP/linux-test-list.txt"
+          cargo test --locked -p capyio-mock-source -p capyio-mock-sink -p capyio-linux-host -p capyio-node -p capyio-linux-audio -p capyio-native-audio-lan --all-targets -- --list --color never | tee "$RUNNER_TEMP/linux-test-list.txt"
           while IFS= read -r test_name; do
             grep -Fx -- "$test_name: test" "$RUNNER_TEMP/linux-test-list.txt"
           done < "$RUNNER_TEMP/required-ipc-tests.txt"
@@ -68,7 +84,7 @@ jobs:
         timeout-minutes: 5
         run: |
           set -euo pipefail
-          timeout --signal=TERM --kill-after=10s 240s cargo test --locked -p capyio-mock-source -p capyio-mock-sink -p capyio-linux-host -p capyio-node --all-targets -- --test-threads=1 --color never | tee "$RUNNER_TEMP/linux-test-results.txt"
+          timeout --signal=TERM --kill-after=10s 240s cargo test --locked -p capyio-mock-source -p capyio-mock-sink -p capyio-linux-host -p capyio-node -p capyio-linux-audio -p capyio-native-audio-lan --all-targets -- --test-threads=1 --color never | tee "$RUNNER_TEMP/linux-test-results.txt"
           while IFS= read -r test_name; do
             grep -Fx -- "test $test_name ... ok" "$RUNNER_TEMP/linux-test-results.txt"
           done < "$RUNNER_TEMP/required-ipc-tests.txt"
