@@ -222,20 +222,87 @@ def verify_virtual_removed(objects, owned, unrelated):
         raise ValueError('unrelated graph object changed during owned Stop')
 
 
-def verify_process_owner(source, expected):
-    """A matching graph name alone cannot prove production pw-cat ownership."""
-    pid = int(source.get('info', {}).get('props', {}).get('application.process.id', 0))
+def ownership_number(value, maximum=(1 << 32) - 2):
+    if type(value) is int:
+        number = value
+    elif isinstance(value, str) and value.isascii() and value.isdecimal():
+        if len(value) > 10:
+            raise ValueError('invalid PipeWire ownership number')
+        number = int(value)
+        if str(number) != value:
+            raise ValueError('noncanonical PipeWire ownership number')
+    else:
+        raise ValueError('invalid PipeWire ownership number')
+    if not 1 <= number <= maximum:
+        raise ValueError('PipeWire ownership number out of range')
+    return number
+
+
+def source_process_id(objects, source, expected):
+    """Resolve the exact Node -> owning Client -> PID, never another pw-cat."""
+    props = source.get('info', {}).get('props', {})
+    if (source.get('type') != 'PipeWire:Interface:Node'
+            or props.get('node.name') != expected['node_name']):
+        raise ValueError('unexpected Source ownership target')
+    # PipeWire 1.0.5 module-client-node/client-node.c sets client.id from the
+    # owning Client global ID. Client context identity is not a Node property.
+    client_id = ownership_number(props.get('client.id'))
+    matches = [o for o in objects if o.get('id') == client_id]
+    if (len(matches) != 1 or type(matches[0].get('id')) is not int
+            or matches[0].get('type') != 'PipeWire:Interface:Client'):
+        raise ValueError('Source owning Client is absent, duplicate or mistyped')
+    client_props = matches[0].get('info', {}).get('props', {})
+    pid = ownership_number(client_props.get('application.process.id'), (1 << 31) - 1)
     if pid <= 1:
-        raise ValueError('virtual microphone process identity absent')
-    process = Path('/proc') / str(pid)
-    status = dict(line.split(':', 1) for line in (process / 'status').read_text().splitlines()
-                  if ':' in line)
-    args = (process / 'cmdline').read_bytes().rstrip(b'\0').split(b'\0')
-    if (int(status['PPid']) != expected['owner_pid']
-            or (process / 'exe').resolve() != Path('/usr/bin/pw-cat').resolve()
-            or not args or b'--playback' not in args or b'--target=0' not in args):
-        raise ValueError('Source is not the production owner direct no-autolink pw-cat child')
+        raise ValueError('invalid Source owning Client PID')
+    # If either redundant identity is present it must agree. Native Linux
+    # pipewire.sec.pid is the daemon's SO_PEERCRED identity, not a fallback.
+    for properties, key in ((props, 'application.process.id'),
+                            (client_props, 'pipewire.sec.pid')):
+        if key in properties and ownership_number(properties[key], (1 << 31) - 1) != pid:
+            raise ValueError('conflicting Source owning process identities')
     return pid
+
+
+def ownership_diagnostic(objects, source):
+    """Bounded allowlist only; never print arbitrary graph properties or paths."""
+    def number(value):
+        try:
+            return ownership_number(value)
+        except ValueError:
+            return None
+    props = source.get('info', {}).get('props', {})
+    client_id = number(props.get('client.id'))
+    matches = [o for o in objects if client_id is not None and o.get('id') == client_id]
+    return {
+        'node_id': number(source.get('id')),
+        'node_client_id': client_id,
+        'node_process_id': number(props.get('application.process.id')),
+        'matching_clients': [{
+            'id': number(o.get('id')),
+            'process_id': number(o.get('info', {}).get('props', {}).get('application.process.id')),
+        } for o in matches[:4]],
+    }
+
+
+def verify_process_owner(objects, source, expected):
+    """A matching graph name alone cannot prove production pw-cat ownership."""
+    try:
+        pid = source_process_id(objects, source, expected)
+        process = Path('/proc') / str(pid)
+        status = dict(line.split(':', 1) for line in (process / 'status').read_text().splitlines()
+                      if ':' in line)
+        args = (process / 'cmdline').read_bytes().rstrip(b'\0').split(b'\0')
+        if (int(status['PPid']) != expected['owner_pid']
+                or (process / 'exe').resolve() != Path('/usr/bin/pw-cat').resolve()
+                or not args or b'--playback' not in args or b'--target=0' not in args):
+            raise ValueError('Source is not the production owner direct no-autolink pw-cat child')
+        return pid
+    except (ValueError, OSError, KeyError):
+        print('capyio_pipewire_ownership='
+              + json.dumps(ownership_diagnostic(objects, source), separators=(',', ':')),
+              file=sys.stderr)
+        raise
 
 
 class Harness:
@@ -389,7 +456,7 @@ class Harness:
                 if time.monotonic() >= ready:
                     raise
                 time.sleep(.05)
-        source_pid = verify_process_owner(source, expected)
+        source_pid = verify_process_owner(objects, source, expected)
         fingerprint = graph_fingerprint(objects)
         owned = {key: fingerprint[key] for key in (source['id'], port['id'])}
         unrelated = {key: value for key, value in fingerprint.items() if key not in owned}
@@ -407,7 +474,9 @@ class Harness:
         if self.virtual_scenario == 'child_exit':
             self.wait_checkpoint(producer, '.capyio-fault-ready')
             # PID was verified as the current launcher's direct pw-cat child.
-            if verify_process_owner(source, expected) != source_pid:
+            current_objects = self.dump()
+            current_source, _ = select_virtual_source(current_objects, expected)
+            if verify_process_owner(current_objects, current_source, expected) != source_pid:
                 raise ValueError('owned pw-cat identity changed before fault injection')
             os.kill(source_pid, signal.SIGTERM)
         elif self.virtual_scenario == 'server_disconnect':

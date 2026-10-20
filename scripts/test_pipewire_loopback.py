@@ -1,14 +1,18 @@
 """Pure checks only: no subprocess, daemon, socket or audio device access."""
 import math
 import copy
+import io
+import json
 import struct
 import unittest
 from unittest.mock import Mock, patch, call
+from pathlib import Path
 import signal
 from run_pipewire_loopback import (
     LIMIT, VIRTUAL_PREFIX, verify_signal, select_ports, Harness, interrupted, verify_silence,
     virtual_expectation, virtual_nodes, select_virtual_source, recorder_port,
     graph_fingerprint, verify_virtual_removed,
+    ownership_number, source_process_id, ownership_diagnostic, verify_process_owner,
 )
 
 
@@ -66,7 +70,10 @@ class VirtualMicrophoneTests(unittest.TestCase):
         }
         self.source = dict(id=50, type='PipeWire:Interface:Node', info={'props': {
             'node.name': self.expected['node_name'], 'media.class': 'Audio/Source',
-            'node.virtual': True, 'application.process.id': 124, 'object.serial': 150}})
+            'node.virtual': True, 'client.id': 40, 'application.process.id': 124,
+            'object.serial': 150}})
+        self.client = dict(id=40, type='PipeWire:Interface:Client', info={'props': {
+            'application.process.id': 124, 'pipewire.sec.pid': 124, 'object.serial': 140}})
         self.output = dict(id=51, type='PipeWire:Interface:Port', info={'props': {
             'node.id': '50', 'port.direction': 'out', 'audio.channel': 'MONO',
             'object.serial': 151}})
@@ -146,6 +153,107 @@ class VirtualMicrophoneTests(unittest.TestCase):
         fresh['info']['props']['object.serial'] = 190
         with self.assertRaises(ValueError):
             verify_virtual_removed(self.unrelated + [fresh], owned, unrelated)
+
+    def test_source_process_identity_comes_from_exact_owning_client(self):
+        # The upstream Node shape need not repeat Client process properties.
+        source = copy.deepcopy(self.source)
+        del source['info']['props']['application.process.id']
+        graph = [source, self.client]
+        self.assertEqual(source_process_id(graph, source, self.expected), 124)
+        self.assertEqual(source_process_id([self.client], self.source, self.expected), 124)
+        client = copy.deepcopy(self.client)
+        client['info']['props'].pop('pipewire.sec.pid')
+        client['info']['props']['application.process.id'] = '124'
+        source['info']['props']['client.id'] = '40'
+        self.assertEqual(source_process_id([client], source, self.expected), 124)
+
+    def test_missing_duplicate_or_mistyped_client_cannot_fallback_to_node_pid(self):
+        wrong_type = copy.deepcopy(self.client)
+        wrong_type['type'] = 'PipeWire:Interface:Node'
+        wrong_id = copy.deepcopy(self.client)
+        wrong_id['id'] = 41
+        wrong_id_type = copy.deepcopy(self.client)
+        wrong_id_type['id'] = '40'
+        no_pid = copy.deepcopy(self.client)
+        del no_pid['info']['props']['application.process.id']
+        for graph in ([], [self.source], [self.client, self.client],
+                      [self.client, wrong_type], [wrong_type], [wrong_id],
+                      [wrong_id_type], [no_pid]):
+            with self.subTest(graph=graph), self.assertRaises(ValueError):
+                source_process_id(graph, self.source, self.expected)
+        source, client = copy.deepcopy(self.source), copy.deepcopy(self.client)
+        source['info']['props']['client.id'] = 1
+        client['id'] = True
+        with self.assertRaises(ValueError):
+            source_process_id([client], source, self.expected)
+
+    def test_invalid_ownership_numbers_and_conflicting_identities_fail_closed(self):
+        for value in (None, True, False, -1, 0, 1.0, '', ' 124', '0124',
+                      '1e2', '１２４', '9' * 1000, [], {}, 1 << 32):
+            with self.subTest(value=value), self.assertRaises(ValueError):
+                ownership_number(value)
+            source = copy.deepcopy(self.source)
+            source['info']['props']['client.id'] = value
+            with self.assertRaises(ValueError):
+                source_process_id([self.client], source, self.expected)
+        for value in (None, True, False, -1, 0, 1, 124.0, '', '0124', 1 << 31):
+            client = copy.deepcopy(self.client)
+            client['info']['props']['application.process.id'] = value
+            with self.subTest(pid=value), self.assertRaises(ValueError):
+                source_process_id([client], self.source, self.expected)
+        for target, key, value in (
+                ('node', 'application.process.id', 125),
+                ('node', 'application.process.id', None),
+                ('node', 'node.name', 'different.source'),
+                ('client', 'pipewire.sec.pid', 125),
+                ('client', 'pipewire.sec.pid', None)):
+            source, client = copy.deepcopy(self.source), copy.deepcopy(self.client)
+            (source if target == 'node' else client)['info']['props'][key] = value
+            with self.subTest(target=target, key=key), self.assertRaises(ValueError):
+                source_process_id([client], source, self.expected)
+
+    def test_proc_executable_parent_and_no_autolink_checks_still_required(self):
+        graph = [self.source, self.client]
+        stderr = io.StringIO()
+        with patch('run_pipewire_loopback.Path.read_text', return_value='PPid:\t123\n'), \
+             patch('run_pipewire_loopback.Path.read_bytes',
+                   return_value=b'/usr/bin/pw-cat\0--playback\0--target=0\0-'), \
+             patch('run_pipewire_loopback.Path.resolve', return_value=Path('/usr/bin/pw-cat')), \
+             patch('run_pipewire_loopback.sys.stderr', stderr):
+            self.assertEqual(verify_process_owner(graph, self.source, self.expected), 124)
+            with patch('run_pipewire_loopback.Path.read_text', return_value='PPid:\t999\n'), \
+                 self.assertRaises(ValueError):
+                verify_process_owner(graph, self.source, self.expected)
+            with patch('run_pipewire_loopback.Path.resolve',
+                       side_effect=[Path('/usr/bin/unrelated'), Path('/usr/bin/pw-cat')]), \
+                 self.assertRaises(ValueError):
+                verify_process_owner(graph, self.source, self.expected)
+            for args in (b'', b'/usr/bin/pw-cat\0--record\0--target=0\0-',
+                         b'/usr/bin/pw-cat\0--playback\0--target=auto\0-'):
+                with patch('run_pipewire_loopback.Path.read_bytes', return_value=args), \
+                     self.assertRaises(ValueError):
+                    verify_process_owner(graph, self.source, self.expected)
+            with patch('run_pipewire_loopback.Path.read_text', side_effect=FileNotFoundError), \
+                 self.assertRaises(FileNotFoundError):
+                verify_process_owner(graph, self.source, self.expected)
+        self.assertEqual(stderr.getvalue().count('capyio_pipewire_ownership='), 6)
+
+    def test_ownership_failure_diagnostics_are_bounded_numeric_allowlist_only(self):
+        secret = 'PRIVATE_GRAPH_VALUE_MUST_NOT_ESCAPE'
+        source, client = copy.deepcopy(self.source), copy.deepcopy(self.client)
+        source['info']['props'].update({'application.process.id': secret, 'secret': secret})
+        client['info']['props'].update({'application.process.id': secret, 'secret': secret})
+        diagnostic = ownership_diagnostic([client] * 100, source)
+        self.assertEqual(set(diagnostic),
+                         {'node_id', 'node_client_id', 'node_process_id', 'matching_clients'})
+        self.assertEqual(len(diagnostic['matching_clients']), 4)
+        self.assertIsNone(diagnostic['node_process_id'])
+        for item in diagnostic['matching_clients']:
+            self.assertEqual(item, {'id': 40, 'process_id': None})
+        encoded = json.dumps(diagnostic)
+        self.assertNotIn(secret, encoded)
+        self.assertNotIn('node.name', encoded)
+        self.assertLess(len(encoded), 512)
 
 
 class CleanupTests(unittest.TestCase):
