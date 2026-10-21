@@ -6,7 +6,7 @@
 #include <spa/param/video/format-utils.h>
 #include <spa/buffer/meta.h>
 static inline struct spa_pod *camera_format(struct spa_pod_builder *b) {
-    const struct spa_video_info_raw f = {
+    struct spa_video_info_raw f = {
         .format=SPA_VIDEO_FORMAT_NV12, .size={CAMERA_WIDTH,CAMERA_HEIGHT},
         .framerate={30,1}, .color_range=SPA_VIDEO_COLOR_RANGE_16_235,
         .color_matrix=SPA_VIDEO_COLOR_MATRIX_BT709,
