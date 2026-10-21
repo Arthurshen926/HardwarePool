@@ -592,6 +592,14 @@ mod paired_store_cli_tests {
         let Some(Command::LinuxCatalog { paired_store, .. }) = parsed.command else {
             panic!("catalog command required")
         };
+        // Parsing is platform-neutral; constructing the Linux protected-store
+        // selection is intentionally available only on Linux.
+        assert!(paired_store.pairing_state.is_none());
+        assert!(paired_store.pairing_node.is_none());
+        assert!(paired_store.pairing_peer.is_none());
+        assert!(paired_store.pairing_bus_address.is_none());
+        assert!(paired_store.pairing_collection.is_none());
+        #[cfg(target_os = "linux")]
         assert!(paired_store.selection().unwrap().is_none());
         assert!(
             Cli::try_parse_from([
