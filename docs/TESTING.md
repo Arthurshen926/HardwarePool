@@ -1194,3 +1194,14 @@ child exit and server disconnect. These use Linux-led proposals; incoming-Draft
 real-graph audio, physical testing and PulseAudio/ALSA compatibility remain
 unverified. The ignored test is explicitly executed by the hosted harness; its
 ordinary ignored listing alone remains insufficient evidence.
+
+ADR 1531 adds `capyio-node --test linux_capture`: ordinary IPC cases exercise
+finite bilateral stereo negotiation and denial/expiry/Stop cleanup. The explicitly
+ignored graph fixture runs only under `scripts/run_pipewire_capture.py` against
+a private actual PipeWire server, separately for waveform, child exit, server
+disconnect, control disconnect and expiry. Each scenario requires its exact
+success marker. `scripts/test_pipewire_capture.py` checks the distinct-channel
+PCM oracle and graph/ownership rejection predicates without starting IPC.
+Compilation, a normal ignored listing, or those pure tests are not graph evidence.
+Android policy and shared Rust UDP reception are real; consumption is simulated,
+not Java AudioTrack or device acceptance. Existing three hosted jobs remain gates.

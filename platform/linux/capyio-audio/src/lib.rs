@@ -1,5 +1,5 @@
-//! Explicit trusted-lab PCM playback or PipeWire virtual-microphone projection.
-//! Neither mode performs pairing or opens resources on import.
+//! Explicit trusted-lab PCM playback, virtual microphone or selected stereo capture.
+//! No mode performs pairing or opens resources on import.
 use std::{io, net::SocketAddrV4, time::Duration};
 
 use capyio_audio::{AudioMediaPacket, AudioMediaStreamBinding};
@@ -21,6 +21,17 @@ mod owner;
 pub use owner::{
     AuthenticatedPlaybackOwner, PlaybackAdmission, PlaybackOwnerEvent, PlaybackTarget,
 };
+
+#[cfg(target_os = "linux")]
+mod capture;
+#[cfg(target_os = "linux")]
+pub use capture::{CAPTURE_PCM_PACKET_BYTES, CaptureMetrics, CapturePump, PcmCaptureSource};
+#[cfg(target_os = "linux")]
+mod capture_pipewire;
+#[cfg(target_os = "linux")]
+pub use capture_pipewire::PipeWireCapture;
+#[cfg(target_os = "linux")]
+mod capture_route;
 
 pub const PCM_PACKET_BYTES: usize = 960;
 pub const MAX_STALL: Duration = Duration::from_millis(250);
@@ -45,12 +56,39 @@ pub enum EndpointMode {
     #[default]
     Playback,
     VirtualMicrophone,
+    /// Explicit selected input only, never the default system source.
+    StereoCapture,
 }
 impl EndpointMode {
+    pub(crate) fn capture(self) -> bool {
+        self == Self::StereoCapture
+    }
+    pub(crate) fn spec(self) -> capyio_audio::AudioStreamSpec {
+        if self.capture() {
+            capyio_audio::AudioStreamSpec::media_balanced()
+        } else {
+            capyio_audio::AudioStreamSpec::voice_interactive()
+        }
+    }
+    pub(crate) fn endpoint(self) -> capyio_protocol::NativeAudioEndpoint {
+        if self.capture() {
+            capyio_protocol::NativeAudioEndpoint::Source
+        } else {
+            capyio_protocol::NativeAudioEndpoint::Sink
+        }
+    }
+    pub(crate) fn preset(self) -> capyio_protocol::NativeAudioPreset {
+        if self.capture() {
+            capyio_protocol::NativeAudioPreset::PcmS16le48000Stereo
+        } else {
+            capyio_protocol::NativeAudioPreset::PcmS16le48000Mono
+        }
+    }
     pub fn name(self) -> &'static str {
         match self {
             Self::Playback => "playback",
             Self::VirtualMicrophone => "virtual_microphone",
+            Self::StereoCapture => "stereo_capture",
         }
     }
 }
@@ -65,6 +103,11 @@ pub(crate) fn validate_endpoint_target(
     target: &str,
 ) -> Result<(), &'static str> {
     validate_target(target)?;
+    if mode == EndpointMode::StereoCapture
+        && (target.eq_ignore_ascii_case("auto") || target.eq_ignore_ascii_case("default"))
+    {
+        return Err("capture requires an explicit source");
+    }
     if mode == EndpointMode::VirtualMicrophone {
         let suffix = target
             .strip_prefix("capyio.virtual-microphone.")
@@ -150,6 +193,8 @@ pub struct PlaybackMetrics {
     pub packets_queued: u64,
     /// Entire packets copied to the local process stream, not audible frames.
     pub packets_written: u64,
+    /// Stereo capture packets handed to UDP, never proof of audible delivery.
+    pub packets_sent: u64,
     pub stale_packets: u64,
     pub malformed_packets: u64,
     pub packets_dropped_busy: u64,

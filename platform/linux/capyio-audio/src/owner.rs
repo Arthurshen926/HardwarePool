@@ -1,13 +1,15 @@
 //! Accepted-channel composition only. No listener, pairing store or credentials.
 //! Existing local grants are consumed, never inferred from authenticated offers.
 use crate::{PlaybackConfig, PlaybackMetrics, RuntimePlayback};
-use capyio_audio::{AudioMediaStreamBinding, AudioStreamSpec};
+use capyio_audio::AudioMediaStreamBinding;
+#[cfg(test)]
+use capyio_audio::AudioStreamSpec;
 use capyio_control_link::{CatalogControlLink, ReceivedControlMessage};
 use capyio_control_tls::{AuthenticatedControlServerChannel, ControlTlsBinding};
 use capyio_core::{AuthorizationState, Availability, PortDirection, Route, RouteId, RouteState};
-use capyio_protocol::{
-    NativeAudioDataOffer, NativeAudioEndpoint, NativeAudioPreset, RouteCommandAction,
-};
+use capyio_protocol::{NativeAudioDataOffer, RouteCommandAction};
+#[cfg(test)]
+use capyio_protocol::{NativeAudioEndpoint, NativeAudioPreset};
 use capyio_runtime::{NodeRuntime, RuntimeSnapshot};
 use std::{
     io,
@@ -292,8 +294,8 @@ impl AuthenticatedPlaybackOwner {
                         now_ms()?,
                     )
                     .map_err(error)?;
-                if preparation.local_endpoint != NativeAudioEndpoint::Sink
-                    || preparation.preset != NativeAudioPreset::PcmS16le48000Mono
+                if preparation.local_endpoint != self.target.endpoint_mode.endpoint()
+                    || preparation.preset != self.target.endpoint_mode.preset()
                 {
                     return Err(error("only the admitted mono playback Sink is supported"));
                 }
@@ -401,7 +403,7 @@ impl AuthenticatedPlaybackOwner {
                 .route(self.admission.route_id)
                 .expect("owned Route exists")
                 .epoch as u32,
-            selected_spec: AudioStreamSpec::voice_interactive(),
+            selected_spec: self.target.endpoint_mode.spec(),
         }
     }
     fn operation_deadline(&mut self) -> io::Result<Instant> {
@@ -415,7 +417,14 @@ impl AuthenticatedPlaybackOwner {
         };
         let lease = self
             .runtime
-            .route_port_lease_claim(route.id, route.sink)
+            .route_port_lease_claim(
+                route.id,
+                if self.target.endpoint_mode.capture() {
+                    route.source
+                } else {
+                    route.sink
+                },
+            )
             .ok_or_else(|| error("local Sink lease missing"))?
             .expires_at_ms;
         let remaining_ms = grant
@@ -538,13 +547,11 @@ fn validate_catalog_endpoints(
             .map_err(error)?;
         // AndroidCapabilityModules.audio availability maps an owned foreground
         // lifecycle (starting/active capture) to BUSY. Only our already-opened
-        // exact Route may retain that remote Source after Start was sent. BUSY
+        // exact Route may retain that remote endpoint after Start was sent. BUSY
         // is never admission, permission, or proof that another use is ours.
-        let owned_source = started_peer
-            && direction == PortDirection::Source
-            && reference.node_id != snapshot.local_node.id;
+        let owned_remote = started_peer && reference.node_id != snapshot.local_node.id;
         let available = |value| {
-            value == Availability::Available || (owned_source && value == Availability::Busy)
+            value == Availability::Available || (owned_remote && value == Availability::Busy)
         };
         if !available(capability.availability)
             || !available(port.availability)
@@ -590,8 +597,8 @@ fn validate_admission(
         .map_err(error)?;
     if !(Duration::from_secs(1)..=Duration::from_secs(300)).contains(&target.duration)
         || target.duration.subsec_nanos() != 0
-        || admission.local_offer.endpoint != NativeAudioEndpoint::Sink
-        || admission.local_offer.preset != NativeAudioPreset::PcmS16le48000Mono
+        || admission.local_offer.endpoint != target.endpoint_mode.endpoint()
+        || admission.local_offer.preset != target.endpoint_mode.preset()
         || admission.local_offer.port != target.local.port()
     {
         return Err(error("invalid explicit Linux playback admission"));
@@ -617,9 +624,14 @@ fn validate_admission(
             "virtual microphone identity differs from admitted local Sink",
         ));
     }
+    let (local, peer) = if target.endpoint_mode.capture() {
+        (route.source, route.sink)
+    } else {
+        (route.sink, route.source)
+    };
     if route.session_id != actual.session_id
-        || route.source.node_id != actual.client_node_id
-        || route.sink.node_id != actual.server_node_id
+        || peer.node_id != actual.client_node_id
+        || local.node_id != actual.server_node_id
     {
         return Err(error("playback Route differs from paired channel binding"));
     }
@@ -630,7 +642,7 @@ fn validate_admission(
             route_id: route.id,
             stream_id: admission.local_offer.stream_id,
             stream_epoch: u32::try_from(route.epoch).map_err(error)?,
-            selected_spec: AudioStreamSpec::voice_interactive(),
+            selected_spec: target.endpoint_mode.spec(),
         },
         now,
     )
@@ -679,6 +691,56 @@ mod tests {
             },
         )
     }
+    #[test]
+    fn capture_owner_requires_source_offer_and_exact_stereo_binding() {
+        let (mut runtime, media) = crate::route::tests::fixture_for(true);
+        let route = runtime.route(media.route_id).unwrap().clone();
+        let admission = PlaybackAdmission {
+            expected: ControlTlsBinding::new(
+                media.session_id,
+                route.source.node_id,
+                route.sink.node_id,
+            )
+            .unwrap(),
+            route_id: route.id,
+            local_offer: NativeAudioDataOffer {
+                port: 40211,
+                stream_id: media.stream_id,
+                endpoint: NativeAudioEndpoint::Source,
+                preset: NativeAudioPreset::PcmS16le48000Stereo,
+            },
+        };
+        let target = PlaybackTarget {
+            local: "127.0.0.1:40211".parse().unwrap(),
+            duration: Duration::from_secs(10),
+            pipewire_target: "exact.approved.source".into(),
+            endpoint_mode: crate::EndpointMode::StereoCapture,
+        };
+        validate_admission(&runtime, admission.expected, admission, &target, 1_000).unwrap();
+        for case in 0..3 {
+            let mut wrong = admission;
+            match case {
+                0 => wrong.local_offer.endpoint = NativeAudioEndpoint::Sink,
+                1 => wrong.local_offer.preset = NativeAudioPreset::PcmS16le48000Mono,
+                _ => wrong.expected.session_id = SessionId::new(),
+            }
+            assert!(
+                validate_admission(&runtime, admission.expected, wrong, &target, 1_000).is_err()
+            );
+        }
+        assert!(
+            validate_admission(&runtime, admission.expected, admission, &target, 5_000).is_err()
+        );
+        let mut peer = runtime.snapshot().peers[0].clone();
+        peer.capabilities
+            .get_mut(&route.sink.capability_id)
+            .unwrap()
+            .availability = Availability::Busy;
+        runtime.accept_peer_catalog(media.session_id, peer).unwrap();
+        assert!(validate_catalog_endpoints(&runtime, route.id, false).is_err());
+        validate_catalog_endpoints(&runtime, route.id, true).unwrap();
+    }
+
     #[test]
     fn ordinary_peer_status_preserves_exact_authority_without_media_readiness() {
         let (runtime, admission, _) = fixture();

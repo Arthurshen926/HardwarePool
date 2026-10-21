@@ -327,3 +327,38 @@ fn endpoint_configuration_is_literal_bounded_and_times_out() {
         Err(NativeLanError::ReceiveTimeout)
     ));
 }
+
+#[test]
+fn ipc_checked_stereo_send_revalidates_before_every_fragment() {
+    for fail_at in [1, 2] {
+        let binding = fixed_binding(AudioStreamSpec::media_balanced());
+        let packet = pcm_packet(&binding, 0);
+        let receiver = UdpSocket::bind("127.0.0.1:0").unwrap();
+        let mut sender = NativeLanUdpEndpoint::bind(
+            "127.0.0.1:0".parse().unwrap(),
+            NativeLanEndpointConfig {
+                peer: receiver.local_addr().unwrap(),
+                read_timeout: Duration::from_millis(1),
+                inflight_packet_capacity: 1,
+            },
+            binding,
+        )
+        .unwrap();
+        let mut checks = 0;
+        assert!(
+            sender
+                .send_packet_checked(&packet, || {
+                    checks += 1;
+                    if checks == fail_at {
+                        Err(NativeLanError::InvalidConfiguration("authority expired"))
+                    } else {
+                        Ok(())
+                    }
+                })
+                .is_err()
+        );
+        assert_eq!(checks, fail_at);
+        assert_eq!(sender.metrics().packets_sent, 0);
+        assert_eq!(sender.metrics().datagrams_sent, fail_at - 1);
+    }
+}

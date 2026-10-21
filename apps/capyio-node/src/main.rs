@@ -42,6 +42,11 @@ enum Command {
         #[arg(long, required = true)]
         trusted_lab: bool,
     },
+    /// Explicit selected-source stereo capture with framed private bootstrap.
+    LinuxCapture {
+        #[arg(long, required = true)]
+        trusted_lab: bool,
+    },
     /// Reports passive Linux playback prerequisites as JSON; never starts playback or connects.
     LinuxPlaybackPreflight {
         /// Optional intended PipeWire target; syntax only, not discovery or authorization.
@@ -74,7 +79,7 @@ fn main() -> anyhow::Result<()> {
     // Never echo even accidentally supplied argv values on its syntax errors.
     let lab_command = std::env::args_os()
         .nth(1)
-        .is_some_and(|arg| arg == "linux-playback");
+        .is_some_and(|arg| arg == "linux-playback" || arg == "linux-capture");
     let cli = match Cli::try_parse() {
         Ok(cli) => cli,
         Err(error)
@@ -127,6 +132,18 @@ fn main() -> anyhow::Result<()> {
             #[cfg(not(target_os = "linux"))]
             {
                 anyhow::bail!("Linux lab playback requires Linux")
+            }
+        }
+        Command::LinuxCapture { trusted_lab } => {
+            anyhow::ensure!(trusted_lab, "explicit trusted-lab opt-in required");
+            #[cfg(target_os = "linux")]
+            {
+                capyio_linux_host::run_trusted_lab_capture_stdio()
+                    .map_err(|_| anyhow::anyhow!("Linux lab capture launch failed"))
+            }
+            #[cfg(not(target_os = "linux"))]
+            {
+                anyhow::bail!("Linux lab capture requires Linux")
             }
         }
         Command::LinuxPlaybackPreflight { target } => {

@@ -191,6 +191,42 @@ jobs:
           launch::incoming_tests::incoming_peer_grant_only_matches_or_narrows_existing_local_approval
           audio_selection::tests::versioned_incoming_contract_uses_actual_ports_and_only_mono_sink
           incoming_audio_contract_metadata_roundtrips_without_granting_permission
+          ipc_linux_capture_approved_finite_offer_status_and_stop
+          ipc_linux_capture_android_denial_never_acquires_sink_or_offers
+          ipc_linux_capture_local_stop_while_android_consent_pending
+          ipc_linux_capture_wrong_nonce_or_route_rejected_without_offer
+          ipc_linux_capture_launcher_eof_cancels_before_authorization
+          ipc_linux_capture_blocked_stdout_exits_within_write_deadlines
+          ipc_linux_capture_previous_invocation_approval_cannot_be_replayed
+          ipc_linux_capture_preplayed_approval_rejected_before_peer
+          ipc_linux_capture_malformed_secret_bootstrap_is_redacted
+          ipc_linux_capture_requires_explicit_opt_in_and_default_remains_demo
+          ipc_linux_capture_malformed_and_truncated_framing_fails_closed
+          ipc_linux_capture_no_reciprocal_offer_expires_without_media
+          hosted_capture::pure_capture_harness_requires_private_remote_and_exact_scenario
+          launch::tests::capture_launch_has_distinct_explicit_schema_and_published_stereo_source
+          owner::tests::capture_owner_requires_source_offer_and_exact_stereo_binding
+          route::tests::capture_guard_requires_exact_local_source_stereo_grant_and_lease
+          ipc_checked_stereo_send_revalidates_before_every_fragment
+          capture::tests::capture_requires_exact_dynamic_stereo_binding_and_finite_lifetime
+          capture::tests::capture_partial_reads_preserve_exact_stereo_packets_and_timeline
+          capture::tests::capture_trickled_partial_packet_cannot_extend_absolute_assembly_budget
+          capture::tests::capture_idle_and_interrupted_reads_are_bounded_without_padding
+          capture::tests::capture_eof_and_truncation_are_terminal_without_emitting_padding
+          capture::tests::capture_lifetime_clock_failure_and_explicit_discard_stop_before_read
+          capture::tests::capture_source_failure_invalid_read_and_timeline_exhaustion_fail_closed
+          capture_pipewire::tests::capture_pipewire_exact_raw_stereo_target_without_environment_override
+          capture_pipewire::tests::capture_pipewire_rejects_default_ambiguous_or_injected_targets
+          capture_pipewire::tests::ipc_capture_owned_stdout_packet_and_repeated_stop_reap_child
+          capture_pipewire::tests::ipc_capture_early_exit_and_backpressured_stdout_cleanup_are_bounded
+          capture_pipewire::tests::ipc_capture_dynamic_stereo_packet_native_udp_preserves_exact_bytes
+          capture_route::tests::ipc_capture_runtime_stop_discards_resources_without_offline_failure
+          capture_route::tests::ipc_capture_lost_lease_prevents_read_send_and_releases_udp
+          capture_route::tests::ipc_capture_source_open_failure_releases_udp_and_source_lease
+          capture_route::tests::ipc_capture_exited_source_cannot_activate_and_releases_resources
+          capture_route::tests::ipc_capture_lifetime_elapsed_during_open_cannot_activate
+          capture_route::tests::ipc_capture_lifetime_session_or_grant_change_stops_before_read_or_send
+          capture_route::tests::ipc_capture_drop_releases_udp_without_claiming_runtime_transition
           TESTS
           cargo test --locked -p capyio-mock-source -p capyio-mock-sink -p capyio-linux-host -p capyio-node -p capyio-linux-audio -p capyio-native-audio-lan -p capyio-control-tls -p capyio-control-link -p capyio-core -p capyio-runtime -p capyio-android-jni -p capyio-protocol --all-targets -- --list --color never | tee "$RUNNER_TEMP/linux-test-list.txt"
           while IFS= read -r test_name; do
@@ -348,4 +384,32 @@ jobs:
               | tee "$RUNNER_TEMP/pipewire-virtual-microphone-$scenario-result.txt"
             grep -Fx "capyio_pipewire_virtual_microphone=passed scenario=$scenario pinned_tls=true consent=true dynamic_udp=true real_source=true stop=true cleanup=true" \
               "$RUNNER_TEMP/pipewire-virtual-microphone-$scenario-result.txt"
+          done
+      - name: Validate pure stereo capture signal and graph isolation oracle
+        run: python3 -m unittest discover -s scripts -p test_pipewire_capture.py -v
+      - name: Build Linux-to-Android stereo capture command fixture without executing IPC
+        run: |
+          set -euo pipefail
+          cargo test --locked -p capyio-node --test linux_capture --no-run \
+            --message-format=json > "$RUNNER_TEMP/pipewire-capture-build.jsonl"
+      - name: Require isolated stereo capture waveform and lifecycle failure cleanup
+        run: |
+          set -euo pipefail
+          fixture="$(python3 - "$RUNNER_TEMP/pipewire-capture-build.jsonl" <<'PYFIXTURE'
+          import json, sys
+          items = [json.loads(line) for line in open(sys.argv[1])]
+          matches = [item['executable'] for item in items
+                     if item.get('reason') == 'compiler-artifact'
+                     and item.get('target', {}).get('name') == 'linux_capture'
+                     and item.get('executable')]
+          assert len(matches) == 1, 'exact capture integration executable required'
+          print(matches[0])
+          PYFIXTURE
+          )"
+          for scenario in waveform child_exit server_disconnect control_disconnect timeout; do
+            timeout --signal=TERM --kill-after=15s 75s python3 scripts/run_pipewire_capture.py \
+              --hosted-pipewire-capture --fixture "$fixture" --scenario "$scenario" \
+              | tee "$RUNNER_TEMP/pipewire-capture-$scenario-result.txt"
+            grep -Fx "capyio_pipewire_capture=passed scenario=$scenario pinned_tls=true independent_consent=true stereo=true real_graph=true simulated_app=true stop=true cleanup=true" \
+              "$RUNNER_TEMP/pipewire-capture-$scenario-result.txt"
           done

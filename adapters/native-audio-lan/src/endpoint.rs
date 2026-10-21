@@ -114,10 +114,21 @@ impl NativeLanUdpEndpoint {
     }
 
     pub fn send_packet(&mut self, packet: &AudioMediaPacket) -> Result<(), NativeLanError> {
+        self.send_packet_checked(packet, || Ok(()))
+    }
+
+    /// Recheck caller-owned finite authority before each bounded fragment send.
+    /// A failed check stops immediately; a partial packet never reports sent.
+    pub fn send_packet_checked(
+        &mut self,
+        packet: &AudioMediaPacket,
+        mut before_fragment: impl FnMut() -> Result<(), NativeLanError>,
+    ) -> Result<(), NativeLanError> {
         packet.validate_against(&self.binding)?;
         let fragment_count = native_lan_fragment_count(packet.payload.len())?;
         let mut datagram = [0_u8; MAX_NATIVE_LAN_DATAGRAM_BYTES];
         for fragment_index in 0..fragment_count {
+            before_fragment()?;
             let bytes =
                 encode_native_lan_fragment(&self.binding, packet, fragment_index, &mut datagram)?;
             let sent = self.socket.send_to(&datagram[..bytes], self.config.peer)?;

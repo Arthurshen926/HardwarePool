@@ -188,11 +188,28 @@ behavior, not physical-device or incoming-Draft real-graph acceptance.
 See [ADR 1530](../../docs/adr/1530-linux-owned-virtual-microphone.md).
 
 
+### Experimental explicit stereo capture to Android
+
+`capyio-node linux-capture --trusted-lab` adds a separate Linux-led reverse path.
+The bounded version-1 configuration names the exact paired Android `sink` Port
+and explicit native PipeWire `target`, along with `node_id`, `listen`, `media`
+and finite `duration_secs`. It rejects default/automatic capture and does not
+change the playback launcher schema. Independent consent, finite grants and
+Source/Sink leases must complete before the owned capture process starts.
+The network Source advertises 48 kHz S16LE stereo, matching Android's existing
+Speaker receiver. See [ADR 1531](../../docs/adr/1531-linux-explicit-stereo-capture.md).
+
+The new private graph acceptance is pending. Its five required scenarios use a
+synthetic distinct-channel source, the production Linux sender, actual Android
+Rust policy/shared UDP receiver, and simulated consumption. They do not establish
+Java AudioTrack, physical audibility, user-session automatic routing or encrypted
+media. Existing mono/virtual-source results above remain separate evidence.
+
+
 ## Next bounded backlog
 
-1. Linux → Android stereo audio, with a distinct local Source and existing
-   independent consent, finite binding and Stop guarantees. It is not implemented
-   by the current mono receive-only path.
+1. Complete hosted acceptance of the explicit Linux → Android stereo candidate
+   above, then consolidate deferred physical/AudioTrack acceptance separately.
 2. Camera, then touchpad, following the Alpha primary capability scope. Each needs
    its own platform projection, permission boundary and software acceptance gate.
 3. Gamepad, haptics, display and IMU remain experimental tracks, not mandatory

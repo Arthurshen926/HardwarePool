@@ -75,6 +75,32 @@ struct LaunchConfig {
     #[serde(default)]
     proposal_mode: ProposalMode,
 }
+/// Separate explicit CLI schema: the configured remote endpoint is a Sink.
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct CaptureLaunchConfig {
+    version: u32,
+    node_id: NodeId,
+    sink: PortRef,
+    listen: SocketAddrV4,
+    media: SocketAddrV4,
+    target: String,
+    duration_secs: u64,
+}
+fn parse_capture(bytes: &[u8]) -> io::Result<LaunchConfig> {
+    let value: CaptureLaunchConfig = sanitized(serde_json::from_slice(bytes))?;
+    if value.target.eq_ignore_ascii_case("auto") || value.target.eq_ignore_ascii_case("default") {
+        return Err(fail());
+    }
+    // Reuse address/duration validation without accepting playback schema fields.
+    let encoded = sanitized(serde_json::to_vec(
+        &json!({"version":value.version,"node_id":value.node_id,"source":value.sink,"listen":value.listen,"media":value.media,"target":value.target,"duration_secs":value.duration_secs}),
+    ))?;
+    let mut config = LaunchConfig::parse(&encoded)?;
+    config.endpoint_mode = EndpointMode::StereoCapture;
+    Ok(config)
+}
+
 fn deserialize_endpoint_mode<'de, D: serde::Deserializer<'de>>(
     deserializer: D,
 ) -> Result<EndpointMode, D::Error> {
@@ -88,7 +114,9 @@ fn deserialize_endpoint_mode<'de, D: serde::Deserializer<'de>>(
 impl LaunchConfig {
     fn output_target(&self, sink: PortRef) -> io::Result<String> {
         match self.endpoint_mode {
-            EndpointMode::Playback => self.target.clone().ok_or_else(fail),
+            EndpointMode::Playback | EndpointMode::StereoCapture => {
+                self.target.clone().ok_or_else(fail)
+            }
             EndpointMode::VirtualMicrophone => {
                 Ok(capyio_linux_audio::virtual_microphone_name(sink.port_id))
             }
@@ -159,8 +187,14 @@ impl LocalCommand {
 /// never loads a path, environment variable, credential store or user device.
 /// All returned errors are static and do not contain input/config/key material.
 pub fn run_trusted_lab_playback_stdio() -> io::Result<()> {
+    run_stdio(false)
+}
+pub fn run_trusted_lab_capture_stdio() -> io::Result<()> {
+    run_stdio(true)
+}
+fn run_stdio(capture: bool) -> io::Result<()> {
     let mut io = sanitized(LauncherIo::stdio())?;
-    let result = launch(&mut io);
+    let result = launch(&mut io, capture);
     if result.is_err() {
         // Do not echo parser/TLS/runtime errors or secrets even on malformed input.
         let _ = io.send_json(
@@ -171,9 +205,14 @@ pub fn run_trusted_lab_playback_stdio() -> io::Result<()> {
     result.map_err(|_| fail())
 }
 
-fn launch(io: &mut LauncherIo) -> io::Result<()> {
+fn launch(io: &mut LauncherIo, capture: bool) -> io::Result<()> {
     let bootstrap_deadline = Instant::now() + BOOTSTRAP;
-    let config = LaunchConfig::parse(io.read_frame(LOCAL_FRAME, bootstrap_deadline)?.as_slice())?;
+    let bytes = io.read_frame(LOCAL_FRAME, bootstrap_deadline)?;
+    let config = if capture {
+        parse_capture(bytes.as_slice())?
+    } else {
+        LaunchConfig::parse(bytes.as_slice())?
+    };
     let directory_bytes = io.read_frame(65_536, bootstrap_deadline)?;
     let directory = sanitized(PairedPeerDirectory::decode_json(
         config.node_id,
@@ -258,7 +297,7 @@ fn launch(io: &mut LauncherIo) -> io::Result<()> {
         if !command.simple("status") { return Err(fail()); }
         let snapshot = owner.snapshot();
         let route = snapshot.routes.iter().find(|route| route.id == route_id).ok_or_else(fail)?;
-        io.send_json(&json!({"version":1,"event":"status","route_id":route_id,"state":route.state,"packets_written":owner.metrics().map(|metrics|metrics.packets_written).unwrap_or(0)}), Instant::now() + Duration::from_secs(1))?;
+        io.send_json(&json!({"version":1,"event":"status","route_id":route_id,"state":route.state,"packets_written":owner.metrics().map(|metrics|metrics.packets_written).unwrap_or(0),"packets_sent":owner.metrics().map(|metrics|metrics.packets_sent).unwrap_or(0)}), Instant::now() + Duration::from_secs(1))?;
         Ok(false)
     });
     sanitized(outcome)?;
@@ -311,12 +350,32 @@ fn prepare(
     }
     // This set opts Sources into publication; Sink-only capabilities are
     // already included. Selecting the Sink here is a NotSourceCapability error.
-    let selected = BTreeSet::new();
+    let capture = config.endpoint_mode == EndpointMode::StereoCapture;
+    let selected = if capture {
+        BTreeSet::from([sink.capability_id])
+    } else {
+        BTreeSet::new()
+    };
     let catalog = sanitized(link.prepare_catalog(runtime, &selected))?;
     sanitized(link.send_catalog_until(catalog, deadline))?;
     let route_id = match config.proposal_mode {
         ProposalMode::LinuxLed => {
-            prepare_selected_route(runtime, link.session_id(), config.source, sink)?
+            if capture {
+                validate_remote_endpoint(
+                    runtime,
+                    config.source,
+                    PortDirection::Sink,
+                    "pcm-s16le-48000-stereo",
+                )?;
+                sanitized(runtime.create_route(
+                    link.session_id(),
+                    sink,
+                    config.source,
+                    RouteBackend::AdapterManaged,
+                ))?
+            } else {
+                prepare_selected_route(runtime, link.session_id(), config.source, sink)?
+            }
         }
         ProposalMode::IncomingDraft => {
             let Some(route_id) = receive_pending_proposal(io, runtime, link, config.source, sink)?
@@ -326,12 +385,22 @@ fn prepare(
             route_id
         }
     };
+    let (route_source, route_sink) = if capture {
+        (sink, config.source)
+    } else {
+        (config.source, sink)
+    };
+    let format = if capture {
+        "pcm-s16le-48000-stereo"
+    } else {
+        "pcm-s16le-48000-mono"
+    };
     let request_id = MessageId::new();
     let consent_deadline = Instant::now() + CONSENT;
     io.send_json(&json!({"version":1,"event":"approval_required","request_id":request_id,"route_id":route_id,
-        "session_id":link.session_id(),"source":config.source,"sink":sink,"target":config.target,
+        "session_id":link.session_id(),"source":route_source,"sink":route_sink,"target":config.target,
         "endpoint_mode":config.endpoint_mode.name(),"node_name":if config.endpoint_mode==EndpointMode::VirtualMicrophone { Some(config.output_target(sink)?) } else { None },
-        "format":"pcm-s16le-48000-mono","duration_secs":config.duration_secs,"approval_timeout_secs":CONSENT.as_secs(),"media_security":"unauthenticated_udp_trusted_lab_only"}), Instant::now() + Duration::from_secs(1))?;
+        "format":format,"duration_secs":config.duration_secs,"approval_timeout_secs":CONSENT.as_secs(),"media_security":"unauthenticated_udp_trusted_lab_only"}), Instant::now() + Duration::from_secs(1))?;
     loop {
         check(consent_deadline)?;
         if let Some(bytes) = io.poll_frame(LOCAL_FRAME)? {
@@ -462,7 +531,7 @@ fn prepare(
     sanitized(runtime.acquire_route_port_lease(route_id, sink, lease_expiry, now))?;
     sanitized(runtime.prepare_route(
         route_id,
-        Some(FormatDescriptor::new("pcm-s16le-48000-mono")),
+        Some(FormatDescriptor::new(format)),
         QosMode::Interactive,
         now,
     ))?;
@@ -475,8 +544,16 @@ fn prepare(
             local_offer: NativeAudioDataOffer {
                 port: config.media.port(),
                 stream_id: StreamId::new(),
-                endpoint: NativeAudioEndpoint::Sink,
-                preset: NativeAudioPreset::PcmS16le48000Mono,
+                endpoint: if capture {
+                    NativeAudioEndpoint::Source
+                } else {
+                    NativeAudioEndpoint::Sink
+                },
+                preset: if capture {
+                    NativeAudioPreset::PcmS16le48000Stereo
+                } else {
+                    NativeAudioPreset::PcmS16le48000Mono
+                },
             },
         },
     )))
@@ -760,7 +837,7 @@ fn negotiation_message(
         match sanitized(link.poll_control_message_until(operation_deadline))? {
             Some(ReceivedControlMessage::Catalog(catalog)) => {
                 sanitized(link.apply_catalog(runtime, catalog))?;
-                validate_source(runtime, source)?;
+                validate_route_remote(runtime, source)?;
             }
             Some(ReceivedControlMessage::Heartbeat(heartbeat)) => {
                 if !heartbeat.acknowledgement {
@@ -787,7 +864,42 @@ fn prepare_selected_route(
     sanitized(runtime.create_route(session_id, source_ref, sink, RouteBackend::AdapterManaged))
 }
 
+fn validate_route_remote(runtime: &NodeRuntime, remote: PortRef) -> io::Result<()> {
+    let snapshot = runtime.snapshot();
+    let mut routes = snapshot
+        .routes
+        .iter()
+        .filter(|r| r.source == remote || r.sink == remote);
+    let route = routes.next().ok_or_else(fail)?;
+    if routes.next().is_some() || remote.node_id == snapshot.local_node.id {
+        return Err(fail());
+    }
+    if route.source == remote {
+        validate_source(runtime, remote)
+    } else {
+        validate_remote_endpoint(
+            runtime,
+            remote,
+            PortDirection::Sink,
+            "pcm-s16le-48000-stereo",
+        )
+    }
+}
+
 fn validate_source(runtime: &NodeRuntime, source_ref: PortRef) -> io::Result<()> {
+    validate_remote_endpoint(
+        runtime,
+        source_ref,
+        PortDirection::Source,
+        "pcm-s16le-48000-mono",
+    )
+}
+fn validate_remote_endpoint(
+    runtime: &NodeRuntime,
+    source_ref: PortRef,
+    direction: PortDirection,
+    format: &str,
+) -> io::Result<()> {
     // Real authenticated catalog descriptors, not launch-config/fixture ports.
     let snapshot = runtime.snapshot();
     let peer = snapshot
@@ -796,12 +908,10 @@ fn validate_source(runtime: &NodeRuntime, source_ref: PortRef) -> io::Result<()>
         .find(|peer| peer.id == source_ref.node_id)
         .ok_or_else(fail)?;
     let source = sanitized(peer.port(source_ref.capability_id, source_ref.port_id))?;
-    if source.direction != PortDirection::Source
+    if source.direction != direction
         || source.profile != ProfileId::audio_frames_v1()
         || source.availability != Availability::Available
-        || !source
-            .formats
-            .contains(&FormatDescriptor::new("pcm-s16le-48000-mono"))
+        || !source.formats.contains(&FormatDescriptor::new(format))
         || !source.qos_modes.contains(&QosMode::Interactive)
     {
         return Err(fail());
@@ -826,9 +936,15 @@ fn local_runtime_endpoint(
     mode: ProposalMode,
     endpoint: EndpointMode,
 ) -> io::Result<(NodeRuntime, PortRef)> {
+    if endpoint == EndpointMode::StereoCapture && mode != ProposalMode::LinuxLed {
+        return Err(fail());
+    }
+    let capture = endpoint == EndpointMode::StereoCapture;
     let mut node = NodeDescriptor::new(
         node_id,
-        if endpoint == EndpointMode::VirtualMicrophone {
+        if capture {
+            "Linux explicit stereo capture"
+        } else if endpoint == EndpointMode::VirtualMicrophone {
             "Linux virtual microphone"
         } else {
             "Linux lab playback"
@@ -862,16 +978,26 @@ fn local_runtime_endpoint(
     let descriptor = PortDescriptor {
         id: port,
         capability_id: capability,
-        display_name: if endpoint == EndpointMode::VirtualMicrophone {
+        display_name: if capture {
+            "Selected stereo capture Source"
+        } else if endpoint == EndpointMode::VirtualMicrophone {
             "Virtual microphone network Sink"
         } else {
             "Explicit playback Sink"
         }
         .into(),
-        direction: PortDirection::Sink,
+        direction: if capture {
+            PortDirection::Source
+        } else {
+            PortDirection::Sink
+        },
         profile: ProfileId::audio_frames_v1(),
         schema_id: None,
-        formats: vec![FormatDescriptor::new("pcm-s16le-48000-mono")],
+        formats: vec![FormatDescriptor::new(if capture {
+            "pcm-s16le-48000-stereo"
+        } else {
+            "pcm-s16le-48000-mono"
+        })],
         qos_modes: BTreeSet::from([QosMode::Interactive]),
         clock_domain: None,
         availability: Availability::Available,
@@ -882,7 +1008,9 @@ fn local_runtime_endpoint(
         node.add_capability(CapabilityDescriptor {
             id: capability,
             adapter_instance_id: adapter,
-            display_name: if endpoint == EndpointMode::VirtualMicrophone {
+            display_name: if capture {
+                "Selected PipeWire stereo capture"
+            } else if endpoint == EndpointMode::VirtualMicrophone {
                 "PipeWire virtual microphone"
             } else {
                 "Explicit lab playback"
@@ -922,6 +1050,67 @@ mod tests {
     fn config() -> serde_json::Value {
         json!({"version":1,"node_id":NodeId::new(),"source":PortRef{node_id:NodeId::new(),capability_id:CapabilityId::new(),port_id:PortId::new()},"listen":"127.0.0.1:0","media":"127.0.0.1:40211","target":"explicit.test","duration_secs":10})
     }
+    #[test]
+    fn capture_launch_has_distinct_explicit_schema_and_published_stereo_source() {
+        let original = config();
+        assert!(parse_capture(&serde_json::to_vec(&original).unwrap()).is_err());
+        let mut value = original.clone();
+        value["sink"] = value["source"].clone();
+        value.as_object_mut().unwrap().remove("source");
+        let parsed = parse_capture(&serde_json::to_vec(&value).unwrap()).unwrap();
+        assert_eq!(parsed.endpoint_mode, EndpointMode::StereoCapture);
+        let (runtime, port) =
+            local_runtime_endpoint(parsed.node_id, ProposalMode::LinuxLed, parsed.endpoint_mode)
+                .unwrap();
+        let snapshot = runtime.snapshot();
+        let capability = &snapshot.local_node.capabilities[&port.capability_id];
+        assert_eq!(capability.class, CapabilityClass::Speaker);
+        assert_eq!(
+            capability.ports[&port.port_id].direction,
+            PortDirection::Source
+        );
+        assert!(
+            capability.ports[&port.port_id]
+                .formats
+                .contains(&FormatDescriptor::new("pcm-s16le-48000-stereo"))
+        );
+        assert!(capability.metadata.is_empty());
+        let published = capyio_control_host::project_publication_catalog(
+            &snapshot.local_node,
+            &BTreeSet::from([port.capability_id]),
+        )
+        .unwrap();
+        assert!(published.capabilities.contains_key(&port.capability_id));
+        assert!(snapshot.routes.is_empty());
+        assert!(snapshot.port_leases.is_empty());
+        assert!(
+            local_runtime_endpoint(
+                parsed.node_id,
+                ProposalMode::IncomingDraft,
+                EndpointMode::StereoCapture
+            )
+            .is_err()
+        );
+        for (key, bad) in [
+            ("target", json!("auto")),
+            ("target", json!("AUTO")),
+            ("target", json!("default")),
+            ("target", json!("Default")),
+            ("target", json!("0")),
+            ("target", json!(null)),
+            ("duration_secs", json!(0)),
+            ("proposal_mode", json!("incoming_draft")),
+            ("endpoint_mode", json!("stereo_capture")),
+        ] {
+            let mut candidate = value.clone();
+            candidate[key] = bad;
+            assert!(parse_capture(&serde_json::to_vec(&candidate).unwrap()).is_err());
+        }
+        let mut candidate = original;
+        candidate["endpoint_mode"] = json!("stereo_capture");
+        assert!(LaunchConfig::parse(&serde_json::to_vec(&candidate).unwrap()).is_err());
+    }
+
     #[test]
     fn virtual_microphone_mode_is_explicit_owned_network_sink_and_not_permission() {
         let mut value = config();

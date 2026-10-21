@@ -21,12 +21,16 @@ fn error(value: impl ToString) -> io::Error {
     io::Error::other(value.to_string())
 }
 
-struct Guard {
-    binding: NativeLanRouteBinding,
+pub(crate) struct Guard {
+    pub(crate) binding: NativeLanRouteBinding,
     last_wall_ms: u64,
 }
 impl Guard {
-    fn new(runtime: &NodeRuntime, media: AudioMediaStreamBinding, now_ms: u64) -> io::Result<Self> {
+    pub(crate) fn new(
+        runtime: &NodeRuntime,
+        media: AudioMediaStreamBinding,
+        now_ms: u64,
+    ) -> io::Result<Self> {
         if runtime.snapshot().local_node.platform != capyio_core::Platform::Linux {
             return Err(error("playback requires a Linux Runtime"));
         }
@@ -44,7 +48,7 @@ impl Guard {
         guard.check(runtime, now_ms)?;
         Ok(guard)
     }
-    fn check(&mut self, runtime: &NodeRuntime, now_ms: u64) -> io::Result<()> {
+    pub(crate) fn check(&mut self, runtime: &NodeRuntime, now_ms: u64) -> io::Result<()> {
         if now_ms < self.last_wall_ms {
             return Err(error("Route clock regressed"));
         }
@@ -55,10 +59,17 @@ impl Guard {
         self.binding
             .require_live_context(route, session, now_ms)
             .map_err(error)?;
-        if route.sink.node_id != session.local_node_id
-            || route.source.node_id != session.remote_node_id
-            || media.selected_spec != capyio_audio::AudioStreamSpec::voice_interactive()
-            || route.selected_format != Some(FormatDescriptor::new("pcm-s16le-48000-mono"))
+        let capture = media.selected_spec == capyio_audio::AudioStreamSpec::media_balanced();
+        let (local, peer, format) = if capture {
+            (route.source, route.sink, "pcm-s16le-48000-stereo")
+        } else {
+            (route.sink, route.source, "pcm-s16le-48000-mono")
+        };
+        if local.node_id != session.local_node_id
+            || peer.node_id != session.remote_node_id
+            || (!capture
+                && media.selected_spec != capyio_audio::AudioStreamSpec::voice_interactive())
+            || route.selected_format != Some(FormatDescriptor::new(format))
             || route.selected_qos_mode != Some(QosMode::Interactive)
         {
             return Err(error(
@@ -66,7 +77,7 @@ impl Guard {
             ));
         }
         let claim = runtime
-            .route_port_lease_claim(route.id, route.sink)
+            .route_port_lease_claim(route.id, local)
             .ok_or_else(|| error("local playback Sink lease missing"))?;
         if claim.session_id != media.session_id
             || claim.expires_at_ms <= now_ms
@@ -77,7 +88,7 @@ impl Guard {
         Ok(())
     }
     // A stale owner must never stop or release a newer epoch's lease.
-    fn owns_current(&self, runtime: &NodeRuntime) -> bool {
+    pub(crate) fn owns_current(&self, runtime: &NodeRuntime) -> bool {
         let media = self.binding.media();
         runtime.route(media.route_id).is_ok_and(|route| {
             route.session_id == media.session_id && route.epoch == u64::from(media.stream_epoch)
@@ -276,8 +287,14 @@ impl<R: Resources> Drop for Worker<R> {
 /// `Active` means worker readiness, not audible delivery or authenticated UDP.
 /// The inherited CLI and default Linux host remain unchanged.
 pub struct RuntimePlayback {
-    worker: Worker<NativeResources>,
-    start: Instant,
+    inner: RuntimeAudio,
+}
+enum RuntimeAudio {
+    Playback {
+        worker: Box<Worker<NativeResources>>,
+        start: Instant,
+    },
+    Capture(Box<crate::capture_route::RuntimeCapture>),
 }
 impl RuntimePlayback {
     /// Takes only already admitted Starting Routes. The required explicit lab
@@ -287,6 +304,16 @@ impl RuntimePlayback {
         media: AudioMediaStreamBinding,
         config: &PlaybackConfig,
     ) -> io::Result<Self> {
+        if config.endpoint_mode == crate::EndpointMode::StereoCapture {
+            return crate::capture_route::RuntimeCapture::open(runtime, media, config).map(
+                |worker| Self {
+                    inner: RuntimeAudio::Capture(Box::new(worker)),
+                },
+            );
+        }
+        if media.selected_spec != config.endpoint_mode.spec() {
+            return Err(error("endpoint mode differs from exact media format"));
+        }
         // Revalidate public fields; struct construction cannot bypass lab limits.
         PlaybackConfig::parse(&[
             "--trusted-lab".into(),
@@ -335,19 +362,33 @@ impl RuntimePlayback {
                 })
             },
         )?;
-        Ok(Self { worker, start })
+        Ok(Self {
+            inner: RuntimeAudio::Playback {
+                worker: Box::new(worker),
+                start,
+            },
+        })
     }
     pub fn poll(&mut self, runtime: &mut NodeRuntime) -> io::Result<()> {
-        self.worker.poll(runtime, || clock(self.start))
+        match &mut self.inner {
+            RuntimeAudio::Playback { worker, start } => worker.poll(runtime, || clock(*start)),
+            RuntimeAudio::Capture(worker) => worker.poll(runtime),
+        }
     }
     pub fn stop(&mut self, runtime: &mut NodeRuntime) -> io::Result<()> {
-        self.worker.stop(runtime)
+        match &mut self.inner {
+            RuntimeAudio::Playback { worker, .. } => worker.stop(runtime),
+            RuntimeAudio::Capture(worker) => worker.stop(runtime),
+        }
     }
     pub fn metrics(&self) -> PlaybackMetrics {
-        self.worker.pump.metrics()
+        match &self.inner {
+            RuntimeAudio::Playback { worker, .. } => worker.pump.metrics(),
+            RuntimeAudio::Capture(worker) => worker.metrics(),
+        }
     }
 }
-fn clock(start: Instant) -> io::Result<(u64, Duration)> {
+pub(crate) fn clock(start: Instant) -> io::Result<(u64, Duration)> {
     let wall = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .map_err(error)?
@@ -395,7 +436,12 @@ impl RuntimePlayback {
                 })
             },
         )?;
-        Ok(Self { worker, start })
+        Ok(Self {
+            inner: RuntimeAudio::Playback {
+                worker: Box::new(worker),
+                start,
+            },
+        })
     }
 }
 
@@ -424,10 +470,17 @@ pub(crate) mod tests {
 
     // Synthetic catalogs only, never an authenticated peer or real device grant.
     pub(crate) fn fixture() -> (NodeRuntime, AudioMediaStreamBinding) {
+        fixture_for(false)
+    }
+    pub(crate) fn fixture_for(capture: bool) -> (NodeRuntime, AudioMediaStreamBinding) {
         let lab = capyio_testkit::DemoLab::new().unwrap();
         let original = lab
             .runtime
-            .route(lab.routes.phone_microphone_to_windows)
+            .route(if capture {
+                lab.routes.windows_system_mix_to_phone
+            } else {
+                lab.routes.phone_microphone_to_windows
+            })
             .unwrap()
             .clone();
         let snapshot = lab.runtime.snapshot();
@@ -446,6 +499,11 @@ pub(crate) mod tests {
                 }
             }
         }
+        let lease_port = if capture {
+            original.source
+        } else {
+            original.sink
+        };
         let peer_id = peer.id;
         let mut runtime = NodeRuntime::new(local).unwrap();
         runtime.register_peer(peer, true).unwrap();
@@ -459,16 +517,20 @@ pub(crate) mod tests {
             )
             .unwrap();
         runtime
-            .set_local_port_lease_policy(original.sink, PortLeasePolicy::Exclusive)
+            .set_local_port_lease_policy(lease_port, PortLeasePolicy::Exclusive)
             .unwrap();
         runtime.authorize_route(route_id, Some(10_000)).unwrap();
         runtime
-            .acquire_route_port_lease(route_id, original.sink, 5_000, 1_000)
+            .acquire_route_port_lease(route_id, lease_port, 5_000, 1_000)
             .unwrap();
         runtime
             .prepare_route(
                 route_id,
-                Some(FormatDescriptor::new("pcm-s16le-48000-mono")),
+                Some(FormatDescriptor::new(if capture {
+                    "pcm-s16le-48000-stereo"
+                } else {
+                    "pcm-s16le-48000-mono"
+                })),
                 QosMode::Interactive,
                 1_000,
             )
@@ -479,10 +541,32 @@ pub(crate) mod tests {
             route_id,
             stream_id: StreamId::new(),
             stream_epoch: 1,
-            selected_spec: capyio_audio::AudioStreamSpec::voice_interactive(),
+            selected_spec: if capture {
+                capyio_audio::AudioStreamSpec::media_balanced()
+            } else {
+                capyio_audio::AudioStreamSpec::voice_interactive()
+            },
         };
         (runtime, media)
     }
+    #[test]
+    fn capture_guard_requires_exact_local_source_stereo_grant_and_lease() {
+        let (mut runtime, media) = fixture_for(true);
+        validate_start(&runtime, media.clone(), 1_000).unwrap();
+        let mut mono = media.clone();
+        mono.selected_spec = capyio_audio::AudioStreamSpec::voice_interactive();
+        assert!(validate_start(&runtime, mono, 1_000).is_err());
+        let mut wrong_epoch = media.clone();
+        wrong_epoch.stream_epoch += 1;
+        assert!(validate_start(&runtime, wrong_epoch, 1_000).is_err());
+        assert!(validate_start(&runtime, media.clone(), 5_000).is_err());
+        let route = runtime.route(media.route_id).unwrap().clone();
+        runtime
+            .release_route_port_lease(route.id, route.source, route.session_id)
+            .unwrap();
+        assert!(validate_start(&runtime, media, 1_000).is_err());
+    }
+
     #[derive(Default)]
     struct State {
         writes: usize,

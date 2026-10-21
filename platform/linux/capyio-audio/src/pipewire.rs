@@ -128,6 +128,11 @@ fn playback_arguments(target: &str) -> io::Result<Vec<OsString>> {
 }
 
 fn endpoint_arguments(target: &str, mode: EndpointMode) -> io::Result<Vec<OsString>> {
+    if mode == EndpointMode::StereoCapture {
+        return Err(io::Error::other(
+            "capture requires the separate capture endpoint",
+        ));
+    }
     validate_endpoint_target(mode, target)
         .map_err(|reason| io::Error::new(io::ErrorKind::InvalidInput, reason))?;
     if cfg!(target_endian = "big") {
@@ -137,10 +142,12 @@ fn endpoint_arguments(target: &str, mode: EndpointMode) -> io::Result<Vec<OsStri
         ));
     }
     let properties = match mode {
+        EndpointMode::StereoCapture => unreachable!("capture rejected above"),
         EndpointMode::Playback => r#"--properties={"node.dont-fallback":true,"node.dont-reconnect":true,"node.dont-move":true}"#.to_owned(),
         EndpointMode::VirtualMicrophone => format!(r#"--properties={{"media.class":"Audio/Source","node.virtual":true,"node.name":"{target}","node.description":"CapyIO Virtual Microphone","node.dont-fallback":true,"node.dont-reconnect":true,"node.dont-move":true}}"#),
     };
     let destination = match mode {
+        EndpointMode::StereoCapture => unreachable!("capture rejected above"),
         EndpointMode::Playback => format!("--target={target}"),
         EndpointMode::VirtualMicrophone => "--target=0".to_owned(),
     };
