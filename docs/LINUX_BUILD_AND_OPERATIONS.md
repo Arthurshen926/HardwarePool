@@ -242,7 +242,7 @@ The console is interactive-only, not an automation endpoint or persistent servic
 The paired console additionally supports `playback --config /absolute/session.json
 --peer PEER_UUID` with the same explicit four paired-store selectors. This is the
 playback-direction console path: selected playback and its virtual-microphone
-projection. Reverse audio is described below; camera/touchpad console control
+projection. Reverse audio and camera are described below; touchpad console control
 remains unimplemented.
 
 The bounded nonsecret manifest uses the existing playback schema. Replace every
@@ -321,3 +321,41 @@ authorizes this one local session; the peer must independently approve its Sink.
 Use `status` or `stop`; cancellation, EOF and expiry never renew or restart it.
 Default packages remain help-only for paired operations, and paired packages
 require the explicitly selected existing unlocked Secret Service collection.
+
+
+## Interactive finite virtual camera (ADR 1550)
+
+Use `camera --config /absolute/session.json --peer PEER_UUID` with the same four
+explicit paired-store selectors. A paired native-camera build and its fixed
+sibling helpers are required. The bounded nonsecret manifest is distinct from
+audio and selects an existing remote camera Source:
+
+```json
+{
+  "version": 1,
+  "node_id": "LOCAL_NODE_UUID",
+  "source": {
+    "node_id": "PEER_NODE_UUID",
+    "capability_id": "REMOTE_CAPABILITY_UUID",
+    "port_id": "REMOTE_SOURCE_PORT_UUID"
+  },
+  "listen": "192.0.2.10:0",
+  "duration_secs": 30
+}
+```
+
+These are placeholders, not deployment values. Choose an explicit permitted local
+loopback/private/link-local IPv4 address and exact paired peer Port IDs. Do not
+include credential material, audio media/target fields or implicit devices. The
+console never discovers or captures a physical local camera. Duration is 3–60
+seconds; the fixed profile is 1280×720 AVC at 30 fps with at most 120 frames.
+
+Review the remote Source → local virtual-camera Sink, exact peer, format, mutual
+TLS security and finite frame/byte/time limits. Only the exact fresh displayed
+start line approves this session, and the peer must independently grant its
+Source. `Starting`, helper creation and queued frames are not proof that any
+consumer received pixels; `consumer_delivery_verified` remains false. Use
+`status` or `stop`; expiry, EOF and revocation clean up without renewal/restart.
+The same private-TTY, owned config-file and explicit unlocked-keyring prerequisites
+apply. These instructions do not install helpers, configure services or grant
+permissions to a real device.

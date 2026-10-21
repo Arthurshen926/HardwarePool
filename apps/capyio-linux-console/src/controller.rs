@@ -1,3 +1,4 @@
+mod camera;
 mod media;
 
 use crate::{invitation::InvitationFifo, terminal::Terminal};
@@ -65,7 +66,7 @@ impl Drop for Signals {
 #[derive(Parser)]
 #[command(
     name = "capyio-linux-console",
-    about = "Explicit finite Linux pairing and audio controller (no automatic resource grants)."
+    about = "Explicit finite Linux pairing and media controller (no automatic resource grants)."
 )]
 struct Args {
     #[arg(long)]
@@ -113,6 +114,13 @@ enum Action {
         #[arg(long)]
         peer: NodeId,
     },
+    /// One finite paired-store virtual-camera session; explicit nonsecret manifest.
+    Camera {
+        #[arg(long)]
+        config: PathBuf,
+        #[arg(long)]
+        peer: NodeId,
+    },
     /// Starts no transaction. In any active prompt, use cancel or Ctrl-C.
     Cancel,
 }
@@ -141,7 +149,9 @@ fn validate(args: &Args) -> io::Result<()> {
             }
         }
         Action::Revoke { peer } if peer.as_uuid().is_nil() => return Err(invalid()),
-        Action::Playback { config, peer } | Action::Capture { config, peer }
+        Action::Playback { config, peer }
+        | Action::Capture { config, peer }
+        | Action::Camera { config, peer }
             if !config.is_absolute() || peer.as_uuid().is_nil() || *peer == args.pairing_node =>
         {
             return Err(invalid());
@@ -165,6 +175,66 @@ impl Drop for Secret {
         self.0.fill(0);
     }
 }
+// Keep exact event objects unambiguous before direction-specific typed decoding.
+// serde_json::Value alone accepts duplicate keys and would erase that evidence.
+struct UniqueValue(Value);
+impl<'de> Deserialize<'de> for UniqueValue {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        struct Visitor;
+        impl<'de> serde::de::Visitor<'de> for Visitor {
+            type Value = UniqueValue;
+            fn expecting(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                formatter.write_str("a JSON value with unique object keys")
+            }
+            fn visit_bool<E: serde::de::Error>(self, value: bool) -> Result<Self::Value, E> {
+                Ok(UniqueValue(Value::Bool(value)))
+            }
+            fn visit_i64<E: serde::de::Error>(self, value: i64) -> Result<Self::Value, E> {
+                Ok(UniqueValue(value.into()))
+            }
+            fn visit_u64<E: serde::de::Error>(self, value: u64) -> Result<Self::Value, E> {
+                Ok(UniqueValue(value.into()))
+            }
+            fn visit_f64<E: serde::de::Error>(self, value: f64) -> Result<Self::Value, E> {
+                serde_json::Number::from_f64(value)
+                    .map(|number| UniqueValue(Value::Number(number)))
+                    .ok_or_else(|| E::custom("nonfinite JSON number"))
+            }
+            fn visit_str<E: serde::de::Error>(self, value: &str) -> Result<Self::Value, E> {
+                Ok(UniqueValue(Value::String(value.to_owned())))
+            }
+            fn visit_unit<E: serde::de::Error>(self) -> Result<Self::Value, E> {
+                Ok(UniqueValue(Value::Null))
+            }
+            fn visit_seq<A: serde::de::SeqAccess<'de>>(
+                self,
+                mut sequence: A,
+            ) -> Result<Self::Value, A::Error> {
+                let mut values = Vec::new();
+                while let Some(UniqueValue(value)) = sequence.next_element()? {
+                    values.push(value);
+                }
+                Ok(UniqueValue(Value::Array(values)))
+            }
+            fn visit_map<A: serde::de::MapAccess<'de>>(
+                self,
+                mut object: A,
+            ) -> Result<Self::Value, A::Error> {
+                let mut values = serde_json::Map::new();
+                while let Some(key) = object.next_key::<String>()? {
+                    if values.contains_key(&key) {
+                        return Err(serde::de::Error::custom("duplicate JSON key"));
+                    }
+                    let UniqueValue(value) = object.next_value()?;
+                    values.insert(key, value);
+                }
+                Ok(UniqueValue(Value::Object(values)))
+            }
+        }
+        deserializer.deserialize_any(Visitor)
+    }
+}
+
 struct Frames {
     bytes: Vec<u8>,
     count: usize,
@@ -208,8 +278,9 @@ impl Frames {
                 if self.count > self.limit {
                     return Err(invalid());
                 }
-                let result =
-                    serde_json::from_slice(&self.bytes[4..4 + length]).map_err(|_| invalid())?;
+                let result = serde_json::from_slice::<UniqueValue>(&self.bytes[4..4 + length])
+                    .map_err(|_| invalid())?
+                    .0;
                 self.bytes.drain(..4 + length);
                 return Ok(Some(result));
             }
@@ -263,7 +334,14 @@ fn require_node_capability() -> io::Result<()> {
     require_node_capability_for("linux-pairing")
 }
 fn require_node_capability_for(command: &str) -> io::Result<()> {
-    if !["linux-pairing", "linux-playback", "linux-capture"].contains(&command) {
+    if ![
+        "linux-pairing",
+        "linux-playback",
+        "linux-capture",
+        "linux-camera",
+    ]
+    .contains(&command)
+    {
         return Err(invalid());
     }
     let mut child = Command::new(sibling()?)
@@ -357,7 +435,8 @@ impl Node {
     fn spawn_for(args: &Args, command: &str, peer: Option<NodeId>) -> io::Result<Self> {
         if !matches!(
             (command, peer),
-            ("linux-pairing", None) | ("linux-playback" | "linux-capture", Some(_))
+            ("linux-pairing", None)
+                | ("linux-playback" | "linux-capture" | "linux-camera", Some(_))
         ) {
             return Err(invalid());
         }
@@ -390,7 +469,7 @@ impl Node {
             frames: Frames::default(),
             error_bytes: 0,
             reaped: false,
-            stop_on_drop: matches!(command, "linux-playback" | "linux-capture"),
+            stop_on_drop: matches!(command, "linux-playback" | "linux-capture" | "linux-camera"),
         };
         nonblocking(result.input.as_ref().ok_or_else(invalid)?)?;
         nonblocking(&result.output)?;
@@ -715,6 +794,7 @@ pub fn run() -> io::Result<()> {
     match &args.action {
         Action::Playback { config, peer } => return media::run(&args, config, *peer),
         Action::Capture { config, peer } => return media::run_capture(&args, config, *peer),
+        Action::Camera { config, peer } => return camera::run(&args, config, *peer),
         _ => {}
     }
     let _signals = Signals::install()?;
@@ -754,7 +834,7 @@ pub fn run() -> io::Result<()> {
         Action::List=>node.send(&json!({"version":1,"action":"list"}),deadline)?,
         Action::Recover=>node.send(&json!({"version":1,"action":"recover"}),deadline)?,
         Action::Revoke{peer}=>node.send(&json!({"version":1,"action":"revoke","peer_node_id":peer}),deadline)?,
-        Action::Cancel | Action::Playback { .. } | Action::Capture { .. } =>unreachable!(),
+        Action::Cancel | Action::Playback { .. } | Action::Capture { .. } | Action::Camera { .. } =>unreachable!(),
     }
     let mut confirmation: Option<Confirmation> = None;
     let mut challenged = false;
@@ -935,10 +1015,10 @@ pub fn run() -> io::Result<()> {
 mod tests {
     use super::*;
     #[test]
-    fn audio_commands_require_explicit_absolute_manifest_and_distinct_peer() {
+    fn media_commands_require_explicit_absolute_manifest_and_distinct_peer() {
         let local = NodeId::new();
         let peer = NodeId::new();
-        for command in ["playback", "capture"] {
+        for command in ["playback", "capture", "camera"] {
             let arguments = vec![
                 "capyio-linux-console".to_owned(),
                 "--pairing-node".to_owned(),
@@ -978,6 +1058,22 @@ mod tests {
             let value: Value = serde_json::from_slice(&frame[4..]).unwrap();
             assert_eq!(value, json!({"version":1,key:command}));
         }
+    }
+    #[test]
+    fn framed_events_reject_duplicate_keys_before_value_decoding() {
+        for payload in [
+            br#"{"event":"failed","event":"stopped"}"#.as_slice(),
+            br#"{"event":"failed","\u0065vent":"stopped"}"#,
+            br#"{"source":{"node_id":"one","node_id":"two"}}"#,
+            br#"{"items":[{"x":1,"x":2}]}"#,
+        ] {
+            let mut bytes = (payload.len() as u32).to_be_bytes().to_vec();
+            bytes.extend_from_slice(payload);
+            assert!(Frames::default().poll(&mut bytes.as_slice()).is_err());
+        }
+        let payload = br#"{"items":[null,true,-1,2,1.5,"text",{"x":1}]}"#;
+        let value = serde_json::from_slice::<UniqueValue>(payload).unwrap().0;
+        assert_eq!(value, serde_json::from_slice::<Value>(payload).unwrap());
     }
     #[test]
     fn frame_bounds_and_partial_eof_fail_closed() {

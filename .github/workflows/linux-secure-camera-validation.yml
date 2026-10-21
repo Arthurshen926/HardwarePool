@@ -116,7 +116,7 @@ jobs:
           TESTS
           grep -Fx 'hosted_linux_camera_graph: test' "$RUNNER_TEMP/camera-launcher-tests-list.txt"
           cargo clippy --locked -p capyio-node --all-targets --features native-camera,paired-store -- -D warnings
-          cargo build --locked -p capyio-node --features native-camera,paired-store --bin capyio-node
+          cargo build --locked -p capyio-node -p capyio-linux-console --features capyio-node/native-camera,capyio-node/paired-store,capyio-linux-console/paired-store
           cargo test --locked -p capyio-node --features native-camera,paired-store --test linux_camera --no-run --message-format=json > "$RUNNER_TEMP/camera-launcher-build.jsonl"
           python3 - "$RUNNER_TEMP/camera-launcher-build.jsonl" "$RUNNER_TEMP/camera-launcher-driver" <<'PY'
           import json, pathlib, sys
@@ -154,11 +154,33 @@ jobs:
             if [ "$scenario" = handshake_timeout ]; then graph=false; fi
             grep -Fx "capyio_pipewire_camera_launcher=passed scenario=$scenario actual_executable=true paired_store=true real_graph=$graph owned_cleanup=true" "$RUNNER_TEMP/camera-launcher-paired-$scenario.txt"
           done
+      - name: Require thirteen actual-console paired camera profiles
+        run: |
+          set -euo pipefail
+          driver="$(cat "$RUNNER_TEMP/camera-launcher-driver")"
+          "$driver" --list | tee "$RUNNER_TEMP/camera-console-tests-list.txt"
+          grep -Fx 'hosted_linux_camera_console_graph: test' "$RUNNER_TEMP/camera-console-tests-list.txt"
+          count=0
+          for scenario in pixels no_approval pretyped mismatched_request mismatched_route mismatched_peer expiry remote_eof local_stop control_stop source_revoke partial_cavc handshake_timeout; do
+            timeout --signal=TERM --kill-after=5s 45s python3 scripts/run_pipewire_camera_launcher.py \
+              --hosted-private-camera-launcher --paired-store --console --driver "$driver" --node target/debug/capyio-node \
+              --helper target/debug/capyio-linux-camera-helper --decoder target/debug/capyio-linux-avc-helper \
+              --consumer "$RUNNER_TEMP/avc-consumer" --scenario "$scenario" \
+              | tee "$RUNNER_TEMP/camera-console-$scenario.txt"
+            graph=true
+            case "$scenario" in
+              no_approval|pretyped|mismatched_request|mismatched_route|mismatched_peer|handshake_timeout) graph=false ;;
+            esac
+            grep -Fx "capyio_pipewire_camera_console=passed scenario=$scenario actual_console=true paired_store=true real_graph=$graph owned_cleanup=true" "$RUNNER_TEMP/camera-console-$scenario.txt"
+            count=$((count + 1))
+          done
+          test "$count" -eq 13
       - uses: actions/upload-artifact@v4
         if: always()
         with:
           name: linux-camera-launcher-text-evidence
           path: |
             ${{ runner.temp }}/camera-launcher-*.txt
+            ${{ runner.temp }}/camera-console-*.txt
             ${{ runner.temp }}/camera-launcher-build.jsonl
           if-no-files-found: ignore

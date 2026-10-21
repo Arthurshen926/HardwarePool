@@ -27,6 +27,9 @@ use std::{
 #[cfg(feature = "paired-store")]
 #[path = "support/paired_store.rs"]
 mod paired_store;
+#[cfg(feature = "paired-store")]
+#[path = "support/playback_console.rs"]
+mod playback_console;
 
 const BOUND: Duration = Duration::from_secs(5);
 fn nonblocking(fd: impl AsFd) {
@@ -47,6 +50,8 @@ fn drain(reader: &mut impl Read, bytes: &mut Vec<u8>) {
     }
 }
 struct Process {
+    #[cfg(feature = "paired-store")]
+    console: Option<playback_console::Console>,
     child: Child,
     stdout: Vec<u8>,
     stderr: Vec<u8>,
@@ -72,6 +77,8 @@ impl Process {
         nonblocking(child.stdout.as_ref().unwrap());
         nonblocking(child.stderr.as_ref().unwrap());
         Self {
+            #[cfg(feature = "paired-store")]
+            console: None,
             child,
             stdout: Vec::new(),
             stderr: Vec::new(),
@@ -83,6 +90,10 @@ impl Process {
         Self::start(&["linux-camera", "--trusted-lab"])
     }
     fn frame(&mut self, body: &[u8]) {
+        assert!(
+            !self.is_console(),
+            "console fixture cannot access Node control pipes"
+        );
         let mut frame = Vec::from(u32::try_from(body.len()).unwrap().to_be_bytes());
         frame.extend_from_slice(body);
         let deadline = Instant::now() + BOUND;
@@ -106,9 +117,69 @@ impl Process {
         frame.fill(0);
     }
     fn command(&mut self, command: Value) {
+        #[cfg(feature = "paired-store")]
+        if self.console.is_some() {
+            match command["command"].as_str().unwrap() {
+                "approve" => {
+                    let request = command["request_id"].as_str().unwrap();
+                    let route = command["route_id"].as_str().unwrap();
+                    self.wait_console_prompt(request, route);
+                    let console = self.console.as_mut().unwrap();
+                    console.send(format!("start {request} {route} {}\n", console.peer).as_bytes());
+                }
+                "status" => self.console.as_mut().unwrap().send(b"status\n"),
+                "stop" => self.console.as_mut().unwrap().send(b"stop\n"),
+                _ => panic!("console fixture only accepts terminal Start/status/Stop"),
+            }
+            return;
+        }
         self.frame(&serde_json::to_vec(&command).unwrap());
     }
+    fn is_console(&self) -> bool {
+        #[cfg(feature = "paired-store")]
+        {
+            self.console.is_some()
+        }
+        #[cfg(not(feature = "paired-store"))]
+        {
+            false
+        }
+    }
+    fn owner_pid(&self) -> u32 {
+        #[cfg(feature = "paired-store")]
+        if let Some(console) = &self.console {
+            return console
+                .node_pid
+                .expect("actual Node identity observed at listening");
+        }
+        self.child.id()
+    }
+    #[cfg(feature = "paired-store")]
+    fn wait_console_prompt(&mut self, request: &str, route: &str) {
+        let deadline = Instant::now() + BOUND;
+        loop {
+            self.collect();
+            let console = self.console.as_ref().unwrap();
+            if console.prompt_seen(request, route) {
+                console.assert_hidden();
+                // The real controller flushes once after printing its prompt.
+                thread::sleep(Duration::from_millis(25));
+                return;
+            }
+            assert!(
+                self.child.try_wait().unwrap().is_none(),
+                "console exited before consent prompt"
+            );
+            assert!(Instant::now() < deadline, "bounded fresh consent prompt");
+            thread::sleep(Duration::from_millis(2));
+        }
+    }
     fn collect(&mut self) {
+        #[cfg(feature = "paired-store")]
+        if let Some(console) = &mut self.console {
+            console.collect(&mut self.child, &mut self.stdout, &mut self.stderr);
+            return;
+        }
         #[cfg(feature = "paired-store")]
         let previous = self.stdout.len();
         drain(self.child.stdout.as_mut().unwrap(), &mut self.stdout);
@@ -127,6 +198,15 @@ impl Process {
         let deadline = Instant::now() + BOUND;
         loop {
             self.collect();
+            #[cfg(feature = "paired-store")]
+            if let Some(console) = &mut self.console
+                && let Some(value) = console.next_event()
+            {
+                if value["event"] == "listening" {
+                    console.identify_node(&self.child);
+                }
+                return value;
+            }
             if self.stdout.len() >= 4 {
                 let length = u32::from_be_bytes(self.stdout[..4].try_into().unwrap()) as usize;
                 assert!((1..=4096).contains(&length), "bounded local event");
@@ -156,6 +236,10 @@ impl Process {
             self.collect();
             if let Some(status) = self.child.try_wait().unwrap() {
                 self.collect();
+                #[cfg(feature = "paired-store")]
+                if let Some(console) = &self.console {
+                    console.assert_finished();
+                }
                 return status;
             }
             assert!(
@@ -169,6 +253,13 @@ impl Process {
 impl Drop for Process {
     fn drop(&mut self) {
         // No blocking reader/writer threads survive assertions or timeout paths.
+        #[cfg(feature = "paired-store")]
+        if self.console.is_some() {
+            // SAFETY: only this fixture's new private console session is targeted.
+            unsafe {
+                libc::kill(-(self.child.id() as libc::pid_t), libc::SIGKILL);
+            }
+        }
         let _ = self.child.kill();
         let _ = self.child.wait();
     }
@@ -225,7 +316,7 @@ fn now_ms() -> u64 {
         .as_millis() as u64
 }
 fn no_children(process: &Process) {
-    let pid = process.child.id();
+    let pid = process.owner_pid();
     // Read-only /proc scan also works on kernels without task/<pid>/children.
     for entry in std::fs::read_dir("/proc").unwrap().flatten() {
         if !entry
@@ -524,6 +615,9 @@ fn paired_bootstrap(fixture: &Fixture, process: &mut Process) {
 fn assert_paired_no_leak(store: &paired_store::PersistedPairing, process: &Process) {
     store.assert_no_leak(&process.stdout_history);
     store.assert_no_leak(&process.stderr);
+    if let Some(console) = &process.console {
+        store.assert_no_leak(&console.tty);
+    }
 }
 
 fn pending() -> (Process, Peer, Value) {
@@ -752,18 +846,234 @@ fn terminal(process: &mut Process, success: bool) {
     }
     assert_eq!(process.finish().code(), Some(if success { 0 } else { 1 }));
     if !success {
-        assert_eq!(
-            String::from_utf8_lossy(&process.stderr).trim(),
+        let expected = if process.is_console() {
+            "Linux console operation failed; no automatic retry. Check explicit selectors, paired-store build and interactive terminal. Pairing persistence may require inspection."
+        } else {
             "Error: Linux camera launch failed"
+        };
+        assert_eq!(String::from_utf8_lossy(&process.stderr).trim(), expected);
+    }
+}
+#[cfg(feature = "paired-store")]
+fn console_pending_scenario(name: &str) -> bool {
+    matches!(
+        name,
+        "no_approval" | "pretyped" | "mismatched_request" | "mismatched_route" | "mismatched_peer"
+    )
+}
+#[cfg(feature = "paired-store")]
+fn console_process(
+    store: &paired_store::PersistedPairing,
+    config: &Value,
+    pretyped: bool,
+) -> Process {
+    let (child, console) = playback_console::Console::start(
+        store,
+        config,
+        pretyped,
+        "camera",
+        &[("RUST_BACKTRACE", "0"), ("RUST_LIB_BACKTRACE", "0")],
+    );
+    Process {
+        child,
+        console: Some(console),
+        stdout: vec![],
+        stderr: vec![],
+        stdout_history: vec![],
+    }
+}
+#[cfg(feature = "paired-store")]
+fn assert_console_consent(
+    store: &paired_store::PersistedPairing,
+    process: &mut Process,
+    approval: &Value,
+) {
+    process.wait_console_prompt(
+        approval["request_id"].as_str().unwrap(),
+        approval["route_id"].as_str().unwrap(),
+    );
+    let console = process.console.as_ref().unwrap();
+    console.assert_hidden();
+    // The public event must identify the exact endpoints and finite secure media
+    // contract; the human-readable summary is checked independently below.
+    assert_eq!(approval["source"]["node_id"], json!(store.peer));
+    assert_eq!(approval["sink"]["node_id"], json!(store.owner));
+    assert_eq!(approval["format"], "cavc-avc-access-unit-v1");
+    assert_eq!(approval["media_security"], "tls13_mtls_v1");
+    assert_eq!(approval["duration_secs"], 10);
+    assert_eq!(approval["width"], 1280);
+    assert_eq!(approval["height"], 720);
+    assert_eq!(approval["fps"], 30);
+    assert_eq!(approval["rotation"], 0);
+    assert_eq!(approval["max_frames"], 120);
+    assert_eq!(approval["max_input_bytes"], 33_554_432);
+    assert_eq!(approval["approval_timeout_secs"], 30);
+    console.assert_presentation(approval);
+    for pid in [process.child.id(), process.owner_pid()] {
+        for name in ["cmdline", "environ"] {
+            store.assert_no_leak(&std::fs::read(format!("/proc/{pid}/{name}")).unwrap());
+        }
+    }
+    assert_paired_no_leak(store, process);
+}
+#[cfg(feature = "paired-store")]
+fn finish_console_pending(
+    name: &str,
+    approval: &Value,
+    store: &paired_store::PersistedPairing,
+    process: &mut Process,
+    peer: &mut Peer,
+) {
+    assert!(peer.runtime.snapshot().routes.is_empty());
+    assert!(peer.runtime.snapshot().port_leases.is_empty());
+    no_children(process);
+    if name.starts_with("mismatched_") {
+        let console = process.console.as_mut().unwrap();
+        let request = if name == "mismatched_request" {
+            MessageId::new().to_string()
+        } else {
+            approval["request_id"].as_str().unwrap().to_owned()
+        };
+        let route = if name == "mismatched_route" {
+            RouteId::new().to_string()
+        } else {
+            approval["route_id"].as_str().unwrap().to_owned()
+        };
+        let peer = if name == "mismatched_peer" {
+            NodeId::new()
+        } else {
+            console.peer
+        };
+        console.send(format!("start {request} {route} {peer}\n").as_bytes());
+        assert!(
+            !process.finish().success(),
+            "mismatched terminal consent cannot approve"
+        );
+    } else {
+        process.command(json!({"version":1,"command":"status"}));
+        assert_eq!(process.event("status")["stage"], "awaiting_local_approval");
+        process.wait_console_prompt(
+            approval["request_id"].as_str().unwrap(),
+            approval["route_id"].as_str().unwrap(),
+        );
+        peer.idle(process);
+        process.command(json!({"version":1,"command":"stop"}));
+        terminal(process, true);
+    }
+    assert!(
+        peer.link
+            .receive_control_message_until(Instant::now() + BOUND)
+            .is_err(),
+        "no Route proposal before fresh exact terminal consent"
+    );
+    assert!(peer.runtime.snapshot().routes.is_empty());
+    assert!(peer.runtime.snapshot().port_leases.is_empty());
+    console_verified(name, store, process);
+    println!("VERIFIED {name}\nCAMERA_STOPPED");
+}
+#[cfg(feature = "paired-store")]
+fn console_verified(name: &str, store: &paired_store::PersistedPairing, process: &Process) {
+    assert_paired_no_leak(store, process);
+    let state = store.service.state.lock().unwrap();
+    assert!(state.reads > 0, "actual protected credential read required");
+    assert_eq!(
+        state.forbidden, 0,
+        "no protected service mutations permitted"
+    );
+    process.console.as_ref().unwrap().assert_finished();
+    println!(
+        "CONSOLE_VERIFIED {name} actual_tty=true fresh_consent=true secret_redacted=true node_reaped=true"
+    );
+}
+#[cfg(feature = "paired-store")]
+fn camera_expiry_observation_reached(observed_at_ms: u64, lease_expires_at_ms: u64) -> bool {
+    observed_at_ms >= lease_expires_at_ms
+}
+#[cfg(feature = "paired-store")]
+fn assert_console_not_early_expiry(process: &mut Process, lease_expires_at_ms: u64) {
+    process.collect();
+    let terminal_seen = std::str::from_utf8(&process.console.as_ref().unwrap().tty)
+        .unwrap()
+        .lines()
+        .filter_map(|line| line.trim_start_matches('\r').strip_prefix("Camera event: "))
+        .filter_map(|line| serde_json::from_str::<Value>(line).ok())
+        .any(|value| matches!(value["event"].as_str(), Some("failed" | "stopped")));
+    if terminal_seen {
+        assert!(
+            camera_expiry_observation_reached(now_ms(), lease_expires_at_ms),
+            "console reported terminal camera state before actual negotiated Source lease expiry"
+        );
+    }
+    if process.child.try_wait().unwrap().is_some() {
+        assert!(
+            camera_expiry_observation_reached(now_ms(), lease_expires_at_ms),
+            "actual console exited before negotiated Source lease expiry"
+        );
+    }
+    // The console can outlive its Node briefly. Observe the Node independently,
+    // including an exited-but-unreaped zombie, rather than hiding early failure
+    // by waiting for the controller's later cleanup or configured duration.
+    let stat = std::fs::read_to_string(format!("/proc/{}/stat", process.owner_pid()));
+    let exited = match stat {
+        Ok(stat) => matches!(
+            stat.rsplit_once(')').unwrap().1.split_whitespace().next(),
+            Some("Z" | "X")
+        ),
+        Err(error) if error.kind() == io::ErrorKind::NotFound => true,
+        Err(error) => panic!("actual Node process observation failed: {error}"),
+    };
+    if exited {
+        assert!(
+            camera_expiry_observation_reached(now_ms(), lease_expires_at_ms),
+            "actual Node exited before negotiated Source lease expiry"
         );
     }
 }
+#[cfg(feature = "paired-store")]
+#[test]
+fn pure_camera_console_expiry_requires_actual_negotiated_lease_without_slack() {
+    for (observed, expiry, allowed) in [
+        (1_999, 2_000, false),
+        (2_000, 2_000, true),
+        (2_001, 2_000, true),
+        (2_000, 3_000, false),
+        (0, 0, true),
+        (u64::MAX - 1, u64::MAX, false),
+    ] {
+        assert_eq!(camera_expiry_observation_reached(observed, expiry), allowed);
+    }
+}
+
+fn assert_camera_not_consumer_proof(event: &Value, id: RouteId) {
+    assert_eq!(event["route_id"], json!(id));
+    assert_eq!(
+        event["state"], "starting",
+        "queued records are not consumer delivery or Active"
+    );
+    assert_eq!(event["consumer_delivery_verified"], false);
+}
+
 /// This is run ONLY inside the disposable private PipeWire harness. Its caller
 /// independently verifies exact 20-frame NV12 pixels, graph ownership, sentinel
 /// continuity, and helper/decoder reaping; Rust asserts the real node outcome.
 #[test]
 #[ignore = "requires explicit disposable native PipeWire graph harness"]
 fn hosted_linux_camera_graph() {
+    assert_ne!(
+        std::env::var("CAPYIO_CAMERA_CONSOLE").as_deref(),
+        Ok("1"),
+        "legacy fixture cannot substitute for actual console"
+    );
+    run_hosted_linux_camera_graph(false);
+}
+#[cfg(feature = "paired-store")]
+#[test]
+#[ignore = "requires explicit disposable native PipeWire graph and actual console PTY harness"]
+fn hosted_linux_camera_console_graph() {
+    assert_eq!(std::env::var("CAPYIO_CAMERA_CONSOLE").as_deref(), Ok("1"));
+    run_hosted_linux_camera_graph(true);
+}
+fn run_hosted_linux_camera_graph(console_mode: bool) {
     use capyio_vcamdroid_adapter::{AvcAccessUnit, AvcStreamKey, encode_access_unit};
     assert_eq!(
         std::env::var("CAPYIO_CAMERA_LAUNCHER_HOSTED").as_deref(),
@@ -774,8 +1084,24 @@ fn hosted_linux_camera_graph() {
         "private daemon opt-in required"
     );
     let scenario = std::env::var("CAPYIO_CAMERA_SCENARIO").unwrap();
-    assert!(
-        [
+    let supported = if console_mode {
+        &[
+            "pixels",
+            "no_approval",
+            "pretyped",
+            "mismatched_request",
+            "mismatched_route",
+            "mismatched_peer",
+            "expiry",
+            "remote_eof",
+            "local_stop",
+            "control_stop",
+            "source_revoke",
+            "partial_cavc",
+            "handshake_timeout",
+        ][..]
+    } else {
+        &[
             "pixels",
             "local_stop",
             "control_stop",
@@ -783,10 +1109,10 @@ fn hosted_linux_camera_graph() {
             "source_revoke",
             "partial_cavc",
             "expiry",
-            "handshake_timeout"
-        ]
-        .contains(&scenario.as_str())
-    );
+            "handshake_timeout",
+        ][..]
+    };
+    assert!(supported.contains(&scenario.as_str()));
     let paired_mode = match std::env::var("CAPYIO_CAMERA_PAIRED_STORE").as_deref() {
         Ok("1") => true,
         Ok("0") | Err(std::env::VarError::NotPresent) => false,
@@ -797,28 +1123,44 @@ fn hosted_linux_camera_graph() {
         !paired_mode,
         "paired-store mode requires a feature-enabled driver"
     );
+    assert!(
+        !console_mode || paired_mode,
+        "console requires actual protected paired identity"
+    );
     let fixture = Fixture::new();
     #[cfg(feature = "paired-store")]
     let store = paired_mode.then(|| persisted_fixture(&fixture));
     #[cfg(feature = "paired-store")]
     let mut process = match &store {
+        Some(store) if console_mode => {
+            console_process(store, &fixture.config, scenario == "pretyped")
+        }
         Some(store) => paired_process(store),
         None => Process::camera(),
     };
     #[cfg(not(feature = "paired-store"))]
     let mut process = Process::camera();
-    println!("\nLAUNCHER_PID {}", process.child.id());
+    if console_mode {
+        println!("\nCONSOLE_PID {}", process.child.id());
+    } else {
+        println!("\nLAUNCHER_PID {}", process.child.id());
+    }
     io::stdout().flush().unwrap();
     harness_line("approve synthetic camera");
     #[cfg(feature = "paired-store")]
-    if paired_mode {
-        paired_bootstrap(&fixture, &mut process);
-    } else {
-        fixture.bootstrap(&mut process);
+    if !console_mode {
+        if paired_mode {
+            paired_bootstrap(&fixture, &mut process);
+        } else {
+            fixture.bootstrap(&mut process);
+        }
     }
     #[cfg(not(feature = "paired-store"))]
     fixture.bootstrap(&mut process);
     let mut peer = fixture.connect(&mut process);
+    if console_mode {
+        println!("LAUNCHER_PID {}", process.owner_pid());
+    }
     if paired_mode {
         // Emitted only after the actual node loaded its store-backed identity
         // and the exact peer completed the existing pinned control handshake.
@@ -827,6 +1169,20 @@ fn hosted_linux_camera_graph() {
     }
     let approval = process.event("approval_required");
     peer.idle(&process);
+    #[cfg(feature = "paired-store")]
+    if console_mode {
+        let store = store.as_ref().unwrap();
+        assert_console_consent(store, &mut process, &approval);
+        println!("CONSOLE_CONSENT exact_source_sink=true no_echo=true");
+        io::stdout().flush().unwrap();
+        // Outer Python verifies the real graph and both exact process identities
+        // while the actual console remains at its unapproved terminal prompt.
+        harness_line("check consent");
+        if console_pending_scenario(&scenario) {
+            finish_console_pending(&scenario, &approval, store, &mut process, &mut peer);
+            return;
+        }
+    }
     process.command(approval_command(&approval));
     let id = serde_json::from_value(approval["route_id"].clone()).unwrap();
     peer.proposal(id);
@@ -842,6 +1198,17 @@ fn hosted_linux_camera_graph() {
     );
     let offer = peer.offer(id);
     no_children(&process);
+    if console_mode {
+        process.command(json!({"version":1,"command":"status"}));
+        let status = process.event("status");
+        assert_camera_not_consumer_proof(&status, id);
+        assert!(
+            status["helper_pid"].is_null()
+                && status["decoder_pid"].is_null()
+                && status["node_name"].is_null()
+        );
+        assert_eq!(status["queued"], 0);
+    }
     println!("SECURE_LISTENING no_media_children=true");
     io::stdout().flush().unwrap();
     if scenario == "handshake_timeout" {
@@ -854,6 +1221,10 @@ fn hosted_linux_camera_graph() {
         #[cfg(feature = "paired-store")]
         if let Some(store) = &store {
             assert_paired_no_leak(store, &process);
+        }
+        #[cfg(feature = "paired-store")]
+        if console_mode {
+            console_verified(&scenario, store.as_ref().unwrap(), &process);
         }
         println!("VERIFIED handshake_timeout\nCAMERA_STOPPED");
         return;
@@ -869,6 +1240,8 @@ fn hosted_linux_camera_graph() {
     )
     .unwrap();
     let bound = process.event("camera_bound");
+    assert_camera_not_consumer_proof(&bound, id);
+    assert_eq!(bound["queued"], 0);
     let helper = bound["helper_pid"].as_u64().unwrap();
     let decoder = bound["decoder_pid"].as_u64().unwrap();
     println!(
@@ -888,7 +1261,9 @@ fn hosted_linux_camera_graph() {
     sender
         .send_record(&peer.runtime, &config, now_ms())
         .unwrap();
-    process.event("camera_record");
+    let record = process.event("camera_record");
+    assert_camera_not_consumer_proof(&record, id);
+    assert_eq!(record["queued"], 0);
     let count = if scenario == "pixels" { 90 } else { 3 };
     let start = Instant::now();
     for sequence in 1..=count {
@@ -901,7 +1276,15 @@ fn hosted_linux_camera_graph() {
         sender
             .send_record(&peer.runtime, &encode_access_unit(&unit).unwrap(), now_ms())
             .unwrap();
-        process.event("camera_record");
+        let record = process.event("camera_record");
+        assert_camera_not_consumer_proof(&record, id);
+        assert_eq!(record["queued"], sequence);
+        for field in ["helper_pid", "decoder_pid", "node_name"] {
+            assert_eq!(
+                record[field], bound[field],
+                "exact bound helper identities persist"
+            );
+        }
         if let Some(wait) = (start + Duration::from_nanos(sequence * 33_333_333))
             .checked_duration_since(Instant::now())
         {
@@ -921,7 +1304,7 @@ fn hosted_linux_camera_graph() {
             .link
             .send_route_command_until(id, RouteCommandAction::Stop, Instant::now() + BOUND)
             .unwrap(),
-        "control_eof" => peer.link.close(),
+        "control_eof" | "remote_eof" => peer.link.close(),
         "source_revoke" => {
             let route = peer.runtime.route(id).unwrap().clone();
             peer.runtime
@@ -952,15 +1335,38 @@ fn hosted_linux_camera_graph() {
                 .route_port_lease_claim(id, route.source)
                 .unwrap()
                 .expires_at_ms;
+            let AuthorizationState::Authorized {
+                expires_at_ms: Some(grant_expiry),
+            } = route.authorization
+            else {
+                panic!("finite negotiated authorization required")
+            };
+            assert!(
+                expiry < grant_expiry,
+                "actual negotiated Source lease, not configured duration, bounds cleanup"
+            );
+            let deadline =
+                Instant::now() + Duration::from_millis(expiry.saturating_sub(now_ms())) + BOUND;
             while now_ms() < expiry {
-                if now_ms() + 100 < expiry {
-                    assert!(
-                        process.child.try_wait().unwrap().is_none(),
-                        "launcher failed before actual finite lease expiry"
-                    );
+                assert!(
+                    Instant::now() < deadline,
+                    "bounded actual lease expiry observation"
+                );
+                #[cfg(feature = "paired-store")]
+                if console_mode {
+                    assert_console_not_early_expiry(&mut process, expiry);
                 }
-                process.collect();
-                thread::sleep(Duration::from_millis(10));
+                if !console_mode {
+                    // Preserve the existing legacy launcher's observation gate.
+                    if now_ms() + 100 < expiry {
+                        assert!(
+                            process.child.try_wait().unwrap().is_none(),
+                            "launcher failed before actual finite lease expiry"
+                        );
+                    }
+                    process.collect();
+                }
+                thread::sleep(Duration::from_millis(if console_mode { 2 } else { 10 }));
             }
             assert_eq!(
                 sender
@@ -985,6 +1391,10 @@ fn hosted_linux_camera_graph() {
     #[cfg(feature = "paired-store")]
     if let Some(store) = &store {
         assert_paired_no_leak(store, &process);
+    }
+    #[cfg(feature = "paired-store")]
+    if console_mode {
+        console_verified(&scenario, store.as_ref().unwrap(), &process);
     }
     println!("VERIFIED {scenario}\nCAMERA_STOPPED");
 }

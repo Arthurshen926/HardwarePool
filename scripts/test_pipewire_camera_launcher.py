@@ -4,7 +4,10 @@ import tempfile
 from types import SimpleNamespace
 from unittest import TestCase, mock
 
-from run_pipewire_camera_launcher import LauncherHarness, SCENARIOS, markers, verify_completion, verify_process
+from run_pipewire_camera_launcher import (
+    CONSOLE_PENDING, CONSOLE_SCENARIOS, CONSOLE_TEST, LauncherHarness, SCENARIOS,
+    markers, verify_completion, verify_mode, verify_process,
+)
 
 
 class LauncherTests(TestCase):
@@ -106,3 +109,183 @@ class LauncherTests(TestCase):
         for pid in (0, 1, 20):
             with self.assertRaises(ValueError):
                 verify_process(pid, 20, Path('/helper'))
+
+
+class ConsoleLauncherTests(TestCase):
+    def transcript(self, scenario):
+        text = ('CONSOLE_PID 15\nLAUNCHER_PID 20\nPAIRED_STORE_AUTH verified\n'
+                'CONSOLE_CONSENT exact_source_sink=true no_echo=true\n')
+        if scenario not in CONSOLE_PENDING:
+            text += 'SECURE_LISTENING no_media_children=true\n'
+        if scenario not in (*CONSOLE_PENDING, 'handshake_timeout'):
+            text += 'CAMERA_READY 21 capyio.camera.fixture\nDECODER_READY 22\n'
+        return (text + f'CONSOLE_VERIFIED {scenario} actual_tty=true fresh_consent=true '
+                'secret_redacted=true node_reaped=true\n'
+                f'VERIFIED {scenario}\nCAMERA_STOPPED\n'
+                f'test {CONSOLE_TEST} ... ok\n'
+                'test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 15 filtered out\n')
+
+    def test_thirteen_explicit_profiles_preserve_eight_legacy_scenarios(self):
+        self.assertEqual(len(SCENARIOS), 8)
+        self.assertEqual(set(CONSOLE_SCENARIOS), {
+            'pixels', 'no_approval', 'pretyped', 'mismatched_request',
+            'mismatched_route', 'mismatched_peer', 'expiry', 'remote_eof',
+            'local_stop', 'control_stop', 'source_revoke', 'partial_cavc', 'handshake_timeout'})
+        for scenario in CONSOLE_SCENARIOS:
+            verify_mode(scenario, paired_store=True, console=True)
+        for args in (('pixels', False, True), ('remote_eof', True, False),
+                     ('control_eof', True, True), ('pretyped', True, False),
+                     ('unknown', True, True)):
+            with self.subTest(args=args), self.assertRaises(ValueError):
+                verify_mode(*args)
+
+    def test_all_console_profiles_require_every_exact_claim_and_success(self):
+        for scenario in CONSOLE_SCENARIOS:
+            text = self.transcript(scenario)
+            with self.subTest(scenario=scenario):
+                verify_completion(text, scenario, 0, paired_store=True, console=True)
+                for line in text.splitlines():
+                    with self.assertRaises(ValueError):
+                        verify_completion(text.replace(line + '\n', ''), scenario, 0,
+                                          paired_store=True, console=True)
+                for code in (1, 2, -15):
+                    with self.assertRaises(ValueError):
+                        verify_completion(text, scenario, code, paired_store=True, console=True)
+
+    def test_no_fixture_substitution_skip_or_mode_confusion(self):
+        text = self.transcript('pixels')
+        for before, after in ((CONSOLE_TEST, 'hosted_linux_camera_graph'),
+                              ('1 passed; 0 failed; 0 ignored', '0 passed; 0 failed; 1 ignored'),
+                              ('CONSOLE_VERIFIED pixels', 'CONSOLE_VERIFIED local_stop'),
+                              ('PAIRED_STORE_AUTH verified\n', '')):
+            with self.subTest(after=after), self.assertRaises(ValueError):
+                verify_completion(text.replace(before, after), 'pixels', 0,
+                                  paired_store=True, console=True)
+        with self.assertRaises(ValueError):
+            verify_completion(text, 'pixels', 0, paired_store=True)
+        with self.assertRaises(ValueError):
+            verify_completion(text, 'pixels', 0, console=True)
+        legacy = LauncherTests.base + 'VERIFIED pixels\nCAMERA_STOPPED\n'
+        with self.assertRaises(ValueError):
+            verify_completion(legacy, 'pixels', 0, paired_store=True, console=True)
+
+    def test_unapproved_or_unbound_console_cannot_claim_media_or_lease(self):
+        for scenario in (*CONSOLE_PENDING, 'handshake_timeout'):
+            for extra in ('CAMERA_READY 21 capyio.camera.fixture\n', 'DECODER_READY 22\n'):
+                with self.subTest(scenario=scenario, extra=extra), self.assertRaises(ValueError):
+                    verify_completion(extra + self.transcript(scenario), scenario, 0,
+                                      paired_store=True, console=True)
+        for scenario in CONSOLE_PENDING:
+            with self.assertRaises(ValueError):
+                verify_completion('SECURE_LISTENING no_media_children=true\n' + self.transcript(scenario),
+                                  scenario, 0, paired_store=True, console=True)
+
+    def test_console_markers_reject_duplicate_malformed_and_partial_final_lines(self):
+        text = self.transcript('pixels')
+        for line in text.splitlines():
+            if not line.startswith('CONSOLE_'):
+                continue
+            with self.subTest(line=line):
+                with self.assertRaises(ValueError):
+                    markers(text + line + '\n')
+                with self.assertRaises(ValueError):
+                    markers(text.replace(line, line + ' extra'))
+        self.assertNotIn('CONSOLE_PID', markers('CONSOLE_PID '))
+        with self.assertRaises(ValueError):
+            markers('CONSOLE_PID ', complete=True)
+
+    def harness(self, root):
+        h = object.__new__(LauncherHarness)
+        h.root, h.console = Path(root), True
+        h.node = Path('/fixed/capyio-node')
+        h.helper, h.decoder = Path('/fixed/camera-helper'), Path('/fixed/camera-decoder')
+        return h
+
+    def test_real_ownership_is_fixture_console_node_helpers_with_exact_commands(self):
+        with tempfile.TemporaryDirectory() as root:
+            h = self.harness(root)
+            (h.root / 'owner.out').write_text(self.transcript('pixels'))
+            with mock.patch('run_pipewire_camera_launcher.verify_process') as verify, \
+                    mock.patch.object(Path, 'read_bytes', side_effect=[
+                        b'capyio-linux-console\0camera\0--pairing-state\0file',
+                        b'capyio-node\0linux-camera\0--pairing-state\0file']):
+                self.assertEqual(h.ready_line(SimpleNamespace(pid=10, poll=lambda: None)),
+                                 ('CAMERA_READY', '21', 'capyio.camera.fixture'))
+                self.assertEqual(verify.call_args_list, [
+                    mock.call(15, 10, Path('/fixed/capyio-linux-console')),
+                    mock.call(20, 15, h.node), mock.call(21, 20, h.helper),
+                    mock.call(22, 20, h.decoder)])
+
+    def test_ownership_rejects_missing_pairing_wrong_operation_or_identity_alias(self):
+        with tempfile.TemporaryDirectory() as root:
+            h = self.harness(root)
+            result = markers(self.transcript('pixels'))
+            child = SimpleNamespace(pid=10)
+            for argv in (b'camera\0file', b'playback\0--pairing-state',
+                         b'linux-camera\0--pairing-state'):
+                with mock.patch('run_pipewire_camera_launcher.verify_process'), \
+                        mock.patch.object(Path, 'read_bytes', return_value=argv), self.assertRaises(ValueError):
+                    h.verify_owner(child, result)
+            for value in (10, 20):
+                with self.assertRaises(ValueError):
+                    h.verify_owner(child, dict(result, CONSOLE_PID=(str(value),)))
+
+    def test_consent_checkpoint_independently_rejects_graph_changes_or_media_claim(self):
+        with tempfile.TemporaryDirectory() as root:
+            h = self.harness(root)
+            prefix = self.transcript('no_approval').split('CONSOLE_VERIFIED')[0]
+            (h.root / 'owner.out').write_text(prefix)
+            child = SimpleNamespace(pid=10, poll=lambda: None)
+            with mock.patch.object(h, 'verify_owner'), mock.patch.object(h, 'dump', return_value=[]), \
+                    mock.patch.object(h, 'check'), mock.patch('run_pipewire_camera_launcher.time.sleep'):
+                self.assertTrue(h.consent_checkpoint(child, {}))
+                with self.assertRaises(ValueError):
+                    h.consent_checkpoint(child, {9: ('node', 'sentinel')})
+                (h.root / 'owner.out').write_text(prefix + 'SECURE_LISTENING no_media_children=true\n')
+                with self.assertRaises(ValueError):
+                    h.consent_checkpoint(child, {})
+
+    def test_cleanup_requires_console_node_and_decoder_gone(self):
+        h = self.harness('/unused')
+        h.console_pid, h.node_pid, h.decoder_pid = 15, 20, 22
+        with mock.patch.object(Path, 'exists', return_value=False) as exists:
+            h.assert_owner_removed()
+            self.assertEqual(exists.call_count, 3)
+        for live in (15, 20, 22):
+            with mock.patch.object(Path, 'exists', autospec=True,
+                                   side_effect=lambda path: path.name == str(live)), self.assertRaises(ValueError):
+                h.assert_owner_removed()
+
+    def test_invalid_console_mode_fails_before_daemon_or_process_start(self):
+        h = self.harness('/unused')
+        with mock.patch.object(h, 'prepare_daemon') as prepare, self.assertRaises(ValueError):
+            h.run_launcher(*(Path('/unused') for _ in range(5)), 'pixels', console=True)
+        prepare.assert_not_called()
+
+    def test_console_pending_orchestration_selects_actual_pty_fixture_and_checks_consent(self):
+        with tempfile.TemporaryDirectory() as root:
+            h = self.harness(root)
+            h.env = {}
+            (h.root / 'owner.out').write_text(self.transcript('no_approval'))
+            graph = [{'id': 1, 'type': 'PipeWire:Interface:Node', 'info': {'props': {
+                'node.name': 'capyio.test.null', 'object.serial': '1'}}}]
+            child = SimpleNamespace(pid=10, stdin=mock.Mock(), wait=mock.Mock(return_value=0))
+            with mock.patch.object(h, 'prepare_daemon'), mock.patch.object(h, 'dump', return_value=graph), \
+                    mock.patch.object(h, 'launch', return_value=child) as launch, \
+                    mock.patch.object(h, 'wait_for', side_effect=lambda predicate: predicate()), \
+                    mock.patch.object(h, 'consent_checkpoint', return_value=True) as consent, \
+                    mock.patch.object(h, 'assert_removed') as removed, \
+                    mock.patch.object(h, 'assert_owner_removed') as reaped, \
+                    mock.patch.object(h, 'check'), mock.patch('run_pipewire_camera_launcher.time.sleep'):
+                h.node_pid = 20
+                paths = [Path('/fixed/' + name) for name in ('driver', 'capyio-node', 'helper', 'decoder', 'consumer')]
+                h.run_launcher(*paths, 'no_approval', paired_store=True, console=True)
+                launch.assert_called_once_with([str(paths[0]), '--exact', CONSOLE_TEST,
+                                                '--ignored', '--nocapture'], 'owner')
+                consent.assert_called_once()
+                self.assertEqual(child.stdin.write.call_args_list,
+                                 [mock.call(b'approve synthetic camera\n'), mock.call(b'check consent\n')])
+                self.assertEqual(h.env['CAPYIO_CAMERA_CONSOLE'], '1')
+                self.assertEqual(h.env['CAPYIO_CAMERA_PAIRED_STORE'], '1')
+                removed.assert_called_once()
+                reaped.assert_called_once()

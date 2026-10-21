@@ -1396,7 +1396,8 @@ Linux console, with exact current-session confirmation and unchanged Node and
 counterpart resource authority. Its mandatory isolated PTY/PipeWire profile is
 separate from legacy/paired launcher tests. UDP audio remains unauthenticated
 plaintext trusted-lab media; reverse audio is added separately by ADR 1549,
-while camera/touchpad console control and renewal remain unimplemented.
+while camera is added separately by ADR 1550; touchpad console control and
+renewal remain unimplemented.
 
 
 ADR 1549 adds interactive finite selected-source stereo capture and virtual-speaker
@@ -1405,3 +1406,10 @@ consent, independent counterpart authority and finite lease cleanup remain
 mandatory. Sixteen additional actual-PTY/private-PipeWire profiles reuse the
 independent stereo media oracle; all prior 48 graph profiles remain required.
 No physical-device or secure UDP media claim is made.
+
+
+ADR 1550 adds finite remote-camera-to-local-virtual-camera console control with
+exact fresh session consent and strictly `Starting`, unverified-consumer status.
+Thirteen mandatory actual-PTY camera profiles retain independent pixels, owned
+process/graph cleanup and all existing media gates. No physical camera or
+unattended lifecycle is introduced.

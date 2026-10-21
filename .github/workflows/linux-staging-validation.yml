@@ -105,7 +105,7 @@ jobs:
                                         capture_output=True, text=True, timeout=10)
           assert console_help.returncode == 0, console_help.stderr
           assert 'capyio-linux-console' in console_help.stdout, console_help.stdout
-          for command in ('welcome', 'join', 'list', 'recover', 'revoke', 'cancel', 'playback', 'capture'):
+          for command in ('welcome', 'join', 'list', 'recover', 'revoke', 'cancel', 'playback', 'capture', 'camera'):
               assert command in console_help.stdout, (command, console_help.stdout)
           for flag in ('--pairing-node', '--pairing-state', '--pairing-bus-address',
                        '--pairing-collection'):

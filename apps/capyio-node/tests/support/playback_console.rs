@@ -1,4 +1,4 @@
-//! Test-only PTY transport for the existing audio fixtures. The only input to
+//! Test-only PTY transport for the existing finite media fixtures. The only input to
 //! the real console is terminal text; tests never access its Node control pipes.
 use super::{BOUND, NodeId, Value, drain, nonblocking};
 use std::{
@@ -47,7 +47,8 @@ impl Console {
         let (node_command, event_prefix) = match operation {
             "playback" => ("linux-playback", "Playback event: "),
             "capture" => ("linux-capture", "Capture event: "),
-            _ => panic!("exact supported audio console operation required"),
+            "camera" => ("linux-camera", "Camera event: "),
+            _ => panic!("exact supported media console operation required"),
         };
         let node = Path::new(env!("CARGO_BIN_EXE_capyio-node"))
             .canonicalize()
@@ -218,7 +219,7 @@ impl Console {
         let line = &text[start..];
         let end = line.find('\n')?;
         let value =
-            parse_event(&line[..end], self.event_prefix).expect("canonical public audio event");
+            parse_event(&line[..end], self.event_prefix).expect("canonical public media event");
         self.event_cursor = start + end + 1;
         Some(value)
     }
@@ -229,6 +230,37 @@ impl Console {
     }
 
     pub(super) fn assert_presentation(&self, approval: &Value) {
+        if self.node_command == "linux-camera" {
+            let text = String::from_utf8_lossy(&self.tty).replace('\r', "");
+            let source = &approval["source"];
+            let sink = &approval["sink"];
+            assert!(text.contains(&format!(
+                "Remote Source Node {}, Capability {}, Port {}\nLocal camera Sink Node {}\n",
+                source["node_id"].as_str().unwrap(),
+                source["capability_id"].as_str().unwrap(),
+                source["port_id"].as_str().unwrap(),
+                sink["node_id"].as_str().unwrap()
+            )));
+            assert!(text.contains(&format!(
+                "Sink Capability {}, Port {}; Session {}; Route {}\n",
+                sink["capability_id"].as_str().unwrap(),
+                sink["port_id"].as_str().unwrap(),
+                approval["session_id"].as_str().unwrap(),
+                approval["route_id"].as_str().unwrap()
+            )));
+            for line in [
+                "Format: cavc-avc-access-unit-v1; media security: tls13_mtls_v1; duration: 10 seconds\n",
+                "1280x720, 30 fps, rotation 0; at most 120 frames and 33554432 encoded bytes.\n",
+                "Experimental finite camera; independent Source consent and both leases remain required.\n",
+                "A bound helper or queued frame is not consumer delivery; Route remains Starting.\n",
+            ] {
+                assert!(
+                    text.contains(line),
+                    "exact secure finite camera presentation required"
+                );
+            }
+            return;
+        }
         let text = String::from_utf8_lossy(&self.tty).replace('\r', "");
         let source = approval["source"]["node_id"].as_str().unwrap();
         let sink = approval["sink"]["node_id"].as_str().unwrap();
@@ -329,7 +361,10 @@ impl Console {
 }
 
 fn parse_event(line: &str, prefix: &str) -> Option<Value> {
-    if !matches!(prefix, "Playback event: " | "Capture event: ") {
+    if !matches!(
+        prefix,
+        "Playback event: " | "Capture event: " | "Camera event: "
+    ) {
         return None;
     }
     let json = line.strip_prefix(prefix)?.trim_end_matches('\r');
@@ -337,9 +372,21 @@ fn parse_event(line: &str, prefix: &str) -> Option<Value> {
         return None;
     }
     let value: Value = serde_json::from_str(json).ok()?;
-    if value["version"] != 1
-        || !matches!(
-            value["event"].as_str()?,
+    let event = value["event"].as_str()?;
+    let accepted = if prefix == "Camera event: " {
+        matches!(
+            event,
+            "listening"
+                | "approval_required"
+                | "camera_bound"
+                | "camera_record"
+                | "status"
+                | "stopped"
+                | "failed"
+        )
+    } else {
+        matches!(
+            event,
             "listening"
                 | "approval_required"
                 | "awaiting_peer_offer"
@@ -347,7 +394,8 @@ fn parse_event(line: &str, prefix: &str) -> Option<Value> {
                 | "stopped"
                 | "failed"
         )
-    {
+    };
+    if value["version"] != 1 || !accepted {
         return None;
     }
     Some(value)
@@ -385,4 +433,33 @@ fn pure_capture_console_events_cannot_substitute_playback_or_unknown_prefix() {
         )
         .is_none()
     );
+}
+
+#[test]
+fn pure_camera_console_events_cannot_substitute_audio_prefix_or_events() {
+    for event in [
+        "listening",
+        "approval_required",
+        "camera_bound",
+        "camera_record",
+        "status",
+        "stopped",
+        "failed",
+    ] {
+        let line = format!("Camera event: {{\"version\":1,\"event\":\"{event}\"}}\r");
+        assert!(parse_event(&line, "Camera event: ").is_some());
+        for prefix in ["Playback event: ", "Capture event: ", "Camera "] {
+            assert!(parse_event(&line, prefix).is_none());
+        }
+    }
+    for event in ["camera_bound", "camera_record"] {
+        for prefix in ["Playback event: ", "Capture event: "] {
+            let line = format!("{prefix}{{\"version\":1,\"event\":\"{event}\"}}");
+            assert!(parse_event(&line, prefix).is_none());
+        }
+    }
+    for event in ["awaiting_peer_offer", "credentials"] {
+        let line = format!("Camera event: {{\"version\":1,\"event\":\"{event}\"}}");
+        assert!(parse_event(&line, "Camera event: ").is_none());
+    }
 }
