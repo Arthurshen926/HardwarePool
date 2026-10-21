@@ -66,8 +66,15 @@ impl CameraConfig {
 }
 
 pub fn run_camera_stdio() -> io::Result<()> {
+    run_stdio(CredentialSource::PrivatePipe)
+}
+#[cfg(feature = "paired-store")]
+pub fn run_camera_paired_store_stdio(selection: PairedStoreSelection) -> io::Result<()> {
+    run_stdio(CredentialSource::PairedStore(selection))
+}
+fn run_stdio(source: CredentialSource) -> io::Result<()> {
     let mut io = sanitized(LauncherIo::stdio())?;
-    let result = launch_camera(&mut io);
+    let result = launch_camera(&mut io, source);
     if result.is_err() {
         let _ = io.send_json(
             &json!({"version":1,"event":"failed"}),
@@ -101,26 +108,12 @@ fn camera_before_approval(io: &mut LauncherIo, stage: &str) -> io::Result<bool> 
     Ok(false)
 }
 
-fn launch_camera(io: &mut LauncherIo) -> io::Result<()> {
+fn launch_camera(io: &mut LauncherIo, source: CredentialSource) -> io::Result<()> {
     let deadline = Instant::now() + BOOTSTRAP;
     let config = CameraConfig::parse(io.read_frame(LOCAL_FRAME, deadline)?.as_slice())?;
-    let bytes = io.read_frame(65_536, deadline)?;
-    let directory = sanitized(PairedPeerDirectory::decode_json(
-        config.node_id,
-        bytes.as_slice(),
-    ))?;
-    drop(bytes);
-    let mut peers = directory.active_peers();
-    let peer = peers.next().ok_or_else(fail)?;
-    if peer.node_id != config.source.node_id
-        || peers.next().is_some()
-        || directory.peers().len() != 1
-    {
-        return Err(fail());
-    }
-    let bytes = io.read_frame(65_536, deadline)?;
-    let credentials = sanitized(ControlCredentialBundle::decode(bytes.as_slice()))?;
-    drop(bytes);
+    let (directory, credentials) =
+        launcher_credentials(io, config.node_id, config.source.node_id, deadline, source)?;
+    let peer = directory.active_peers().next().ok_or_else(fail)?;
     let identity = ControlTlsServerIdentity::from_bundle(peer.peer_certificate_sha256, credentials);
     let (mut runtime, sink) = camera_runtime(config.node_id)?;
     let expectation = sanitized(ControlTlsNodeBinding::new(config.node_id, peer.node_id))?;

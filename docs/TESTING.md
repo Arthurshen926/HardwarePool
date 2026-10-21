@@ -1341,3 +1341,13 @@ a synthetic fake service. Run the same commands with `--features native-secret-s
 `dbus-daemon` must exist and missing prerequisites fail rather than silently skip.
 No real user credentials/keyring, physical devices, power-loss filesystem or
 long-lived service acceptance is included.
+
+## Persisted pairing launcher integration
+
+ADR 1541 adds `cargo test --locked -p capyio-node --features paired-store --test linux_paired_store`
+using actual node children, synthetic committed state and an owned private fake
+Secret Service. A real user bus/keyring and physical devices are forbidden in
+these fixtures. Run legacy `linux_camera` and `linux_touchpad` test targets with
+the same feature to retain the private-bootstrap and finite-authority regression
+coverage. Hosted CI must execute the private-bus tests when local socket binding
+is restricted; compilation alone is not wire acceptance evidence.

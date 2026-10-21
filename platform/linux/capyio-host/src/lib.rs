@@ -12,6 +12,10 @@ mod launch;
 mod launcher_io;
 #[cfg(all(target_os = "linux", feature = "touchpad-test-fixture"))]
 pub use launch::run_touchpad_fixture_stdio;
+#[cfg(all(target_os = "linux", feature = "paired-store"))]
+pub use launch::{
+    PairedStoreSelection, run_camera_paired_store_stdio, run_touchpad_paired_store_stdio,
+};
 #[cfg(target_os = "linux")]
 pub use launch::{
     run_camera_stdio, run_touchpad_stdio, run_trusted_lab_capture_stdio,

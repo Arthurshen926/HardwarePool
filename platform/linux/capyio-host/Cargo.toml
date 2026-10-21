@@ -8,6 +8,7 @@ license.workspace = true
 
 [features]
 default = []
+paired-store = ["dep:capyio-linux-pairing-store"]
 native-touchpad = ["capyio-linux-touchpad/native-uinput"]
 touchpad-test-fixture = ["capyio-linux-touchpad/test-fixture"]
 native-camera = ["capyio-linux-avc/native-pipewire"]
@@ -39,3 +40,8 @@ capyio-pairing = { path = "../../../crates/capyio-pairing" }
 capyio-linux-avc = { path = "../capyio-avc" }
 
 capyio-linux-touchpad = { path = "../capyio-touchpad" }
+
+[target.'cfg(target_os = "linux")'.dependencies.capyio-linux-pairing-store]
+path = "../capyio-pairing-store"
+optional = true
+features = ["native-secret-service"]

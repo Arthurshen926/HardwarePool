@@ -1672,3 +1672,9 @@ shared enrollment manager; no service or thread is created by the store. Typed
 bootstrap material selects exactly one committed active peer for existing finite
 launchers. ADR 1540 adds the optional explicit local Unix Secret Service backend,
 with no launcher wiring, implicit unlock, activation or plaintext fallback.
+
+ADR 1541 wires the optional `paired-store` feature into finite camera/touchpad
+commands: five explicit public selectors plus a distinct nonsecret bootstrap
+marker replace only the directory/credential frames. Private FIFO local config,
+resource approval, source consent and finite session/lease authority stay separate.
+Audio launchers and enrollment/service UI remain outside this increment.

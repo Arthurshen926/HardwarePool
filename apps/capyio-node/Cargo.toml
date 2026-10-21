@@ -8,6 +8,7 @@ license.workspace = true
 
 [features]
 default = []
+paired-store = ["capyio-linux-host/paired-store"]
 native-touchpad = ["capyio-linux-host/native-touchpad"]
 touchpad-test-fixture = ["capyio-linux-host/touchpad-test-fixture"]
 native-camera = ["capyio-linux-host/native-camera"]
@@ -40,3 +41,9 @@ capyio-android-host = { path = "../../platform/android/capyio-host" }
 capyio-input = { path = "../../crates/capyio-input" }
 capyio-linux-touchpad = { path = "../../platform/linux/capyio-touchpad" }
 capyio-remote-touchpad-adapter = { path = "../../adapters/remote-touchpad", features = ["tls"] }
+
+[target.'cfg(target_os = "linux")'.dev-dependencies]
+capyio-linux-pairing-store = { path = "../../platform/linux/capyio-pairing-store" }
+zbus = { version = "=5.19.0", default-features = false, features = ["tokio"] }
+tokio = { version = "=1.53.1", default-features = false, features = ["rt", "net", "time", "sync", "macros"] }
+sha2.workspace = true

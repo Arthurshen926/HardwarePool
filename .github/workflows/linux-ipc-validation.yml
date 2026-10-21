@@ -41,6 +41,15 @@ jobs:
           if ! command -v dbus-daemon; then sudo apt-get update && sudo apt-get install -y --no-install-recommends dbus; fi
           timeout --signal=TERM --kill-after=10s 240s cargo test --locked -p capyio-linux-pairing-store --features native-secret-service -- --test-threads=1
           cargo clippy --locked -p capyio-linux-pairing-store --all-targets --features native-secret-service -- -D warnings
+      - name: Validate persisted pairing launcher boundary
+        run: |
+          cargo test --locked -p capyio-node --features paired-store --test linux_paired_store -- --list | tee "$RUNNER_TEMP/paired-launcher-tests.txt"
+          for test in ipc_paired_store_camera_and_touchpad_listen_without_grant_and_stop_cleanly ipc_paired_store_invalid_peer_or_backend_fails_before_listening_or_helper ipc_paired_store_rejects_legacy_credential_frames_in_selected_mode paired_store_cli_rejects_incomplete_selector_set_without_access; do
+            grep -Fx "$test: test" "$RUNNER_TEMP/paired-launcher-tests.txt"
+          done
+          timeout --signal=TERM --kill-after=10s 600s cargo test --locked -p capyio-node --features paired-store --test linux_paired_store --test linux_camera --test linux_touchpad -- --test-threads=1
+          cargo test --locked -p capyio-node --features paired-store --bin capyio-node paired_store_cli_tests
+          cargo clippy --locked -p capyio-node -p capyio-linux-host --features paired-store --all-targets -- -D warnings
       - name: Build repository mock adapters
         run: cargo build --locked -p capyio-mock-source -p capyio-mock-sink
       - name: Require finite IPC regression tests

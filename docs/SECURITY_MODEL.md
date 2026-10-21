@@ -1564,3 +1564,9 @@ Content-derived handles, exact bundle digests, exclusive
 store ownership and revoked tombstones fail closed. Recovery never generates or
 deletes credentials and does not prove remote completion. The typed selected-peer
 bootstrap material changes no finite launcher, consent or lease checks.
+
+ADR 1541's launcher integration reads one exact existing paired peer in-process;
+selector/config identity mismatch and unavailable/revoked/altered records fail
+before control-listener binding or helper spawn. It never recovers a pending
+journal or grants permanent resource permission. The paired-store marker is not
+approval. Existing three-frame private bootstrap remains a distinct default mode.

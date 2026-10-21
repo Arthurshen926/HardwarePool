@@ -683,6 +683,7 @@ dependencies = [
  "capyio-core",
  "capyio-linux-audio",
  "capyio-linux-avc",
+ "capyio-linux-pairing-store",
  "capyio-linux-touchpad",
  "capyio-mock-source",
  "capyio-pairing",
@@ -791,6 +792,7 @@ dependencies = [
  "capyio-data-plane",
  "capyio-input",
  "capyio-linux-host",
+ "capyio-linux-pairing-store",
  "capyio-linux-touchpad",
  "capyio-native-audio-lan",
  "capyio-pairing",
@@ -803,8 +805,11 @@ dependencies = [
  "rcgen",
  "rustix",
  "serde_json",
+ "sha2",
+ "tokio",
  "tracing",
  "tracing-subscriber",
+ "zbus",
 ]
 
 [[package]]

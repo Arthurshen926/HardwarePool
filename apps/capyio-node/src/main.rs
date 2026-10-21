@@ -51,6 +51,9 @@ enum Command {
     LinuxTouchpad {
         #[arg(long, required = true)]
         trusted_lab: bool,
+        #[cfg(feature = "paired-store")]
+        #[command(flatten)]
+        paired_store: PairedStoreArgs,
     },
     /// Software-only Type-B syscall fixture; never opens an input device.
     #[cfg(feature = "touchpad-test-fixture")]
@@ -64,6 +67,9 @@ enum Command {
     LinuxCamera {
         #[arg(long, required = true)]
         trusted_lab: bool,
+        #[cfg(feature = "paired-store")]
+        #[command(flatten)]
+        paired_store: PairedStoreArgs,
     },
     /// Reports passive Linux playback prerequisites as JSON; never starts playback or connects.
     LinuxPlaybackPreflight {
@@ -168,15 +174,26 @@ fn main() -> anyhow::Result<()> {
                 anyhow::bail!("Linux lab capture requires Linux")
             }
         }
-        Command::LinuxTouchpad { trusted_lab } => {
+        Command::LinuxTouchpad {
+            trusted_lab,
+            #[cfg(feature = "paired-store")]
+            paired_store,
+        } => {
             anyhow::ensure!(trusted_lab, "explicit trusted-lab opt-in required");
             #[cfg(target_os = "linux")]
             {
+                #[cfg(feature = "paired-store")]
+                if let Some(selection) = paired_store.selection()? {
+                    return capyio_linux_host::run_touchpad_paired_store_stdio(selection)
+                        .map_err(|_| anyhow::anyhow!("Linux touchpad launch failed"));
+                }
                 capyio_linux_host::run_touchpad_stdio()
                     .map_err(|_| anyhow::anyhow!("Linux touchpad launch failed"))
             }
             #[cfg(not(target_os = "linux"))]
             {
+                #[cfg(feature = "paired-store")]
+                let _ = paired_store;
                 anyhow::bail!("Linux touchpad requires Linux")
             }
         }
@@ -197,15 +214,26 @@ fn main() -> anyhow::Result<()> {
                 anyhow::bail!("Linux touchpad requires Linux")
             }
         }
-        Command::LinuxCamera { trusted_lab } => {
+        Command::LinuxCamera {
+            trusted_lab,
+            #[cfg(feature = "paired-store")]
+            paired_store,
+        } => {
             anyhow::ensure!(trusted_lab, "explicit trusted-lab opt-in required");
             #[cfg(target_os = "linux")]
             {
+                #[cfg(feature = "paired-store")]
+                if let Some(selection) = paired_store.selection()? {
+                    return capyio_linux_host::run_camera_paired_store_stdio(selection)
+                        .map_err(|_| anyhow::anyhow!("Linux camera launch failed"));
+                }
                 capyio_linux_host::run_camera_stdio()
                     .map_err(|_| anyhow::anyhow!("Linux camera launch failed"))
             }
             #[cfg(not(target_os = "linux"))]
             {
+                #[cfg(feature = "paired-store")]
+                let _ = paired_store;
                 anyhow::bail!("Linux camera requires Linux")
             }
         }
@@ -382,5 +410,97 @@ mod preflight_cli_tests {
             Cli::try_parse_from(["capyio-node", "linux-playback-preflight", "--trusted-lab"])
                 .is_err()
         );
+    }
+}
+
+/// Nonsecret selectors only. Supplying any selector requires the complete set.
+#[cfg(feature = "paired-store")]
+#[derive(Debug, clap::Args)]
+#[group(multiple = true, requires_all = ["pairing_state", "pairing_node", "pairing_peer", "pairing_bus_address", "pairing_collection"])]
+struct PairedStoreArgs {
+    /// Existing owner-only pairing metadata directory; never a credential file.
+    #[arg(long)]
+    pairing_state: Option<std::path::PathBuf>,
+    #[arg(long)]
+    pairing_node: Option<capyio_core::NodeId>,
+    #[arg(long)]
+    pairing_peer: Option<capyio_core::NodeId>,
+    /// Explicit local Unix D-Bus address; no session-bus environment default.
+    #[arg(long)]
+    pairing_bus_address: Option<String>,
+    /// Existing unlocked persistent Secret Service collection object path.
+    #[arg(long)]
+    pairing_collection: Option<String>,
+}
+#[cfg(all(target_os = "linux", feature = "paired-store"))]
+impl PairedStoreArgs {
+    fn selection(self) -> anyhow::Result<Option<capyio_linux_host::PairedStoreSelection>> {
+        match (
+            self.pairing_state,
+            self.pairing_node,
+            self.pairing_peer,
+            self.pairing_bus_address,
+            self.pairing_collection,
+        ) {
+            (None, None, None, None, None) => Ok(None),
+            (
+                Some(state_path),
+                Some(local_node),
+                Some(peer),
+                Some(bus_address),
+                Some(collection),
+            ) => Ok(Some(capyio_linux_host::PairedStoreSelection {
+                local_node,
+                state_path,
+                bus_address,
+                collection,
+                peer,
+            })),
+            _ => anyhow::bail!("complete paired-store selector set required"),
+        }
+    }
+}
+#[cfg(all(test, feature = "paired-store"))]
+mod paired_store_cli_tests {
+    use super::*;
+    #[test]
+    fn paired_store_selector_group_is_all_or_none() {
+        for command in ["linux-camera", "linux-touchpad"] {
+            assert!(Cli::try_parse_from(["node", command, "--trusted-lab"]).is_ok());
+            for flag in [
+                "--pairing-state",
+                "--pairing-node",
+                "--pairing-peer",
+                "--pairing-bus-address",
+                "--pairing-collection",
+            ] {
+                let value = if flag == "--pairing-node" || flag == "--pairing-peer" {
+                    "00000000-0000-0000-0000-000000000001"
+                } else {
+                    "/synthetic"
+                };
+                assert!(
+                    Cli::try_parse_from(["node", command, "--trusted-lab", flag, value]).is_err()
+                );
+            }
+            assert!(
+                Cli::try_parse_from([
+                    "node",
+                    command,
+                    "--trusted-lab",
+                    "--pairing-state",
+                    "/synthetic",
+                    "--pairing-node",
+                    "00000000-0000-0000-0000-000000000001",
+                    "--pairing-peer",
+                    "00000000-0000-0000-0000-000000000002",
+                    "--pairing-bus-address",
+                    "unix:path=/synthetic",
+                    "--pairing-collection",
+                    "/org/freedesktop/secrets/collection/capyio"
+                ])
+                .is_ok()
+            );
+        }
     }
 }

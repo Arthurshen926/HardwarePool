@@ -1,4 +1,4 @@
-//! One-shot executable lab composition. No credential enrollment or persistence.
+//! One-shot executable lab composition. No enrollment or credential persistence writes.
 //! The launcher must exclusively own both inherited pipes and protect their
 //! contents. A pipe is not authentication or protection from its invoker.
 use crate::{LinuxPlaybackHost, launcher_io::LauncherIo};
@@ -1621,3 +1621,105 @@ mod touchpad;
 #[cfg(feature = "touchpad-test-fixture")]
 pub use touchpad::run_touchpad_fixture_stdio;
 pub use touchpad::run_touchpad_stdio;
+
+/// Explicit nonsecret selectors. This selects authentication only, never a
+/// resource, route approval, listen endpoint or lease duration.
+#[cfg(feature = "paired-store")]
+pub struct PairedStoreSelection {
+    pub local_node: NodeId,
+    pub state_path: std::path::PathBuf,
+    pub bus_address: String,
+    pub collection: String,
+    pub peer: NodeId,
+}
+
+enum CredentialSource {
+    PrivatePipe,
+    #[cfg(feature = "paired-store")]
+    PairedStore(PairedStoreSelection),
+}
+
+fn launcher_credentials(
+    io: &mut LauncherIo,
+    local_node: NodeId,
+    expected_peer: NodeId,
+    deadline: Instant,
+    source: CredentialSource,
+) -> io::Result<(PairedPeerDirectory, ControlCredentialBundle)> {
+    let (directory, credentials) = match source {
+        CredentialSource::PrivatePipe => {
+            let bytes = io.read_frame(65_536, deadline)?;
+            let directory = sanitized(PairedPeerDirectory::decode_json(
+                local_node,
+                bytes.as_slice(),
+            ))?;
+            drop(bytes);
+            validate_selected_peer(&directory, expected_peer)?;
+            let bytes = io.read_frame(65_536, deadline)?;
+            let credentials = sanitized(ControlCredentialBundle::decode(bytes.as_slice()))?;
+            (directory, credentials)
+        }
+        #[cfg(feature = "paired-store")]
+        CredentialSource::PairedStore(selection) => {
+            if selection.local_node != local_node || selection.peer != expected_peer {
+                return Err(fail());
+            }
+            // This distinct second frame prevents legacy directory/credential
+            // bootstrap from being silently accepted in persisted-store mode.
+            #[derive(Deserialize)]
+            #[serde(deny_unknown_fields)]
+            struct Marker {
+                version: u32,
+                credential_source: String,
+            }
+            let marker = io.read_frame(LOCAL_FRAME, deadline)?;
+            if marker.as_slice().iter().find(|b| !b.is_ascii_whitespace()) != Some(&b'{') {
+                return Err(fail());
+            }
+            let marker: Marker = sanitized(serde_json::from_slice(marker.as_slice()))?;
+            if marker.version != 1 || marker.credential_source != "paired-store" {
+                return Err(fail());
+            }
+            check(deadline)?;
+            use capyio_linux_pairing_store::{LinuxPairingStore, SecretServiceBackend};
+            let backend = sanitized(SecretServiceBackend::connect_unix(
+                &selection.bus_address,
+                &selection.collection,
+                local_node,
+                Duration::from_secs(1).min(deadline.saturating_duration_since(Instant::now())),
+            ))?;
+            let store = sanitized(LinuxPairingStore::open(
+                &selection.state_path,
+                local_node,
+                backend,
+            ))?;
+            let material = sanitized(store.bootstrap(expected_peer))?;
+            let directory = sanitized(PairedPeerDirectory::decode_json(
+                local_node,
+                &sanitized(material.directory_json())?,
+            ))?;
+            let credentials =
+                sanitized(ControlCredentialBundle::decode(material.credential_bytes()))?;
+            // No journal recovery or credential mutation is initiated by launch.
+            // Existing revocation is a per-launch snapshot, not a lease extension.
+            check(deadline)?;
+            (directory, credentials)
+        }
+    };
+    validate_selected_peer(&directory, expected_peer)?;
+    Ok((directory, credentials))
+}
+fn validate_selected_peer(directory: &PairedPeerDirectory, expected: NodeId) -> io::Result<()> {
+    let mut peers = directory.active_peers();
+    if peers.next().is_none_or(|peer| peer.node_id != expected)
+        || peers.next().is_some()
+        || directory.peers().len() != 1
+    {
+        return Err(fail());
+    }
+    Ok(())
+}
+#[cfg(feature = "paired-store")]
+pub use camera::run_camera_paired_store_stdio;
+#[cfg(feature = "paired-store")]
+pub use touchpad::run_touchpad_paired_store_stdio;

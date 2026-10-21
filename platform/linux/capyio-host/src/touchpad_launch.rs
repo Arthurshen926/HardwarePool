@@ -72,7 +72,12 @@ impl TouchpadConfig {
 }
 
 pub fn run_touchpad_stdio() -> io::Result<()> {
-    run_stdio(Backend::Native)
+    run_stdio(Backend::Native, CredentialSource::PrivatePipe)
+}
+
+#[cfg(feature = "paired-store")]
+pub fn run_touchpad_paired_store_stdio(selection: PairedStoreSelection) -> io::Result<()> {
+    run_stdio(Backend::Native, CredentialSource::PairedStore(selection))
 }
 
 enum Backend {
@@ -91,11 +96,11 @@ pub fn run_touchpad_fixture_stdio(mode: &str) -> io::Result<()> {
         "backpressure" => Backpressure,
         _ => return Err(fail()),
     };
-    run_stdio(Backend::Fixture(mode))
+    run_stdio(Backend::Fixture(mode), CredentialSource::PrivatePipe)
 }
-fn run_stdio(backend: Backend) -> io::Result<()> {
+fn run_stdio(backend: Backend, source: CredentialSource) -> io::Result<()> {
     let mut io = sanitized(LauncherIo::stdio())?;
-    let result = launch_touchpad(&mut io, backend);
+    let result = launch_touchpad(&mut io, backend, source);
     if result.is_err() {
         let _ = io.send_json(
             &json!({"version":1,"event":"failed"}),
@@ -129,26 +134,16 @@ fn touchpad_before_approval(io: &mut LauncherIo, stage: &str) -> io::Result<bool
     Ok(false)
 }
 
-fn launch_touchpad(io: &mut LauncherIo, backend: Backend) -> io::Result<()> {
+fn launch_touchpad(
+    io: &mut LauncherIo,
+    backend: Backend,
+    source: CredentialSource,
+) -> io::Result<()> {
     let deadline = Instant::now() + BOOTSTRAP;
     let config = TouchpadConfig::parse(io.read_frame(LOCAL_FRAME, deadline)?.as_slice())?;
-    let bytes = io.read_frame(65_536, deadline)?;
-    let directory = sanitized(PairedPeerDirectory::decode_json(
-        config.node_id,
-        bytes.as_slice(),
-    ))?;
-    drop(bytes);
-    let mut peers = directory.active_peers();
-    let peer = peers.next().ok_or_else(fail)?;
-    if peer.node_id != config.source.node_id
-        || peers.next().is_some()
-        || directory.peers().len() != 1
-    {
-        return Err(fail());
-    }
-    let bytes = io.read_frame(65_536, deadline)?;
-    let credentials = sanitized(ControlCredentialBundle::decode(bytes.as_slice()))?;
-    drop(bytes);
+    let (directory, credentials) =
+        launcher_credentials(io, config.node_id, config.source.node_id, deadline, source)?;
+    let peer = directory.active_peers().next().ok_or_else(fail)?;
     let identity = ControlTlsServerIdentity::from_bundle(peer.peer_certificate_sha256, credentials);
     let client_identity = ControlTlsClientIdentity {
         expected_peer_certificate: identity.expected_peer_certificate,
