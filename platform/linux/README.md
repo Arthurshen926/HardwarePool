@@ -1,5 +1,10 @@
 # Linux platform boundary
 
+For the unified build-only command, strict staging inventory, passive preflight
+and the boundary between synthetic bootstrap and separately authorized real
+operation, see [Linux build and operations](../../docs/LINUX_BUILD_AND_OPERATIONS.md).
+This is not an installer or a completed Linux pairing/provisioning flow.
+
 ## Current software-validated scope — 2026-10-20
 
 Implementation `510aea94` passed all three hosted gates in
@@ -235,8 +240,8 @@ compatibility remain deferred.
 
 1. Consolidate deferred physical/AudioTrack acceptance separately; the explicit
    Linux → Android stereo software slice above has passed its hosted gates.
-2. Connect the accepted touchpad backend to its own headless executable entry;
-   finite camera executable software acceptance is now recorded under ADR 1536.
+2. The finite camera and touchpad executable software entries are accepted
+   under ADRs 1536 and 1537; consolidate their build and operation boundaries.
    Physical camera use and actual uinput/desktop gesture acceptance stay deferred;
    decoded NV12 results alone do not prove these later integration slices.
 3. Gamepad, haptics, display and IMU remain experimental tracks, not mandatory
@@ -299,8 +304,8 @@ This proves the actual executable composition, not only the earlier library
 owner. Production queued-frame status still remains Starting: application
 consumption is not inferred from queue admission. Physical Camera2, Android
 permission/UI, ordinary-user application compatibility and device testing remain
-separate deferred acceptance. The next executable integration is the touchpad
-backend; this camera result does not grant input-device access.
+separate deferred acceptance. The separately accepted touchpad executable below
+uses fake syscalls for validation; this camera result grants no input-device access.
 
 ## Finite touchpad executable
 
@@ -321,6 +326,23 @@ That explicit fixture command uses fake syscalls only. It does not establish
 kernel/device/OS gesture behavior. Native and fixture features do not redirect
 one another's command or helper path.
 
+### Accepted touchpad executable evidence
+
+Implementation `6257da2e9bd77c05dc12b0f3de458bc4d50b330f` passed all seven jobs
+across four hosted workflows. [Touchpad run 39578248821](https://github.com/Arthurshen926/HardwarePool/actions/runs/39578248821)
+passed ten default admission tests, all 18 fixture-feature actual-node tests,
+fixed helper packaging/cleanup and native/fake separation checks. Official
+libevdev native Node/helper compilation passed without executing the real helper.
+See the [touchpad executable report](../../docs/LINUX_TOUCHPAD_LAUNCHER_20261021_REPORT.md).
+
+The caller still needs an already-issued paired credential bundle/directory,
+protected private bootstrap/control pipes, the exact selected Android Source,
+local nonce-bound approval and independent Android consent. This is one finite
+3–60-second session, not pairing/setup automation or continuous input. Actual
+uinput creation, desktop recognition, OS gestures and physical Android capture
+remain untested and deferred. Fake syscall traces and successful compilation
+must not be described as real kernel input acceptance.
+
 ## Explicit virtual speaker capture mode
 
 The existing `linux-capture --trusted-lab` command accepts
@@ -329,5 +351,10 @@ owned native PipeWire Audio/Sink only after finite bilateral Route authority,
 then forwards explicitly routed application stereo audio to the Android Speaker
 Sink. Omitted mode still captures only the explicitly selected source. See
 [ADR 1538](../../docs/adr/1538-linux-owned-virtual-speaker.md) for the schema,
-six-variable helper hardening and pending hosted real-graph gate. This does not
-change default devices or establish physical/general desktop compatibility.
+six-variable helper hardening and accepted hosted real-graph evidence.
+Implementation `1ad1e97e6cf57067177a5e86100dccccba17360a` passed all seven required
+CI jobs, including waveform, no-input Stop, child/server/control loss and expiry
+in [PipeWire run 39579126851](https://github.com/Arthurshen926/HardwarePool/actions/runs/39579126851).
+This is native PipeWire software routing through the Android Rust receiver with
+simulated consumption, not physical AudioTrack or general desktop compatibility.
+UDP remains unauthenticated/unencrypted trusted-lab-only; default devices are unchanged.

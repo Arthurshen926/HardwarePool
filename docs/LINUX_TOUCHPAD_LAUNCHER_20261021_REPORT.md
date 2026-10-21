@@ -1,12 +1,12 @@
-# Finite Linux touchpad executable candidate: 2026-10-21
+# Finite Linux touchpad executable acceptance: 2026-10-21
 
 ## Scope and baseline
 
-Based on accepted camera launcher commit
-`bbf6531731f27e7243f10fa4a2e80ae780f14b74`. ADR 1537 adds the finite
+Accepted implementation `6257da2e9bd77c05dc12b0f3de458bc4d50b330f` builds on
+camera launcher `bbf6531731f27e7243f10fa4a2e80ae780f14b74`. ADR 1537 adds the finite
 `capyio-node linux-touchpad --trusted-lab` composition around the accepted
 RuntimeTouchpadWorker. Camera acceptance documentation is reconciled in this
-candidate with the publisher's exact-head all-seven-job result; camera source
+increment with the publisher's exact-head all-seven-job result; camera source
 is unchanged.
 
 Production preserves Android's touchpad Source-listener convention, paired
@@ -16,6 +16,13 @@ Source consent remains independent. A validated Source lease plus local Sink
 lease precede data admission; the Sink deadline is shortened to the Source
 lease so the existing independent watchdog enforces both. Neither catalog nor
 Starting state claims a created device or visible input.
+
+This is not a standalone pairing or one-click setup flow. Its caller must
+already have the exact paired-peer directory and issued credential bundle,
+protect the inherited private bootstrap/control pipes, select the exact Android
+Source, and provide the nonce/Route-bound local approval. Android consent is
+separate. Each invocation is finite (3 through 60 seconds); it neither persists
+credentials nor supplies a continuously running input service.
 
 A separate feature/command/helper executes the production projector and helper
 IPC/C loop with fake syscalls only. It does not modify the production native
@@ -62,7 +69,24 @@ check the final cleanup trace, rather than counting startup CancelAll releases,
 and retain each live helper's exact PID, direct parent and fixed executable so
 post-terminal absence also detects orphaning/reparenting.
 
-## Hosted gate and remaining limits
+## Exact-head hosted acceptance
+
+All seven jobs across four workflows passed for
+`6257da2e9bd77c05dc12b0f3de458bc4d50b330f`:
+
+- [Touchpad software validation, run 39578248821, job 119149074960](https://github.com/Arthurshen926/HardwarePool/actions/runs/39578248821/job/119149074960).
+- [Linux IPC validation, run 39578248692](https://github.com/Arthurshen926/HardwarePool/actions/runs/39578248692).
+- [Linux AVC validation, run 39578248773](https://github.com/Arthurshen926/HardwarePool/actions/runs/39578248773).
+- [Linux secure-camera validation, run 39578248743](https://github.com/Arthurshen926/HardwarePool/actions/runs/39578248743).
+
+The touchpad job passed all ten default admission tests and all 18 actual-node
+fixture-feature tests, exact discovery/success guards, packaged fixture and
+helper-boundary tests, existing owner/projector tests, native Node/helper
+compilation and native/fake feature-isolation checks. No CI source fix was
+needed. The other green workflows retain the prior audio/camera gates; they
+are not evidence of real touchpad input or OS gestures.
+
+## Gate coverage and remaining limits
 
 The existing Linux touchpad workflow retains all prior library/native-fake gates
 and adds exact presence/success checks for every actual-node test, fixed helper
@@ -72,8 +96,11 @@ entrypoints; the native executable is never run. Other workflows/jobs remain
 unchanged.
 
 Local native-uinput compilation was unavailable because official libevdev
-headers are absent. Exact-head hosted native build and required checks remain
-pending publication; this report is not a hosted pass claim.
+headers were absent. The exact-head hosted job supplied the official libevdev
+development package and passed native compilation; it did not execute the
+native helper or access a kernel input device. The frozen implementation SHA
+above, rather than this later documentation-only update, identifies the tested
+source.
 
 All device behavior tested here is simulated at the syscall boundary. Kernel
 uinput creation, desktop device classification, OS gestures, physical Android

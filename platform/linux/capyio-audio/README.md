@@ -77,4 +77,9 @@ consent and exact finite Route authority it exposes an owned native `Audio/Sink`
 and sends selected application stereo PCM to the admitted Android Speaker Sink.
 Default selected-source capture is unchanged. See
 [ADR 1538](../../../docs/adr/1538-linux-owned-virtual-speaker.md) for authority,
-shared environment hardening, pending hosted evidence and compatibility limits.
+shared environment hardening and accepted hosted evidence at `1ad1e97e`:
+all six virtual-speaker scenarios passed in
+[run 39579126851](https://github.com/Arthurshen926/HardwarePool/actions/runs/39579126851).
+This is native PipeWire software and Android Rust simulated-consumer evidence,
+not physical AudioTrack output or general desktop compatibility; the existing
+unauthenticated, unencrypted trusted-lab UDP boundary remains unchanged.
