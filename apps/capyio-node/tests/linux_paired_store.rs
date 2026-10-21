@@ -4,262 +4,24 @@
 //! an owned private D-Bus service. Never opens a real keyring or media/input device.
 use capyio_control_credentials::ControlCredentialBundle;
 use capyio_core::{CapabilityId, NodeId, PortId};
-use capyio_linux_pairing_store::{BackendError, CredentialBackend, LinuxPairingStore, SecretBytes};
+use capyio_linux_pairing_store::LinuxPairingStore;
 use capyio_pairing::{
     CertificateFingerprint, CredentialHandle, PairedPeerDirectory, PairedPeerRecord,
     PairingInvitation,
 };
 use serde_json::{Value, json};
-use sha2::{Digest, Sha256};
 use std::{
-    collections::HashMap,
     fs,
     io::{self, Read, Write},
-    os::{fd::AsFd, unix::fs::DirBuilderExt},
-    path::PathBuf,
+    os::fd::AsFd,
     process::{Child, Command, ExitStatus, Stdio},
-    sync::{
-        Arc, Mutex,
-        atomic::{AtomicUsize, Ordering},
-        mpsc,
-    },
     thread,
     time::{Duration, Instant},
 };
-use zbus::zvariant::{OwnedObjectPath, OwnedValue, Str};
-const COLLECTION: &str = "/org/freedesktop/secrets/collection/capyio";
-const ITEM: &str = "/org/freedesktop/secrets/collection/capyio/item0";
-const SESSION: &str = "/org/freedesktop/secrets/session/capyio";
+#[path = "support/paired_store.rs"]
+mod paired_store;
+use paired_store::{PersistedPairing, SeedBackend};
 const BOUND: Duration = Duration::from_secs(8);
-type Attributes = HashMap<String, String>;
-type Shared = Arc<Mutex<KeyringState>>;
-fn path(s: &str) -> OwnedObjectPath {
-    OwnedObjectPath::try_from(s).unwrap()
-}
-#[derive(Default)]
-struct KeyringState {
-    attributes: Attributes,
-    bytes: Vec<u8>,
-    locked: bool,
-    missing: bool,
-    sessions: usize,
-    collection_property_reads: usize,
-    reads: usize,
-    forbidden: usize,
-}
-struct Service(Shared);
-#[zbus::interface(name = "org.freedesktop.Secret.Service")]
-impl Service {
-    fn open_session(
-        &self,
-        algorithm: &str,
-        input: OwnedValue,
-    ) -> zbus::fdo::Result<(OwnedValue, OwnedObjectPath)> {
-        assert_eq!(algorithm, "plain");
-        assert_eq!(<&str>::try_from(&input).unwrap(), "");
-        self.0.lock().unwrap().sessions += 1;
-        Ok((OwnedValue::from(Str::from("")), path(SESSION)))
-    }
-    fn unlock(
-        &self,
-        _objects: Vec<OwnedObjectPath>,
-    ) -> zbus::fdo::Result<(Vec<OwnedObjectPath>, OwnedObjectPath)> {
-        self.0.lock().unwrap().forbidden += 1;
-        Err(zbus::fdo::Error::AccessDenied(
-            "forbidden synthetic operation".into(),
-        ))
-    }
-    fn create_collection(
-        &self,
-        _properties: HashMap<String, OwnedValue>,
-        _alias: &str,
-    ) -> zbus::fdo::Result<(OwnedObjectPath, OwnedObjectPath)> {
-        self.0.lock().unwrap().forbidden += 1;
-        Err(zbus::fdo::Error::AccessDenied(
-            "forbidden synthetic operation".into(),
-        ))
-    }
-}
-struct Collection(Shared);
-#[zbus::interface(name = "org.freedesktop.Secret.Collection")]
-impl Collection {
-    #[zbus(property)]
-    fn locked(&self) -> bool {
-        let mut state = self.0.lock().unwrap();
-        state.collection_property_reads += 1;
-        state.locked
-    }
-    fn search_items(&self, attributes: Attributes) -> Vec<OwnedObjectPath> {
-        let s = self.0.lock().unwrap();
-        if !s.missing && attributes == s.attributes {
-            vec![path(ITEM)]
-        } else {
-            vec![]
-        }
-    }
-    fn create_item(
-        &self,
-        _properties: HashMap<String, OwnedValue>,
-        _secret: (OwnedObjectPath, Vec<u8>, Vec<u8>, String),
-        _replace: bool,
-    ) -> zbus::fdo::Result<(OwnedObjectPath, OwnedObjectPath)> {
-        self.0.lock().unwrap().forbidden += 1;
-        Err(zbus::fdo::Error::AccessDenied("read only fixture".into()))
-    }
-}
-struct Item(Shared);
-#[zbus::interface(name = "org.freedesktop.Secret.Item")]
-impl Item {
-    #[zbus(property)]
-    fn locked(&self) -> bool {
-        self.0.lock().unwrap().locked
-    }
-    #[zbus(property)]
-    fn attributes(&self) -> Attributes {
-        self.0.lock().unwrap().attributes.clone()
-    }
-    #[allow(clippy::type_complexity)]
-    fn get_secret(
-        &self,
-        session: OwnedObjectPath,
-    ) -> ((OwnedObjectPath, Vec<u8>, Vec<u8>, String),) {
-        assert_eq!(session.as_str(), SESSION);
-        let mut s = self.0.lock().unwrap();
-        s.reads += 1;
-        ((
-            session,
-            vec![],
-            s.bytes.clone(),
-            "application/x-capyio-control-credential".into(),
-        ),)
-    }
-    fn delete(&self) -> zbus::fdo::Result<OwnedObjectPath> {
-        self.0.lock().unwrap().forbidden += 1;
-        Err(zbus::fdo::Error::AccessDenied("read only fixture".into()))
-    }
-}
-struct PrivateService {
-    root: PathBuf,
-    address: String,
-    bus: Child,
-    stop: Option<tokio::sync::oneshot::Sender<()>>,
-    task: Option<thread::JoinHandle<()>>,
-    state: Shared,
-}
-impl PrivateService {
-    fn start(state: Shared) -> Self {
-        static NEXT: AtomicUsize = AtomicUsize::new(0);
-        let root = std::env::temp_dir().join(format!(
-            "capyio-node-paired-{}-{}",
-            std::process::id(),
-            NEXT.fetch_add(1, Ordering::Relaxed)
-        ));
-        fs::DirBuilder::new().mode(0o700).create(&root).unwrap();
-        let socket = root.join("bus");
-        let address = format!("unix:path={}", socket.display());
-        let config = root.join("bus.conf");
-        fs::write(&config, format!("<busconfig><type>session</type><listen>{address}</listen><auth>EXTERNAL</auth><policy context=\"default\"><allow user=\"*\"/><allow own=\"*\"/><allow send_destination=\"*\"/><allow receive_sender=\"*\"/></policy></busconfig>")).unwrap();
-        let bus = Command::new("/usr/bin/dbus-daemon")
-            .args(["--nofork", "--nopidfile"])
-            .arg(format!("--config-file={}", config.display()))
-            .env_clear()
-            .stdin(Stdio::null())
-            .stdout(Stdio::null())
-            .stderr(Stdio::inherit())
-            .spawn()
-            .expect("mandatory private-bus test requires dbus-daemon");
-        let mut service = Self {
-            root,
-            address,
-            bus,
-            stop: None,
-            task: None,
-            state: state.clone(),
-        };
-        let deadline = Instant::now() + BOUND;
-        while !socket.exists() {
-            assert!(
-                service.bus.try_wait().unwrap().is_none(),
-                "private bus exited"
-            );
-            assert!(Instant::now() < deadline);
-            thread::sleep(Duration::from_millis(5));
-        }
-        let address = service.address.clone();
-        let (ready, wait) = mpsc::sync_channel(1);
-        let (stop, stopped) = tokio::sync::oneshot::channel();
-        service.stop = Some(stop);
-        service.task = Some(thread::spawn(move || {
-            tokio::runtime::Builder::new_current_thread()
-                .enable_all()
-                .build()
-                .unwrap()
-                .block_on(async {
-                    let connection = zbus::connection::Builder::address(address.as_str())
-                        .unwrap()
-                        .name("org.freedesktop.secrets")
-                        .unwrap()
-                        .serve_at("/org/freedesktop/secrets", Service(state.clone()))
-                        .unwrap()
-                        .serve_at(COLLECTION, Collection(state.clone()))
-                        .unwrap()
-                        .serve_at(ITEM, Item(state))
-                        .unwrap()
-                        .build()
-                        .await
-                        .unwrap();
-                    ready.send(()).unwrap();
-                    let _ = stopped.await;
-                    let _ = connection.close().await;
-                });
-        }));
-        wait.recv_timeout(BOUND)
-            .expect("bounded fake service startup");
-        service
-    }
-}
-impl Drop for PrivateService {
-    fn drop(&mut self) {
-        if let Some(stop) = self.stop.take() {
-            let _ = stop.send(());
-        }
-        if let Some(task) = self.task.take() {
-            let result = task.join();
-            if !thread::panicking() {
-                result.unwrap();
-            }
-        }
-        let _ = self.bus.kill();
-        let _ = self.bus.wait();
-        let _ = fs::remove_dir_all(&self.root);
-        if !thread::panicking() {
-            assert_eq!(self.state.lock().unwrap().forbidden, 0);
-        }
-    }
-}
-#[derive(Clone)]
-struct SeedBackend(Vec<u8>);
-impl CredentialBackend for SeedBackend {
-    fn load(
-        &self,
-        _owner: NodeId,
-        _handle: &CredentialHandle,
-    ) -> Result<SecretBytes, BackendError> {
-        SecretBytes::new(self.0.clone())
-    }
-    fn put_exact(
-        &self,
-        _owner: NodeId,
-        _handle: &CredentialHandle,
-        bytes: &[u8],
-    ) -> Result<(), BackendError> {
-        if bytes == self.0 {
-            Ok(())
-        } else {
-            Err(BackendError::Conflict)
-        }
-    }
-}
 fn credentials() -> (Vec<u8>, Vec<u8>, CertificateFingerprint) {
     use rcgen::{
         BasicConstraints, CertificateParams, ExtendedKeyUsagePurpose, IsCa, Issuer, KeyPair,
@@ -291,113 +53,44 @@ fn credentials() -> (Vec<u8>, Vec<u8>, CertificateFingerprint) {
         pin,
     )
 }
-struct Fixture {
-    service: PrivateService,
-    owner: NodeId,
-    peer: NodeId,
-    state_path: PathBuf,
-    bundle: Vec<u8>,
-    key: Vec<u8>,
-    directory: Vec<u8>,
+struct Fixture(PersistedPairing);
+impl std::ops::Deref for Fixture {
+    type Target = PersistedPairing;
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
 }
 impl Fixture {
     fn new() -> Self {
         let owner = NodeId::new();
         let peer = NodeId::new();
-        let (bundle, key, pin) = credentials();
-        let handle =
-            CredentialHandle::new(format!("linux-protected:{:x}", Sha256::digest(&bundle)))
-                .unwrap();
-        let state = Arc::new(Mutex::new(KeyringState {
-            attributes: HashMap::from([
-                ("application".into(), "dev.capyio.control".into()),
-                ("schema".into(), "1".into()),
-                ("local-node-id".into(), owner.to_string()),
-                ("credential-handle".into(), handle.as_str().into()),
-            ]),
-            bytes: bundle.clone(),
-            ..Default::default()
-        }));
-        let service = PrivateService::start(state);
-        let state_path = service.root.join("state");
-        fs::DirBuilder::new()
-            .mode(0o700)
-            .create(&state_path)
-            .unwrap();
+        let (bundle, _key, pin) = credentials();
         let mut directory = PairedPeerDirectory::new(owner).unwrap();
         directory
             .add(
-                PairedPeerRecord::new(peer, "Synthetic peer", "localhost", handle, pin, 1).unwrap(),
+                PairedPeerRecord::new(
+                    peer,
+                    "Synthetic peer",
+                    "localhost",
+                    CredentialHandle::new("synthetic.fixture.only").unwrap(),
+                    pin,
+                    1,
+                )
+                .unwrap(),
             )
             .unwrap();
-        let directory = directory.encode_json().unwrap();
-        let invitation = PairingInvitation::new(owner, directory.clone(), bundle.clone())
-            .unwrap()
-            .encode()
-            .unwrap();
-        let mut store =
-            LinuxPairingStore::open(&state_path, owner, SeedBackend(bundle.clone())).unwrap();
-        store.stage_enrollment(&invitation).unwrap();
-        store.commit_pending_enrollment().unwrap();
-        drop(store);
-        Self {
-            service,
+        Self(PersistedPairing::new(
             owner,
-            peer,
-            state_path,
-            bundle,
-            key,
-            directory,
-        }
+            &directory.encode_json().unwrap(),
+            &ControlCredentialBundle::decode(&bundle).unwrap(),
+        ))
     }
     fn config(&self) -> Value {
         json!({"version":1,"node_id":self.owner,"source":{"node_id":self.peer,"capability_id":CapabilityId::new(),"port_id":PortId::new()},"listen":"127.0.0.1:0","duration_secs":3})
     }
-    fn args(&self, command: &str) -> Vec<String> {
-        vec![
-            command.into(),
-            "--trusted-lab".into(),
-            "--pairing-state".into(),
-            self.state_path.display().to_string(),
-            "--pairing-node".into(),
-            self.owner.to_string(),
-            "--pairing-peer".into(),
-            self.peer.to_string(),
-            "--pairing-bus-address".into(),
-            self.service.address.clone(),
-            "--pairing-collection".into(),
-            COLLECTION.into(),
-        ]
-    }
-    fn revoke(&self) {
-        let mut store = LinuxPairingStore::open(
-            &self.state_path,
-            self.owner,
-            SeedBackend(self.bundle.clone()),
-        )
-        .unwrap();
-        store.revoke(self.peer, 2).unwrap();
-    }
     fn no_leak(&self, process: &Process) {
-        for secret in [&self.bundle, &self.key] {
-            for output in [&process.out, &process.err] {
-                assert!(
-                    !output.windows(secret.len()).any(|w| w == secret.as_slice()),
-                    "secret leaked in executable output"
-                );
-            }
-        }
-        let hex = self
-            .key
-            .iter()
-            .map(|b| format!("{b:02x}"))
-            .collect::<String>();
-        assert!(!String::from_utf8_lossy(&process.out).contains(&hex));
-        assert!(!String::from_utf8_lossy(&process.err).contains(&hex));
-        for file in fs::read_dir(&self.state_path).unwrap() {
-            let bytes = fs::read(file.unwrap().path()).unwrap();
-            assert!(!bytes.windows(self.key.len()).any(|w| w == self.key));
-        }
+        self.assert_no_leak(&process.out);
+        self.assert_no_leak(&process.err);
     }
 }
 fn nonblocking(fd: impl AsFd) {

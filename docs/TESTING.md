@@ -1351,3 +1351,11 @@ these fixtures. Run legacy `linux_camera` and `linux_touchpad` test targets with
 the same feature to retain the private-bootstrap and finite-authority regression
 coverage. Hosted CI must execute the private-bus tests when local socket binding
 is restricted; compilation alone is not wire acceptance evidence.
+
+ADR 1542 adds full paired-store finite-session gates using the same existing
+camera graph driver and touchpad fake-helper suite, not a parallel protocol.
+The camera runner requires `--paired-store` and exact authentication-mode proof;
+the touchpad suite requires `CAPYIO_TOUCHPAD_PAIRED_STORE=1` with
+`paired-store,touchpad-test-fixture`. Both retain legacy runs, exact test discovery,
+strict success records and bounded cleanup. Native graph/fake-helper evidence
+must come from the disposable hosted runner, never a user keyring or device.

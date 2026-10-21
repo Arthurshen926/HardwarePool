@@ -62,6 +62,9 @@ enum Command {
         trusted_lab: bool,
         #[arg(long, value_parser = ["normal", "fail-create", "partial-write", "delayed-commit", "backpressure"])]
         fixture_mode: String,
+        #[cfg(feature = "paired-store")]
+        #[command(flatten)]
+        paired_store: PairedStoreArgs,
     },
     /// Finite pinned Android camera reception via private inherited bootstrap.
     LinuxCamera {
@@ -201,16 +204,28 @@ fn main() -> anyhow::Result<()> {
         Command::LinuxTouchpadFixture {
             trusted_lab,
             fixture_mode,
+            #[cfg(feature = "paired-store")]
+            paired_store,
         } => {
             anyhow::ensure!(trusted_lab, "explicit trusted-lab opt-in required");
             #[cfg(target_os = "linux")]
             {
+                #[cfg(feature = "paired-store")]
+                if let Some(selection) = paired_store.selection()? {
+                    return capyio_linux_host::run_touchpad_fixture_paired_store_stdio(
+                        &fixture_mode,
+                        selection,
+                    )
+                    .map_err(|_| anyhow::anyhow!("Linux touchpad launch failed"));
+                }
                 capyio_linux_host::run_touchpad_fixture_stdio(&fixture_mode)
                     .map_err(|_| anyhow::anyhow!("Linux touchpad launch failed"))
             }
             #[cfg(not(target_os = "linux"))]
             {
                 let _ = fixture_mode;
+                #[cfg(feature = "paired-store")]
+                let _ = paired_store;
                 anyhow::bail!("Linux touchpad requires Linux")
             }
         }
@@ -502,5 +517,35 @@ mod paired_store_cli_tests {
                 .is_ok()
             );
         }
+    }
+
+    #[cfg(feature = "touchpad-test-fixture")]
+    #[test]
+    fn paired_fixture_selectors_remain_all_or_none() {
+        let base = [
+            "node",
+            "linux-touchpad-fixture",
+            "--trusted-lab",
+            "--fixture-mode",
+            "normal",
+        ];
+        assert!(Cli::try_parse_from(base).is_ok());
+        let mut partial = base.to_vec();
+        partial.extend(["--pairing-state", "/synthetic"]);
+        assert!(Cli::try_parse_from(partial).is_err());
+        let mut full = base.to_vec();
+        full.extend([
+            "--pairing-state",
+            "/synthetic",
+            "--pairing-node",
+            "00000000-0000-0000-0000-000000000001",
+            "--pairing-peer",
+            "00000000-0000-0000-0000-000000000002",
+            "--pairing-bus-address",
+            "unix:path=/synthetic",
+            "--pairing-collection",
+            "/org/freedesktop/secrets/collection/capyio",
+        ]);
+        assert!(Cli::try_parse_from(full).is_ok());
     }
 }

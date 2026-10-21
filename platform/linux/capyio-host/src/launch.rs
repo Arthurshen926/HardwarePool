@@ -1618,6 +1618,8 @@ pub use camera::run_camera_stdio;
 
 #[path = "touchpad_launch.rs"]
 mod touchpad;
+#[cfg(all(feature = "touchpad-test-fixture", feature = "paired-store"))]
+pub use touchpad::run_touchpad_fixture_paired_store_stdio;
 #[cfg(feature = "touchpad-test-fixture")]
 pub use touchpad::run_touchpad_fixture_stdio;
 pub use touchpad::run_touchpad_stdio;

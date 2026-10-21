@@ -87,6 +87,17 @@ enum Backend {
 }
 #[cfg(feature = "touchpad-test-fixture")]
 pub fn run_touchpad_fixture_stdio(mode: &str) -> io::Result<()> {
+    run_fixture_stdio(mode, CredentialSource::PrivatePipe)
+}
+#[cfg(all(feature = "touchpad-test-fixture", feature = "paired-store"))]
+pub fn run_touchpad_fixture_paired_store_stdio(
+    mode: &str,
+    selection: PairedStoreSelection,
+) -> io::Result<()> {
+    run_fixture_stdio(mode, CredentialSource::PairedStore(selection))
+}
+#[cfg(feature = "touchpad-test-fixture")]
+fn run_fixture_stdio(mode: &str, source: CredentialSource) -> io::Result<()> {
     use capyio_linux_touchpad::TouchpadFixtureMode::*;
     let mode = match mode {
         "normal" => Normal,
@@ -96,7 +107,7 @@ pub fn run_touchpad_fixture_stdio(mode: &str) -> io::Result<()> {
         "backpressure" => Backpressure,
         _ => return Err(fail()),
     };
-    run_stdio(Backend::Fixture(mode), CredentialSource::PrivatePipe)
+    run_stdio(Backend::Fixture(mode), source)
 }
 fn run_stdio(backend: Backend, source: CredentialSource) -> io::Result<()> {
     let mut io = sanitized(LauncherIo::stdio())?;

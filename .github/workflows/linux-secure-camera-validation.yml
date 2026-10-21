@@ -12,7 +12,7 @@ concurrency:
 jobs:
   secure-camera:
     runs-on: ubuntu-24.04
-    timeout-minutes: 15
+    timeout-minutes: 20
     defaults:
       run:
         shell: bash
@@ -29,7 +29,7 @@ jobs:
         run: |
           set -euo pipefail
           sudo apt-get update
-          sudo apt-get install --yes --no-install-recommends libavcodec-dev libavutil-dev libpipewire-0.3-dev libspa-0.2-dev pipewire-bin
+          sudo apt-get install --yes --no-install-recommends libavcodec-dev libavutil-dev libpipewire-0.3-dev libspa-0.2-dev pipewire-bin dbus
           dpkg-query -W libavcodec-dev libavutil-dev libpipewire-0.3-dev | tee "$RUNNER_TEMP/avc-dependencies.txt"
           cat > "$RUNNER_TEMP/avc-license.c" <<'C'
           #include <stdio.h>
@@ -91,8 +91,8 @@ jobs:
           set -euo pipefail
           python3 -m unittest discover -s scripts -p test_pipewire_camera_launcher.py -v
           python3 -m py_compile scripts/run_pipewire_camera_launcher.py scripts/test_pipewire_camera_launcher.py
-          cargo test --locked -p capyio-node --test linux_camera -- --list | tee "$RUNNER_TEMP/camera-launcher-tests-list.txt"
-          cargo test --locked -p capyio-node --test linux_camera -- --test-threads=1 | tee "$RUNNER_TEMP/camera-launcher-tests.txt"
+          cargo test --locked -p capyio-node --features paired-store --test linux_camera -- --list | tee "$RUNNER_TEMP/camera-launcher-tests-list.txt"
+          cargo test --locked -p capyio-node --features paired-store --test linux_camera -- --test-threads=1 | tee "$RUNNER_TEMP/camera-launcher-tests.txt"
           while IFS= read -r test_name; do
             grep -Fx "$test_name: test" "$RUNNER_TEMP/camera-launcher-tests-list.txt"
             grep -Fx "test $test_name ... ok" "$RUNNER_TEMP/camera-launcher-tests.txt"
@@ -110,11 +110,14 @@ jobs:
           ipc_linux_camera_wrong_data_pin_never_spawns_helpers
           ipc_linux_camera_denied_or_missing_source_lease_fails_before_helpers
           ipc_linux_camera_configured_source_must_exist_in_authenticated_catalog
+          ipc_paired_camera_pinned_peer_without_local_approval_never_activates
+          ipc_paired_camera_wrong_control_pin_never_spawns_helpers
+          ipc_paired_camera_revoked_store_never_opens_listener
           TESTS
           grep -Fx 'hosted_linux_camera_graph: test' "$RUNNER_TEMP/camera-launcher-tests-list.txt"
-          cargo clippy --locked -p capyio-node --all-targets --features native-camera -- -D warnings
-          cargo build --locked -p capyio-node --features native-camera --bin capyio-node
-          cargo test --locked -p capyio-node --features native-camera --test linux_camera --no-run --message-format=json > "$RUNNER_TEMP/camera-launcher-build.jsonl"
+          cargo clippy --locked -p capyio-node --all-targets --features native-camera,paired-store -- -D warnings
+          cargo build --locked -p capyio-node --features native-camera,paired-store --bin capyio-node
+          cargo test --locked -p capyio-node --features native-camera,paired-store --test linux_camera --no-run --message-format=json > "$RUNNER_TEMP/camera-launcher-build.jsonl"
           python3 - "$RUNNER_TEMP/camera-launcher-build.jsonl" "$RUNNER_TEMP/camera-launcher-driver" <<'PY'
           import json, pathlib, sys
           records = [json.loads(line) for line in pathlib.Path(sys.argv[1]).read_text().splitlines()]
@@ -135,7 +138,21 @@ jobs:
               | tee "$RUNNER_TEMP/camera-launcher-$scenario.txt"
             graph=true
             if [ "$scenario" = handshake_timeout ]; then graph=false; fi
-            grep -Fx "capyio_pipewire_camera_launcher=passed scenario=$scenario actual_executable=true real_graph=$graph owned_cleanup=true" "$RUNNER_TEMP/camera-launcher-$scenario.txt"
+            grep -Fx "capyio_pipewire_camera_launcher=passed scenario=$scenario actual_executable=true paired_store=false real_graph=$graph owned_cleanup=true" "$RUNNER_TEMP/camera-launcher-$scenario.txt"
+          done
+      - name: Require paired-store actual executable camera sessions
+        run: |
+          set -euo pipefail
+          driver="$(cat "$RUNNER_TEMP/camera-launcher-driver")"
+          for scenario in pixels local_stop control_stop control_eof source_revoke partial_cavc expiry handshake_timeout; do
+            timeout --signal=TERM --kill-after=5s 45s python3 scripts/run_pipewire_camera_launcher.py \
+              --hosted-private-camera-launcher --paired-store --driver "$driver" --node target/debug/capyio-node \
+              --helper target/debug/capyio-linux-camera-helper --decoder target/debug/capyio-linux-avc-helper \
+              --consumer "$RUNNER_TEMP/avc-consumer" --scenario "$scenario" \
+              | tee "$RUNNER_TEMP/camera-launcher-paired-$scenario.txt"
+            graph=true
+            if [ "$scenario" = handshake_timeout ]; then graph=false; fi
+            grep -Fx "capyio_pipewire_camera_launcher=passed scenario=$scenario actual_executable=true paired_store=true real_graph=$graph owned_cleanup=true" "$RUNNER_TEMP/camera-launcher-paired-$scenario.txt"
           done
       - uses: actions/upload-artifact@v4
         if: always()

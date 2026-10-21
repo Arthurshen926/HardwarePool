@@ -27,6 +27,10 @@ use std::{
     thread,
     time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
+#[cfg(all(feature = "touchpad-test-fixture", feature = "paired-store"))]
+#[path = "support/paired_store.rs"]
+mod paired_store;
+
 const BOUND: Duration = Duration::from_secs(5);
 fn nonblocking(fd: impl AsFd) {
     let flags = rustix::fs::fcntl_getfl(&fd).unwrap();
@@ -51,6 +55,8 @@ struct Process {
     stderr: Vec<u8>,
     #[cfg(feature = "touchpad-test-fixture")]
     helper_pids: BTreeSet<u32>,
+    #[cfg(all(feature = "touchpad-test-fixture", feature = "paired-store"))]
+    paired_store: Option<paired_store::PersistedPairing>,
 }
 impl Process {
     fn start(args: &[&str]) -> Self {
@@ -73,6 +79,8 @@ impl Process {
             stderr: Vec::new(),
             #[cfg(feature = "touchpad-test-fixture")]
             helper_pids: BTreeSet::new(),
+            #[cfg(all(feature = "touchpad-test-fixture", feature = "paired-store"))]
+            paired_store: None,
         }
     }
     fn touchpad() -> Self {
@@ -128,6 +136,11 @@ impl Process {
         }
         drain(self.child.stdout.as_mut().unwrap(), &mut self.stdout);
         drain(self.child.stderr.as_mut().unwrap(), &mut self.stderr);
+        #[cfg(all(feature = "touchpad-test-fixture", feature = "paired-store"))]
+        if let Some(store) = &self.paired_store {
+            store.assert_no_leak(&self.stdout);
+            store.assert_no_leak(&self.stderr);
+        }
     }
     fn next_event(&mut self) -> Value {
         let deadline = Instant::now() + BOUND;
@@ -860,18 +873,113 @@ mod software_fixture {
 
     fn fixture_pending(mode: &str) -> (Process, Peer, Value) {
         let fixture = Fixture::new();
-        let mut process = Process::start(&[
-            "linux-touchpad-fixture",
-            "--trusted-lab",
-            "--fixture-mode",
-            mode,
-        ]);
-        fixture.bootstrap(&mut process);
+        let mut process = match std::env::var("CAPYIO_TOUCHPAD_PAIRED_STORE") {
+            Ok(value) => {
+                assert_eq!(value, "1", "explicit paired fixture mode is 1 only");
+                #[cfg(feature = "paired-store")]
+                {
+                    paired_process(&fixture, mode, false)
+                }
+                #[cfg(not(feature = "paired-store"))]
+                {
+                    panic!("paired-store fixture mode requires the paired-store feature")
+                }
+            }
+            Err(std::env::VarError::NotPresent) => {
+                let mut process = Process::start(&[
+                    "linux-touchpad-fixture",
+                    "--trusted-lab",
+                    "--fixture-mode",
+                    mode,
+                ]);
+                fixture.bootstrap(&mut process);
+                process
+            }
+            Err(_) => panic!("invalid paired-store fixture environment"),
+        };
         let mut peer = fixture.connect(&mut process);
         let approval = process.event("approval_required");
         peer.idle(&process);
         assert_no_open(&mut process);
         (process, peer, approval)
+    }
+
+    #[cfg(feature = "paired-store")]
+    fn paired_process(fixture: &Fixture, mode: &str, revoked: bool) -> Process {
+        let local = serde_json::from_value(fixture.config["node_id"].clone()).unwrap();
+        let store =
+            paired_store::PersistedPairing::new(local, &fixture.directory, &fixture.credentials);
+        if revoked {
+            store.revoke();
+        }
+        let mut args = store.args("linux-touchpad-fixture");
+        args.extend(["--fixture-mode".into(), mode.into()]);
+        let borrowed: Vec<_> = args.iter().map(String::as_str).collect();
+        let mut process = Process::start(&borrowed);
+        process.paired_store = Some(store);
+        process.command(fixture.config.clone());
+        process.command(json!({"version":1,"credential_source":"paired-store"}));
+        process
+    }
+
+    #[cfg(feature = "paired-store")]
+    #[test]
+    fn ipc_linux_touchpad_paired_store_approval_pin_and_revocation_boundary() {
+        // Real persisted key loading and pinned mTLS still confer no resource
+        // authority: no local approval, Source grant, lease or native helper.
+        let fixture = Fixture::new();
+        let mut process = paired_process(&fixture, "normal", false);
+        let mut peer = fixture.connect(&mut process);
+        let approval = process.event("approval_required");
+        assert_eq!(approval["media_security"], "tls13_mtls_v1");
+        peer.idle(&process);
+        assert_no_open(&mut process);
+        process.command(json!({"version":1,"command":"stop"}));
+        terminal(&mut process, "stopped");
+        assert_no_open(&mut process);
+
+        // Both the stored peer pin and the remote endpoint pin remain exact.
+        for stored_peer_pin in [false, true] {
+            let mut fixture = Fixture::new();
+            if stored_peer_pin {
+                let local = serde_json::from_value(fixture.config["node_id"].clone()).unwrap();
+                let original = PairedPeerDirectory::decode_json(local, &fixture.directory).unwrap();
+                let mut record = original.active_peers().next().unwrap().clone();
+                record.peer_certificate_sha256 = identities().2;
+                let mut directory = PairedPeerDirectory::new(local).unwrap();
+                directory.add(record).unwrap();
+                fixture.directory = directory.encode_json().unwrap();
+            } else {
+                fixture.client.expected_peer_certificate = identities().1.expected_peer_certificate;
+            }
+            let mut process = paired_process(&fixture, "normal", false);
+            let listening = process.event("listening");
+            let nodes = ControlTlsNodeBinding::new(
+                serde_json::from_value(fixture.config["node_id"].clone()).unwrap(),
+                fixture.source.node_id,
+            )
+            .unwrap();
+            assert!(
+                AuthenticatedControlClientChannel::connect_fresh_session(
+                    ControlTlsEndpoint {
+                        address: listening["address"].as_str().unwrap().parse().unwrap(),
+                        io_timeout: BOUND
+                    },
+                    "localhost",
+                    fixture.client,
+                    nodes,
+                )
+                .is_err()
+            );
+            failed(&mut process);
+            assert_no_open(&mut process);
+        }
+
+        // Revocation already committed before launch blocks even the listener.
+        let fixture = Fixture::new();
+        let mut process = paired_process(&fixture, "normal", true);
+        failed(&mut process);
+        assert_no_open(&mut process);
     }
 
     fn approve(process: &mut Process, peer: &mut Peer, approval: &Value, ttl: u64) -> RouteId {

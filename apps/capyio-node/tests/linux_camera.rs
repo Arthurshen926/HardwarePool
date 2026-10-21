@@ -24,6 +24,10 @@ use std::{
     thread,
     time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
+#[cfg(feature = "paired-store")]
+#[path = "support/paired_store.rs"]
+mod paired_store;
+
 const BOUND: Duration = Duration::from_secs(5);
 fn nonblocking(fd: impl AsFd) {
     let flags = rustix::fs::fcntl_getfl(&fd).unwrap();
@@ -46,6 +50,8 @@ struct Process {
     child: Child,
     stdout: Vec<u8>,
     stderr: Vec<u8>,
+    #[cfg(feature = "paired-store")]
+    stdout_history: Vec<u8>,
 }
 impl Process {
     fn start(args: &[&str]) -> Self {
@@ -69,6 +75,8 @@ impl Process {
             child,
             stdout: Vec::new(),
             stderr: Vec::new(),
+            #[cfg(feature = "paired-store")]
+            stdout_history: Vec::new(),
         }
     }
     fn camera() -> Self {
@@ -101,7 +109,18 @@ impl Process {
         self.frame(&serde_json::to_vec(&command).unwrap());
     }
     fn collect(&mut self) {
+        #[cfg(feature = "paired-store")]
+        let previous = self.stdout.len();
         drain(self.child.stdout.as_mut().unwrap(), &mut self.stdout);
+        #[cfg(feature = "paired-store")]
+        {
+            self.stdout_history
+                .extend_from_slice(&self.stdout[previous..]);
+            assert!(
+                self.stdout_history.len() <= 1_048_576,
+                "bounded output transcript"
+            );
+        }
         drain(self.child.stderr.as_mut().unwrap(), &mut self.stderr);
     }
     fn next_event(&mut self) -> Value {
@@ -483,6 +502,30 @@ impl Peer {
         }
     }
 }
+#[cfg(feature = "paired-store")]
+fn persisted_fixture(fixture: &Fixture) -> paired_store::PersistedPairing {
+    paired_store::PersistedPairing::new(
+        serde_json::from_value(fixture.config["node_id"].clone()).unwrap(),
+        &fixture.directory,
+        &fixture.credentials,
+    )
+}
+#[cfg(feature = "paired-store")]
+fn paired_process(store: &paired_store::PersistedPairing) -> Process {
+    let args = store.args("linux-camera");
+    Process::start(&args.iter().map(String::as_str).collect::<Vec<_>>())
+}
+#[cfg(feature = "paired-store")]
+fn paired_bootstrap(fixture: &Fixture, process: &mut Process) {
+    process.command(fixture.config.clone());
+    process.command(json!({"version":1,"credential_source":"paired-store"}));
+}
+#[cfg(feature = "paired-store")]
+fn assert_paired_no_leak(store: &paired_store::PersistedPairing, process: &Process) {
+    store.assert_no_leak(&process.stdout_history);
+    store.assert_no_leak(&process.stderr);
+}
+
 fn pending() -> (Process, Peer, Value) {
     let fixture = Fixture::new();
     let mut process = Process::camera();
@@ -744,13 +787,44 @@ fn hosted_linux_camera_graph() {
         ]
         .contains(&scenario.as_str())
     );
+    let paired_mode = match std::env::var("CAPYIO_CAMERA_PAIRED_STORE").as_deref() {
+        Ok("1") => true,
+        Ok("0") | Err(std::env::VarError::NotPresent) => false,
+        _ => panic!("invalid explicit paired-store fixture mode"),
+    };
+    #[cfg(not(feature = "paired-store"))]
+    assert!(
+        !paired_mode,
+        "paired-store mode requires a feature-enabled driver"
+    );
     let fixture = Fixture::new();
+    #[cfg(feature = "paired-store")]
+    let store = paired_mode.then(|| persisted_fixture(&fixture));
+    #[cfg(feature = "paired-store")]
+    let mut process = match &store {
+        Some(store) => paired_process(store),
+        None => Process::camera(),
+    };
+    #[cfg(not(feature = "paired-store"))]
     let mut process = Process::camera();
     println!("\nLAUNCHER_PID {}", process.child.id());
     io::stdout().flush().unwrap();
     harness_line("approve synthetic camera");
+    #[cfg(feature = "paired-store")]
+    if paired_mode {
+        paired_bootstrap(&fixture, &mut process);
+    } else {
+        fixture.bootstrap(&mut process);
+    }
+    #[cfg(not(feature = "paired-store"))]
     fixture.bootstrap(&mut process);
     let mut peer = fixture.connect(&mut process);
+    if paired_mode {
+        // Emitted only after the actual node loaded its store-backed identity
+        // and the exact peer completed the existing pinned control handshake.
+        println!("PAIRED_STORE_AUTH verified");
+        io::stdout().flush().unwrap();
+    }
     let approval = process.event("approval_required");
     peer.idle(&process);
     process.command(approval_command(&approval));
@@ -777,6 +851,10 @@ fn hosted_linux_camera_graph() {
         let started = Instant::now();
         terminal(&mut process, false);
         assert!(started.elapsed() < BOUND);
+        #[cfg(feature = "paired-store")]
+        if let Some(store) = &store {
+            assert_paired_no_leak(store, &process);
+        }
         println!("VERIFIED handshake_timeout\nCAMERA_STOPPED");
         return;
     }
@@ -903,6 +981,10 @@ fn hosted_linux_camera_graph() {
             !std::path::Path::new(&format!("/proc/{pid}")).exists(),
             "owned media child reaped"
         );
+    }
+    #[cfg(feature = "paired-store")]
+    if let Some(store) = &store {
+        assert_paired_no_leak(store, &process);
     }
     println!("VERIFIED {scenario}\nCAMERA_STOPPED");
 }
@@ -1088,4 +1170,75 @@ fn ipc_linux_camera_configured_source_must_exist_in_authenticated_catalog() {
         "unknown Source must fail before approval or peer catalog publication"
     );
     failed(&mut process);
+}
+
+#[cfg(feature = "paired-store")]
+#[test]
+fn ipc_paired_camera_pinned_peer_without_local_approval_never_activates() {
+    let fixture = Fixture::new();
+    let store = persisted_fixture(&fixture);
+    let mut process = paired_process(&store);
+    paired_bootstrap(&fixture, &mut process);
+    let mut peer = fixture.connect(&mut process);
+    let approval = process.event("approval_required");
+    assert_eq!(approval["media_security"], "tls13_mtls_v1");
+    peer.idle(&process);
+    no_children(&process);
+    assert!(peer.runtime.snapshot().port_leases.is_empty());
+    process.command(json!({"version":1,"command":"stop"}));
+    process.event("stopped");
+    assert!(process.finish().success());
+    assert_paired_no_leak(&store, &process);
+}
+
+#[cfg(feature = "paired-store")]
+#[test]
+fn ipc_paired_camera_wrong_control_pin_never_spawns_helpers() {
+    let mut fixture = Fixture::new();
+    let local = serde_json::from_value(fixture.config["node_id"].clone()).unwrap();
+    let original = PairedPeerDirectory::decode_json(local, &fixture.directory).unwrap();
+    let mut record = original.active_peers().next().unwrap().clone();
+    // Keep the valid peer certificate/CA and replace only the persisted exact
+    // peer leaf pin. Ordinary chain trust must not bypass stored pairing trust.
+    record.peer_certificate_sha256 = identities().2;
+    let mut wrong_pin = PairedPeerDirectory::new(local).unwrap();
+    wrong_pin.add(record).unwrap();
+    fixture.directory = wrong_pin.encode_json().unwrap();
+    let store = persisted_fixture(&fixture);
+    let mut process = paired_process(&store);
+    paired_bootstrap(&fixture, &mut process);
+    let listening = process.event("listening");
+    no_children(&process);
+    let nodes = ControlTlsNodeBinding::new(
+        serde_json::from_value(fixture.config["node_id"].clone()).unwrap(),
+        fixture.source.node_id,
+    )
+    .unwrap();
+    assert!(
+        AuthenticatedControlClientChannel::connect_fresh_session(
+            ControlTlsEndpoint {
+                address: listening["address"].as_str().unwrap().parse().unwrap(),
+                io_timeout: BOUND,
+            },
+            "localhost",
+            fixture.client,
+            nodes,
+        )
+        .is_err()
+    );
+    failed(&mut process);
+    assert_paired_no_leak(&store, &process);
+}
+
+#[cfg(feature = "paired-store")]
+#[test]
+fn ipc_paired_camera_revoked_store_never_opens_listener() {
+    let fixture = Fixture::new();
+    let store = persisted_fixture(&fixture);
+    store.revoke();
+    let mut process = paired_process(&store);
+    paired_bootstrap(&fixture, &mut process);
+    failed(&mut process);
+    assert!(!String::from_utf8_lossy(&process.stdout_history).contains("listening"));
+    assert_paired_no_leak(&store, &process);
 }

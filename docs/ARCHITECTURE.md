@@ -1678,3 +1678,7 @@ commands: five explicit public selectors plus a distinct nonsecret bootstrap
 marker replace only the directory/credential frames. Private FIFO local config,
 resource approval, source consent and finite session/lease authority stay separate.
 Audio launchers and enrollment/service UI remain outside this increment.
+
+ADR 1542 composes the paired-store loader with the existing finite camera graph
+and touchpad fake-helper acceptance paths. Test-only selection changes no
+production mTLS, local/Source approval, lease or Active semantics.

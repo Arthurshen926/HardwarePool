@@ -26,7 +26,7 @@ jobs:
         run: |
           set -euo pipefail
           sudo apt-get update
-          sudo apt-get install --yes --no-install-recommends libevdev-dev pkg-config
+          sudo apt-get install --yes --no-install-recommends libevdev-dev pkg-config dbus
           dpkg-query -W libevdev-dev | tee "$RUNNER_TEMP/touchpad-dependencies.txt"
           pkg-config --modversion libevdev | tee -a "$RUNNER_TEMP/touchpad-dependencies.txt"
       - name: Portable and authenticated owner acceptance
@@ -68,6 +68,21 @@ jobs:
           cargo clippy --locked -p capyio-linux-touchpad -p capyio-linux-host -p capyio-node --all-targets --features capyio-linux-touchpad/test-fixture,capyio-node/touchpad-test-fixture -- -D warnings
           # Require exact discovery and successful outcomes; no any-nonzero oracle.
           python3 scripts/check_touchpad_launcher_tests.py "$RUNNER_TEMP"
+      - name: Require persisted pairing through finite touchpad helper sessions
+        run: |
+          set -euo pipefail
+          cargo build --locked -p capyio-node --features touchpad-test-fixture,paired-store
+          cargo test --locked -p capyio-node --features touchpad-test-fixture,paired-store --bin capyio-node paired_store_cli_tests
+          cargo test --locked -p capyio-node --test linux_touchpad --features touchpad-test-fixture,paired-store software_fixture -- --list | tee "$RUNNER_TEMP/touchpad-paired-list.txt"
+          CAPYIO_TOUCHPAD_PAIRED_STORE=1 timeout --signal=TERM --kill-after=5s 240s cargo test --locked -p capyio-node --test linux_touchpad --features touchpad-test-fixture,paired-store software_fixture -- --test-threads=1 --nocapture | tee "$RUNNER_TEMP/touchpad-paired.txt"
+          python3 - "$RUNNER_TEMP" <<'PY'
+          import pathlib, sys
+          sys.path.insert(0, 'scripts')
+          from check_touchpad_launcher_tests import FIXTURE, require
+          root = pathlib.Path(sys.argv[1])
+          require(FIXTURE + ('software_fixture::ipc_linux_touchpad_paired_store_approval_pin_and_revocation_boundary',), (root / 'touchpad-paired-list.txt').read_text(), (root / 'touchpad-paired.txt').read_text())
+          PY
+          cargo clippy --locked -p capyio-node -p capyio-linux-host --features paired-store,touchpad-test-fixture --all-targets -- -D warnings
       - uses: actions/upload-artifact@v4
         if: always()
         with:

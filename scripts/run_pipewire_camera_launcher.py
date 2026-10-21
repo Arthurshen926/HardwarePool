@@ -17,6 +17,7 @@ from run_pipewire_loopback import graph_fingerprint
 SCENARIOS = ('pixels', 'local_stop', 'control_stop', 'control_eof',
              'source_revoke', 'partial_cavc', 'expiry', 'handshake_timeout')
 PATTERNS = {
+    'PAIRED_STORE_AUTH': r'PAIRED_STORE_AUTH verified',
     'LAUNCHER_PID': r'LAUNCHER_PID ([1-9][0-9]*)',
     'SECURE_LISTENING': r'SECURE_LISTENING no_media_children=true',
     'CAMERA_READY': r'CAMERA_READY ([1-9][0-9]*) (capyio\.camera\.[A-Za-z0-9-]+)',
@@ -48,9 +49,13 @@ def verify_process(pid, parent_pid, executable):
         raise ValueError('owned process executable or direct parent mismatch')
 
 
-def verify_completion(text, scenario, code):
+def verify_completion(text, scenario, code, paired_store=False):
     result = markers(text, complete=True)
     required = {'LAUNCHER_PID', 'SECURE_LISTENING', 'VERIFIED', 'CAMERA_STOPPED'}
+    if paired_store:
+        required.add('PAIRED_STORE_AUTH')
+    elif 'PAIRED_STORE_AUTH' in result:
+        raise ValueError('unexpected paired-store authentication mode')
     if scenario != 'handshake_timeout':
         required.update(('CAMERA_READY', 'DECODER_READY'))
     elif 'CAMERA_READY' in result or 'DECODER_READY' in result:
@@ -81,9 +86,10 @@ class LauncherHarness(CameraHarness):
             raise ValueError('launcher fixture exited before both media readiness markers')
         return None
 
-    def run_launcher(self, driver, node_binary, helper, decoder, consumer, scenario):
+    def run_launcher(self, driver, node_binary, helper, decoder, consumer, scenario, paired_store=False):
         self.node, self.helper, self.decoder = node_binary, helper, decoder
-        self.env.update(CAPYIO_CAMERA_LAUNCHER_HOSTED='1', CAPYIO_CAMERA_SCENARIO=scenario)
+        self.env.update(CAPYIO_CAMERA_LAUNCHER_HOSTED='1', CAPYIO_CAMERA_SCENARIO=scenario,
+                        CAPYIO_CAMERA_PAIRED_STORE='1' if paired_store else '0')
         self.prepare_daemon()
         baseline = graph_fingerprint(self.dump())
         named(self.dump(), 'capyio.test.null')
@@ -113,7 +119,7 @@ class LauncherHarness(CameraHarness):
             owner.stdin.flush()
             code = owner.wait(timeout=15)
             self.check()
-            verify_completion((self.root / 'owner.out').read_text(), scenario, code)
+            verify_completion((self.root / 'owner.out').read_text(), scenario, code, paired_store=paired_store)
             self.assert_removed(baseline, {}, pid)
             return
         _, announced_pid, name = self.wait_for(lambda: self.ready_line(owner))
@@ -147,7 +153,7 @@ class LauncherHarness(CameraHarness):
         owner.stdin.flush()
         code = owner.wait(timeout=15)
         self.check()
-        verify_completion((self.root / 'owner.out').read_text(), scenario, code)
+        verify_completion((self.root / 'owner.out').read_text(), scenario, code, paired_store=paired_store)
         if app is not None:
             if app.wait(timeout=5) != 0:
                 raise ValueError('independent native pixel consumer failed')
@@ -166,13 +172,15 @@ def main():
     for name in ('driver', 'node', 'helper', 'decoder', 'consumer'):
         parser.add_argument('--' + name, type=Path, required=True)
     parser.add_argument('--scenario', choices=SCENARIOS, required=True)
+    parser.add_argument('--paired-store', action='store_true',
+                        help='Require a native-camera,paired-store feature-enabled driver and private fake keyring authentication')
     args = parser.parse_args()
     with tempfile.TemporaryDirectory(prefix='capyio-camera-launcher-') as temporary:
         root = Path(temporary)
         root.chmod(0o700)
         harness = LauncherHarness(root, e2e=True)
         try:
-            harness.run_launcher(*(getattr(args, name).resolve() for name in ('driver', 'node', 'helper', 'decoder', 'consumer')), args.scenario)
+            harness.run_launcher(*(getattr(args, name).resolve() for name in ('driver', 'node', 'helper', 'decoder', 'consumer')), args.scenario, paired_store=args.paired_store)
         except Exception:
             for label in ('daemon.err', 'owner.out', 'owner.err', 'consumer.out', 'consumer.err', 'command.err'):
                 path = root / label
@@ -181,7 +189,7 @@ def main():
             raise
         finally:
             harness.close()
-    print(f'capyio_pipewire_camera_launcher=passed scenario={args.scenario} actual_executable=true real_graph={str(args.scenario != "handshake_timeout").lower()} owned_cleanup=true')
+    print(f'capyio_pipewire_camera_launcher=passed scenario={args.scenario} actual_executable=true paired_store={str(args.paired_store).lower()} real_graph={str(args.scenario != "handshake_timeout").lower()} owned_cleanup=true')
 
 
 if __name__ == '__main__':

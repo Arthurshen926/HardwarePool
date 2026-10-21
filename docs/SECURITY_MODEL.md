@@ -1570,3 +1570,8 @@ selector/config identity mismatch and unavailable/revoked/altered records fail
 before control-listener binding or helper spawn. It never recovers a pending
 journal or grants permanent resource permission. The paired-store marker is not
 approval. Existing three-frame private bootstrap remains a distinct default mode.
+
+ADR 1542 requires stored peer-pin failure, revoked pre-launch state rejection,
+and no helper/lease without fresh approval in actual executable fixtures.
+Runtime Source revocation and finite expiry remain independent of stored pairing;
+these tests do not turn per-launch metadata loading into a live revocation watch.

@@ -31,6 +31,21 @@ class LauncherTests(TestCase):
                 with self.assertRaises(ValueError):
                     verify_completion(text.replace('VERIFIED ' + scenario, 'VERIFIED wrong'), scenario, 0)
 
+    def test_paired_store_requires_exact_authentication_mode_evidence(self):
+        legacy = self.base + 'VERIFIED pixels\nCAMERA_STOPPED\n'
+        paired = 'PAIRED_STORE_AUTH verified\n' + legacy
+        verify_completion(legacy, 'pixels', 0)
+        verify_completion(paired, 'pixels', 0, paired_store=True)
+        with self.assertRaises(ValueError):
+            verify_completion(legacy, 'pixels', 0, paired_store=True)
+        with self.assertRaises(ValueError):
+            verify_completion(paired, 'pixels', 0)
+        for invalid in ('PAIRED_STORE_AUTH skipped', 'PAIRED_STORE_AUTH verified extra'):
+            with self.assertRaises(ValueError):
+                verify_completion(invalid + '\n' + legacy, 'pixels', 0, paired_store=True)
+        with self.assertRaises(ValueError):
+            verify_completion('PAIRED_STORE_AUTH verified\n' + paired, 'pixels', 0, paired_store=True)
+
     def test_duplicate_and_malformed_markers_rejected(self):
         valid = self.base + 'VERIFIED pixels\nCAMERA_STOPPED\n'
         for line in valid.splitlines():
