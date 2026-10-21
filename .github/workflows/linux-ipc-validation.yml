@@ -74,6 +74,12 @@ jobs:
           pty_prepare_camera_requires_fresh_exact_output_confirmation
           pty_prepare_camera_cancel_and_eof_never_create_output
           pty_prepare_camera_refuses_existing_and_symlink_outputs
+          pty_prepare_audio_and_touchpad_export_exact_explicit_selection
+          pty_prepare_audio_and_touchpad_reject_unsupported_catalog_rows
+          pty_prepare_audio_and_touchpad_reject_invalid_and_mixed_options
+          pty_prepare_audio_and_touchpad_reject_mismatched_selection
+          pty_prepare_audio_and_touchpad_cancel_and_eof_never_create_output
+          pty_prepare_audio_and_touchpad_refuse_existing_and_unsafe_outputs
           TESTS
           while IFS= read -r name; do
             grep -Fx "$name: test" "$RUNNER_TEMP/catalog-tests.txt"
@@ -82,7 +88,7 @@ jobs:
           while IFS= read -r name; do
             grep -Fx "test $name ... ok" "$RUNNER_TEMP/catalog-results.txt"
           done < "$RUNNER_TEMP/catalog-required.txt"
-          grep -F 'test result: ok. 16 passed; 0 failed; 0 ignored;' "$RUNNER_TEMP/catalog-results.txt"
+          grep -F 'test result: ok. 22 passed; 0 failed; 0 ignored;' "$RUNNER_TEMP/catalog-results.txt"
       - name: Require explicit finite enrollment management against isolated peers
         run: |
           set -euo pipefail

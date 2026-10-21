@@ -1,7 +1,8 @@
 //! Read-only, finite catalog inspection through the fixed sibling Node.
 //! Authentication and catalog admission remain Node-owned. No resource command,
 //! grant, lease, media worker or device is created by this controller. A separate
-//! explicit two-confirmation action may export only a nonsecret camera manifest.
+//! explicit two-confirmation action may export only a nonsecret launcher manifest.
+use super::catalog_export::{Candidate, ExportKind, ExportOptions};
 use super::*;
 use capyio_core::{Availability, CapabilityId, PortDirection, PortId};
 use std::{
@@ -47,7 +48,7 @@ enum CompatibilityStatus {
     NotSupported,
 }
 
-#[derive(Clone, Copy, Debug, Deserialize, Serialize)]
+#[derive(Clone, Copy, Debug, Deserialize, Serialize, Eq, PartialEq)]
 #[serde(rename_all = "snake_case")]
 enum CompatibilityReason {
     ResourceUnavailable,
@@ -261,16 +262,42 @@ impl Catalog {
         Ok(())
     }
 
-    fn camera_candidates(&self) -> io::Result<Vec<super::catalog_export::CameraCandidate>> {
+    fn candidates(&self, kind: ExportKind) -> io::Result<Vec<Candidate>> {
         // No partial or subsequently rejected snapshot may become selectable.
         self.lines()?;
+        let (direction, profile, format, reason) = match kind {
+            ExportKind::Camera => (
+                PortDirection::Source,
+                "capyio.video.frames",
+                "cavc-avc-access-unit-v1",
+                CompatibilityReason::CameraNeedsLocalSelection,
+            ),
+            ExportKind::Playback | ExportKind::VirtualMicrophone => (
+                PortDirection::Source,
+                "capyio.audio.frames",
+                "pcm-s16le-48000-mono",
+                CompatibilityReason::AudioPlaybackNeedsLocalSelection,
+            ),
+            ExportKind::Capture | ExportKind::VirtualSpeaker => (
+                PortDirection::Sink,
+                "capyio.audio.frames",
+                "pcm-s16le-48000-stereo",
+                CompatibilityReason::AudioCaptureNeedsLocalSelection,
+            ),
+            ExportKind::Touchpad => (
+                PortDirection::Source,
+                "capyio.input.touchpad-frames",
+                "touchpad-frame-v1",
+                CompatibilityReason::TouchpadNeedsLocalSelection,
+            ),
+        };
         self.ports
             .iter()
             .filter_map(|event| match event {
                 Event::CatalogPort(port)
                     if port.peer_node_id == self.peer
-                        && matches!(port.direction, PortDirection::Source)
-                        && port.profile.name == "capyio.video.frames"
+                        && port.direction == direction
+                        && port.profile.name == profile
                         && port.profile.major == 1
                         && matches!(port.capability_availability, Availability::Available)
                         && matches!(port.port_availability, Availability::Available)
@@ -278,28 +305,26 @@ impl Catalog {
                             port.compatibility.status,
                             CompatibilityStatus::NeedsLocalSelection
                         )
-                        && matches!(
-                            port.compatibility.reason,
-                            CompatibilityReason::CameraNeedsLocalSelection
-                        )
-                        && port.formats.iter().any(|format| {
-                            format.id == "cavc-avc-access-unit-v1" && format.parameters.is_empty()
+                        && port.compatibility.reason == reason
+                        && port.formats.iter().any(|candidate| {
+                            candidate.id == format && candidate.parameters.is_empty()
                         }) =>
                 {
-                    Some(
-                        event
-                            .canonical()
-                            .map(|display| super::catalog_export::CameraCandidate {
-                                peer: port.peer_node_id,
-                                capability: port.capability_id,
-                                port: port.port_id,
-                                display,
-                            }),
-                    )
+                    Some(event.canonical().map(|display| Candidate {
+                        peer: port.peer_node_id,
+                        capability: port.capability_id,
+                        port: port.port_id,
+                        display,
+                    }))
                 }
                 _ => None,
             })
             .collect()
+    }
+
+    #[cfg(test)]
+    fn camera_candidates(&self) -> io::Result<Vec<Candidate>> {
+        self.candidates(ExportKind::Camera)
     }
 
     fn lines(&self) -> io::Result<Vec<String>> {
@@ -492,29 +517,48 @@ pub(super) fn run_prepare_camera(
     listen: SocketAddr,
     duration_secs: u64,
 ) -> io::Result<()> {
+    run_prepare(
+        args,
+        peer,
+        endpoint,
+        output,
+        &super::catalog_export::camera_options(listen, duration_secs),
+    )
+}
+
+pub(super) fn run_prepare(
+    args: &Args,
+    peer: NodeId,
+    endpoint: SocketAddr,
+    output: &Path,
+    options: &ExportOptions,
+) -> io::Result<()> {
     let deadline = Instant::now() + WORK_LIFETIME;
     validate_selection(args.pairing_node, peer, endpoint)?;
-    super::catalog_export::validate_options(output, listen, duration_secs)?;
+    // Reject syntactic output-path, mode, target, address and duration errors
+    // before spawning a Node, opening credentials or connecting. Filesystem
+    // checks remain after selection and before the Save prompt or file create.
+    super::catalog_export::validate_export_options(output, options)?;
     let _signals = Signals::install()?;
     require_node_capability_for("linux-catalog")?;
     check(deadline)?;
     let mut tty = Terminal::open()?;
+    let name = options.kind.name();
     tty.begin_prompt(
         &format!(
-            "Prepare nonsecret camera manifest from one authenticated catalog snapshot.\r\nRequested peer: {peer}\r\nExplicit endpoint: {endpoint}\r\n{NO_AUTHORITY}Peer text is ASCII-escaped and displayed literally.\r\nType cancel, Ctrl-C or Ctrl-D to stop: "
+            "Prepare nonsecret {name} manifest from one authenticated catalog snapshot.\r\nRequested peer: {peer}\r\nExplicit endpoint: {endpoint}\r\n{NO_AUTHORITY}Peer text is ASCII-escaped and displayed literally.\r\nType cancel, Ctrl-C or Ctrl-D to stop: "
         ),
         deadline.min(Instant::now() + Duration::from_secs(1)),
     )?;
     let catalog = read_catalog(args, peer, endpoint, &mut tty, deadline)?;
-    let candidates = catalog.camera_candidates()?;
+    let candidates = catalog.candidates(options.kind)?;
     super::catalog_export::prepare(
         &mut tty,
         args.pairing_node,
         peer,
         &candidates,
         output,
-        listen,
-        duration_secs,
+        options,
     )
 }
 
@@ -880,5 +924,133 @@ mod tests {
         accept(&mut empty, begin(0)).unwrap();
         accept(&mut empty, complete(0)).unwrap();
         assert!(empty.camera_candidates().unwrap().is_empty());
+    }
+
+    fn export_port(kind: ExportKind) -> Value {
+        let mut value = port();
+        match kind {
+            ExportKind::Camera => return camera_port(),
+            ExportKind::Playback | ExportKind::VirtualMicrophone => {
+                value["formats"] = json!([{"id":"pcm-s16le-48000-mono","parameters":{}}]);
+            }
+            ExportKind::Capture | ExportKind::VirtualSpeaker => {
+                value["direction"] = json!("sink");
+                value["formats"] = json!([{"id":"pcm-s16le-48000-stereo","parameters":{}}]);
+                value["compatibility"]["reason"] = json!("audio_capture_needs_local_selection");
+            }
+            ExportKind::Touchpad => {
+                value["profile"]["name"] = json!("capyio.input.touchpad-frames");
+                value["formats"] = json!([{"id":"touchpad-frame-v1","parameters":{}}]);
+                value["compatibility"]["reason"] = json!("touchpad_needs_local_selection");
+            }
+        }
+        value
+    }
+
+    const EXPORT_KINDS: [ExportKind; 6] = [
+        ExportKind::Camera,
+        ExportKind::Playback,
+        ExportKind::VirtualMicrophone,
+        ExportKind::Capture,
+        ExportKind::VirtualSpeaker,
+        ExportKind::Touchpad,
+    ];
+
+    #[test]
+    fn pure_catalog_all_export_modes_require_complete_matching_rows() {
+        for kind in EXPORT_KINDS {
+            let mut catalog = Catalog::new(peer());
+            assert!(catalog.candidates(kind).is_err());
+            accept(&mut catalog, begin(2)).unwrap();
+            accept(&mut catalog, export_port(kind)).unwrap();
+            assert!(catalog.candidates(kind).is_err());
+            let mut second = export_port(kind);
+            second["port_id"] = json!("55555555-5555-4555-8555-555555555555");
+            accept(&mut catalog, second).unwrap();
+            assert!(catalog.candidates(kind).is_err());
+            accept(&mut catalog, complete(2)).unwrap();
+            let candidates = catalog.candidates(kind).unwrap();
+            assert_eq!(candidates.len(), 2);
+            assert_eq!(candidates[0].peer, peer());
+            assert_eq!(candidates[0].port.to_string(), PORT);
+            assert_ne!(candidates[0].port, candidates[1].port);
+            assert!(candidates.iter().all(|candidate| {
+                candidate
+                    .display
+                    .bytes()
+                    .all(|byte| (32..=126).contains(&byte))
+                    && candidate.display.contains("\"event\":\"catalog_port\"")
+            }));
+            for other in EXPORT_KINDS {
+                // Physical and virtual endpoints intentionally share one exact
+                // remote contract, but no other format/direction may cross over.
+                let same_contract = other == kind
+                    || matches!(
+                        (kind, other),
+                        (ExportKind::Playback, ExportKind::VirtualMicrophone)
+                            | (ExportKind::VirtualMicrophone, ExportKind::Playback)
+                            | (ExportKind::Capture, ExportKind::VirtualSpeaker)
+                            | (ExportKind::VirtualSpeaker, ExportKind::Capture)
+                    );
+                assert_eq!(
+                    catalog.candidates(other).unwrap().len(),
+                    if same_contract { 2 } else { 0 }
+                );
+            }
+            let mut empty = Catalog::new(peer());
+            accept(&mut empty, begin(0)).unwrap();
+            accept(&mut empty, complete(0)).unwrap();
+            assert!(empty.candidates(kind).unwrap().is_empty());
+        }
+    }
+
+    #[test]
+    fn pure_catalog_all_export_modes_reject_ineligible_hints_and_contracts() {
+        for kind in EXPORT_KINDS {
+            let original = export_port(kind);
+            for (pointer, replacement) in [
+                ("/direction", json!("control")),
+                (
+                    "/direction",
+                    json!(if original["direction"] == "source" {
+                        "sink"
+                    } else {
+                        "source"
+                    }),
+                ),
+                ("/profile/name", json!("unsupported.profile")),
+                ("/profile/major", json!(2)),
+                ("/capability_availability", json!("busy")),
+                ("/capability_availability", json!("permission_required")),
+                ("/port_availability", json!("offline")),
+                ("/port_availability", json!("busy")),
+                ("/formats/0/id", json!("wrong-format")),
+                ("/formats/0/parameters", json!({"rate":"48000"})),
+                ("/formats", json!([])),
+                (
+                    "/compatibility/reason",
+                    json!(if kind == ExportKind::Camera {
+                        "touchpad_needs_local_selection"
+                    } else {
+                        "camera_needs_local_selection"
+                    }),
+                ),
+                (
+                    "/compatibility",
+                    json!({"status":"not_supported","reason":"format_not_supported"}),
+                ),
+            ] {
+                let mut value = export_port(kind);
+                *value.pointer_mut(pointer).unwrap() = replacement;
+                let mut catalog = Catalog::new(peer());
+                accept(&mut catalog, begin(1)).unwrap();
+                accept(&mut catalog, value).unwrap();
+                accept(&mut catalog, complete(1)).unwrap();
+                assert!(
+                    catalog.candidates(kind).unwrap().is_empty(),
+                    "{kind:?}: {pointer}"
+                );
+            }
+        }
     }
 }

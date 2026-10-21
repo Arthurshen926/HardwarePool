@@ -83,6 +83,24 @@ struct Args {
     #[command(subcommand)]
     action: Action,
 }
+#[derive(Clone, Copy, clap::ValueEnum)]
+enum ExportAudioMode {
+    Playback,
+    VirtualMicrophone,
+    Capture,
+    VirtualSpeaker,
+}
+impl ExportAudioMode {
+    fn kind(self) -> catalog_export::ExportKind {
+        match self {
+            Self::Playback => catalog_export::ExportKind::Playback,
+            Self::VirtualMicrophone => catalog_export::ExportKind::VirtualMicrophone,
+            Self::Capture => catalog_export::ExportKind::Capture,
+            Self::VirtualSpeaker => catalog_export::ExportKind::VirtualSpeaker,
+        }
+    }
+}
+
 #[derive(Subcommand)]
 enum Action {
     Welcome {
@@ -106,6 +124,38 @@ enum Action {
     },
     /// Export one explicitly selected camera manifest, without starting resources.
     PrepareCamera {
+        #[arg(long)]
+        peer: NodeId,
+        #[arg(long)]
+        endpoint: SocketAddr,
+        #[arg(long)]
+        output: PathBuf,
+        #[arg(long)]
+        listen: SocketAddr,
+        #[arg(long)]
+        duration_secs: u64,
+    },
+    /// Export audio config only; never enumerate devices or start a session.
+    PrepareAudio {
+        #[arg(long)]
+        peer: NodeId,
+        #[arg(long)]
+        endpoint: SocketAddr,
+        #[arg(long)]
+        output: PathBuf,
+        #[arg(long)]
+        listen: SocketAddr,
+        #[arg(long)]
+        media: SocketAddr,
+        #[arg(long)]
+        duration_secs: u64,
+        #[arg(long, value_enum)]
+        mode: ExportAudioMode,
+        #[arg(long)]
+        target: Option<String>,
+    },
+    /// Export native touchpad config only; never access an input device.
+    PrepareTouchpad {
         #[arg(long)]
         peer: NodeId,
         #[arg(long)]
@@ -192,7 +242,25 @@ fn validate(args: &Args) -> io::Result<()> {
         Action::Catalog { peer, .. } if peer.as_uuid().is_nil() || *peer == args.pairing_node => {
             return Err(invalid());
         }
+        Action::PrepareAudio {
+            peer,
+            output,
+            duration_secs,
+            ..
+        } if peer.as_uuid().is_nil()
+            || *peer == args.pairing_node
+            || !output.is_absolute()
+            || !(1..=300).contains(duration_secs) =>
+        {
+            return Err(invalid());
+        }
         Action::PrepareCamera {
+            peer,
+            output,
+            duration_secs,
+            ..
+        }
+        | Action::PrepareTouchpad {
             peer,
             output,
             duration_secs,
@@ -923,6 +991,51 @@ pub fn run() -> io::Result<()> {
                 *duration_secs,
             );
         }
+        Action::PrepareAudio {
+            peer,
+            endpoint,
+            output,
+            listen,
+            media,
+            duration_secs,
+            mode,
+            target,
+        } => {
+            return catalog::run_prepare(
+                &args,
+                *peer,
+                *endpoint,
+                output,
+                &catalog_export::ExportOptions {
+                    kind: mode.kind(),
+                    listen: *listen,
+                    media: Some(*media),
+                    target: target.clone(),
+                    duration_secs: *duration_secs,
+                },
+            );
+        }
+        Action::PrepareTouchpad {
+            peer,
+            endpoint,
+            output,
+            listen,
+            duration_secs,
+        } => {
+            return catalog::run_prepare(
+                &args,
+                *peer,
+                *endpoint,
+                output,
+                &catalog_export::ExportOptions {
+                    kind: catalog_export::ExportKind::Touchpad,
+                    listen: *listen,
+                    media: None,
+                    target: None,
+                    duration_secs: *duration_secs,
+                },
+            );
+        }
         Action::Playback { config, peer } => return media::run(&args, config, *peer),
         Action::Capture { config, peer } => return media::run_capture(&args, config, *peer),
         Action::Camera { config, peer } => return camera::run(&args, config, *peer),
@@ -972,7 +1085,7 @@ pub fn run() -> io::Result<()> {
         Action::List=>node.send(&json!({"version":1,"action":"list"}),deadline)?,
         Action::Recover=>node.send(&json!({"version":1,"action":"recover"}),deadline)?,
         Action::Revoke{peer}=>node.send(&json!({"version":1,"action":"revoke","peer_node_id":peer}),deadline)?,
-        Action::Cancel | Action::Catalog { .. } | Action::PrepareCamera { .. } | Action::Playback { .. } | Action::Capture { .. } | Action::Camera { .. } | Action::Touchpad { .. } =>unreachable!(),
+        Action::Cancel | Action::Catalog { .. } | Action::PrepareCamera { .. } | Action::PrepareAudio { .. } | Action::PrepareTouchpad { .. } | Action::Playback { .. } | Action::Capture { .. } | Action::Camera { .. } | Action::Touchpad { .. } =>unreachable!(),
         #[cfg(feature = "touchpad-test-fixture")]
         Action::TouchpadFixture { .. } => unreachable!(),
     }
@@ -1154,6 +1267,76 @@ pub fn run() -> io::Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn prepare_audio_and_touchpad_cli_require_explicit_kind_specific_options() {
+        let local = NodeId::new();
+        let peer = NodeId::new();
+        let prefix = vec![
+            "console".to_owned(),
+            "--pairing-node".into(),
+            local.to_string(),
+            "--pairing-state".into(),
+            "/synthetic/state".into(),
+            "--pairing-bus-address".into(),
+            "unix:path=/synthetic/bus".into(),
+            "--pairing-collection".into(),
+            "/synthetic/collection".into(),
+        ];
+        for mode in [
+            "playback",
+            "virtual-microphone",
+            "capture",
+            "virtual-speaker",
+            "touchpad",
+        ] {
+            let mut arguments = prefix.clone();
+            arguments.extend([
+                if mode == "touchpad" {
+                    "prepare-touchpad"
+                } else {
+                    "prepare-audio"
+                }
+                .into(),
+                "--peer".into(),
+                peer.to_string(),
+                "--endpoint".into(),
+                "127.0.0.1:4000".into(),
+                "--output".into(),
+                "/synthetic/new.json".into(),
+                "--listen".into(),
+                "127.0.0.1:0".into(),
+                "--duration-secs".into(),
+                "10".into(),
+            ]);
+            if mode != "touchpad" {
+                arguments.extend([
+                    "--mode".into(),
+                    mode.into(),
+                    "--media".into(),
+                    "127.0.0.1:4001".into(),
+                ]);
+            }
+            assert!(validate(&Args::try_parse_from(&arguments).unwrap()).is_ok());
+            let mut required = vec![10, 12, 14, 16, 18];
+            if mode != "touchpad" {
+                required.extend([20, 22]);
+            }
+            for index in required {
+                let mut missing = arguments.clone();
+                missing.drain(index..index + 2);
+                assert!(Args::try_parse_from(missing).is_err());
+            }
+            for option in ["--security", "--fixture-mode", "--proposal-mode"] {
+                let mut extra = arguments.clone();
+                extra.extend([option.into(), "unrequested".into()]);
+                assert!(Args::try_parse_from(extra).is_err());
+            }
+            if mode == "touchpad" {
+                arguments.extend(["--target".into(), "unrequested".into()]);
+                assert!(Args::try_parse_from(arguments).is_err());
+            }
+        }
+    }
     #[test]
     fn prepare_camera_requires_all_explicit_nonsecret_options() {
         let local = NodeId::new();

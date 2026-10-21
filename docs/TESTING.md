@@ -1432,3 +1432,9 @@ ADR 1553 adds camera-only manifest preparation from a current authenticated
 catalog, with separate fresh exact selection and output confirmation. Exclusive
 owned-file export never starts media or grants authority; later launch still
 requires current catalog validation and independent finite session consent.
+
+### Audio and touchpad manifest preparation
+
+[ADR 1554](adr/1554-linux-audio-touchpad-manifest-export.md) extends the same
+explicit snapshot/select/save path to four audio endpoint modes and touchpad.
+Export remains nonsecret configuration only, with no Start or resource authority.

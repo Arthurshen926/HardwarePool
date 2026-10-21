@@ -242,6 +242,25 @@ impl Config {
     }
 }
 
+pub(super) fn validate_export(
+    bytes: &[u8],
+    local: NodeId,
+    peer: NodeId,
+    capture: bool,
+) -> io::Result<()> {
+    Config::parse(
+        bytes,
+        local,
+        peer,
+        if capture {
+            Direction::Capture
+        } else {
+            Direction::Playback
+        },
+    )
+    .map(|_| ())
+}
+
 fn lab_address(address: SocketAddrV4) -> bool {
     let ip = address.ip();
     let octets = ip.octets();

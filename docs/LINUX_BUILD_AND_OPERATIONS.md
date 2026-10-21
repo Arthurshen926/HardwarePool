@@ -409,7 +409,7 @@ and availability with escaped text. `needs_local_selection` is only a metadata
 hint, not compatibility, local-device discovery or authorization. No Route,
 proposal, grant, lease, helper or media endpoint is created. A published Port can
 change after inspection; the finite media launcher must revalidate it and obtain
-fresh local and counterpart consent. Camera-only manifest preparation is described below; other media kinds still require an explicit manifest.
+fresh local and counterpart consent. Explicit camera, audio and touchpad manifest preparation is described below.
 
 Do not expect this command to discover a peer address, configure its publication,
 unlock a collection, provision identity or verify physical hardware. Missing,
@@ -440,3 +440,39 @@ A later separately invoked `camera --config /absolute/owned/new-camera.json
 local/counterpart consent and finite leases. The 120-frame ceiling at 30 fps is
 about four seconds of continuous video even when the time ceiling is longer.
 Preparation for audio and touchpad is not provided by this command.
+
+
+## Prepare audio or touchpad manifests without starting them (ADR 1554)
+
+The same selectors and fresh select/save decisions apply. All addresses below are
+illustrative: use the existing reachable peer endpoint and supported explicit
+local addresses. Never copy an arbitrary target without choosing your device.
+
+```sh
+./capyio-linux-console --pairing-node LOCAL_NODE_UUID --pairing-state /absolute/private/state --pairing-bus-address unix:path=/explicit/bus --pairing-collection /org/freedesktop/secrets/collection/EXISTING prepare-audio --peer PEER_NODE_UUID --endpoint 192.0.2.20:PORT --output /absolute/owned/new-audio.json --listen 192.0.2.10:0 --media 192.0.2.10:40000 --duration-secs 10 --mode playback --target EXPLICIT_LOCAL_TARGET
+./capyio-linux-console --pairing-node LOCAL_NODE_UUID --pairing-state /absolute/private/state --pairing-bus-address unix:path=/explicit/bus --pairing-collection /org/freedesktop/secrets/collection/EXISTING prepare-touchpad --peer PEER_NODE_UUID --endpoint 192.0.2.20:PORT --output /absolute/owned/new-touchpad.json --listen 192.0.2.10:0 --duration-secs 10
+```
+
+Choose the audio mode explicitly:
+
+- `playback`: remote mono Source to local Sink, required `--target`.
+- `virtual-microphone`: remote mono Source to a local virtual microphone, omit
+  `--target`; specifying one is rejected.
+- `capture`: local stereo Source to remote Sink, required `--target` for the
+  selected local source. The saved endpoint mode is `selected_source`.
+- `virtual-speaker`: local virtual speaker Source to remote stereo Sink, omit
+  `--target`; specifying one is rejected.
+
+Audio requires both listen/media addresses on the same supported local IPv4
+address with distinct ports under the existing policy, and a 1–300-second ceiling.
+It does not enumerate or verify a physical target. Its media remains plaintext,
+unauthenticated UDP for a trusted isolated lab, despite authenticated inspection.
+Touchpad retains its exact five-contact, 120 by 70 mm TLS profile and 3–60-second
+ceiling, with no target, media address or helper-path override.
+
+Each output path must be new, bounded and safe as in camera preparation. The
+exported file has no secret or resource authority; no session, listener, graph or
+device starts. After inspecting it, the user may separately invoke `playback`,
+`capture` or `touchpad` with that config and the same explicit peer. That launch
+still requires a current catalog and fresh local/counterpart resource consent.
+Do not treat successful export as device existence, permission or delivery proof.

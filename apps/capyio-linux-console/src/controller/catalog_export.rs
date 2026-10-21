@@ -1,4 +1,4 @@
-//! Two fresh local decisions export only the existing nonsecret camera schema.
+//! Two fresh local decisions export only existing nonsecret launcher schemas.
 //! This module never spawns a Node or creates resource authority or devices.
 use super::*;
 use capyio_core::{CapabilityId, PortId};
@@ -9,14 +9,96 @@ const CONSENT: Duration = Duration::from_secs(30);
 const MAX_OUTPUT_PATH: usize = 214;
 const LIMITS: &str = "Catalog snapshot may already be stale; the later camera launcher revalidates it.\r\nExport is not resource authorization: no Routes, grants, leases, media or devices are created.\r\nSaving does not Start a camera; a later explicit camera command needs fresh independent consent.\r\nThe fixed 120-frame limit is approximately 4 seconds at 30 fps, even with the 60-second duration ceiling.\r\n";
 
-pub(super) struct CameraCandidate {
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(super) enum ExportKind {
+    Camera,
+    Playback,
+    VirtualMicrophone,
+    Capture,
+    VirtualSpeaker,
+    Touchpad,
+}
+
+impl ExportKind {
+    pub(super) fn name(self) -> &'static str {
+        match self {
+            Self::Camera => "camera",
+            Self::Playback => "playback",
+            Self::VirtualMicrophone => "virtual microphone",
+            Self::Capture => "capture",
+            Self::VirtualSpeaker => "virtual speaker",
+            Self::Touchpad => "touchpad",
+        }
+    }
+
+    fn label(self) -> &'static str {
+        match self {
+            Self::Camera => "Camera",
+            Self::Playback => "Playback",
+            Self::VirtualMicrophone => "Virtual microphone",
+            Self::Capture => "Capture",
+            Self::VirtualSpeaker => "Virtual speaker",
+            Self::Touchpad => "Touchpad",
+        }
+    }
+
+    fn capture(self) -> bool {
+        matches!(self, Self::Capture | Self::VirtualSpeaker)
+    }
+
+    fn audio(self) -> bool {
+        !matches!(self, Self::Camera | Self::Touchpad)
+    }
+
+    fn limits(self) -> String {
+        if self == Self::Camera {
+            return LIMITS.into();
+        }
+        let mut text = format!(
+            "Catalog snapshot may already be stale; the later {} launcher revalidates it.\r\nExport is not resource authorization: no Routes, grants, leases, media or devices are created.\r\nSaving does not Start a {} session; a later explicit command needs fresh independent consent.\r\n",
+            self.name(),
+            self.name()
+        );
+        if self.audio() {
+            text.push_str("WARNING: plaintext unauthenticated UDP media; trusted isolated lab only.\r\nMedia security: unauthenticated_udp_trusted_lab_only.\r\n");
+            let format = if self.capture() {
+                "pcm-s16le-48000-stereo"
+            } else {
+                "pcm-s16le-48000-mono"
+            };
+            let direction = if self.capture() {
+                "local Source -> remote Sink"
+            } else {
+                "remote Source -> local Sink"
+            };
+            text.push_str(&format!("Audio direction: {direction}.\r\nAudio format: {format}; duration 1..300 seconds.\r\n"));
+        } else {
+            text.push_str("Touchpad format: touchpad-frame-v1; five contacts (max_contacts=5), 120 x 70 mm, pressure supported, not clickable.\r\nMedia security: tls13_mtls_v1; duration 3..60 seconds.\r\nExport proves neither frame delivery nor OS gestures.\r\n");
+        }
+        text
+    }
+}
+
+#[derive(Clone, Debug)]
+pub(super) struct ExportOptions {
+    pub(super) kind: ExportKind,
+    pub(super) listen: SocketAddr,
+    pub(super) media: Option<SocketAddr>,
+    pub(super) target: Option<String>,
+    pub(super) duration_secs: u64,
+}
+
+pub(super) struct Candidate {
     pub(super) peer: NodeId,
     pub(super) capability: CapabilityId,
     pub(super) port: PortId,
     pub(super) display: String,
 }
 
-impl CameraCandidate {
+#[cfg(test)]
+type CameraCandidate = Candidate;
+
+impl Candidate {
     fn command(&self, request: MessageId) -> String {
         format!(
             "select {request} {} {} {}",
@@ -39,32 +121,89 @@ fn output_text(output: &Path) -> io::Result<&str> {
     Ok(text)
 }
 
-pub(super) fn validate_options(
-    output: &Path,
-    listen: SocketAddr,
-    duration_secs: u64,
-) -> io::Result<()> {
+pub(super) fn validate_export_options(output: &Path, options: &ExportOptions) -> io::Result<()> {
     output_text(output)?;
-    let SocketAddr::V4(address) = listen else {
+    let SocketAddr::V4(mut listen) = options.listen else {
         return Err(invalid());
     };
-    let ip = address.ip();
-    if !(3..=60).contains(&duration_secs)
-        || !(ip.is_loopback() || ip.is_private() || ip.is_link_local())
-        || ip.is_broadcast()
-        || ip.is_unspecified()
-    {
-        return Err(invalid());
+    if options.kind.audio() {
+        let Some(SocketAddr::V4(media)) = options.media else {
+            return Err(invalid());
+        };
+        // Match the existing audio parser/Host policy, including its port-1
+        // placeholder for an explicitly requested ephemeral TCP listener.
+        if listen.port() == 0 {
+            listen.set_port(1);
+        }
+        let lab_address = |address: std::net::SocketAddrV4| {
+            let ip = address.ip();
+            let octets = ip.octets();
+            let overlay = octets[0] == 100 && (64..=127).contains(&octets[1]);
+            address.port() != 0
+                && (ip.is_private() || ip.is_loopback() || overlay)
+                && octets[3] != 255
+        };
+        if !(1..=300).contains(&options.duration_secs)
+            || listen.ip() != media.ip()
+            || !lab_address(listen)
+            || !lab_address(media)
+            || listen == media
+        {
+            return Err(invalid());
+        }
+        match (options.kind, options.target.as_deref()) {
+            (ExportKind::Playback | ExportKind::Capture, Some(target))
+                if !target.is_empty()
+                    && target.len() <= 128
+                    && !target.starts_with('-')
+                    && target != "0"
+                    && !target.eq_ignore_ascii_case("auto")
+                    && !target.eq_ignore_ascii_case("default")
+                    && target
+                        .bytes()
+                        .all(|byte| byte.is_ascii_alphanumeric() || b"_.:-".contains(&byte)) =>
+            {
+                Ok(())
+            }
+            (ExportKind::VirtualMicrophone | ExportKind::VirtualSpeaker, None) => Ok(()),
+            _ => Err(invalid()),
+        }
+    } else {
+        let ip = listen.ip();
+        if options.media.is_some()
+            || options.target.is_some()
+            || !(3..=60).contains(&options.duration_secs)
+            || !(ip.is_loopback() || ip.is_private() || ip.is_link_local())
+            || ip.is_broadcast()
+            || ip.is_unspecified()
+        {
+            return Err(invalid());
+        }
+        Ok(())
     }
-    Ok(())
+}
+
+#[cfg(test)]
+fn validate_options(output: &Path, listen: SocketAddr, duration_secs: u64) -> io::Result<()> {
+    validate_export_options(output, &camera_options(listen, duration_secs))
+}
+
+pub(super) fn camera_options(listen: SocketAddr, duration_secs: u64) -> ExportOptions {
+    ExportOptions {
+        kind: ExportKind::Camera,
+        listen,
+        media: None,
+        target: None,
+        duration_secs,
+    }
 }
 
 fn select<'a>(
     line: &[u8],
     request: MessageId,
     peer: NodeId,
-    candidates: &'a [CameraCandidate],
-) -> io::Result<&'a CameraCandidate> {
+    candidates: &'a [Candidate],
+) -> io::Result<&'a Candidate> {
     if request.as_uuid().is_nil() || peer.as_uuid().is_nil() {
         return Err(invalid());
     }
@@ -81,6 +220,52 @@ fn select<'a>(
     Ok(chosen)
 }
 
+fn build_manifest(
+    local: NodeId,
+    peer: NodeId,
+    chosen: &Candidate,
+    options: &ExportOptions,
+) -> io::Result<Vec<u8>> {
+    let remote =
+        json!({"node_id": chosen.peer, "capability_id": chosen.capability, "port_id": chosen.port});
+    let mut value = json!({
+        "version": 1,
+        "node_id": local,
+        "listen": options.listen,
+        "duration_secs": options.duration_secs,
+    });
+    value[if options.kind.capture() {
+        "sink"
+    } else {
+        "source"
+    }] = remote;
+    if options.kind.audio() {
+        value["media"] = json!(options.media);
+        value["target"] = json!(options.target);
+        value["endpoint_mode"] = json!(match options.kind {
+            ExportKind::Playback => "playback",
+            ExportKind::VirtualMicrophone => "virtual_microphone",
+            ExportKind::Capture => "selected_source",
+            ExportKind::VirtualSpeaker => "virtual_speaker",
+            _ => return Err(invalid()),
+        });
+        if !options.kind.capture() {
+            value["proposal_mode"] = json!("linux_led");
+        }
+    } else if options.media.is_some() || options.target.is_some() {
+        return Err(invalid());
+    }
+    let bytes = serde_json::to_vec(&value).map_err(|_| invalid())?;
+    // The existing launcher's parser, not the catalog hint, owns each schema.
+    match options.kind {
+        ExportKind::Camera => super::camera::validate_export(&bytes, local, peer)?,
+        ExportKind::Touchpad => super::touchpad::validate_export(&bytes, local, peer)?,
+        _ => super::media::validate_export(&bytes, local, peer, options.kind.capture())?,
+    }
+    Ok(bytes)
+}
+
+#[cfg(test)]
 fn manifest(
     local: NodeId,
     peer: NodeId,
@@ -88,17 +273,7 @@ fn manifest(
     listen: SocketAddr,
     duration_secs: u64,
 ) -> io::Result<Vec<u8>> {
-    let bytes = serde_json::to_vec(&json!({
-        "version": 1,
-        "node_id": local,
-        "source": {"node_id": chosen.peer, "capability_id": chosen.capability, "port_id": chosen.port},
-        "listen": listen,
-        "duration_secs": duration_secs,
-    }))
-    .map_err(|_| invalid())?;
-    // The existing launcher's parser, not the catalog hint, owns this schema.
-    super::camera::validate_export(&bytes, local, peer)?;
-    Ok(bytes)
+    build_manifest(local, peer, chosen, &camera_options(listen, duration_secs))
 }
 
 fn save_command(request: MessageId, output: &Path) -> io::Result<String> {
@@ -135,17 +310,26 @@ pub(super) fn prepare(
     tty: &mut Terminal,
     local: NodeId,
     peer: NodeId,
-    candidates: &[CameraCandidate],
+    candidates: &[Candidate],
     output: &Path,
-    listen: SocketAddr,
-    duration_secs: u64,
+    options: &ExportOptions,
 ) -> io::Result<()> {
-    validate_options(output, listen, duration_secs)?;
+    validate_export_options(output, options)?;
+    let limits = options.kind.limits();
+    let label = options.kind.label();
+    let name = options.kind.name();
     let display_deadline = Instant::now() + Duration::from_secs(2);
-    tty.write(&format!("\r\n{LIMITS}"), display_deadline)?;
+    tty.write(&format!("\r\n{limits}"), display_deadline)?;
     if candidates.is_empty() {
         tty.write(
-            "No eligible camera Source in this complete snapshot.\r\n",
+            &format!(
+                "No eligible {name} {} in this complete snapshot.\r\n",
+                if options.kind.capture() {
+                    "Sink"
+                } else {
+                    "Source"
+                }
+            ),
             display_deadline,
         )?;
         return Err(invalid());
@@ -157,7 +341,7 @@ pub(super) fn prepare(
     let mut prompt = format!("Selection request: {request}\r\n");
     for candidate in candidates {
         tty.write(
-            &format!("Camera candidate: {}\r\n", candidate.display),
+            &format!("{label} candidate: {}\r\n", candidate.display),
             display_deadline,
         )?;
         prompt.push_str(&format!("Type exactly: {}\r\n", candidate.command(request)));
@@ -168,7 +352,7 @@ pub(super) fn prepare(
     let line = response(tty, selection_deadline)?;
     let chosen = select(line.as_bytes(), request, peer, candidates)?;
     drop(line);
-    let bytes = manifest(local, peer, chosen, listen, duration_secs)?;
+    let bytes = build_manifest(local, peer, chosen, options)?;
     let destination = PinnedOutput::open(output)?;
     // No file has been created. Selection is not permission to save, and the
     // second begin_prompt discards all input left from the first challenge.
@@ -176,7 +360,7 @@ pub(super) fn prepare(
     let command = save_command(request, output)?;
     let text = std::str::from_utf8(&bytes).map_err(|_| invalid())?;
     let prompt = format!(
-        "\r\n{LIMITS}Output path: {}\r\nCamera config: {text}\r\nSave request: {request}\r\nType exactly: {command}\r\nSave (30 seconds; cancel, Ctrl-C or Ctrl-D abort): ",
+        "\r\n{limits}Output path: {}\r\n{label} config: {text}\r\nSave request: {request}\r\nType exactly: {command}\r\nSave (30 seconds; cancel, Ctrl-C or Ctrl-D abort): ",
         output_text(output)?
     );
     let save_deadline = Instant::now() + CONSENT;
@@ -189,7 +373,7 @@ pub(super) fn prepare(
     check(save_deadline)?;
     destination.create(&bytes, save_deadline)?;
     tty.write(
-        "Camera manifest saved; no camera session started.\r\n",
+        &format!("{label} manifest saved; no {name} session started.\r\n"),
         Instant::now() + Duration::from_secs(1),
     )
 }
@@ -708,5 +892,303 @@ mod tests {
         );
         assert_eq!(fs::read(&output).unwrap(), b"replacement");
         assert_eq!(fs::read(&moved).unwrap(), b"{");
+    }
+
+    const EXPORT_KINDS: [ExportKind; 6] = [
+        ExportKind::Camera,
+        ExportKind::Playback,
+        ExportKind::VirtualMicrophone,
+        ExportKind::Capture,
+        ExportKind::VirtualSpeaker,
+        ExportKind::Touchpad,
+    ];
+
+    fn options(kind: ExportKind) -> ExportOptions {
+        ExportOptions {
+            kind,
+            listen: "127.0.0.1:0".parse().unwrap(),
+            media: kind.audio().then(|| "127.0.0.1:43198".parse().unwrap()),
+            target: matches!(kind, ExportKind::Playback | ExportKind::Capture)
+                .then(|| "synthetic.target".into()),
+            duration_secs: 7,
+        }
+    }
+
+    fn built(options: &ExportOptions) -> io::Result<Vec<u8>> {
+        build_manifest(
+            LOCAL.parse().unwrap(),
+            PEER.parse().unwrap(),
+            &candidate(PORT),
+            options,
+        )
+    }
+
+    fn check_option_parity(options: &ExportOptions, expected: bool) {
+        assert_eq!(
+            validate_export_options(Path::new("/tmp/owned/manifest.json"), options).is_ok(),
+            expected,
+            "preflight: {options:?}"
+        );
+        assert_eq!(built(options).is_ok(), expected, "launcher: {options:?}");
+    }
+
+    #[test]
+    fn pure_manifest_export_builders_match_each_existing_launcher_schema() {
+        for kind in EXPORT_KINDS {
+            let options = options(kind);
+            check_option_parity(&options, true);
+            let bytes = built(&options).unwrap();
+            assert!(bytes.len() <= MAX_FRAME);
+            let value: Value = serde_json::from_slice(&bytes).unwrap();
+            let mut expected = json!({
+                "version":1,"node_id":LOCAL,"listen":"127.0.0.1:0","duration_secs":7
+            });
+            expected[if kind.capture() { "sink" } else { "source" }] = json!({
+                "node_id":PEER,"capability_id":CAPABILITY,"port_id":PORT
+            });
+            if kind.audio() {
+                expected["media"] = json!("127.0.0.1:43198");
+                expected["target"] = json!(options.target);
+                expected["endpoint_mode"] = json!(match kind {
+                    ExportKind::Playback => "playback",
+                    ExportKind::VirtualMicrophone => "virtual_microphone",
+                    ExportKind::Capture => "selected_source",
+                    ExportKind::VirtualSpeaker => "virtual_speaker",
+                    _ => unreachable!(),
+                });
+                if !kind.capture() {
+                    expected["proposal_mode"] = json!("linux_led");
+                }
+            }
+            assert_eq!(value, expected, "{kind:?}");
+            for local in [PEER, "00000000-0000-0000-0000-000000000000"] {
+                assert!(
+                    build_manifest(
+                        local.parse().unwrap(),
+                        PEER.parse().unwrap(),
+                        &candidate(PORT),
+                        &options
+                    )
+                    .is_err()
+                );
+            }
+            let mut wrong = candidate(PORT);
+            wrong.peer = LOCAL.parse().unwrap();
+            assert!(
+                build_manifest(
+                    LOCAL.parse().unwrap(),
+                    PEER.parse().unwrap(),
+                    &wrong,
+                    &options
+                )
+                .is_err()
+            );
+            let mut nil_capability = candidate(PORT);
+            nil_capability.capability = "00000000-0000-0000-0000-000000000000".parse().unwrap();
+            assert!(
+                build_manifest(
+                    LOCAL.parse().unwrap(),
+                    PEER.parse().unwrap(),
+                    &nil_capability,
+                    &options
+                )
+                .is_err()
+            );
+            assert!(
+                build_manifest(
+                    LOCAL.parse().unwrap(),
+                    PEER.parse().unwrap(),
+                    &candidate("00000000-0000-0000-0000-000000000000"),
+                    &options
+                )
+                .is_err()
+            );
+        }
+    }
+
+    #[test]
+    fn pure_manifest_export_audio_preflight_matches_address_and_duration_policy() {
+        for kind in [
+            ExportKind::Playback,
+            ExportKind::VirtualMicrophone,
+            ExportKind::Capture,
+            ExportKind::VirtualSpeaker,
+        ] {
+            for ip in [
+                "127.0.0.1",
+                "192.168.1.2",
+                "10.2.3.4",
+                "100.64.1.2",
+                "100.127.1.2",
+            ] {
+                for listen_port in [0, 2, 65535] {
+                    for duration in [1, 300] {
+                        let mut options = options(kind);
+                        options.listen = format!("{ip}:{listen_port}").parse().unwrap();
+                        options.media = Some(format!("{ip}:43198").parse().unwrap());
+                        options.duration_secs = duration;
+                        check_option_parity(&options, true);
+                    }
+                }
+            }
+            for (listen, media) in [
+                ("0.0.0.0:0", "0.0.0.0:43198"),
+                ("8.8.8.8:0", "8.8.8.8:43198"),
+                ("169.254.1.2:0", "169.254.1.2:43198"),
+                ("100.63.1.2:0", "100.63.1.2:43198"),
+                ("100.128.1.2:0", "100.128.1.2:43198"),
+                ("192.168.1.255:0", "192.168.1.255:43198"),
+                ("127.0.0.1:0", "127.0.0.2:43198"),
+                ("127.0.0.1:0", "127.0.0.1:0"),
+                ("127.0.0.1:0", "127.0.0.1:1"),
+                ("127.0.0.1:43198", "127.0.0.1:43198"),
+                ("[::1]:0", "[::1]:43198"),
+                ("127.0.0.1:0", "[::1]:43198"),
+            ] {
+                let mut options = options(kind);
+                options.listen = listen.parse().unwrap();
+                options.media = Some(media.parse().unwrap());
+                check_option_parity(&options, false);
+            }
+            let mut absent = options(kind);
+            absent.media = None;
+            check_option_parity(&absent, false);
+            for duration in [0, 301, u64::MAX] {
+                let mut options = options(kind);
+                options.duration_secs = duration;
+                check_option_parity(&options, false);
+            }
+        }
+    }
+
+    #[test]
+    fn pure_manifest_export_requires_physical_targets_and_forbids_virtual_targets() {
+        for kind in [ExportKind::Playback, ExportKind::Capture] {
+            for target in ["physical.target", "alsa_output.usb-1:2", "12", "a_b-c.d:1"] {
+                let mut options = options(kind);
+                options.target = Some(target.into());
+                check_option_parity(&options, true);
+            }
+            for target in [
+                "",
+                "0",
+                "auto",
+                "AUTO",
+                "default",
+                "Default",
+                "-physical",
+                "bad target",
+                "bad/target",
+                "\u{202e}",
+                "\x1b",
+            ] {
+                let mut options = options(kind);
+                options.target = Some(target.into());
+                check_option_parity(&options, false);
+            }
+            let mut missing = options(kind);
+            missing.target = None;
+            check_option_parity(&missing, false);
+            let mut boundary = options(kind);
+            boundary.target = Some("a".repeat(128));
+            check_option_parity(&boundary, true);
+            boundary.target = Some("a".repeat(129));
+            check_option_parity(&boundary, false);
+        }
+        for kind in [ExportKind::VirtualMicrophone, ExportKind::VirtualSpeaker] {
+            for target in ["", "synthetic.target", "auto"] {
+                let mut options = options(kind);
+                options.target = Some(target.into());
+                check_option_parity(&options, false);
+            }
+        }
+    }
+
+    #[test]
+    fn pure_manifest_export_touchpad_matches_its_distinct_policy_and_fixed_limits() {
+        for kind in [ExportKind::Camera, ExportKind::Touchpad] {
+            for listen in ["127.0.0.1:0", "192.168.1.2:65535", "169.254.1.2:0"] {
+                for duration in [3, 60] {
+                    let mut options = options(kind);
+                    options.listen = listen.parse().unwrap();
+                    options.duration_secs = duration;
+                    check_option_parity(&options, true);
+                }
+            }
+            for listen in [
+                "0.0.0.0:0",
+                "8.8.8.8:44",
+                "100.64.1.2:0",
+                "224.0.0.1:44",
+                "255.255.255.255:44",
+                "[::1]:0",
+            ] {
+                let mut options = options(kind);
+                options.listen = listen.parse().unwrap();
+                check_option_parity(&options, false);
+            }
+            for duration in [0, 1, 2, 61, u64::MAX] {
+                let mut options = options(kind);
+                options.duration_secs = duration;
+                check_option_parity(&options, false);
+            }
+            let mut audio_option = options(kind);
+            audio_option.media = Some("127.0.0.1:43198".parse().unwrap());
+            check_option_parity(&audio_option, false);
+            audio_option.media = None;
+            audio_option.target = Some("synthetic.target".into());
+            check_option_parity(&audio_option, false);
+        }
+        let limits = ExportKind::Touchpad.limits();
+        for text in [
+            "five contacts",
+            "max_contacts=5",
+            "120 x 70 mm",
+            "pressure supported",
+            "not clickable",
+            "tls13_mtls_v1",
+            "neither frame delivery nor OS gestures",
+        ] {
+            assert!(limits.contains(text), "{text}");
+        }
+        assert!(!limits.contains("UDP"));
+        assert!(!limits.contains("120-frame"));
+        assert_eq!(ExportKind::Camera.limits(), LIMITS);
+        for kind in [
+            ExportKind::Playback,
+            ExportKind::VirtualMicrophone,
+            ExportKind::Capture,
+            ExportKind::VirtualSpeaker,
+        ] {
+            let limits = kind.limits();
+            assert!(limits.contains(
+                "WARNING: plaintext unauthenticated UDP media; trusted isolated lab only."
+            ));
+            assert!(limits.contains("unauthenticated_udp_trusted_lab_only"));
+            assert!(limits.contains(if kind.capture() {
+                "pcm-s16le-48000-stereo"
+            } else {
+                "pcm-s16le-48000-mono"
+            }));
+            assert!(!limits.contains("tls13_mtls_v1"));
+        }
+    }
+
+    #[test]
+    fn pure_manifest_export_all_modes_share_exclusive_owner_private_storage() {
+        let fixture = Fixture::new();
+        for (index, kind) in EXPORT_KINDS.into_iter().enumerate() {
+            let output = fixture.0.join(format!("manifest-{index}.json"));
+            let options = options(kind);
+            validate_export_options(&output, &options).unwrap();
+            let bytes = built(&options).unwrap();
+            let pinned = PinnedOutput::open(&output).unwrap();
+            assert!(!output.exists());
+            pinned.create(&bytes, future()).unwrap();
+            assert_eq!(fs::read(&output).unwrap(), bytes);
+            assert_eq!(fs::metadata(&output).unwrap().mode() & 0o777, 0o600);
+            assert!(pinned.create(b"{}", future()).is_err());
+            assert_eq!(fs::read(&output).unwrap(), bytes);
+        }
     }
 }

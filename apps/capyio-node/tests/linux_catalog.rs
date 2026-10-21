@@ -1738,3 +1738,548 @@ fn pty_prepare_camera_refuses_existing_and_symlink_outputs() {
         }
     }
 }
+
+// Remaining manifest modes use the very same actual-PTY/Node/store boundary.
+// These fixtures inspect only nonsecret bytes; none launches the exported file,
+// opens a media listener, or uses an audio, PipeWire, uinput or other device.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum PreparedExport {
+    Playback,
+    VirtualMicrophone,
+    Capture,
+    VirtualSpeaker,
+    Touchpad,
+}
+impl PreparedExport {
+    const ALL: [Self; 5] = [
+        Self::Playback,
+        Self::VirtualMicrophone,
+        Self::Capture,
+        Self::VirtualSpeaker,
+        Self::Touchpad,
+    ];
+    // One representative of each distinct remote schema and eligibility rule.
+    const REMOTE_KINDS: [Self; 3] = [Self::Playback, Self::Capture, Self::Touchpad];
+
+    fn action(self) -> &'static str {
+        if self == Self::Touchpad {
+            "prepare-touchpad"
+        } else {
+            "prepare-audio"
+        }
+    }
+    fn label(self) -> &'static str {
+        match self {
+            Self::Playback => "Playback",
+            Self::VirtualMicrophone => "Virtual microphone",
+            Self::Capture => "Capture",
+            Self::VirtualSpeaker => "Virtual speaker",
+            Self::Touchpad => "Touchpad",
+        }
+    }
+    fn mode(self) -> &'static str {
+        match self {
+            Self::Playback => "playback",
+            Self::VirtualMicrophone => "virtual-microphone",
+            Self::Capture => "capture",
+            Self::VirtualSpeaker => "virtual-speaker",
+            Self::Touchpad => panic!("touchpad has no audio mode"),
+        }
+    }
+    fn direction(self) -> PortDirection {
+        match self {
+            Self::Capture | Self::VirtualSpeaker => PortDirection::Sink,
+            _ => PortDirection::Source,
+        }
+    }
+    fn format(self) -> &'static str {
+        match self {
+            Self::Playback | Self::VirtualMicrophone => "pcm-s16le-48000-mono",
+            Self::Capture | Self::VirtualSpeaker => "pcm-s16le-48000-stereo",
+            Self::Touchpad => "touchpad-frame-v1",
+        }
+    }
+    fn reason(self) -> &'static str {
+        match self {
+            Self::Playback | Self::VirtualMicrophone => "audio_playback_needs_local_selection",
+            Self::Capture | Self::VirtualSpeaker => "audio_capture_needs_local_selection",
+            Self::Touchpad => "touchpad_needs_local_selection",
+        }
+    }
+    fn target(self) -> Option<&'static str> {
+        match self {
+            Self::Playback => Some("synthetic.playback"),
+            Self::Capture => Some("synthetic.capture"),
+            _ => None,
+        }
+    }
+    fn args(self, output: &Path) -> Vec<String> {
+        let mut args = vec![
+            "--output".into(),
+            output.to_str().unwrap().into(),
+            "--listen".into(),
+            "127.0.0.1:0".into(),
+            "--duration-secs".into(),
+            "7".into(),
+        ];
+        if self != Self::Touchpad {
+            args.extend([
+                "--media".into(),
+                "127.0.0.1:43198".into(),
+                "--mode".into(),
+                self.mode().into(),
+            ]);
+            if let Some(target) = self.target() {
+                args.extend(["--target".into(), target.into()]);
+            }
+        }
+        args
+    }
+    fn start(self, fixture: &Fixture, output: &Path) -> Process {
+        Process::console_command(
+            &fixture.pairing,
+            fixture.endpoint,
+            self.action(),
+            &self.args(output),
+        )
+    }
+}
+
+fn prepared_fixture(kind: PreparedExport, count: usize) -> Fixture {
+    let mut fixture = Fixture::new(count);
+    fixture.node.platform = Platform::Android;
+    for capability in fixture.node.capabilities.values_mut() {
+        capability.class = match kind {
+            PreparedExport::Playback | PreparedExport::VirtualMicrophone => {
+                CapabilityClass::Microphone
+            }
+            PreparedExport::Capture | PreparedExport::VirtualSpeaker => CapabilityClass::Speaker,
+            PreparedExport::Touchpad => CapabilityClass::Touchpad,
+        };
+        capability.availability = Availability::Available;
+        for port in capability.ports.values_mut() {
+            port.direction = kind.direction();
+            port.profile = if kind == PreparedExport::Touchpad {
+                ProfileId::touchpad_frames_v1()
+            } else {
+                ProfileId::audio_frames_v1()
+            };
+            port.formats = vec![FormatDescriptor::new(kind.format())];
+            port.availability = Availability::Available;
+        }
+    }
+    fixture.node.validate().unwrap();
+    fixture
+}
+
+fn begin_prepared(kind: PreparedExport, fixture: &Fixture, output: &Path) -> (Process, MessageId) {
+    let mut process = kind.start(fixture, output);
+    let mut peer = fixture.accept_empty(&mut process);
+    fixture.send(&mut peer, &process);
+    closed_without_resource_commands(&mut peer, process.started + BOUND);
+    let request = camera_prompt(&mut process, "Selection request: ", SELECT_END);
+    (process, request)
+}
+
+fn prepared_finished(
+    kind: PreparedExport,
+    fixture: &Fixture,
+    process: &mut Process,
+    success: bool,
+) {
+    assert_eq!(process.finish().success(), success, "{kind:?}");
+    let text = terminal_text(process);
+    assert!(!text.contains("Type start"));
+    assert!(!text.contains("Route approval"));
+    assert_eq!(
+        text.contains(&format!(
+            "{} manifest saved; no {} session started.",
+            kind.label(),
+            kind.label().to_ascii_lowercase()
+        )),
+        success,
+        "{kind:?}: {text}"
+    );
+    assert!(
+        fixture
+            .server
+            .try_accept_until(Instant::now() + Duration::from_millis(50))
+            .unwrap()
+            .is_none(),
+        "preparation must not reconnect or automatically start {kind:?}"
+    );
+    fixture.unchanged(process);
+}
+
+fn expected_prepared(
+    kind: PreparedExport,
+    fixture: &Fixture,
+    row: (CapabilityId, PortId),
+) -> Value {
+    let mut value = json!({
+        "version": 1,
+        "node_id": fixture.pairing.owner,
+        "listen": "127.0.0.1:0",
+        "duration_secs": 7,
+    });
+    let remote = json!({
+        "node_id": fixture.node.id,
+        "capability_id": row.0,
+        "port_id": row.1,
+    });
+    if kind.direction() == PortDirection::Sink {
+        value["sink"] = remote;
+    } else {
+        value["source"] = remote;
+    }
+    if kind != PreparedExport::Touchpad {
+        value["media"] = json!("127.0.0.1:43198");
+        value["target"] = json!(kind.target());
+        value["endpoint_mode"] = json!(match kind {
+            PreparedExport::Playback => "playback",
+            PreparedExport::VirtualMicrophone => "virtual_microphone",
+            PreparedExport::Capture => "selected_source",
+            PreparedExport::VirtualSpeaker => "virtual_speaker",
+            PreparedExport::Touchpad => unreachable!(),
+        });
+        if kind.direction() == PortDirection::Source {
+            value["proposal_mode"] = json!("linux_led");
+        }
+    }
+    value
+}
+
+#[test]
+fn pty_prepare_audio_and_touchpad_export_exact_explicit_selection() {
+    for kind in PreparedExport::ALL {
+        let fixture = prepared_fixture(kind, 2);
+        let output = fixture.pairing.service.root.join("manifest.json");
+        let rows = camera_rows(&fixture);
+        let (mut process, selection) = begin_prepared(kind, &fixture, &output);
+        assert!(!output.exists(), "catalog visibility is not save consent");
+        let prefix = format!("{} candidate: ", kind.label());
+        let candidates: Vec<Value> = terminal_text(&process)
+            .lines()
+            .filter_map(|line| line.trim().strip_prefix(&prefix))
+            .map(|line| serde_json::from_str(line).unwrap())
+            .collect();
+        assert_eq!(
+            candidates.len(),
+            2,
+            "{kind:?} must never pick the first row"
+        );
+        for row in &rows {
+            assert!(candidates.iter().any(|candidate| {
+                candidate["peer_node_id"] == fixture.node.id.to_string()
+                    && candidate["capability_id"] == row.0.to_string()
+                    && candidate["port_id"] == row.1.to_string()
+                    && candidate["direction"] == serde_json::to_value(kind.direction()).unwrap()
+                    && candidate["compatibility"]
+                        == json!({"status":"needs_local_selection","reason":kind.reason()})
+            }));
+        }
+        let selected = rows[1];
+        let save = select_camera(&fixture, &mut process, selection, selected);
+        assert!(!output.exists(), "selection alone must not create output");
+        let prefix = format!("{} config: ", kind.label());
+        let displayed: Value = terminal_text(&process)
+            .lines()
+            .find_map(|line| line.trim().strip_prefix(&prefix))
+            .map(|line| serde_json::from_str(line).unwrap())
+            .unwrap();
+        let expected = expected_prepared(kind, &fixture, selected);
+        assert_eq!(
+            displayed, expected,
+            "{kind:?} exact displayed launcher schema"
+        );
+        type_camera(&mut process, save_line(save, &output).as_bytes());
+        prepared_finished(kind, &fixture, &mut process, true);
+        let metadata = fs::symlink_metadata(&output).unwrap();
+        assert!(metadata.file_type().is_file());
+        assert_eq!(metadata.permissions().mode() & 0o777, 0o600);
+        let bytes = fs::read(&output).unwrap();
+        assert!(!bytes.is_empty() && bytes.len() <= 4096);
+        assert_eq!(serde_json::from_slice::<Value>(&bytes).unwrap(), expected);
+        fixture.pairing.assert_no_leak(&bytes);
+        let text = std::str::from_utf8(&bytes).unwrap();
+        for forbidden in [
+            OMITTED,
+            SERVER_NAME,
+            "linux-protected:",
+            &fixture.endpoint.to_string(),
+        ] {
+            assert!(!text.contains(forbidden));
+        }
+        assert!(fixture.pairing.service.state.lock().unwrap().reads > 0);
+        // Stop at bytes, not a launcher, media stream, or virtual/physical device.
+    }
+}
+
+#[test]
+fn pty_prepare_audio_and_touchpad_reject_unsupported_catalog_rows() {
+    for kind in PreparedExport::REMOTE_KINDS {
+        let mut faults = vec![
+            "direction",
+            "profile-name",
+            "profile-major",
+            "format",
+            "parameters",
+            "port-busy",
+            "cap-busy",
+        ];
+        if kind == PreparedExport::Touchpad {
+            faults.extend(["platform", "class"]);
+        }
+        for fault in faults {
+            let mut fixture = prepared_fixture(kind, 1);
+            let capability = fixture.node.capabilities.values_mut().next().unwrap();
+            let port = capability.ports.values_mut().next().unwrap();
+            match fault {
+                "direction" => {
+                    port.direction = if kind.direction() == PortDirection::Source {
+                        PortDirection::Sink
+                    } else {
+                        PortDirection::Source
+                    };
+                    if kind != PreparedExport::Touchpad {
+                        // A supported audio row for the opposite mode is still
+                        // ineligible: do not relabel its source/sink direction.
+                        port.formats = vec![FormatDescriptor::new(
+                            if port.direction == PortDirection::Source {
+                                "pcm-s16le-48000-mono"
+                            } else {
+                                "pcm-s16le-48000-stereo"
+                            },
+                        )];
+                    }
+                }
+                "profile-name" => port.profile = ProfileId::video_frames_v1(),
+                "profile-major" => port.profile.major = 2,
+                "format" => {
+                    port.formats[0].id = match kind {
+                        PreparedExport::Playback => "pcm-s16le-48000-stereo",
+                        PreparedExport::Capture => "pcm-s16le-48000-mono",
+                        PreparedExport::Touchpad => "touch-frame-v1",
+                        _ => unreachable!(),
+                    }
+                    .into();
+                }
+                "parameters" => {
+                    port.formats[0]
+                        .parameters
+                        .insert("unrequested".into(), "1".into());
+                }
+                "port-busy" => port.availability = Availability::Busy,
+                "cap-busy" => capability.availability = Availability::Busy,
+                "platform" => fixture.node.platform = Platform::Linux,
+                "class" => capability.class = CapabilityClass::Pointer,
+                _ => unreachable!(),
+            }
+            let output = fixture.pairing.service.root.join("manifest.json");
+            let mut process = kind.start(&fixture, &output);
+            let mut peer = fixture.accept_empty(&mut process);
+            fixture.send(&mut peer, &process);
+            closed_without_resource_commands(&mut peer, process.started + BOUND);
+            prepared_finished(kind, &fixture, &mut process, false);
+            assert!(!output.exists(), "{kind:?} {fault} must not create output");
+            assert!(!terminal_text(&process).contains(" candidate: "));
+            assert!(!terminal_text(&process).contains("Selection request: "));
+        }
+    }
+}
+
+fn replace_option(args: &mut [String], option: &str, value: &str) {
+    let index = args.iter().position(|arg| arg == option).unwrap();
+    args[index + 1] = value.into();
+}
+fn remove_option(args: &mut Vec<String>, option: &str) {
+    let index = args.iter().position(|arg| arg == option).unwrap();
+    args.drain(index..=index + 1);
+}
+
+#[test]
+fn pty_prepare_audio_and_touchpad_reject_invalid_and_mixed_options() {
+    for kind in PreparedExport::ALL {
+        let mut faults = vec!["duration", "listen", "mixed-config"];
+        match kind {
+            PreparedExport::Playback | PreparedExport::Capture => {
+                faults.extend(["missing-target", "implicit-target", "unsafe-target"]);
+            }
+            PreparedExport::VirtualMicrophone | PreparedExport::VirtualSpeaker => {
+                faults.push("virtual-target");
+            }
+            PreparedExport::Touchpad => {
+                faults.extend(["touchpad-media", "touchpad-mode", "touchpad-target"]);
+            }
+        }
+        if kind != PreparedExport::Touchpad {
+            faults.extend([
+                "missing-mode",
+                "unknown-mode",
+                "missing-media",
+                "media-zero",
+                "media-ip",
+            ]);
+        }
+        for fault in faults {
+            let fixture = prepared_fixture(kind, 1);
+            let output = fixture.pairing.service.root.join("manifest.json");
+            let mut args = kind.args(&output);
+            match fault {
+                "duration" => replace_option(&mut args, "--duration-secs", "0"),
+                "listen" => replace_option(&mut args, "--listen", "0.0.0.0:0"),
+                "mixed-config" => args.extend(["--config".into(), "/not-read.json".into()]),
+                "missing-target" => remove_option(&mut args, "--target"),
+                "implicit-target" => replace_option(&mut args, "--target", "default"),
+                "unsafe-target" => replace_option(&mut args, "--target", "target/with/path"),
+                "virtual-target" | "touchpad-target" => {
+                    args.extend(["--target".into(), "synthetic.explicit".into()]);
+                }
+                "touchpad-media" => args.extend(["--media".into(), "127.0.0.1:43198".into()]),
+                "touchpad-mode" => args.extend(["--mode".into(), "playback".into()]),
+                "missing-mode" => remove_option(&mut args, "--mode"),
+                "unknown-mode" => replace_option(&mut args, "--mode", "incoming-draft"),
+                "missing-media" => remove_option(&mut args, "--media"),
+                "media-zero" => replace_option(&mut args, "--media", "127.0.0.1:0"),
+                "media-ip" => replace_option(&mut args, "--media", "127.0.0.2:43198"),
+                _ => unreachable!(),
+            }
+            let mut process =
+                Process::console_command(&fixture.pairing, fixture.endpoint, kind.action(), &args);
+            prepared_finished(kind, &fixture, &mut process, false);
+            assert!(!output.exists(), "invalid {kind:?} {fault} created output");
+            assert!(!terminal_text(&process).contains("Selection request: "));
+            assert!(process.pty.as_ref().unwrap().node_pid.is_none());
+            let state = fixture.pairing.service.state.lock().unwrap();
+            assert_eq!(
+                state.sessions, 0,
+                "{kind:?} {fault} before protected access"
+            );
+            assert_eq!(state.reads, 0);
+            assert_eq!(state.collection_property_reads, 0);
+        }
+    }
+}
+
+#[test]
+fn pty_prepare_audio_and_touchpad_reject_mismatched_selection() {
+    for kind in PreparedExport::REMOTE_KINDS {
+        for fault in [
+            "peer",
+            "capability",
+            "port",
+            "crossed",
+            "unsupported",
+            "multiple",
+        ] {
+            let mut fixture = prepared_fixture(kind, 2);
+            if fault == "unsupported" {
+                fixture
+                    .node
+                    .capabilities
+                    .values_mut()
+                    .next_back()
+                    .unwrap()
+                    .ports
+                    .values_mut()
+                    .next()
+                    .unwrap()
+                    .availability = Availability::Busy;
+            }
+            let output = fixture.pairing.service.root.join("manifest.json");
+            let rows = camera_rows(&fixture);
+            let (mut process, request) = begin_prepared(kind, &fixture, &output);
+            let line = match fault {
+                "peer" => format!(
+                    "select {request} {} {} {}\n",
+                    NodeId::new(),
+                    rows[0].0,
+                    rows[0].1
+                ),
+                "capability" => selection_line(&fixture, request, (CapabilityId::new(), rows[0].1)),
+                "port" => selection_line(&fixture, request, (rows[0].0, PortId::new())),
+                "crossed" => selection_line(&fixture, request, (rows[0].0, rows[1].1)),
+                "unsupported" => selection_line(&fixture, request, rows[1]),
+                "multiple" => format!(
+                    "{}{}",
+                    selection_line(&fixture, request, rows[0]),
+                    selection_line(&fixture, request, rows[1])
+                ),
+                _ => unreachable!(),
+            };
+            type_camera(&mut process, line.as_bytes());
+            prepared_finished(kind, &fixture, &mut process, false);
+            assert!(!output.exists(), "{kind:?} {fault} must not create output");
+            assert!(!terminal_text(&process).contains("Save request: "));
+        }
+    }
+}
+
+#[test]
+fn pty_prepare_audio_and_touchpad_cancel_and_eof_never_create_output() {
+    for kind in PreparedExport::ALL {
+        for (stage, input) in [
+            ("selection", b"cancel\n".as_slice()),
+            ("save", b"\x04".as_slice()),
+        ] {
+            let fixture = prepared_fixture(kind, 1);
+            let output = fixture.pairing.service.root.join("manifest.json");
+            let (mut process, request) = begin_prepared(kind, &fixture, &output);
+            if stage == "save" {
+                select_camera(&fixture, &mut process, request, camera_rows(&fixture)[0]);
+            }
+            assert!(!output.exists());
+            type_camera(&mut process, input);
+            prepared_finished(kind, &fixture, &mut process, false);
+            assert!(
+                !output.exists(),
+                "{kind:?} {stage} cancellation created output"
+            );
+        }
+    }
+}
+
+#[test]
+fn pty_prepare_audio_and_touchpad_refuse_existing_and_unsafe_outputs() {
+    const SENTINEL: &[u8] = b"synthetic existing manifest must remain unchanged";
+    for kind in PreparedExport::REMOTE_KINDS {
+        for fault in ["existing", "unsafe-parent"] {
+            let fixture = prepared_fixture(kind, 1);
+            let parent = fixture.pairing.service.root.join("exports");
+            fs::DirBuilder::new().mode(0o700).create(&parent).unwrap();
+            let output = parent.join("manifest.json");
+            if fault == "existing" {
+                fs::write(&output, SENTINEL).unwrap();
+                fs::set_permissions(&output, fs::Permissions::from_mode(0o640)).unwrap();
+            } else {
+                fs::set_permissions(&parent, fs::Permissions::from_mode(0o770)).unwrap();
+            }
+            let (mut process, request) = begin_prepared(kind, &fixture, &output);
+            let row = camera_rows(&fixture)[0];
+            if fault == "unsafe-parent" {
+                type_camera(
+                    &mut process,
+                    selection_line(&fixture, request, row).as_bytes(),
+                );
+            } else {
+                let save = select_camera(&fixture, &mut process, request, row);
+                type_camera(&mut process, save_line(save, &output).as_bytes());
+            }
+            prepared_finished(kind, &fixture, &mut process, false);
+            if fault == "existing" {
+                assert_eq!(fs::read(&output).unwrap(), SENTINEL);
+                assert_eq!(
+                    fs::metadata(&output).unwrap().permissions().mode() & 0o777,
+                    0o640
+                );
+            } else {
+                assert!(!output.exists());
+                assert!(!terminal_text(&process).contains("Save request: "));
+                assert_eq!(
+                    fs::metadata(&parent).unwrap().permissions().mode() & 0o777,
+                    0o770
+                );
+            }
+        }
+    }
+}

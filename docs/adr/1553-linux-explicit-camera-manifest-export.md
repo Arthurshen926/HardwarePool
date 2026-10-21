@@ -12,7 +12,8 @@ child Node are closed/reaped before selection. Ordinary `catalog` behavior and
 all existing media launchers remain unchanged.
 
 This slice generates only the existing camera launcher manifest. Playback,
-capture, virtual microphone/speaker and touchpad export remain out of scope.
+capture, virtual microphone/speaker and touchpad export were added separately
+in ADR 1554 using the same consent and filesystem boundary.
 There is no local physical camera selection: this manifest names the remote
 camera Source and an explicitly requested local virtual-camera control listener.
 No listener, virtual-camera helper, device, Route, proposal, grant or lease is
