@@ -10,6 +10,8 @@ publish = false
 [features]
 default = []
 paired-store = []
+# Software-only acceptance; never enabled by either staging profile.
+touchpad-test-fixture = ["paired-store"]
 
 [dependencies]
 clap.workspace = true

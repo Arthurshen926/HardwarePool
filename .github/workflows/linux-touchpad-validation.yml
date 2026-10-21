@@ -83,6 +83,26 @@ jobs:
           require(FIXTURE + ('software_fixture::ipc_linux_touchpad_paired_store_approval_pin_and_revocation_boundary',), (root / 'touchpad-paired-list.txt').read_text(), (root / 'touchpad-paired.txt').read_text())
           PY
           cargo clippy --locked -p capyio-node -p capyio-linux-host --features paired-store,touchpad-test-fixture --all-targets -- -D warnings
+      - name: Require nine actual-terminal software touchpad console cases
+        run: |
+          set -euo pipefail
+          # Both fixture features are explicit and absent from production staging.
+          # The fixed Node fixture uses fake syscalls, never /dev/uinput.
+          cargo build --locked -p capyio-node -p capyio-linux-console --features capyio-node/touchpad-test-fixture,capyio-node/paired-store,capyio-linux-console/touchpad-test-fixture
+          cargo test --locked -p capyio-linux-console --features touchpad-test-fixture --bin capyio-linux-console
+          cargo test --locked -p capyio-node --test linux_touchpad --features touchpad-test-fixture,paired-store console_fixture:: -- --list | tee "$RUNNER_TEMP/touchpad-console-list.txt"
+          CAPYIO_TOUCHPAD_PAIRED_STORE=1 CAPYIO_TOUCHPAD_CONSOLE=1 timeout --signal=TERM --kill-after=5s 240s \
+            cargo test --locked -p capyio-node --test linux_touchpad --features touchpad-test-fixture,paired-store console_fixture:: -- --ignored --test-threads=1 --nocapture \
+            2> "$RUNNER_TEMP/touchpad-console-markers.txt" | tee "$RUNNER_TEMP/touchpad-console.txt"
+          cat "$RUNNER_TEMP/touchpad-console-markers.txt"
+          python3 - "$RUNNER_TEMP" <<'PY'
+          import pathlib, sys
+          sys.path.insert(0, 'scripts')
+          from check_touchpad_launcher_tests import require_console
+          root = pathlib.Path(sys.argv[1])
+          require_console((root / 'touchpad-console-list.txt').read_text(), (root / 'touchpad-console.txt').read_text() + '\n' + (root / 'touchpad-console-markers.txt').read_text())
+          PY
+          cargo clippy --locked -p capyio-linux-console -p capyio-node --features capyio-linux-console/touchpad-test-fixture,capyio-node/paired-store,capyio-node/touchpad-test-fixture --all-targets -- -D warnings
       - uses: actions/upload-artifact@v4
         if: always()
         with:

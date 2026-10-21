@@ -1396,8 +1396,8 @@ Linux console, with exact current-session confirmation and unchanged Node and
 counterpart resource authority. Its mandatory isolated PTY/PipeWire profile is
 separate from legacy/paired launcher tests. UDP audio remains unauthenticated
 plaintext trusted-lab media; reverse audio is added separately by ADR 1549,
-while camera is added separately by ADR 1550; touchpad console control and
-renewal remain unimplemented.
+while camera and touchpad are added separately by ADRs 1550–1551; renewal
+remains unimplemented.
 
 
 ADR 1549 adds interactive finite selected-source stereo capture and virtual-speaker
@@ -1413,3 +1413,10 @@ exact fresh session consent and strictly `Starting`, unverified-consumer status.
 Thirteen mandatory actual-PTY camera profiles retain independent pixels, owned
 process/graph cleanup and all existing media gates. No physical camera or
 unattended lifecycle is introduced.
+
+
+ADR 1551 adds finite touchpad console consent using the existing state-only
+Node schema. Binding never implies activation; independent software-helper
+acceptance retains full commit-before-ACK and contact-release proof. The fixture
+action is compile-time-only and excluded from both staging profiles. No real
+uinput device, permission change, OS gesture proof or renewal is introduced.

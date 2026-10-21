@@ -30,6 +30,9 @@ use std::{
 #[cfg(all(feature = "touchpad-test-fixture", feature = "paired-store"))]
 #[path = "support/paired_store.rs"]
 mod paired_store;
+#[cfg(all(feature = "touchpad-test-fixture", feature = "paired-store"))]
+#[path = "support/playback_console.rs"]
+mod playback_console;
 
 const BOUND: Duration = Duration::from_secs(5);
 fn nonblocking(fd: impl AsFd) {
@@ -57,6 +60,8 @@ struct Process {
     helper_pids: BTreeSet<u32>,
     #[cfg(all(feature = "touchpad-test-fixture", feature = "paired-store"))]
     paired_store: Option<paired_store::PersistedPairing>,
+    #[cfg(all(feature = "touchpad-test-fixture", feature = "paired-store"))]
+    console: Option<playback_console::Console>,
 }
 impl Process {
     fn start(args: &[&str]) -> Self {
@@ -81,12 +86,18 @@ impl Process {
             helper_pids: BTreeSet::new(),
             #[cfg(all(feature = "touchpad-test-fixture", feature = "paired-store"))]
             paired_store: None,
+            #[cfg(all(feature = "touchpad-test-fixture", feature = "paired-store"))]
+            console: None,
         }
     }
     fn touchpad() -> Self {
         Self::start(&["linux-touchpad", "--trusted-lab"])
     }
     fn frame(&mut self, body: &[u8]) {
+        assert!(
+            !self.is_console(),
+            "PTY acceptance never writes Node control pipes"
+        );
         let mut frame = Vec::from(u32::try_from(body.len()).unwrap().to_be_bytes());
         frame.extend_from_slice(body);
         let deadline = Instant::now() + BOUND;
@@ -110,11 +121,110 @@ impl Process {
         frame.fill(0);
     }
     fn command(&mut self, command: Value) {
+        #[cfg(all(feature = "touchpad-test-fixture", feature = "paired-store"))]
+        if self.console.is_some() {
+            match command["command"].as_str().unwrap() {
+                "approve" => {
+                    let request = command["request_id"].as_str().unwrap();
+                    let route = command["route_id"].as_str().unwrap();
+                    self.wait_console_prompt(request, route);
+                    let console = self.console.as_mut().unwrap();
+                    console.send(format!("start {request} {route} {}\n", console.peer).as_bytes());
+                }
+                "status" => self.console.as_mut().unwrap().send(b"status\n"),
+                "stop" => self.console.as_mut().unwrap().send(b"stop\n"),
+                _ => panic!("console fixture only accepts typed Start/status/Stop"),
+            }
+            return;
+        }
         self.frame(&serde_json::to_vec(&command).unwrap());
     }
+    fn is_console(&self) -> bool {
+        #[cfg(all(feature = "touchpad-test-fixture", feature = "paired-store"))]
+        {
+            self.console.is_some()
+        }
+        #[cfg(not(all(feature = "touchpad-test-fixture", feature = "paired-store")))]
+        {
+            false
+        }
+    }
+    fn owner_pid(&self) -> u32 {
+        #[cfg(all(feature = "touchpad-test-fixture", feature = "paired-store"))]
+        if let Some(console) = &self.console {
+            return console.node_pid.expect("actual Node observed at listening");
+        }
+        self.child.id()
+    }
+    #[cfg(all(feature = "touchpad-test-fixture", feature = "paired-store"))]
+    fn wait_console_prompt(&mut self, request: &str, route: &str) {
+        let deadline = Instant::now() + BOUND;
+        loop {
+            self.collect();
+            let console = self.console.as_ref().unwrap();
+            if console.prompt_seen(request, route) {
+                console.assert_hidden();
+                // The terminal performs a second flush after writing the prompt.
+                thread::sleep(Duration::from_millis(25));
+                return;
+            }
+            assert!(
+                self.child.try_wait().unwrap().is_none(),
+                "console exited before prompt"
+            );
+            assert!(Instant::now() < deadline, "bounded fresh consent prompt");
+            thread::sleep(Duration::from_millis(2));
+        }
+    }
+    #[cfg(all(feature = "touchpad-test-fixture", feature = "paired-store"))]
+    fn wait_console_status_prompt(&mut self) {
+        let deadline = Instant::now() + BOUND;
+        loop {
+            self.collect();
+            let console = self.console.as_ref().unwrap();
+            if console.status_prompt_seen() {
+                console.assert_hidden();
+                thread::sleep(Duration::from_millis(25));
+                return;
+            }
+            assert!(
+                self.child.try_wait().unwrap().is_none(),
+                "console exited before status prompt"
+            );
+            assert!(Instant::now() < deadline, "bounded status prompt");
+            thread::sleep(Duration::from_millis(2));
+        }
+    }
+    fn close_input(&mut self) {
+        #[cfg(all(feature = "touchpad-test-fixture", feature = "paired-store"))]
+        if let Some(console) = &mut self.console {
+            // Terminal raw mode interprets Control-D as EOF/cancel. The fixture
+            // cannot access the console's inherited Node-control descriptor.
+            console.send(b"\x04");
+            return;
+        }
+        drop(self.child.stdin.take());
+    }
     fn collect(&mut self) {
+        #[cfg(all(feature = "touchpad-test-fixture", feature = "paired-store"))]
+        if let Some(console) = &mut self.console {
+            console.collect(&mut self.child, &mut self.stdout, &mut self.stderr);
+        }
         #[cfg(feature = "touchpad-test-fixture")]
-        for pid in child_pids(self.child.id()) {
+        let owner = {
+            #[cfg(feature = "paired-store")]
+            {
+                self.console
+                    .as_ref()
+                    .map_or(Some(self.child.id()), |console| console.node_pid)
+            }
+            #[cfg(not(feature = "paired-store"))]
+            {
+                Some(self.child.id())
+            }
+        };
+        #[cfg(feature = "touchpad-test-fixture")]
+        for pid in owner.into_iter().flat_map(child_pids) {
             let executable = match std::fs::read_link(format!("/proc/{pid}/exe")) {
                 Ok(executable) => executable,
                 // An unstarted/failing child can be reaped between the PPid
@@ -132,20 +242,51 @@ impl Process {
                 executable, expected,
                 "only the fixed fixture sibling may be spawned"
             );
+            #[cfg(feature = "paired-store")]
+            if let Some(store) = &self.paired_store {
+                for name in ["cmdline", "environ"] {
+                    match std::fs::read(format!("/proc/{pid}/{name}")) {
+                        Ok(bytes) => store.assert_no_leak(&bytes),
+                        Err(error) if error.kind() == io::ErrorKind::NotFound => {}
+                        Err(error) => {
+                            panic!("cannot inspect owned helper public metadata: {error}")
+                        }
+                    }
+                }
+            }
             self.helper_pids.insert(pid);
         }
-        drain(self.child.stdout.as_mut().unwrap(), &mut self.stdout);
-        drain(self.child.stderr.as_mut().unwrap(), &mut self.stderr);
+        if !self.is_console() {
+            drain(self.child.stdout.as_mut().unwrap(), &mut self.stdout);
+            drain(self.child.stderr.as_mut().unwrap(), &mut self.stderr);
+        }
         #[cfg(all(feature = "touchpad-test-fixture", feature = "paired-store"))]
         if let Some(store) = &self.paired_store {
             store.assert_no_leak(&self.stdout);
             store.assert_no_leak(&self.stderr);
+            if let Some(console) = &self.console {
+                store.assert_no_leak(&console.tty);
+            }
         }
     }
     fn next_event(&mut self) -> Value {
         let deadline = Instant::now() + BOUND;
         loop {
             self.collect();
+            #[cfg(all(feature = "touchpad-test-fixture", feature = "paired-store"))]
+            if let Some(console) = &mut self.console
+                && let Some(value) = console.next_event()
+            {
+                if value["event"] == "listening" {
+                    console.identify_node(&self.child);
+                }
+                if value["event"] == "status" {
+                    // The event line precedes the controller's fresh prompt and
+                    // final input flush. Never race the next typed command.
+                    self.wait_console_status_prompt();
+                }
+                return value;
+            }
             if self.stdout.len() >= 4 {
                 let length = u32::from_be_bytes(self.stdout[..4].try_into().unwrap()) as usize;
                 assert!((1..=4096).contains(&length), "bounded local event");
@@ -175,6 +316,14 @@ impl Process {
             self.collect();
             if let Some(status) = self.child.try_wait().unwrap() {
                 self.collect();
+                #[cfg(all(feature = "touchpad-test-fixture", feature = "paired-store"))]
+                if let Some(console) = &self.console {
+                    console.assert_finished();
+                    let store = self.paired_store.as_ref().unwrap();
+                    let state = store.service.state.lock().unwrap();
+                    assert!(state.reads > 0, "actual protected-store read required");
+                    assert_eq!(state.forbidden, 0, "read-only private Secret Service");
+                }
                 return status;
             }
             assert!(
@@ -188,6 +337,13 @@ impl Process {
 impl Drop for Process {
     fn drop(&mut self) {
         // No blocking reader/writer threads survive assertions or timeout paths.
+        #[cfg(all(feature = "touchpad-test-fixture", feature = "paired-store"))]
+        if self.console.is_some() {
+            // SAFETY: only this test's private PTY session/process group is owned.
+            unsafe {
+                libc::kill(-(self.child.id() as libc::pid_t), libc::SIGKILL);
+            }
+        }
         let _ = self.child.kill();
         let _ = self.child.wait();
     }
@@ -282,7 +438,7 @@ fn child_pids(pid: u32) -> Vec<u32> {
 }
 fn no_children(process: &Process) {
     assert!(
-        child_pids(process.child.id()).is_empty(),
+        child_pids(process.owner_pid()).is_empty(),
         "no helper before both grants and authenticated binding"
     );
 }
@@ -670,7 +826,7 @@ fn ipc_linux_touchpad_start_waits_for_source_data_offer_without_native_children(
 fn ipc_linux_touchpad_preapproval_eof_is_terminal() {
     let (mut process, mut peer, _) = pending();
     no_children(&process);
-    drop(process.child.stdin.take());
+    process.close_input();
     assert_eq!(process.finish().code(), Some(1));
     assert_eq!(
         String::from_utf8_lossy(&process.stderr).trim(),
@@ -872,13 +1028,33 @@ mod software_fixture {
     use std::{collections::BTreeMap, net::TcpListener, sync::mpsc};
 
     fn fixture_pending(mode: &str) -> (Process, Peer, Value) {
+        fixture_pending_input(mode, false)
+    }
+
+    fn fixture_pending_input(mode: &str, pretyped: bool) -> (Process, Peer, Value) {
         let fixture = Fixture::new();
+        let console_mode = match std::env::var("CAPYIO_TOUCHPAD_CONSOLE") {
+            Ok(value) => {
+                assert_eq!(value, "1", "explicit console fixture mode is 1 only");
+                true
+            }
+            Err(std::env::VarError::NotPresent) => false,
+            Err(_) => panic!("invalid console fixture environment"),
+        };
+        assert!(
+            !pretyped || console_mode,
+            "pretyped input requires actual console"
+        );
         let mut process = match std::env::var("CAPYIO_TOUCHPAD_PAIRED_STORE") {
             Ok(value) => {
                 assert_eq!(value, "1", "explicit paired fixture mode is 1 only");
                 #[cfg(feature = "paired-store")]
                 {
-                    paired_process(&fixture, mode, false)
+                    if console_mode {
+                        console_process(&fixture, mode, pretyped)
+                    } else {
+                        paired_process(&fixture, mode, false)
+                    }
                 }
                 #[cfg(not(feature = "paired-store"))]
                 {
@@ -886,6 +1062,10 @@ mod software_fixture {
                 }
             }
             Err(std::env::VarError::NotPresent) => {
+                assert!(
+                    !console_mode,
+                    "console requires explicit protected paired-store fixture"
+                );
                 let mut process = Process::start(&[
                     "linux-touchpad-fixture",
                     "--trusted-lab",
@@ -899,9 +1079,136 @@ mod software_fixture {
         };
         let mut peer = fixture.connect(&mut process);
         let approval = process.event("approval_required");
+        #[cfg(feature = "paired-store")]
+        if process.is_console() {
+            assert_console_consent(&mut process, &approval);
+        }
         peer.idle(&process);
         assert_no_open(&mut process);
         (process, peer, approval)
+    }
+
+    #[cfg(feature = "paired-store")]
+    fn console_process(fixture: &Fixture, mode: &str, pretyped: bool) -> Process {
+        let local = serde_json::from_value(fixture.config["node_id"].clone()).unwrap();
+        let store =
+            paired_store::PersistedPairing::new(local, &fixture.directory, &fixture.credentials);
+        let (child, console) = playback_console::Console::start_touchpad_fixture(
+            &store,
+            &fixture.config,
+            pretyped,
+            mode,
+        );
+        Process {
+            child,
+            console: Some(console),
+            stdout: vec![],
+            stderr: vec![],
+            helper_pids: BTreeSet::new(),
+            paired_store: Some(store),
+        }
+    }
+
+    #[cfg(feature = "paired-store")]
+    fn assert_console_consent(process: &mut Process, approval: &Value) {
+        process.wait_console_prompt(
+            approval["request_id"].as_str().unwrap(),
+            approval["route_id"].as_str().unwrap(),
+        );
+        let console = process.console.as_ref().unwrap();
+        let store = process.paired_store.as_ref().unwrap();
+        console.assert_hidden();
+        assert_eq!(approval["source"]["node_id"], json!(store.peer));
+        assert_eq!(approval["sink"]["node_id"], json!(store.owner));
+        assert_eq!(approval["format"], "touchpad-frame-v1");
+        assert_eq!(approval["media_security"], "tls13_mtls_v1");
+        assert_eq!(approval["duration_secs"], 10);
+        assert_eq!(approval["approval_timeout_secs"], 30);
+        assert_eq!(approval["max_contacts"], 5);
+        assert_eq!(approval["width_mm"], 120);
+        assert_eq!(approval["height_mm"], 70);
+        assert_eq!(approval["clickable"], false);
+        assert_eq!(approval["pressure"], true);
+        console.assert_presentation(approval);
+        assert!(
+            String::from_utf8_lossy(&console.tty)
+                .contains("SOFTWARE-ONLY TOUCHPAD FIXTURE: no OS device or gesture acceptance.")
+        );
+        for pid in [process.child.id(), process.owner_pid()] {
+            for name in ["cmdline", "environ"] {
+                store.assert_no_leak(&std::fs::read(format!("/proc/{pid}/{name}")).unwrap());
+            }
+        }
+    }
+
+    #[cfg(feature = "paired-store")]
+    pub(super) fn console_fresh_exact_terminal_consent() {
+        for scenario in [
+            "no_approval",
+            "pretyped",
+            "mismatched_request",
+            "mismatched_route",
+            "mismatched_peer",
+        ] {
+            let (mut process, mut peer, approval) =
+                fixture_pending_input("normal", scenario == "pretyped");
+            assert!(process.is_console(), "actual console is mandatory");
+            assert!(peer.runtime.snapshot().routes.is_empty());
+            assert!(peer.runtime.snapshot().port_leases.is_empty());
+            if scenario.starts_with("mismatched_") {
+                let request = if scenario == "mismatched_request" {
+                    MessageId::new().to_string()
+                } else {
+                    approval["request_id"].as_str().unwrap().to_owned()
+                };
+                let route = if scenario == "mismatched_route" {
+                    RouteId::new().to_string()
+                } else {
+                    approval["route_id"].as_str().unwrap().to_owned()
+                };
+                let console = process.console.as_mut().unwrap();
+                let peer = if scenario == "mismatched_peer" {
+                    NodeId::new()
+                } else {
+                    console.peer
+                };
+                let typed = format!("start {request} {route} {peer}");
+                let before = console.tty.len();
+                console.send(format!("{typed}\n").as_bytes());
+                assert!(
+                    !process.finish().success(),
+                    "stale/wrong terminal authority fails closed"
+                );
+                assert!(
+                    !String::from_utf8_lossy(&process.console.as_ref().unwrap().tty[before..])
+                        .contains(&typed),
+                    "typed input must not echo"
+                );
+            } else {
+                process.command(json!({"version":1,"command":"status"}));
+                assert_eq!(process.event("status")["stage"], "awaiting_local_approval");
+                process.wait_console_prompt(
+                    approval["request_id"].as_str().unwrap(),
+                    approval["route_id"].as_str().unwrap(),
+                );
+                peer.idle(&process);
+                process.command(json!({"version":1,"command":"stop"}));
+                terminal(&mut process, "stopped");
+            }
+            assert_no_open(&mut process);
+            no_children(&process);
+            assert!(
+                peer.link
+                    .receive_control_message_until(Instant::now() + BOUND)
+                    .is_err(),
+                "no proposal before fresh exact terminal consent"
+            );
+            assert!(peer.runtime.snapshot().routes.is_empty());
+            assert!(peer.runtime.snapshot().port_leases.is_empty());
+            eprintln!(
+                "touchpad_console_consent_case={scenario} actual_tty=true unapproved=true helper_open=false owned_cleanup=true"
+            );
+        }
     }
 
     #[cfg(feature = "paired-store")]
@@ -1049,7 +1356,23 @@ mod software_fixture {
             assert!(Instant::now() < deadline, "data connection not admitted");
             thread::sleep(Duration::from_millis(2));
         };
-        process.event("touchpad_bound");
+        let bound = process.event("touchpad_bound");
+        assert_eq!(bound["state"], "starting");
+        assert_eq!(bound["os_gestures_verified"], false);
+        #[cfg(feature = "paired-store")]
+        if process.is_console() {
+            process.command(json!({"version":1,"command":"status"}));
+            let status = process.event("status");
+            assert_eq!(
+                status["state"], "starting",
+                "binding is not committed backend ACK"
+            );
+            assert_eq!(status["os_gestures_verified"], false);
+            assert!(
+                !String::from_utf8_lossy(&process.console.as_ref().unwrap().tty)
+                    .contains("\"event\":\"touchpad_active\"")
+            );
+        }
         no_children(process);
         assert_no_open(process);
         (sender, binding)
@@ -1223,12 +1546,24 @@ mod software_fixture {
         }
     }
     fn terminal(process: &mut Process, expected: &str) {
+        terminal_not_before(process, expected, None);
+    }
+    fn terminal_not_before(process: &mut Process, expected: &str, lease_expiry: Option<u64>) {
         loop {
             let event = process.next_event();
+            let observed_at_ms = now_ms();
             if event["event"] == "touchpad_active" {
                 continue;
             }
             assert_eq!(event["event"], expected);
+            if let Some(expiry) = lease_expiry {
+                // Capture when the actual terminal event is read, before any
+                // controller/Node/helper reap wait can conceal early failure.
+                assert!(
+                    observed_at_ms >= expiry,
+                    "console reported terminal failure before exact Source lease expiry"
+                );
+            }
             break;
         }
         assert_eq!(
@@ -1244,6 +1579,23 @@ mod software_fixture {
             assert_eq!(errors, ["Error: Linux touchpad launch failed"]);
         } else {
             assert!(errors.is_empty());
+        }
+        #[cfg(feature = "paired-store")]
+        if process.is_console() {
+            let console_errors: Vec<_> = trace
+                .lines()
+                .filter(|line| line.starts_with("Linux console "))
+                .collect();
+            if expected == "failed" {
+                assert_eq!(
+                    console_errors,
+                    [
+                        "Linux console operation failed; no automatic retry. Check explicit selectors, paired-store build and interactive terminal. Pairing persistence may require inspection."
+                    ]
+                );
+            } else {
+                assert!(console_errors.is_empty());
+            }
         }
         no_children(process);
     }
@@ -1318,13 +1670,35 @@ mod software_fixture {
     }
 
     #[test]
-    fn ipc_linux_touchpad_five_slots_tracking_cancel_gap_and_android_policy() {
+    pub(super) fn ipc_linux_touchpad_five_slots_tracking_cancel_gap_and_android_policy() {
         let (mut process, mut peer, approval) = fixture_pending("normal");
         let id = approve(&mut process, &mut peer, &approval, 10_000);
         let (mut sender, binding) = bind_data(&mut process, &mut peer, id);
         hello(&mut sender, binding);
+        if process.is_console() {
+            wait_trace(&mut process, "CREATE");
+            process.command(json!({"version":1,"command":"status"}));
+            let status = process.event("status");
+            assert_eq!(
+                status["state"], "starting",
+                "Hello/helper creation is not backend delivery"
+            );
+            assert!(
+                batches(&mut process).is_empty(),
+                "no native frame commit before payload"
+            );
+        }
         let mut capture = capture(binding);
         submit(&mut sender, binding, &capture.start(1).unwrap());
+        assert!(
+            batches(&mut process).contains_key(&1),
+            "first authenticated ACK follows complete native commit"
+        );
+        if process.is_console() {
+            let active = process.event("touchpad_active");
+            assert_eq!(active["state"], "active");
+            assert_eq!(active["os_gestures_verified"], false);
+        }
         for count in 1..=5 {
             let action = if count == 1 {
                 AndroidMotionAction::Down
@@ -1461,7 +1835,9 @@ mod software_fixture {
                 .unwrap(),
         );
         assert!(has(&batches(&mut process)[&13], 3, 0x39, 6));
-        process.event("touchpad_active");
+        if !process.is_console() {
+            process.event("touchpad_active");
+        }
         process.command(json!({"version":1,"command":"status"}));
         let status = process.event("status");
         assert_eq!(status["state"], "active");
@@ -1484,7 +1860,7 @@ mod software_fixture {
     }
 
     #[test]
-    fn ipc_linux_touchpad_mismatched_hello_never_opens_helper() {
+    pub(super) fn ipc_linux_touchpad_mismatched_hello_never_opens_helper() {
         let (mut process, mut peer, approval) = fixture_pending("normal");
         let id = approve(&mut process, &mut peer, &approval, 5000);
         let (mut sender, binding) = bind_data(&mut process, &mut peer, id);
@@ -1502,7 +1878,8 @@ mod software_fixture {
     }
 
     #[test]
-    fn ipc_linux_touchpad_native_failure_and_backpressure_never_acknowledge_uncertain_commit() {
+    pub(super) fn ipc_linux_touchpad_native_failure_and_backpressure_never_acknowledge_uncertain_commit()
+     {
         for mode in ["partial-write", "backpressure"] {
             let (mut process, mut peer, approval) = fixture_pending(mode);
             let id = approve(&mut process, &mut peer, &approval, 5000);
@@ -1531,7 +1908,7 @@ mod software_fixture {
     }
 
     #[test]
-    fn ipc_linux_touchpad_ack_waits_for_complete_native_commit() {
+    pub(super) fn ipc_linux_touchpad_ack_waits_for_complete_native_commit() {
         let (mut process, mut peer, approval) = fixture_pending("delayed-commit");
         let id = approve(&mut process, &mut peer, &approval, 5000);
         let (mut sender, binding) = bind_data(&mut process, &mut peer, id);
@@ -1578,7 +1955,7 @@ mod software_fixture {
     }
 
     #[test]
-    fn ipc_linux_touchpad_create_failure_has_no_native_open_or_ack() {
+    pub(super) fn ipc_linux_touchpad_create_failure_has_no_native_open_or_ack() {
         let (mut process, mut peer, approval) = fixture_pending("fail-create");
         let id = approve(&mut process, &mut peer, &approval, 5000);
         let (mut sender, binding) = bind_data(&mut process, &mut peer, id);
@@ -1589,7 +1966,8 @@ mod software_fixture {
     }
 
     #[test]
-    fn ipc_linux_touchpad_control_eof_data_eof_local_eof_and_expiry_release_owned_contacts() {
+    pub(super) fn ipc_linux_touchpad_control_eof_data_eof_local_eof_and_expiry_release_owned_contacts()
+     {
         for cause in [
             "control-stop",
             "source-revoke",
@@ -1627,7 +2005,7 @@ mod software_fixture {
                 }
                 "control-eof" => peer.link.close(),
                 "data-eof" => sender.close(),
-                "local-eof" => drop(process.child.stdin.take()),
+                "local-eof" => process.close_input(),
                 "expiry" => {
                     let lease = peer
                         .runtime
@@ -1658,16 +2036,35 @@ mod software_fixture {
                 _ => unreachable!(),
             }
             if cause == "local-eof" {
-                // Closing the private input also closes LauncherIo's event path.
+                // Legacy closes LauncherIo's input. The actual console instead
+                // receives typed Control-D and owns Stop/EOF plus bounded reap.
                 assert_eq!(process.finish().code(), Some(1));
-                assert_eq!(
-                    String::from_utf8_lossy(&process.stderr)
-                        .lines()
-                        .filter(|line| line.starts_with("Error:"))
-                        .collect::<Vec<_>>(),
-                    ["Error: Linux touchpad launch failed"]
-                );
+                let diagnostics: Vec<_> = String::from_utf8_lossy(&process.stderr)
+                    .lines()
+                    .filter(|line| line.starts_with("Error:") || line.starts_with("Linux console "))
+                    .map(str::to_owned)
+                    .collect();
+                if process.is_console() {
+                    let controller = "Linux console operation failed; no automatic retry. Check explicit selectors, paired-store build and interactive terminal. Pairing persistence may require inspection.";
+                    // Drop may complete Stop before EOF or interrupt the Node's
+                    // input path. Both exact outcomes still require one static
+                    // console failure and all the same contact/reap assertions.
+                    assert!(
+                        diagnostics == [controller]
+                            || diagnostics == ["Error: Linux touchpad launch failed", controller],
+                        "unexpected console EOF diagnostics: {diagnostics:?}"
+                    );
+                } else {
+                    assert_eq!(diagnostics, ["Error: Linux touchpad launch failed"]);
+                }
                 no_children(&process);
+            } else if cause == "expiry" && process.is_console() {
+                let expiry = peer
+                    .runtime
+                    .route_port_lease_claim(id, binding.source)
+                    .unwrap()
+                    .expires_at_ms;
+                terminal_not_before(&mut process, "failed", Some(expiry));
             } else {
                 terminal(&mut process, "failed");
             }
@@ -1687,7 +2084,7 @@ mod software_fixture {
         }
     }
     #[test]
-    fn ipc_linux_touchpad_wrong_data_pin_and_changed_route_offer_fail_before_open() {
+    pub(super) fn ipc_linux_touchpad_wrong_data_pin_and_changed_route_offer_fail_before_open() {
         for wrong_pin in [false, true] {
             let (mut process, mut peer, approval) = fixture_pending("normal");
             let id = approve(&mut process, &mut peer, &approval, 5000);
@@ -1733,7 +2130,8 @@ mod software_fixture {
     }
 
     #[test]
-    fn ipc_linux_touchpad_local_stop_interrupts_partial_data_handshake_before_native_open() {
+    pub(super) fn ipc_linux_touchpad_local_stop_interrupts_partial_data_handshake_before_native_open()
+     {
         let (mut process, mut peer, approval) = fixture_pending("normal");
         let id = approve(&mut process, &mut peer, &approval, 5000);
         let listener = TcpListener::bind("127.0.0.1:0").unwrap();
@@ -1773,5 +2171,105 @@ mod software_fixture {
         terminal(&mut process, "stopped");
         assert!(started.elapsed() < Duration::from_secs(3));
         assert_no_open(&mut process);
+    }
+}
+
+#[cfg(all(feature = "touchpad-test-fixture", feature = "paired-store"))]
+mod console_fixture {
+    use super::software_fixture;
+
+    fn require_actual_console() {
+        for name in ["CAPYIO_TOUCHPAD_CONSOLE", "CAPYIO_TOUCHPAD_PAIRED_STORE"] {
+            assert_eq!(
+                std::env::var(name).as_deref(),
+                Ok("1"),
+                "explicit hosted PTY and protected-store modes required"
+            );
+        }
+    }
+
+    fn verified(name: &str) {
+        eprintln!(
+            "capyio_touchpad_console=passed test={name} actual_tty=true paired_store=true software_helper=true owned_cleanup=true"
+        );
+    }
+
+    #[test]
+    #[ignore = "requires explicit disposable actual-console PTY/private Secret Service/software-helper harness"]
+    fn hosted_touchpad_console_fresh_exact_terminal_consent() {
+        require_actual_console();
+        software_fixture::console_fresh_exact_terminal_consent();
+        verified("hosted_touchpad_console_fresh_exact_terminal_consent");
+    }
+
+    #[test]
+    #[ignore = "requires explicit disposable actual-console PTY/private Secret Service/software-helper harness"]
+    fn hosted_touchpad_console_five_slots_tracking_cancel_gap_and_android_policy() {
+        require_actual_console();
+        software_fixture::ipc_linux_touchpad_five_slots_tracking_cancel_gap_and_android_policy();
+        verified("hosted_touchpad_console_five_slots_tracking_cancel_gap_and_android_policy");
+    }
+
+    #[test]
+    #[ignore = "requires explicit disposable actual-console PTY/private Secret Service/software-helper harness"]
+    fn hosted_touchpad_console_mismatched_hello_never_opens_helper() {
+        require_actual_console();
+        software_fixture::ipc_linux_touchpad_mismatched_hello_never_opens_helper();
+        verified("hosted_touchpad_console_mismatched_hello_never_opens_helper");
+    }
+
+    #[test]
+    #[ignore = "requires explicit disposable actual-console PTY/private Secret Service/software-helper harness"]
+    fn hosted_touchpad_console_native_failure_and_backpressure_never_acknowledge_uncertain_commit()
+    {
+        require_actual_console();
+        software_fixture::ipc_linux_touchpad_native_failure_and_backpressure_never_acknowledge_uncertain_commit();
+        verified(
+            "hosted_touchpad_console_native_failure_and_backpressure_never_acknowledge_uncertain_commit",
+        );
+    }
+
+    #[test]
+    #[ignore = "requires explicit disposable actual-console PTY/private Secret Service/software-helper harness"]
+    fn hosted_touchpad_console_ack_waits_for_complete_native_commit() {
+        require_actual_console();
+        software_fixture::ipc_linux_touchpad_ack_waits_for_complete_native_commit();
+        verified("hosted_touchpad_console_ack_waits_for_complete_native_commit");
+    }
+
+    #[test]
+    #[ignore = "requires explicit disposable actual-console PTY/private Secret Service/software-helper harness"]
+    fn hosted_touchpad_console_create_failure_has_no_native_open_or_ack() {
+        require_actual_console();
+        software_fixture::ipc_linux_touchpad_create_failure_has_no_native_open_or_ack();
+        verified("hosted_touchpad_console_create_failure_has_no_native_open_or_ack");
+    }
+
+    #[test]
+    #[ignore = "requires explicit disposable actual-console PTY/private Secret Service/software-helper harness"]
+    fn hosted_touchpad_console_control_eof_data_eof_local_eof_and_expiry_release_owned_contacts() {
+        require_actual_console();
+        software_fixture::ipc_linux_touchpad_control_eof_data_eof_local_eof_and_expiry_release_owned_contacts();
+        verified(
+            "hosted_touchpad_console_control_eof_data_eof_local_eof_and_expiry_release_owned_contacts",
+        );
+    }
+
+    #[test]
+    #[ignore = "requires explicit disposable actual-console PTY/private Secret Service/software-helper harness"]
+    fn hosted_touchpad_console_wrong_data_pin_and_changed_route_offer_fail_before_open() {
+        require_actual_console();
+        software_fixture::ipc_linux_touchpad_wrong_data_pin_and_changed_route_offer_fail_before_open();
+        verified("hosted_touchpad_console_wrong_data_pin_and_changed_route_offer_fail_before_open");
+    }
+
+    #[test]
+    #[ignore = "requires explicit disposable actual-console PTY/private Secret Service/software-helper harness"]
+    fn hosted_touchpad_console_local_stop_interrupts_partial_data_handshake_before_native_open() {
+        require_actual_console();
+        software_fixture::ipc_linux_touchpad_local_stop_interrupts_partial_data_handshake_before_native_open();
+        verified(
+            "hosted_touchpad_console_local_stop_interrupts_partial_data_handshake_before_native_open",
+        );
     }
 }

@@ -1,5 +1,6 @@
 mod camera;
 mod media;
+mod touchpad;
 
 use crate::{invitation::InvitationFifo, terminal::Terminal};
 use capyio_core::{MessageId, NodeId};
@@ -121,6 +122,23 @@ enum Action {
         #[arg(long)]
         peer: NodeId,
     },
+    /// One finite paired-store touchpad session; explicit nonsecret manifest.
+    Touchpad {
+        #[arg(long)]
+        config: PathBuf,
+        #[arg(long)]
+        peer: NodeId,
+    },
+    /// Software-only acceptance fixture; absent from production staging profiles.
+    #[cfg(feature = "touchpad-test-fixture")]
+    TouchpadFixture {
+        #[arg(long)]
+        config: PathBuf,
+        #[arg(long)]
+        peer: NodeId,
+        #[arg(long, value_parser = ["normal", "fail-create", "partial-write", "delayed-commit", "backpressure"])]
+        fixture_mode: String,
+    },
     /// Starts no transaction. In any active prompt, use cancel or Ctrl-C.
     Cancel,
 }
@@ -152,7 +170,20 @@ fn validate(args: &Args) -> io::Result<()> {
         Action::Playback { config, peer }
         | Action::Capture { config, peer }
         | Action::Camera { config, peer }
+        | Action::Touchpad { config, peer }
             if !config.is_absolute() || peer.as_uuid().is_nil() || *peer == args.pairing_node =>
+        {
+            return Err(invalid());
+        }
+        #[cfg(feature = "touchpad-test-fixture")]
+        Action::TouchpadFixture {
+            config,
+            peer,
+            fixture_mode,
+        } if !config.is_absolute()
+            || peer.as_uuid().is_nil()
+            || *peer == args.pairing_node
+            || !touchpad_fixture_mode(fixture_mode) =>
         {
             return Err(invalid());
         }
@@ -339,8 +370,10 @@ fn require_node_capability_for(command: &str) -> io::Result<()> {
         "linux-playback",
         "linux-capture",
         "linux-camera",
+        "linux-touchpad",
     ]
     .contains(&command)
+        && !(cfg!(feature = "touchpad-test-fixture") && command == "linux-touchpad-fixture")
     {
         return Err(invalid());
     }
@@ -418,11 +451,29 @@ fn require_node_capability_for(command: &str) -> io::Result<()> {
     result
 }
 
+fn touchpad_fixture_mode(mode: &str) -> bool {
+    cfg!(feature = "touchpad-test-fixture")
+        && matches!(
+            mode,
+            "normal" | "fail-create" | "partial-write" | "delayed-commit" | "backpressure"
+        )
+}
+fn valid_node_command(command: &str, has_peer: bool, fixture_mode: Option<&str>) -> bool {
+    match (command, has_peer, fixture_mode) {
+        ("linux-pairing", false, None) => true,
+        ("linux-playback" | "linux-capture" | "linux-camera" | "linux-touchpad", true, None) => {
+            true
+        }
+        ("linux-touchpad-fixture", true, Some(mode)) => touchpad_fixture_mode(mode),
+        _ => false,
+    }
+}
+
 struct Node {
     child: Child,
     input: Option<ChildStdin>,
     output: ChildStdout,
-    error: ChildStderr,
+    error: Option<ChildStderr>,
     frames: Frames,
     error_bytes: usize,
     reaped: bool,
@@ -433,11 +484,19 @@ impl Node {
         Self::spawn_for(args, "linux-pairing", None)
     }
     fn spawn_for(args: &Args, command: &str, peer: Option<NodeId>) -> io::Result<Self> {
-        if !matches!(
-            (command, peer),
-            ("linux-pairing", None)
-                | ("linux-playback" | "linux-capture" | "linux-camera", Some(_))
-        ) {
+        Self::spawn_command(args, command, peer, None)
+    }
+    #[cfg(feature = "touchpad-test-fixture")]
+    fn spawn_touchpad_fixture(args: &Args, peer: NodeId, mode: &str) -> io::Result<Self> {
+        Self::spawn_command(args, "linux-touchpad-fixture", Some(peer), Some(mode))
+    }
+    fn spawn_command(
+        args: &Args,
+        command: &str,
+        peer: Option<NodeId>,
+        fixture_mode: Option<&str>,
+    ) -> io::Result<Self> {
+        if !valid_node_command(command, peer.is_some(), fixture_mode) {
             return Err(invalid());
         }
         let path = sibling()?;
@@ -453,14 +512,26 @@ impl Node {
             .arg(&args.pairing_collection)
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
-            .stderr(Stdio::piped());
+            // Only the separately compiled software fixture inherits synthetic
+            // fake-helper traces. Production never forwards Node stderr.
+            .stderr(if fixture_mode.is_some() {
+                Stdio::inherit()
+            } else {
+                Stdio::piped()
+            });
+        if let Some(mode) = fixture_mode {
+            process.args(["--fixture-mode", mode]);
+        }
         if let Some(peer) = peer {
             process.arg("--pairing-peer").arg(peer.to_string());
         }
         let mut child = process.spawn()?;
         let input = child.stdin.take().ok_or_else(invalid)?;
         let output = child.stdout.take().ok_or_else(invalid)?;
-        let error = child.stderr.take().ok_or_else(invalid)?;
+        let error = child.stderr.take();
+        if fixture_mode.is_none() && error.is_none() {
+            return Err(invalid());
+        }
         let result = Self {
             child,
             input: Some(input),
@@ -469,11 +540,13 @@ impl Node {
             frames: Frames::default(),
             error_bytes: 0,
             reaped: false,
-            stop_on_drop: matches!(command, "linux-playback" | "linux-capture" | "linux-camera"),
+            stop_on_drop: command != "linux-pairing",
         };
         nonblocking(result.input.as_ref().ok_or_else(invalid)?)?;
         nonblocking(&result.output)?;
-        nonblocking(&result.error)?;
+        if let Some(error) = &result.error {
+            nonblocking(error)?;
+        }
         Ok(result)
     }
     fn set_stop_on_drop(&mut self) {
@@ -522,8 +595,8 @@ impl Node {
     }
     fn poll(&mut self) -> io::Result<Option<Value>> {
         let mut discard = [0; 1024];
-        loop {
-            match self.error.read(&mut discard) {
+        while let Some(error) = &mut self.error {
+            match error.read(&mut discard) {
                 Ok(0) => break,
                 Ok(n) => {
                     self.error_bytes += n;
@@ -795,6 +868,13 @@ pub fn run() -> io::Result<()> {
         Action::Playback { config, peer } => return media::run(&args, config, *peer),
         Action::Capture { config, peer } => return media::run_capture(&args, config, *peer),
         Action::Camera { config, peer } => return camera::run(&args, config, *peer),
+        Action::Touchpad { config, peer } => return touchpad::run(&args, config, *peer),
+        #[cfg(feature = "touchpad-test-fixture")]
+        Action::TouchpadFixture {
+            config,
+            peer,
+            fixture_mode,
+        } => return touchpad::run_fixture(&args, config, *peer, fixture_mode),
         _ => {}
     }
     let _signals = Signals::install()?;
@@ -834,7 +914,9 @@ pub fn run() -> io::Result<()> {
         Action::List=>node.send(&json!({"version":1,"action":"list"}),deadline)?,
         Action::Recover=>node.send(&json!({"version":1,"action":"recover"}),deadline)?,
         Action::Revoke{peer}=>node.send(&json!({"version":1,"action":"revoke","peer_node_id":peer}),deadline)?,
-        Action::Cancel | Action::Playback { .. } | Action::Capture { .. } | Action::Camera { .. } =>unreachable!(),
+        Action::Cancel | Action::Playback { .. } | Action::Capture { .. } | Action::Camera { .. } | Action::Touchpad { .. } =>unreachable!(),
+        #[cfg(feature = "touchpad-test-fixture")]
+        Action::TouchpadFixture { .. } => unreachable!(),
     }
     let mut confirmation: Option<Confirmation> = None;
     let mut challenged = false;
@@ -1018,7 +1100,7 @@ mod tests {
     fn media_commands_require_explicit_absolute_manifest_and_distinct_peer() {
         let local = NodeId::new();
         let peer = NodeId::new();
-        for command in ["playback", "capture", "camera"] {
+        for command in ["playback", "capture", "camera", "touchpad"] {
             let arguments = vec![
                 "capyio-linux-console".to_owned(),
                 "--pairing-node".to_owned(),
@@ -1048,6 +1130,44 @@ mod tests {
             }
             assert!(Args::try_parse_from(&arguments[..13]).is_err());
         }
+    }
+    #[test]
+    fn fixture_commands_cannot_redirect_production_or_escape_compile_feature() {
+        assert!(valid_node_command("linux-touchpad", true, None));
+        assert!(!valid_node_command("linux-touchpad", true, Some("normal")));
+        assert!(!valid_node_command("/tmp/replacement", true, None));
+        assert!(!valid_node_command("linux-touchpad-fixture", true, None));
+        assert!(!valid_node_command(
+            "linux-touchpad-fixture",
+            false,
+            Some("normal")
+        ));
+        for mode in [
+            "normal",
+            "fail-create",
+            "partial-write",
+            "delayed-commit",
+            "backpressure",
+        ] {
+            assert_eq!(
+                valid_node_command("linux-touchpad-fixture", true, Some(mode)),
+                cfg!(feature = "touchpad-test-fixture")
+            );
+        }
+        for mode in ["", "native", "/dev/uinput", "--help", "normal --unsafe"] {
+            assert!(!valid_node_command(
+                "linux-touchpad-fixture",
+                true,
+                Some(mode)
+            ));
+        }
+        let fixture_help = Args::try_parse_from(["console", "touchpad-fixture", "--help"])
+            .err()
+            .unwrap();
+        assert_eq!(
+            fixture_help.kind() == clap::error::ErrorKind::DisplayHelp,
+            cfg!(feature = "touchpad-test-fixture")
+        );
     }
     #[test]
     fn shutdown_frames_keep_pairing_cancel_separate_from_media_stop() {

@@ -242,7 +242,7 @@ The console is interactive-only, not an automation endpoint or persistent servic
 The paired console additionally supports `playback --config /absolute/session.json
 --peer PEER_UUID` with the same explicit four paired-store selectors. This is the
 playback-direction console path: selected playback and its virtual-microphone
-projection. Reverse audio and camera are described below; touchpad console control
+projection. Reverse audio, camera and touchpad are described below; automatic renewal
 remains unimplemented.
 
 The bounded nonsecret manifest uses the existing playback schema. Replace every
@@ -359,3 +359,28 @@ consumer received pixels; `consumer_delivery_verified` remains false. Use
 The same private-TTY, owned config-file and explicit unlocked-keyring prerequisites
 apply. These instructions do not install helpers, configure services or grant
 permissions to a real device.
+
+
+## Interactive finite touchpad (ADR 1551)
+
+Use `touchpad --config /absolute/session.json --peer PEER_UUID` with the same four
+explicit paired-store selectors. The manifest is the version/local node/remote
+`source`/`listen`/`duration_secs` shape shown for camera above, but selects an
+existing authenticated touchpad Source Port, not a camera Port. The Node checks
+that exact catalog profile. Duration is 3–60 seconds; choose an explicit supported
+local loopback/private/link-local IPv4 address, never a wildcard listener.
+
+Review the remote Source → local touchpad Sink and the fixed five-contact,
+120×70 mm, pressure-capable, non-clickable profile. The data and control paths
+retain mutual TLS. Type only the fresh displayed exact start line for this
+session; the peer must independently grant its Source. A binding is not Active.
+Active reflects the existing Node runtime's committed-backend rule, but
+`os_gestures_verified` remains false and no physical gesture acceptance is claimed.
+Use `status` or `stop`; expiry, EOF and revocation do not renew or restart input.
+
+A native-touchpad paired build and existing OS authorization for the input backend
+are prerequisites. The console does not install a service, change permissions or
+configure `/dev/uinput`. The hosted acceptance uses a separately compiled
+`touchpad-test-fixture` console/Node pair and fake syscalls only. Its explicit
+`touchpad-fixture` action and synthetic stderr traces are development instrumentation,
+not supported production deployment options; both staged profiles exclude them.

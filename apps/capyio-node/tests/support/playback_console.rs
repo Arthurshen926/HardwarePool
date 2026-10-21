@@ -23,6 +23,7 @@ pub(super) struct Console {
     pub(super) node_pid: Option<u32>,
     node_binary: PathBuf,
     node_command: &'static str,
+    node_fixture_mode: Option<String>,
     event_prefix: &'static str,
     pub(super) peer: NodeId,
 }
@@ -37,6 +38,7 @@ fn attributes(file: &File) -> libc::termios {
 }
 
 impl Console {
+    #[allow(dead_code)]
     pub(super) fn start(
         pairing: &super::paired_store::PersistedPairing,
         config: &Value,
@@ -44,10 +46,48 @@ impl Console {
         operation: &str,
         environment: &[(&str, &str)],
     ) -> (Child, Self) {
+        Self::start_inner(pairing, config, pretyped, operation, environment, None)
+    }
+
+    // Only the separately built, feature-gated fixture action can select the
+    // fixed fake-syscall helper. This is not a production backend override.
+    #[cfg(feature = "touchpad-test-fixture")]
+    #[allow(dead_code)]
+    pub(super) fn start_touchpad_fixture(
+        pairing: &super::paired_store::PersistedPairing,
+        config: &Value,
+        pretyped: bool,
+        mode: &str,
+    ) -> (Child, Self) {
+        assert!(
+            fixture_mode_allowed(mode),
+            "fixed software fixture mode required"
+        );
+        Self::start_inner(
+            pairing,
+            config,
+            pretyped,
+            "touchpad-fixture",
+            &[("RUST_BACKTRACE", "0"), ("RUST_LIB_BACKTRACE", "0")],
+            Some(mode),
+        )
+    }
+
+    fn start_inner(
+        pairing: &super::paired_store::PersistedPairing,
+        config: &Value,
+        pretyped: bool,
+        operation: &str,
+        environment: &[(&str, &str)],
+        fixture_mode: Option<&str>,
+    ) -> (Child, Self) {
         let (node_command, event_prefix) = match operation {
             "playback" => ("linux-playback", "Playback event: "),
             "capture" => ("linux-capture", "Capture event: "),
             "camera" => ("linux-camera", "Camera event: "),
+            "touchpad-fixture" if fixture_mode.is_some_and(fixture_mode_allowed) => {
+                ("linux-touchpad-fixture", "Touchpad event: ")
+            }
             _ => panic!("exact supported media console operation required"),
         };
         let node = Path::new(env!("CARGO_BIN_EXE_capyio-node"))
@@ -104,6 +144,7 @@ impl Console {
             node_pid: None,
             node_binary: node,
             node_command,
+            node_fixture_mode: fixture_mode.map(str::to_owned),
             event_prefix,
             peer: pairing.peer,
         };
@@ -144,6 +185,9 @@ impl Console {
             .stdin(Stdio::null())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped());
+        if let Some(mode) = fixture_mode {
+            command.args(["--fixture-mode", mode]);
+        }
         // SAFETY: only async-signal-safe calls run after fork. The fresh slave
         // is attached to this owned session and stays live through spawn.
         unsafe {
@@ -164,7 +208,13 @@ impl Console {
         let child = command.spawn().unwrap();
         // Public owned-process identity only, written immediately so the outer
         // graph harness can clean up even before TLS reaches its checkpoint.
-        let runtime = PathBuf::from(std::env::var_os("XDG_RUNTIME_DIR").unwrap());
+        let runtime = if fixture_mode.is_some() {
+            // Each synthetic pairing owns a fresh private directory. Unlike the
+            // graph gates, many touchpad scenarios run in a single test process.
+            pairing.service.root.clone()
+        } else {
+            PathBuf::from(std::env::var_os("XDG_RUNTIME_DIR").unwrap())
+        };
         let start = runtime.join(".capyio-console-start.json");
         let mut evidence = OpenOptions::new()
             .write(true)
@@ -229,7 +279,49 @@ impl Console {
         String::from_utf8_lossy(&self.tty[self.event_cursor..]).contains(&prompt)
     }
 
+    #[cfg(feature = "touchpad-test-fixture")]
+    #[allow(dead_code)]
+    pub(super) fn status_prompt_seen(&self) -> bool {
+        let text = String::from_utf8_lossy(&self.tty[self.event_cursor..]);
+        text.contains("Type status, stop or cancel: ")
+            || text
+                .lines()
+                .any(|line| line.starts_with("Type start ") && line.ends_with(" or stop: "))
+    }
+
     pub(super) fn assert_presentation(&self, approval: &Value) {
+        if self.node_command == "linux-touchpad-fixture" {
+            let text = String::from_utf8_lossy(&self.tty).replace('\r', "");
+            let source = &approval["source"];
+            let sink = &approval["sink"];
+            assert!(text.contains(&format!(
+                "Remote Source Node {}, Capability {}, Port {}\nLocal touchpad Sink Node {}\n",
+                source["node_id"].as_str().unwrap(),
+                source["capability_id"].as_str().unwrap(),
+                source["port_id"].as_str().unwrap(),
+                sink["node_id"].as_str().unwrap(),
+            )));
+            assert!(text.contains(&format!(
+                "Sink Capability {}, Port {}; Session {}; Route {}\n",
+                sink["capability_id"].as_str().unwrap(),
+                sink["port_id"].as_str().unwrap(),
+                approval["session_id"].as_str().unwrap(),
+                approval["route_id"].as_str().unwrap(),
+            )));
+            for line in [
+                "Format: touchpad-frame-v1; media security: tls13_mtls_v1; duration: 10 seconds\n",
+                "At most 5 contacts; 120x70 mm; non-clickable; pressure enabled.\n",
+                "Experimental finite AdapterManaged touchpad; independent Source consent and both leases remain required.\n",
+                "Node Active follows committed backend ACK; binding alone is not activation.\n",
+                "OS gestures and physical input are not verified.\n",
+            ] {
+                assert!(
+                    text.contains(line),
+                    "exact secure finite touchpad presentation required"
+                );
+            }
+            return;
+        }
         if self.node_command == "linux-camera" {
             let text = String::from_utf8_lossy(&self.tty).replace('\r', "");
             let source = &approval["source"];
@@ -326,6 +418,14 @@ impl Console {
             args.split(|byte| *byte == 0)
                 .any(|arg| arg == self.node_command.as_bytes())
         );
+        if let Some(mode) = &self.node_fixture_mode {
+            let args: Vec<_> = args.split(|byte| *byte == 0).collect();
+            assert!(
+                args.windows(2)
+                    .any(|args| { args == [b"--fixture-mode".as_slice(), mode.as_bytes()] })
+            );
+            assert!(!args.contains(&b"linux-touchpad".as_slice()));
+        }
         self.node_pid = Some(pid);
         pid
     }
@@ -360,10 +460,17 @@ impl Console {
     }
 }
 
+fn fixture_mode_allowed(mode: &str) -> bool {
+    matches!(
+        mode,
+        "normal" | "fail-create" | "partial-write" | "delayed-commit" | "backpressure"
+    )
+}
+
 fn parse_event(line: &str, prefix: &str) -> Option<Value> {
     if !matches!(
         prefix,
-        "Playback event: " | "Capture event: " | "Camera event: "
+        "Playback event: " | "Capture event: " | "Camera event: " | "Touchpad event: "
     ) {
         return None;
     }
@@ -373,7 +480,18 @@ fn parse_event(line: &str, prefix: &str) -> Option<Value> {
     }
     let value: Value = serde_json::from_str(json).ok()?;
     let event = value["event"].as_str()?;
-    let accepted = if prefix == "Camera event: " {
+    let accepted = if prefix == "Touchpad event: " {
+        matches!(
+            event,
+            "listening"
+                | "approval_required"
+                | "touchpad_bound"
+                | "touchpad_active"
+                | "status"
+                | "stopped"
+                | "failed"
+        )
+    } else if prefix == "Camera event: " {
         matches!(
             event,
             "listening"
@@ -461,5 +579,77 @@ fn pure_camera_console_events_cannot_substitute_audio_prefix_or_events() {
     for event in ["awaiting_peer_offer", "credentials"] {
         let line = format!("Camera event: {{\"version\":1,\"event\":\"{event}\"}}");
         assert!(parse_event(&line, "Camera event: ").is_none());
+    }
+}
+
+#[test]
+fn pure_touchpad_console_events_require_exact_prefix_version_and_event() {
+    for event in [
+        "listening",
+        "approval_required",
+        "touchpad_bound",
+        "touchpad_active",
+        "status",
+        "stopped",
+        "failed",
+    ] {
+        let line = format!("Touchpad event: {{\"version\":1,\"event\":\"{event}\"}}\r");
+        assert!(parse_event(&line, "Touchpad event: ").is_some());
+        for prefix in [
+            "Playback event: ",
+            "Capture event: ",
+            "Camera event: ",
+            "Touchpad ",
+        ] {
+            assert!(parse_event(&line, prefix).is_none());
+        }
+    }
+    for line in [
+        "Touchpad event: {\"version\":2,\"event\":\"status\"}",
+        "Touchpad event: {\"version\":1,\"event\":\"camera_record\"}",
+        "Touchpad event: {\"version\":1,\"event\":\"awaiting_peer_offer\"}",
+        "Touchpad event: {\"version\":1,\"event\":\"credentials\"}",
+        "Touchpad event: []",
+        "Touchpad event: not json",
+    ] {
+        assert!(parse_event(line, "Touchpad event: ").is_none());
+    }
+}
+
+#[test]
+fn pure_touchpad_console_event_frames_have_fixed_bound_and_no_audio_alias() {
+    for event in ["touchpad_bound", "touchpad_active"] {
+        for prefix in ["Playback event: ", "Capture event: ", "Camera event: "] {
+            let line = format!("{prefix}{{\"version\":1,\"event\":\"{event}\"}}");
+            assert!(parse_event(&line, prefix).is_none());
+        }
+    }
+    let oversized = format!(
+        "Touchpad event: {{\"version\":1,\"event\":\"status\",\"padding\":\"{}\"}}",
+        "x".repeat(4096)
+    );
+    assert!(parse_event(&oversized, "Touchpad event: ").is_none());
+}
+
+#[test]
+fn pure_touchpad_console_fixture_modes_are_closed_software_only_allowlist() {
+    for mode in [
+        "normal",
+        "fail-create",
+        "partial-write",
+        "delayed-commit",
+        "backpressure",
+    ] {
+        assert!(fixture_mode_allowed(mode));
+    }
+    for mode in [
+        "",
+        "native",
+        "/dev/uinput",
+        "/tmp/helper",
+        "normal --native",
+        "NORMAL",
+    ] {
+        assert!(!fixture_mode_allowed(mode));
     }
 }

@@ -27,6 +27,35 @@ FIXTURE = tuple("software_fixture::" + name for name in (
 ))
 
 
+CONSOLE = tuple("console_fixture::hosted_touchpad_console_" + suffix for suffix in (
+    "fresh_exact_terminal_consent",
+    "five_slots_tracking_cancel_gap_and_android_policy",
+    "mismatched_hello_never_opens_helper",
+    "native_failure_and_backpressure_never_acknowledge_uncertain_commit",
+    "ack_waits_for_complete_native_commit",
+    "create_failure_has_no_native_open_or_ack",
+    "control_eof_data_eof_local_eof_and_expiry_release_owned_contacts",
+    "wrong_data_pin_and_changed_route_offer_fail_before_open",
+    "local_stop_interrupts_partial_data_handshake_before_native_open",
+))
+
+
+def console_marker(name):
+    if name not in CONSOLE:
+        raise ValueError("unknown console case")
+    return ("capyio_touchpad_console=passed test=" + name.split("::")[-1]
+            + " actual_tty=true paired_store=true software_helper=true owned_cleanup=true")
+
+
+def require_console(listing, output):
+    require(CONSOLE, listing, output)
+    if "test result: ok. 9 passed; 0 failed; 0 ignored;" not in output:
+        raise ValueError("exact nine console tests must execute")
+    markers = [line for line in output.splitlines() if line.startswith("capyio_touchpad_console")]
+    if sorted(markers) != sorted(console_marker(name) for name in CONSOLE):
+        raise ValueError("missing, duplicated or malformed actual-console evidence")
+
+
 def require(names, listing, output):
     listed = set(listing.splitlines())
     passed = set(output.splitlines())
