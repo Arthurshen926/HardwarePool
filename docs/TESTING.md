@@ -1336,5 +1336,8 @@ and strict all-target Clippy. Synthetic tests exercise bilateral manager
 preparation, crash-state replay, injected post-put failure, process-death lock
 release, full-directory admission, missing/locked/changed credentials, duplicate
 bindings, owner/pin mismatch, revoked replay, symlinks and oversized journals.
-No real user credentials/keyring, native Secret Service, physical devices,
-power-loss filesystem or long-lived service acceptance is included.
+ADR 1540 adds real adapter protocol tests on private owned dbus-daemon buses with
+a synthetic fake service. Run the same commands with `--features native-secret-service`;
+`dbus-daemon` must exist and missing prerequisites fail rather than silently skip.
+No real user credentials/keyring, physical devices, power-loss filesystem or
+long-lived service acceptance is included.

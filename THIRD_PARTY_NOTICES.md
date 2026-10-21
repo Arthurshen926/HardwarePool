@@ -108,3 +108,9 @@ https://deb.debian.org/debian/pool/main/libe/libevdev/libevdev-dev_1.13.4+dfsg-1
 SHA256 `daf65e62433c1154ffab87a8cfdf106efcb20095142134f972923277fe600797`.
 The native helper linked successfully against the already available libevdev.so.2
 runtime but was not executed. Hosted CI records its own resolved package version.
+
+The optional Linux Secret Service backend uses registry libraries `zbus` 5.19.0
+(MIT) and `tokio` 1.53.1 (MIT), with exact transitive versions/checksums in
+Cargo.lock. No upstream source or binary is vendored. ADR 1540 records purpose,
+alternatives and the local plain-session/OS-keyring trust boundary. Distribution
+must include the resolved dependencies' applicable license notices in its SBOM.

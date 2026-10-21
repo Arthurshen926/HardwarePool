@@ -1,10 +1,15 @@
 #![forbid(unsafe_code)]
 #![cfg(target_os = "linux")]
-//! Core-only Linux persistence boundary. No production credential backend is
-//! provided: callers must supply protected storage, never a plaintext fallback.
+//! Linux persistence boundary. Callers explicitly supply protected storage.
+//! `native-secret-service` offers an optional local OS keyring adapter; there is
+//! never a plaintext fallback or automatic keyring discovery/unlock.
 //! The exclusive owner holds its lock until drop. Recovery is explicit and local.
 
 mod files;
+#[cfg(feature = "native-secret-service")]
+mod secret_service;
+#[cfg(feature = "native-secret-service")]
+pub use secret_service::SecretServiceBackend;
 
 use capyio_control_credentials::{ControlCredentialBundle, MAX_CONTROL_CREDENTIAL_BUNDLE_BYTES};
 use capyio_core::NodeId;
@@ -29,8 +34,12 @@ const MAX_DOCUMENT: usize = 131_072;
 /// collection creation. This trait deliberately has no delete operation.
 pub trait CredentialBackend {
     fn load(&self, owner: NodeId, handle: &CredentialHandle) -> Result<SecretBytes, BackendError>;
-    /// Atomic create-only or byte-exact idempotent replay. Must durably persist
-    /// before returning; refuse a different existing value (including races).
+    /// Create-only or byte-exact idempotent replay. Success requires protected
+    /// service/storage acknowledgement and exact readback, not merely queuing a
+    /// write. Refuse different existing values and duplicate matches. Standard
+    /// keyring implementations may rely on cooperative namespace serialization
+    /// rather than attribute CAS; their acknowledgement is not a power-loss or
+    /// fsync guarantee. Implementations must disclose these trust assumptions.
     fn put_exact(
         &self,
         owner: NodeId,

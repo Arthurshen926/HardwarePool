@@ -38,7 +38,9 @@ jobs:
       - name: Validate Linux pairing persistence boundary
         run: |
           cargo test --locked -p capyio-linux-pairing-store
-          cargo clippy --locked -p capyio-linux-pairing-store --all-targets -- -D warnings
+          if ! command -v dbus-daemon; then sudo apt-get update && sudo apt-get install -y --no-install-recommends dbus; fi
+          timeout --signal=TERM --kill-after=10s 240s cargo test --locked -p capyio-linux-pairing-store --features native-secret-service -- --test-threads=1
+          cargo clippy --locked -p capyio-linux-pairing-store --all-targets --features native-secret-service -- -D warnings
       - name: Build repository mock adapters
         run: cargo build --locked -p capyio-mock-source -p capyio-mock-sink
       - name: Require finite IPC regression tests

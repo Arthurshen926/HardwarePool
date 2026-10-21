@@ -1,6 +1,8 @@
 # ADR 1539: Linux pairing persistence boundary (core only)
 
-Status: experimental implementation, not production secure storage.
+Status: experimental implementation. ADR 1540 supersedes the core-only backend
+availability and atomic/durability assumptions below; this document records the
+original boundary.
 
 ## Context and decision
 

@@ -6,6 +6,10 @@ edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 
+[features]
+default = []
+native-secret-service = ["dep:zbus", "dep:tokio"]
+
 [dependencies]
 capyio-core = { path = "../../../crates/capyio-core" }
 capyio-pairing = { path = "../../../crates/capyio-pairing" }
@@ -16,6 +20,10 @@ serde_json.workspace = true
 sha2.workspace = true
 thiserror.workspace = true
 rustix = { version = "=1.1.4", default-features = false, features = ["fs", "std", "process"] }
+
+[target.'cfg(target_os = "linux")'.dependencies]
+zbus = { version = "=5.19.0", default-features = false, features = ["tokio"], optional = true }
+tokio = { version = "=1.53.1", default-features = false, features = ["rt", "net", "time", "sync", "macros"], optional = true }
 
 [dev-dependencies]
 libc = "=0.2.189"

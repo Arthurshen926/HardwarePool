@@ -1670,4 +1670,5 @@ ADR 1539 adds a platform-owned Linux pairing store with an explicit protected
 backend seam, bounded public journal and local-only recovery. A caller polls the
 shared enrollment manager; no service or thread is created by the store. Typed
 bootstrap material selects exactly one committed active peer for existing finite
-launchers. No native secure backend is shipped in this slice.
+launchers. ADR 1540 adds the optional explicit local Unix Secret Service backend,
+with no launcher wiring, implicit unlock, activation or plaintext fallback.

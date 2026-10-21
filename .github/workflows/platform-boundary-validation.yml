@@ -5,6 +5,8 @@ on:
     branches: [codex/linux-ipc-validation-20261019]
     paths:
       - .github/workflows/platform-boundary-validation.yml
+      - platform/linux/capyio-pairing-store/**
+      - Cargo.lock
       - platform/linux/capyio-audio/src/lib.rs
       - platform/windows/capyio-credential-protection/src/lib.rs
       - platform/windows/capyio-service/src/display_worker_failure.rs
@@ -45,6 +47,8 @@ jobs:
       - run: cargo fmt --all -- --check
       - run: cargo check --locked --workspace --exclude capyio-desktop --all-targets
       - run: cargo clippy --locked --workspace --exclude capyio-desktop --all-targets -- -D warnings
+      - name: Compile optional Linux keyring boundary on both platforms
+        run: cargo check --locked -p capyio-linux-pairing-store --features native-secret-service --all-targets
       - name: Compile affected test targets without running devices
         run: cargo test --locked -p capyio-windows-credential-protection -p capyio-windows-service -p capyio-windows-pairing-store -p capyio-vcamdroid-adapter --all-targets --no-run
       - name: Run exact hardware-free boundary regressions
