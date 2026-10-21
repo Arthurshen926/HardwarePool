@@ -1,5 +1,6 @@
 //! Explicit, finite first-enrollment management over trusted inherited FIFOs.
-//! No listener, discovery, credential export or resource grant exists here.
+//! Only explicit welcome opens one enrollment listener; no discovery, credential
+//! export or resource grant exists here.
 //! Recovery is explicit local journal replay, never a remote completion claim.
 
 use std::{
@@ -18,15 +19,16 @@ use capyio_linux_pairing_store::{
     BackendError, CredentialBackend, LinuxPairingStore, SecretBytes, SecretServiceBackend,
 };
 use capyio_pairing::{CredentialHandle, PairedPeerDirectory, PairingState};
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use serde_json::json;
 
-use crate::launcher_io::LauncherIo;
+use crate::{invitation_pipe::InvitationPipe, launcher_io::LauncherIo};
 
 const MAX_FRAME: usize = 4096;
 const LIFETIME: Duration = Duration::from_secs(180);
 const BACKEND_TIMEOUT: Duration = Duration::from_secs(1);
 const POLL_INTERVAL: Duration = Duration::from_millis(10);
+const INVITATION_WRITE_BUDGET: Duration = Duration::from_secs(1);
 
 /// All selectors are public. The PIN is accepted only in the private first frame.
 pub struct PairingManagementSelection {
@@ -61,6 +63,12 @@ enum Request {
         name: String,
         endpoint: SocketAddr,
         pin: Pin,
+    },
+    Welcome {
+        version: u8,
+        name: String,
+        bind: SocketAddr,
+        invitation_pipe: PathBuf,
     },
     List {
         version: u8,
@@ -138,6 +146,20 @@ fn parse_request(bytes: &[u8]) -> io::Result<Request> {
                 && !endpoint.ip().is_multicast()
                 && pin.0.len() == 8
                 && pin.0.bytes().all(|b| b.is_ascii_digit())
+        }
+        Request::Welcome {
+            version,
+            name,
+            bind,
+            invitation_pipe,
+        } => {
+            *version == 1
+                && !name.trim().is_empty()
+                && name.len() <= 128
+                && !name.chars().any(char::is_control)
+                && !bind.ip().is_unspecified()
+                && !bind.ip().is_multicast()
+                && invitation_pipe.is_absolute()
         }
         Request::List { version } | Request::Recover { version } => *version == 1,
         Request::Revoke {
@@ -247,7 +269,7 @@ pub fn run_pairing_management_stdio(selection: PairingManagementSelection) -> io
     }
     // Listing and revoking local trust must remain available with a locked or
     // unavailable keyring. Their metadata-only backend cannot read or write keys.
-    let backend = if matches!(&request, Request::Join { .. }) {
+    let backend = if matches!(&request, Request::Join { .. } | Request::Welcome { .. }) {
         Some(
             SecretServiceBackend::connect_unix(
                 &selection.bus_address,
@@ -299,6 +321,32 @@ pub fn run_pairing_management_stdio(selection: PairingManagementSelection) -> io
         }
         Request::Revoke { peer_node_id, .. } => {
             revoke(&mut channel, &mut store, &directory, peer_node_id, deadline)
+        }
+        Request::Welcome {
+            name,
+            bind,
+            invitation_pipe,
+            ..
+        } => {
+            if pending {
+                return Err(storage_error());
+            }
+            // Validate the explicitly designated secret channel before binding.
+            let invitation = InvitationPipe::open(&invitation_pipe)?;
+            if channel.poll_frame(MAX_FRAME)?.is_some() {
+                return Err(invalid());
+            }
+            let paired = directory.peers().map(|peer| peer.node_id).collect();
+            welcome(
+                &mut channel,
+                &mut store,
+                selection.local_node,
+                name,
+                bind,
+                paired,
+                invitation,
+                deadline,
+            )
         }
         Request::Join {
             name,
@@ -505,10 +553,99 @@ fn join<B: CredentialBackend>(
         .map_err(|_| invalid())?;
     // join resets its state. Defer AFTER join, and before any approval/persistence.
     manager.defer_control_ready();
+    run_enrollment(channel, store, local, manager, deadline)
+}
+
+fn invitation_validity(deadline: Instant) -> io::Result<u64> {
+    let seconds = deadline
+        .saturating_duration_since(Instant::now())
+        .saturating_sub(INVITATION_WRITE_BUDGET)
+        .as_secs();
+    if seconds == 0 {
+        Err(invalid())
+    } else {
+        Ok(seconds)
+    }
+}
+
+// Only this separately designated FIFO receives invitation material. Neither
+// generic JSON status nor ordinary stdout/stderr contains a PIN or endpoint.
+struct InvitationBytes(Vec<u8>);
+impl Drop for InvitationBytes {
+    fn drop(&mut self) {
+        self.0.fill(0);
+    }
+}
+#[allow(clippy::too_many_arguments)]
+fn welcome<B: CredentialBackend>(
+    channel: &mut LauncherIo,
+    store: &mut LinuxPairingStore<B>,
+    local: NodeId,
+    name: String,
+    bind: SocketAddr,
+    paired: BTreeSet<NodeId>,
+    mut invitation: InvitationPipe,
+    deadline: Instant,
+) -> io::Result<()> {
+    check_deadline(deadline)?;
+    let mut manager = EnrollmentManager::default();
+    let mut status = manager
+        .welcome_manual(
+            local,
+            name,
+            bind.ip(),
+            bind.port(),
+            paired,
+            "linux-protected:",
+        )
+        .map_err(|_| invalid())?;
+    manager.defer_control_ready();
+    let pin = Pin(status.pin.take().ok_or_else(invalid)?);
+    let endpoint = status.endpoint.take().ok_or_else(invalid)?;
+    #[derive(Serialize)]
+    struct Invitation<'a> {
+        version: u8,
+        event: &'a str,
+        endpoint: &'a str,
+        pin: &'a str,
+        valid_for_secs: u64,
+    }
+    let encoded = InvitationBytes(
+        serde_json::to_vec(&Invitation {
+            version: 1,
+            event: "invitation",
+            endpoint: &endpoint,
+            pin: &pin.0,
+            valid_for_secs: invitation_validity(deadline)?,
+        })
+        .map_err(|_| invalid())?,
+    );
+    invitation.send(
+        &encoded.0,
+        deadline.min(Instant::now() + INVITATION_WRITE_BUDGET),
+    )?;
+    drop(encoded);
+    drop(pin);
+    drop(invitation); // Exactly one secret frame; no writer remains during consent.
+    run_enrollment(channel, store, local, manager, deadline)
+}
+
+fn run_enrollment<B: CredentialBackend>(
+    channel: &mut LauncherIo,
+    store: &mut LinuxPairingStore<B>,
+    local: NodeId,
+    manager: EnrollmentManager,
+    deadline: Instant,
+) -> io::Result<()> {
     let mut confirmation: Option<Confirmation> = None;
     let mut local_saved = false;
     let result = (|| {
-        channel.send_json(&json!({"version":1,"event":"authenticating"}), deadline)?;
+        let event = if manager.status().phase == "waiting" {
+            "waiting"
+        } else {
+            "authenticating"
+        };
+        channel.send_json(&json!({"version":1,"event":event}), deadline)?;
         loop {
             check_deadline(deadline)?;
             // Input is checked before status/persistence, so early approval, EOF,
@@ -606,7 +743,7 @@ fn join<B: CredentialBackend>(
                 "failed" | "cancelled" => {
                     return Err(io::Error::other("pairing enrollment did not complete"));
                 }
-                "authenticating" | "confirm" | "waiting_peer" | "waiting_prepared"
+                "waiting" | "authenticating" | "confirm" | "waiting_peer" | "waiting_prepared"
                 | "waiting_receipt" => {}
                 _ => return Err(invalid()),
             }
@@ -683,6 +820,30 @@ mod tests {
         assert!(!gate.consumed);
         assert!(gate.consume(gate.request_id, peer).is_ok());
         assert!(gate.consume(gate.request_id, peer).is_err());
+    }
+
+    #[test]
+    fn invitation_validity_accounts_for_elapsed_time_and_write_budget() {
+        assert!(invitation_validity(Instant::now() + INVITATION_WRITE_BUDGET).is_err());
+        let remaining = invitation_validity(Instant::now() + Duration::from_secs(5)).unwrap();
+        assert!((1..=3).contains(&remaining));
+        assert!(invitation_validity(Instant::now() + LIFETIME).unwrap() < 180);
+    }
+
+    #[test]
+    fn welcome_requires_explicit_concrete_bind_and_separate_secret_path() {
+        assert!(parse_request(br#"{"version":1,"action":"welcome","name":"Linux","bind":"127.0.0.1:0","invitation_pipe":"/owned/pipe"}"#).is_ok());
+        for bind in [
+            "0.0.0.0:1234",
+            "[::]:1234",
+            "224.0.0.1:1234",
+            "hostname:1234",
+        ] {
+            let value = json!({"version":1,"action":"welcome","name":"Linux","bind":bind,"invitation_pipe":"/owned/pipe"});
+            assert!(parse_request(&serde_json::to_vec(&value).unwrap()).is_err());
+        }
+        assert!(parse_request(br#"{"version":1,"action":"welcome","name":"Linux","bind":"127.0.0.1:0","invitation_pipe":"relative"}"#).is_err());
+        assert!(parse_request(br#"{"version":1,"action":"welcome","name":"Linux","bind":"127.0.0.1:0","invitation_pipe":"/owned/pipe","pin":"12345678"}"#).is_err());
     }
 
     #[test]

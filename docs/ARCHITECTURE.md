@@ -1696,3 +1696,8 @@ ADR 1545 adds exact-peer/exact-journal confirmed local recovery to the finite
 management command. Metadata-only inspection and fresh consent precede protected
 loading; the original identity is reused without remote completion or service
 claims. Staging optionally records the paired-store feature; default stays off.
+
+ADR 1546 adds explicit finite manual welcome using the existing enrollment
+protocol and a separate owner-only invitation FIFO. Welcome and join share the
+same fresh peer-confirmation and persistence loop; existing platform welcome
+announcement behavior remains unchanged. No resource service is started.

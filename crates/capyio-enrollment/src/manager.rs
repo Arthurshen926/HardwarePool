@@ -17,6 +17,13 @@ use std::{
 
 const WINDOW: Duration = Duration::from_secs(180);
 
+fn announcement_ip(host: IpAddr, announce: bool) -> Option<std::net::Ipv4Addr> {
+    match host {
+        IpAddr::V4(ip) if announce && !ip.is_loopback() => Some(ip),
+        _ => None,
+    }
+}
+
 #[derive(Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct EnrollmentStatus {
@@ -37,6 +44,20 @@ pub struct EnrollmentStatus {
 mod tests {
     use super::*;
     use capyio_control_credentials::ControlCredentialBundle;
+
+    #[test]
+    fn welcome_announcement_policy_preserves_default_and_disables_manual() {
+        let lan: IpAddr = "192.0.2.1".parse().unwrap();
+        assert_eq!(
+            announcement_ip(lan, true),
+            Some("192.0.2.1".parse().unwrap())
+        );
+        assert_eq!(announcement_ip(lan, false), None);
+        for host in ["127.0.0.1", "::1", "2001:db8::1"] {
+            assert_eq!(announcement_ip(host.parse().unwrap(), true), None);
+            assert_eq!(announcement_ip(host.parse().unwrap(), false), None);
+        }
+    }
 
     #[test]
     fn pin_pairing_requires_both_approvals_and_keeps_keys_local() {
@@ -399,6 +420,34 @@ impl EnrollmentManager {
         paired: BTreeSet<NodeId>,
         prefix: &'static str,
     ) -> Result<EnrollmentStatus, String> {
+        self.welcome_impl(local, name, host, port, paired, prefix, true)
+    }
+
+    /// Open the same explicit PIN window without LAN discovery announcements.
+    /// The caller must deliver the endpoint and PIN through its private channel.
+    pub fn welcome_manual(
+        &mut self,
+        local: NodeId,
+        name: String,
+        host: IpAddr,
+        port: u16,
+        paired: BTreeSet<NodeId>,
+        prefix: &'static str,
+    ) -> Result<EnrollmentStatus, String> {
+        self.welcome_impl(local, name, host, port, paired, prefix, false)
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn welcome_impl(
+        &mut self,
+        local: NodeId,
+        name: String,
+        host: IpAddr,
+        port: u16,
+        paired: BTreeSet<NodeId>,
+        prefix: &'static str,
+        announce: bool,
+    ) -> Result<EnrollmentStatus, String> {
         validate_address(host)?;
         let listener = TcpListener::bind(SocketAddr::new(host, port)).map_err(|e| e.to_string())?;
         listener.set_nonblocking(true).map_err(|e| e.to_string())?;
@@ -427,18 +476,14 @@ impl EnrollmentManager {
         thread::spawn(move || {
             let deadline = Instant::now() + WINDOW;
             let result = (|| {
-                let announcer = if let IpAddr::V4(ip) = host {
+                let announcer = if let Some(ip) = announcement_ip(host, announce) {
                     let port = listener.local_addr().map_err(|e| e.to_string())?.port();
-                    if ip.is_loopback() {
-                        None
-                    } else {
-                        match crate::discovery::Announcer::new(ip, local, name.clone(), port) {
-                            Ok(announcer) => Some(announcer),
-                            Err(error) => {
-                                inner.lock().unwrap().status.discovery_message =
-                                    format!("配对地址可手动使用，局域网广播不可用：{error}");
-                                None
-                            }
+                    match crate::discovery::Announcer::new(ip, local, name.clone(), port) {
+                        Ok(announcer) => Some(announcer),
+                        Err(error) => {
+                            inner.lock().unwrap().status.discovery_message =
+                                format!("配对地址可手动使用，局域网广播不可用：{error}");
+                            None
                         }
                     }
                 } else {
@@ -464,6 +509,12 @@ impl EnrollmentManager {
                         Err(e) => return Err(e.to_string()),
                     }
                 };
+                // Manual hosting has no discovery/retry window. Close the accept
+                // socket now so additional joiners cannot queue behind this peer.
+                // Preserve the existing default welcome listener lifetime.
+                if !announce {
+                    drop(listener);
+                }
                 // One accepted attempt consumes this PIN window, including malformed/wrong PIN attempts.
                 run(
                     inner.clone(),

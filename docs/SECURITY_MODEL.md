@@ -1591,3 +1591,9 @@ bound journal digest. The store lock spans confirmation and local replay; revoke
 changed or missing records fail closed. No protected write/delete or remote trust
 completion is inferred. Same-UID malicious filesystem races are outside flock
 serialization; the staged feature inventory remains unsigned, not authorization.
+
+ADR 1546 keeps welcome PIN output exclusively in an explicitly designated
+owner-only FIFO distinct from standard streams. Concrete bind selection and
+manual-only discovery policy prevent implicit exposure. Bilateral approval,
+one-attempt lifetime and existing finite resource authority remain separate;
+revoking invitation validity cannot erase already-delivered caller bytes.

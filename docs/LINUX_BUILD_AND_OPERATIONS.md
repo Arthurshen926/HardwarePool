@@ -163,12 +163,15 @@ logs or this staging directory. Use the existing schema and bounded pipe protoco
 in ADR 1522, ADR 1531, ADR 1536 and ADR 1537; do not invent a new pairing protocol.
 
 The opt-in `paired-store` node includes the bounded persistent-store launcher and
-finite `linux-pairing` management primitives (ADRs 1539–1545), not a finished
+finite `linux-pairing` management primitives (ADRs 1539–1546), not a finished
 Linux provisioning flow. They require an explicitly selected state directory,
 Node, Secret Service bus and collection plus the existing private framed protocol;
 packaging does not configure or unlock a user's backend. Explicit journal recovery
 requires a fresh exact-peer/transaction confirmation and reports local repair
-only, never remote completion or service readiness. Default staging retains
+only, never remote completion or service readiness. Manual welcome requires a
+concrete bind address and separately provisioned private invitation FIFO; PINs
+never appear in normal status output. Hosting is an explicit finite action, not
+a staging/build side effect. Default staging retains
 the trusted-bootstrap path only. A normal user-facing pairing/bootstrap flow and
 real-user backend acceptance remain open. Actual identity generation, persistent
 access configuration, permissions, installation and physical operation remain

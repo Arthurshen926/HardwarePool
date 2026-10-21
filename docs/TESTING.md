@@ -1376,3 +1376,8 @@ suite, with metadata-only inspection, exact transaction confirmation and byte-
 preserving local replay. Core faults reject journal replacement and credential
 loss. Staging CI separately builds default/paired profiles and checks help-only
 command availability; this is not enrollment or device acceptance.
+
+ADR 1546 adds hosted two-actual-Node welcome/join acceptance using only private
+fake Secret Services and synthetic identities, including the fixed invitation
+expiry and dedicated FIFO isolation. Pure policy tests preserve the existing
+welcome announcement default while manual welcome disables it.

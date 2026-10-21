@@ -7,6 +7,8 @@
 //! labeled synthetic peer/session context and mock-only authorization.
 
 #[cfg(all(target_os = "linux", feature = "paired-store"))]
+mod invitation_pipe;
+#[cfg(all(target_os = "linux", feature = "paired-store"))]
 mod pairing_management;
 #[cfg(all(target_os = "linux", feature = "paired-store"))]
 pub use pairing_management::{PairingManagementSelection, run_pairing_management_stdio};
