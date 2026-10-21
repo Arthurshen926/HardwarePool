@@ -44,7 +44,7 @@ jobs:
       - name: Validate persisted pairing launcher boundary
         run: |
           cargo test --locked -p capyio-node --features paired-store --test linux_paired_store -- --list | tee "$RUNNER_TEMP/paired-launcher-tests.txt"
-          for test in ipc_paired_store_camera_and_touchpad_listen_without_grant_and_stop_cleanly ipc_paired_store_invalid_peer_or_backend_fails_before_listening_or_helper ipc_paired_store_rejects_legacy_credential_frames_in_selected_mode paired_store_cli_rejects_incomplete_selector_set_without_access; do
+          for test in ipc_paired_store_camera_and_touchpad_listen_without_grant_and_stop_cleanly ipc_paired_store_invalid_peer_or_backend_fails_before_listening_or_helper ipc_paired_store_rejects_legacy_credential_frames_in_selected_mode paired_store_cli_rejects_incomplete_selector_set_without_access ipc_paired_store_audio_loads_credentials_without_helpers_and_stops ipc_paired_store_audio_binding_and_backend_fail_before_listener ipc_paired_store_audio_rejects_mixed_bootstrap_without_keyring_access; do
             grep -Fx "$test: test" "$RUNNER_TEMP/paired-launcher-tests.txt"
           done
           timeout --signal=TERM --kill-after=10s 600s cargo test --locked -p capyio-node --features paired-store --test linux_paired_store --test linux_camera --test linux_touchpad -- --test-threads=1
@@ -344,7 +344,7 @@ jobs:
 
   pipewire-loopback:
     runs-on: ubuntu-24.04
-    timeout-minutes: 20
+    timeout-minutes: 30
     defaults:
       run:
         shell: bash
@@ -360,7 +360,7 @@ jobs:
         run: |
           set -euo pipefail
           sudo apt-get update
-          sudo apt-get install --yes --no-install-recommends pipewire-bin
+          sudo apt-get install --yes --no-install-recommends pipewire-bin dbus-daemon
           dpkg-query -W pipewire-bin libpipewire-0.3-modules libspa-0.2-modules
       - name: Validate pure signal oracle and fixture
         run: |
@@ -379,7 +379,7 @@ jobs:
       - name: Build integrated Android-policy command fixture without executing IPC
         run: |
           set -euo pipefail
-          cargo test --locked -p capyio-node --test linux_playback --no-run \
+          cargo test --locked -p capyio-node --features paired-store --test linux_playback --no-run \
             --message-format=json > "$RUNNER_TEMP/pipewire-e2e-build.jsonl"
       - name: Require one integrated pinned-control UDP PipeWire and Stop run
         run: |
@@ -427,7 +427,7 @@ jobs:
       - name: Build Linux-to-Android stereo capture command fixture without executing IPC
         run: |
           set -euo pipefail
-          cargo test --locked -p capyio-node --test linux_capture --no-run \
+          cargo test --locked -p capyio-node --features paired-store --test linux_capture --no-run \
             --message-format=json > "$RUNNER_TEMP/pipewire-capture-build.jsonl"
       - name: Require isolated stereo capture waveform and lifecycle failure cleanup
         run: |
@@ -472,6 +472,53 @@ jobs:
             grep -Fx "capyio_pipewire_virtual_speaker=passed scenario=$scenario pinned_tls=true independent_consent=true dynamic_udp=true stereo=true real_sink=true simulated_app=true environment_sanitized=true stop=true cleanup=true" \
               "$RUNNER_TEMP/pipewire-virtual-speaker-$scenario-result.txt"
           done
+      - name: Require paired IncomingDraft independent approval and finite Source lease
+        run: |
+          set -euo pipefail
+          test_name=incoming_draft::ipc_linux_incoming_paired_store_requires_independent_local_approval
+          timeout --signal=TERM --kill-after=5s 60s cargo test --locked -p capyio-node --features paired-store --test linux_playback "$test_name" -- --exact --test-threads=1 --nocapture 2>&1 | tee "$RUNNER_TEMP/audio-paired-incoming.txt"
+          grep -F 'test result: ok. 1 passed; 0 failed; 0 ignored;' "$RUNNER_TEMP/audio-paired-incoming.txt"
+          grep -F 'capyio_audio_paired_store=passed protected_read=true secret_redacted=true' "$RUNNER_TEMP/audio-paired-incoming.txt"
+      - name: Require all sixteen paired-store audio graph scenarios without skips
+        run: |
+          set -euo pipefail
+          playback="$(python3 - "$RUNNER_TEMP/pipewire-e2e-build.jsonl" <<'PYFIXTURE'
+          import json, sys
+          items = [json.loads(line) for line in open(sys.argv[1])]
+          matches = [item['executable'] for item in items if item.get('reason') == 'compiler-artifact' and item.get('target', {}).get('name') == 'linux_playback' and item.get('executable')]
+          assert len(matches) == 1
+          print(matches[0])
+          PYFIXTURE
+          )"
+          capture="$(python3 - "$RUNNER_TEMP/pipewire-capture-build.jsonl" <<'PYFIXTURE'
+          import json, sys
+          items = [json.loads(line) for line in open(sys.argv[1])]
+          matches = [item['executable'] for item in items if item.get('reason') == 'compiler-artifact' and item.get('target', {}).get('name') == 'linux_capture' and item.get('executable')]
+          assert len(matches) == 1
+          print(matches[0])
+          PYFIXTURE
+          )"
+          count=0
+          for mode in playback virtual_microphone capture virtual_speaker; do
+            case "$mode" in
+              playback) scenarios="waveform" ;;
+              virtual_microphone) scenarios="waveform no_consumer child_exit server_disconnect" ;;
+              capture) scenarios="waveform child_exit server_disconnect control_disconnect timeout" ;;
+              virtual_speaker) scenarios="waveform no_input child_exit server_disconnect control_disconnect expiry" ;;
+            esac
+            for scenario in $scenarios; do
+              case "$mode" in
+                playback) args=(scripts/run_pipewire_loopback.py --hosted-pipewire-loopback --e2e-fixture "$playback") ;;
+                virtual_microphone) args=(scripts/run_pipewire_loopback.py --hosted-pipewire-loopback --virtual-microphone-fixture "$playback" --virtual-microphone-scenario "$scenario") ;;
+                capture) args=(scripts/run_pipewire_capture.py --hosted-pipewire-capture --fixture "$capture" --scenario "$scenario") ;;
+                virtual_speaker) args=(scripts/run_pipewire_capture.py --hosted-pipewire-capture --fixture "$capture" --endpoint-mode virtual_speaker --scenario "$scenario") ;;
+              esac
+              timeout --signal=TERM --kill-after=15s 75s python3 "${args[@]}" --paired-store | tee "$RUNNER_TEMP/audio-paired-$mode-$scenario.txt"
+              grep -Fx "capyio_audio_paired_graph=passed mode=$mode scenario=$scenario protected_read=true cleanup=true" "$RUNNER_TEMP/audio-paired-$mode-$scenario.txt"
+              count=$((count + 1))
+            done
+          done
+          test "$count" -eq 16
 
   linux-native-camera:
     # Optional native dependency only in this disposable official Ubuntu runner.

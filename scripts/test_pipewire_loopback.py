@@ -282,5 +282,41 @@ class CleanupTests(unittest.TestCase):
         cleanup.assert_called_once()
 
 
+class PairedStoreHarnessTests(unittest.TestCase):
+    def test_explicit_paired_store_requires_real_launcher_and_private_environment(self):
+        root = Path('/synthetic-not-opened')
+        with self.assertRaises(ValueError):
+            Harness(root, paired_store=True)
+        legacy = Harness(root, e2e=True)
+        paired = Harness(root, e2e=True, paired_store=True)
+        self.assertNotIn('CAPYIO_AUDIO_PAIRED_STORE', legacy.env)
+        self.assertEqual(paired.env['CAPYIO_AUDIO_PAIRED_STORE'], '1')
+        self.assertNotIn('DBUS_SESSION_BUS_ADDRESS', paired.env)
+        self.assertEqual(paired.env['HOME'], str(root))
+
+    def test_paired_evidence_requires_actual_read_and_exact_unskipped_execution(self):
+        harness = Harness(Path('/synthetic-not-opened'), e2e=True, paired_store=True)
+        evidence = 'capyio_audio_paired_store=passed protected_read=true secret_redacted=true\n'
+        passed = 'test result: ok. 1 passed; 0 failed; 0 ignored; 20 filtered out;\n'
+        with patch.object(Path, 'read_text', side_effect=[evidence, passed]):
+            harness.verify_pairing()
+        for logs in ([evidence.replace('true', 'false'), passed],
+                     [evidence + evidence, passed],
+                     [evidence + 'capyio_audio_paired_store=malformed\n', passed],
+                     ['', passed], [evidence, passed.replace('1 passed', '0 passed')],
+                     [evidence, passed.replace('0 ignored', '1 ignored')]):
+            with self.subTest(logs=logs), patch.object(Path, 'read_text', side_effect=logs):
+                with self.assertRaises(ValueError):
+                    harness.verify_pairing()
+        # A mode/feature mismatch cannot pass by claiming paired evidence in legacy mode.
+        legacy = Harness(Path('/synthetic-not-opened'), e2e=True)
+        with patch.object(Path, 'read_text', return_value='unrelated fixture log\n'):
+            legacy.verify_pairing()
+        for unexpected in (evidence, 'capyio_audio_paired_store=malformed\n'):
+            with patch.object(Path, 'read_text', return_value=unexpected):
+                with self.assertRaises(ValueError):
+                    legacy.verify_pairing()
+
+
 if __name__ == '__main__':
     unittest.main()

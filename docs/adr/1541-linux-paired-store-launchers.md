@@ -7,8 +7,8 @@ Status: experimental finite launcher integration; no enrollment UI or daemon.
 The `paired-store` feature of `capyio-node` optionally authenticates the existing
 `linux-camera` and `linux-touchpad` commands with ADR 1540's protected backend.
 It does not enroll a device, create credentials, recover a journal, start a
-service, unlock a collection, or persist resource approval. Audio launchers retain their existing private credential bootstrap; integrating
-them is separate work. ADR 1542 adds paired selectors to the explicitly
+service, unlock a collection, or persist resource approval. Audio launchers were outside this increment; ADR 1543 subsequently adds the same
+explicit identity-source selection while retaining legacy private bootstrap. ADR 1542 adds paired selectors to the explicitly
 feature-gated software-only touchpad fixture command for acceptance tests.
 
 Supplying any pairing selector requires all five: `--pairing-state`,

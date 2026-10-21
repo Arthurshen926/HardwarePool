@@ -306,7 +306,10 @@ def verify_process_owner(objects, source, expected):
 
 
 class Harness:
-    def __init__(self, root, e2e=False, virtual_scenario=None):
+    def __init__(self, root, e2e=False, virtual_scenario=None, paired_store=False):
+        if paired_store and not e2e:
+            raise ValueError('paired store requires an actual executable fixture')
+        self.paired_store = paired_store
         self.root = root
         self.e2e = e2e
         self.virtual_scenario = virtual_scenario
@@ -319,8 +322,21 @@ class Harness:
                     'XDG_RUNTIME_DIR': str(root), 'PIPEWIRE_RUNTIME_DIR': str(root),
                     'PIPEWIRE_CONFIG_DIR': str(root), 'PIPEWIRE_REMOTE': 'capyio-test',
                     'CAPYIO_PIPEWIRE_TEST': '1', 'CAPYIO_PIPEWIRE_E2E': '1'}
+        if paired_store:
+            self.env['CAPYIO_AUDIO_PAIRED_STORE'] = '1'
         if virtual_scenario is not None:
             self.env['CAPYIO_PIPEWIRE_VIRTUAL_MICROPHONE'] = virtual_scenario
+
+    def verify_pairing(self):
+        evidence = (self.root / 'producer.err').read_text().splitlines()
+        markers = [line for line in evidence if line.startswith('capyio_audio_paired_store')]
+        expected = ['capyio_audio_paired_store=passed protected_read=true secret_redacted=true']
+        if markers != (expected if self.paired_store else []):
+            raise ValueError('paired-store evidence missing, duplicated, malformed or unexpected')
+        if self.paired_store:
+            result = (self.root / 'producer.out').read_text()
+            if 'test result: ok. 1 passed; 0 failed; 0 ignored;' not in result:
+                raise ValueError('exact paired-store integration test must run, not skip')
 
     def check(self):
         if time.monotonic() >= self.deadline:
@@ -620,7 +636,10 @@ def main():
     fixtures.add_argument('--e2e-fixture', type=Path)
     fixtures.add_argument('--virtual-microphone-fixture', type=Path)
     parser.add_argument('--virtual-microphone-scenario', choices=VIRTUAL_SCENARIOS)
+    parser.add_argument('--paired-store', action='store_true')
     args = parser.parse_args()
+    if args.paired_store and args.fixture is not None:
+        parser.error('paired store requires an actual executable fixture')
     if args.virtual_microphone_fixture is None and args.virtual_microphone_scenario is not None:
         parser.error('virtual microphone scenario requires its explicit fixture')
     if args.virtual_microphone_scenario is None:
@@ -635,13 +654,15 @@ def main():
     with tempfile.TemporaryDirectory(prefix='capyio-pipewire-') as directory:
         virtual = args.virtual_microphone_fixture is not None
         harness = Harness(Path(directory), e2e=args.e2e_fixture is not None or virtual,
-                          virtual_scenario=args.virtual_microphone_scenario if virtual else None)
+                          virtual_scenario=args.virtual_microphone_scenario if virtual else None,
+                          paired_store=args.paired_store)
         try:
             fixture = (args.fixture or args.e2e_fixture or args.virtual_microphone_fixture)
             if virtual:
                 harness.run_virtual(fixture.resolve(strict=True))
             else:
                 harness.run(fixture.resolve(strict=True))
+            harness.verify_pairing()
         except Exception:
             # All processes/configurations are owned synthetic fixtures, no user data.
             for name in ('daemon.err', 'producer.err', 'capture.err', 'command.err'):
@@ -655,6 +676,10 @@ def main():
             signal.signal(signal.SIGTERM, signal.SIG_IGN)
             signal.signal(signal.SIGINT, signal.SIG_IGN)
             harness.close()
+    if args.paired_store:
+        mode = 'virtual_microphone' if args.virtual_microphone_fixture else 'playback'
+        scenario = args.virtual_microphone_scenario if args.virtual_microphone_fixture else 'waveform'
+        print(f'capyio_audio_paired_graph=passed mode={mode} scenario={scenario} protected_read=true cleanup=true')
     if args.virtual_microphone_fixture:
         print('capyio_pipewire_virtual_microphone=passed scenario='
               + args.virtual_microphone_scenario

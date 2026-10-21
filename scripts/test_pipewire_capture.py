@@ -453,5 +453,20 @@ class VirtualSpeakerGraphTests(unittest.TestCase):
                 CaptureHarness(root, scenario, mode)
 
 
+class PairedCaptureHarnessTests(unittest.TestCase):
+    def test_all_existing_scenarios_support_explicit_paired_store_without_ambient_bus(self):
+        for mode, scenarios in [('selected_source', SCENARIOS), ('virtual_speaker', VIRTUAL_SCENARIOS)]:
+            for scenario in scenarios:
+                with self.subTest(mode=mode, scenario=scenario):
+                    legacy = CaptureHarness(Path('/synthetic-not-opened'), scenario, mode)
+                    paired = CaptureHarness(Path('/synthetic-not-opened'), scenario, mode,
+                                            paired_store=True)
+                    self.assertNotIn('CAPYIO_AUDIO_PAIRED_STORE', legacy.env)
+                    self.assertEqual(paired.env['CAPYIO_AUDIO_PAIRED_STORE'], '1')
+                    self.assertNotIn('DBUS_SESSION_BUS_ADDRESS', paired.env)
+                    self.assertEqual(paired.env['CAPYIO_PIPEWIRE_CAPTURE'], scenario)
+                    self.assertEqual(paired.env['CAPYIO_PIPEWIRE_ENDPOINT_MODE'], mode)
+
+
 if __name__ == '__main__':
     unittest.main()

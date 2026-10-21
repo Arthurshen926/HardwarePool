@@ -1575,3 +1575,7 @@ ADR 1542 requires stored peer-pin failure, revoked pre-launch state rejection,
 and no helper/lease without fresh approval in actual executable fixtures.
 Runtime Source revocation and finite expiry remain independent of stored pairing;
 these tests do not turn per-launch metadata loading into a live revocation watch.
+
+ADR 1543 applies this exact-peer snapshot to audio playback and capture, including
+existing virtual endpoints. Audio UDP remains plaintext and trusted-lab only;
+pinned control identity does not encrypt media or authorize a local resource.

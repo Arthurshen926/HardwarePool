@@ -41,11 +41,17 @@ enum Command {
     LinuxPlayback {
         #[arg(long, required = true)]
         trusted_lab: bool,
+        #[cfg(feature = "paired-store")]
+        #[command(flatten)]
+        paired_store: PairedStoreArgs,
     },
     /// Explicit selected-source stereo capture with framed private bootstrap.
     LinuxCapture {
         #[arg(long, required = true)]
         trusted_lab: bool,
+        #[cfg(feature = "paired-store")]
+        #[command(flatten)]
+        paired_store: PairedStoreArgs,
     },
     /// Finite pinned Android touchpad reception via private inherited bootstrap.
     LinuxTouchpad {
@@ -153,27 +159,53 @@ fn main() -> anyhow::Result<()> {
             host.serve(std::io::stdin().lock(), std::io::stdout().lock())?;
             Ok(())
         }
-        Command::LinuxPlayback { trusted_lab } => {
+        Command::LinuxPlayback {
+            trusted_lab,
+            #[cfg(feature = "paired-store")]
+            paired_store,
+        } => {
             anyhow::ensure!(trusted_lab, "explicit trusted-lab opt-in required");
             #[cfg(target_os = "linux")]
             {
+                #[cfg(feature = "paired-store")]
+                if let Some(selection) = paired_store.selection()? {
+                    return capyio_linux_host::run_trusted_lab_playback_paired_store_stdio(
+                        selection,
+                    )
+                    .map_err(|_| anyhow::anyhow!("Linux lab playback launch failed"));
+                }
                 capyio_linux_host::run_trusted_lab_playback_stdio()
                     .map_err(|_| anyhow::anyhow!("Linux lab playback launch failed"))
             }
             #[cfg(not(target_os = "linux"))]
             {
+                #[cfg(feature = "paired-store")]
+                let _ = paired_store;
                 anyhow::bail!("Linux lab playback requires Linux")
             }
         }
-        Command::LinuxCapture { trusted_lab } => {
+        Command::LinuxCapture {
+            trusted_lab,
+            #[cfg(feature = "paired-store")]
+            paired_store,
+        } => {
             anyhow::ensure!(trusted_lab, "explicit trusted-lab opt-in required");
             #[cfg(target_os = "linux")]
             {
+                #[cfg(feature = "paired-store")]
+                if let Some(selection) = paired_store.selection()? {
+                    return capyio_linux_host::run_trusted_lab_capture_paired_store_stdio(
+                        selection,
+                    )
+                    .map_err(|_| anyhow::anyhow!("Linux lab capture launch failed"));
+                }
                 capyio_linux_host::run_trusted_lab_capture_stdio()
                     .map_err(|_| anyhow::anyhow!("Linux lab capture launch failed"))
             }
             #[cfg(not(target_os = "linux"))]
             {
+                #[cfg(feature = "paired-store")]
+                let _ = paired_store;
                 anyhow::bail!("Linux lab capture requires Linux")
             }
         }
@@ -480,7 +512,12 @@ mod paired_store_cli_tests {
     use super::*;
     #[test]
     fn paired_store_selector_group_is_all_or_none() {
-        for command in ["linux-camera", "linux-touchpad"] {
+        for command in [
+            "linux-camera",
+            "linux-touchpad",
+            "linux-playback",
+            "linux-capture",
+        ] {
             assert!(Cli::try_parse_from(["node", command, "--trusted-lab"]).is_ok());
             for flag in [
                 "--pairing-state",

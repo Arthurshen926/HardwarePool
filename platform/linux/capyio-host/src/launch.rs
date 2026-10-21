@@ -211,14 +211,27 @@ impl LocalCommand {
 /// never loads a path, environment variable, credential store or user device.
 /// All returned errors are static and do not contain input/config/key material.
 pub fn run_trusted_lab_playback_stdio() -> io::Result<()> {
-    run_stdio(false)
+    run_stdio(false, CredentialSource::PrivatePipe)
 }
 pub fn run_trusted_lab_capture_stdio() -> io::Result<()> {
-    run_stdio(true)
+    run_stdio(true, CredentialSource::PrivatePipe)
 }
-fn run_stdio(capture: bool) -> io::Result<()> {
+/// Load an explicit existing peer snapshot; consent and finite leases are unchanged.
+#[cfg(feature = "paired-store")]
+pub fn run_trusted_lab_playback_paired_store_stdio(
+    selection: PairedStoreSelection,
+) -> io::Result<()> {
+    run_stdio(false, CredentialSource::PairedStore(selection))
+}
+#[cfg(feature = "paired-store")]
+pub fn run_trusted_lab_capture_paired_store_stdio(
+    selection: PairedStoreSelection,
+) -> io::Result<()> {
+    run_stdio(true, CredentialSource::PairedStore(selection))
+}
+fn run_stdio(capture: bool, source: CredentialSource) -> io::Result<()> {
     let mut io = sanitized(LauncherIo::stdio())?;
-    let result = launch(&mut io, capture);
+    let result = launch(&mut io, capture, source);
     if result.is_err() {
         // Do not echo parser/TLS/runtime errors or secrets even on malformed input.
         let _ = io.send_json(
@@ -229,7 +242,7 @@ fn run_stdio(capture: bool) -> io::Result<()> {
     result.map_err(|_| fail())
 }
 
-fn launch(io: &mut LauncherIo, capture: bool) -> io::Result<()> {
+fn launch(io: &mut LauncherIo, capture: bool, source: CredentialSource) -> io::Result<()> {
     let bootstrap_deadline = Instant::now() + BOOTSTRAP;
     let bytes = io.read_frame(LOCAL_FRAME, bootstrap_deadline)?;
     let config = if capture {
@@ -237,23 +250,14 @@ fn launch(io: &mut LauncherIo, capture: bool) -> io::Result<()> {
     } else {
         LaunchConfig::parse(bytes.as_slice())?
     };
-    let directory_bytes = io.read_frame(65_536, bootstrap_deadline)?;
-    let directory = sanitized(PairedPeerDirectory::decode_json(
+    let (directory, credentials) = launcher_credentials(
+        io,
         config.node_id,
-        directory_bytes.as_slice(),
-    ))?;
-    drop(directory_bytes);
-    let mut peers = directory.active_peers();
-    let peer = peers.next().ok_or_else(fail)?;
-    if peer.node_id != config.source.node_id
-        || peers.next().is_some()
-        || directory.peers().len() != 1
-    {
-        return Err(fail());
-    }
-    let credential_bytes = io.read_frame(65_536, bootstrap_deadline)?;
-    let credentials = sanitized(ControlCredentialBundle::decode(credential_bytes.as_slice()))?;
-    drop(credential_bytes); // Clear the sole encoded secret buffer immediately.
+        config.source.node_id,
+        bootstrap_deadline,
+        source,
+    )?;
+    let peer = directory.active_peers().next().ok_or_else(fail)?;
     let (mut runtime, sink) =
         local_runtime_endpoint(config.node_id, config.proposal_mode, config.endpoint_mode)?;
     let expectation = sanitized(ControlTlsNodeBinding::new(config.node_id, peer.node_id))?;

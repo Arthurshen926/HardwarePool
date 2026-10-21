@@ -4,6 +4,10 @@
 //! audio process. The explicitly ignored playback and virtual-microphone cases
 //! additionally require the hosted harness's private synthetic PipeWire graph
 //! and exact opt-in markers.
+#[cfg(feature = "paired-store")]
+#[path = "support/paired_store.rs"]
+mod paired_store;
+
 use capyio_android_jni::AndroidCatalogRuntimeV1;
 use capyio_control_credentials::ControlCredentialBundle;
 use capyio_control_link::{CatalogControlLink, ReceivedControlMessage};
@@ -49,6 +53,8 @@ fn drain(reader: &mut impl Read, bytes: &mut Vec<u8>) {
     }
 }
 struct Process {
+    #[cfg(feature = "paired-store")]
+    pairing: Option<paired_store::PersistedPairing>,
     child: Child,
     stdout: Vec<u8>,
     stderr: Vec<u8>,
@@ -68,6 +74,8 @@ impl Process {
         nonblocking(child.stderr.as_ref().unwrap());
         Self {
             child,
+            #[cfg(feature = "paired-store")]
+            pairing: None,
             stdout: Vec::new(),
             stderr: Vec::new(),
         }
@@ -104,6 +112,11 @@ impl Process {
     fn collect(&mut self) {
         drain(self.child.stdout.as_mut().unwrap(), &mut self.stdout);
         drain(self.child.stderr.as_mut().unwrap(), &mut self.stderr);
+        #[cfg(feature = "paired-store")]
+        if let Some(pairing) = &self.pairing {
+            pairing.assert_no_leak(&self.stdout);
+            pairing.assert_no_leak(&self.stderr);
+        }
     }
     fn event(&mut self, expected: &str) -> Value {
         let deadline = Instant::now() + BOUND;
@@ -133,6 +146,15 @@ impl Process {
             self.collect();
             if let Some(status) = self.child.try_wait().unwrap() {
                 self.collect();
+                #[cfg(feature = "paired-store")]
+                if let Some(pairing) = &self.pairing {
+                    let state = pairing.service.state.lock().unwrap();
+                    assert!(state.reads > 0, "actual protected credential read required");
+                    assert_eq!(state.forbidden, 0);
+                    eprintln!(
+                        "capyio_audio_paired_store=passed protected_read=true secret_redacted=true"
+                    );
+                }
                 return status;
             }
             assert!(
@@ -209,6 +231,28 @@ impl Fixture {
             source,
             nodes: ControlTlsNodeBinding::new(local, source.node_id).unwrap(),
         }
+    }
+    fn launch(&self, paired: bool) -> Process {
+        if paired {
+            #[cfg(feature = "paired-store")]
+            {
+                let local = serde_json::from_value(self.config["node_id"].clone()).unwrap();
+                let pairing =
+                    paired_store::PersistedPairing::new(local, &self.directory, &self.bundle);
+                let args = pairing.args("linux-playback");
+                let mut process =
+                    Process::start(&args.iter().map(String::as_str).collect::<Vec<_>>());
+                process.pairing = Some(pairing);
+                process.command(self.config.clone());
+                process.command(json!({"version":1,"credential_source":"paired-store"}));
+                return process;
+            }
+            #[cfg(not(feature = "paired-store"))]
+            panic!("paired audio acceptance requires the paired-store build feature");
+        }
+        let mut process = Process::playback();
+        self.bootstrap(&mut process);
+        process
     }
     fn bootstrap(&self, process: &mut Process) {
         process.command(self.config.clone());
@@ -456,10 +500,13 @@ mod incoming_draft {
     }
 
     fn ready() -> (Process, AndroidPeer) {
+        ready_with_store(false)
+    }
+
+    fn ready_with_store(paired: bool) -> (Process, AndroidPeer) {
         let mut fixture = Fixture::new();
         fixture.config["proposal_mode"] = json!("incoming_draft");
-        let mut process = Process::playback();
-        fixture.bootstrap(&mut process);
+        let mut process = fixture.launch(paired);
         let mut peer = fixture.connect(&mut process);
         let destination = sink(&peer);
         assert_eq!(
@@ -502,7 +549,11 @@ mod incoming_draft {
     }
 
     fn pending() -> (Process, AndroidPeer, Route, Value) {
-        let (mut process, mut peer) = ready();
+        pending_with_store(false)
+    }
+
+    fn pending_with_store(paired: bool) -> (Process, AndroidPeer, Route, Value) {
+        let (mut process, mut peer) = ready_with_store(paired);
         let route = begin(&mut peer);
         publish(&mut peer);
         let approval = process.event("approval_required");
@@ -634,7 +685,17 @@ mod incoming_draft {
 
     #[test]
     fn ipc_linux_incoming_actual_android_start_requires_independent_local_approval() {
-        let (mut process, mut peer, proposal, approval) = pending();
+        actual_android_start_requires_independent_local_approval(false);
+    }
+
+    #[cfg(feature = "paired-store")]
+    #[test]
+    fn ipc_linux_incoming_paired_store_requires_independent_local_approval() {
+        actual_android_start_requires_independent_local_approval(true);
+    }
+
+    fn actual_android_start_requires_independent_local_approval(paired: bool) {
+        let (mut process, mut peer, proposal, approval) = pending_with_store(paired);
         process.command(approve(&approval));
         let grant = receive_local_grant(&mut peer, &proposal);
         // Linux local consent alone cannot acquire the Android microphone.
@@ -1437,8 +1498,7 @@ mod hosted_pipewire {
             fixture.config["target"] = json!("capyio.test.null");
         }
         fixture.config["duration_secs"] = json!(LIFETIME.as_secs());
-        let mut process = Process::playback();
-        fixture.bootstrap(&mut process);
+        let mut process = fixture.launch(hosted_paired_store());
         let mut peer = fixture.connect(&mut process);
         let approval = process.event("approval_required");
         if scenario.virtual_microphone() {
@@ -1844,4 +1904,12 @@ fn identities() -> (
         },
         client_pin,
     )
+}
+
+fn hosted_paired_store() -> bool {
+    match std::env::var_os("CAPYIO_AUDIO_PAIRED_STORE") {
+        None => false,
+        Some(value) if value == "1" => true,
+        Some(_) => panic!("exact paired-store hosted opt-in required"),
+    }
 }

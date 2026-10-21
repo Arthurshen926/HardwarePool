@@ -1682,3 +1682,7 @@ Audio launchers and enrollment/service UI remain outside this increment.
 ADR 1542 composes the paired-store loader with the existing finite camera graph
 and touchpad fake-helper acceptance paths. Test-only selection changes no
 production mTLS, local/Source approval, lease or Active semantics.
+
+ADR 1543 adds the same explicit paired-store identity source to finite playback,
+virtual microphone, capture and virtual speaker launchers. Existing source/sink
+binding, incoming-draft playback negotiation, approvals and leases are unchanged.

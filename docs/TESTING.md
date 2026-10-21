@@ -1359,3 +1359,9 @@ the touchpad suite requires `CAPYIO_TOUCHPAD_PAIRED_STORE=1` with
 `paired-store,touchpad-test-fixture`. Both retain legacy runs, exact test discovery,
 strict success records and bounded cleanup. Native graph/fake-helper evidence
 must come from the disposable hosted runner, never a user keyring or device.
+
+ADR 1543 extends the isolated store subprocess tests and existing disposable audio
+graph gates to paired playback, virtual microphone, capture and virtual speaker,
+retaining legacy runs and independent waveform/tone and cleanup checks. Incoming
+draft control acceptance is distinct from graph coverage. No real keyring or
+physical audio device is used.

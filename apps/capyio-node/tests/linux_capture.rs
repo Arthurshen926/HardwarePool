@@ -4,6 +4,10 @@
 //! capture process. The explicitly ignored graph case additionally requires the
 //! hosted harness's private synthetic PipeWire graph and exact opt-in markers.
 //! Android policy and shared Rust UDP receive are real; app consumption is simulated.
+#[cfg(feature = "paired-store")]
+#[path = "support/paired_store.rs"]
+mod paired_store;
+
 use capyio_android_jni::AndroidCatalogRuntimeV1;
 use capyio_control_credentials::ControlCredentialBundle;
 use capyio_control_link::{CatalogControlLink, ReceivedControlMessage};
@@ -48,6 +52,8 @@ fn drain(reader: &mut impl Read, bytes: &mut Vec<u8>) {
     }
 }
 struct Process {
+    #[cfg(feature = "paired-store")]
+    pairing: Option<paired_store::PersistedPairing>,
     child: Child,
     stdout: Vec<u8>,
     stderr: Vec<u8>,
@@ -71,6 +77,8 @@ impl Process {
         nonblocking(child.stderr.as_ref().unwrap());
         Self {
             child,
+            #[cfg(feature = "paired-store")]
+            pairing: None,
             stdout: Vec::new(),
             stderr: Vec::new(),
         }
@@ -107,6 +115,11 @@ impl Process {
     fn collect(&mut self) {
         drain(self.child.stdout.as_mut().unwrap(), &mut self.stdout);
         drain(self.child.stderr.as_mut().unwrap(), &mut self.stderr);
+        #[cfg(feature = "paired-store")]
+        if let Some(pairing) = &self.pairing {
+            pairing.assert_no_leak(&self.stdout);
+            pairing.assert_no_leak(&self.stderr);
+        }
     }
     fn event(&mut self, expected: &str) -> Value {
         let deadline = Instant::now() + BOUND;
@@ -136,6 +149,15 @@ impl Process {
             self.collect();
             if let Some(status) = self.child.try_wait().unwrap() {
                 self.collect();
+                #[cfg(feature = "paired-store")]
+                if let Some(pairing) = &self.pairing {
+                    let state = pairing.service.state.lock().unwrap();
+                    assert!(state.reads > 0, "actual protected credential read required");
+                    assert_eq!(state.forbidden, 0);
+                    eprintln!(
+                        "capyio_audio_paired_store=passed protected_read=true secret_redacted=true"
+                    );
+                }
                 return status;
             }
             assert!(
@@ -210,6 +232,30 @@ impl Fixture {
             runtime,
             nodes: ControlTlsNodeBinding::new(local, sink.node_id).unwrap(),
         }
+    }
+    fn launch(&self, paired: bool, environment: &[(&str, &str)]) -> Process {
+        if paired {
+            #[cfg(feature = "paired-store")]
+            {
+                let local = serde_json::from_value(self.config["node_id"].clone()).unwrap();
+                let pairing =
+                    paired_store::PersistedPairing::new(local, &self.directory, &self.bundle);
+                let args = pairing.args("linux-capture");
+                let mut process = Process::start_with_env(
+                    &args.iter().map(String::as_str).collect::<Vec<_>>(),
+                    environment,
+                );
+                process.pairing = Some(pairing);
+                process.command(self.config.clone());
+                process.command(json!({"version":1,"credential_source":"paired-store"}));
+                return process;
+            }
+            #[cfg(not(feature = "paired-store"))]
+            panic!("paired audio acceptance requires the paired-store build feature");
+        }
+        let mut process = Process::start_with_env(&["linux-capture", "--trusted-lab"], environment);
+        self.bootstrap(&mut process);
+        process
     }
     fn bootstrap(&self, process: &mut Process) {
         process.command(self.config.clone());
@@ -909,12 +955,10 @@ mod hosted_capture {
             fixture.config["endpoint_mode"] = json!("virtual_speaker");
         }
         fixture.config["duration_secs"] = json!(lifetime.as_secs());
-        let mut process = if virtual_speaker {
-            Process::start_with_env(&["linux-capture", "--trusted-lab"], &POISONED_ENV)
-        } else {
-            Process::capture()
-        };
-        fixture.bootstrap(&mut process);
+        let mut process = fixture.launch(
+            hosted_paired_store(),
+            if virtual_speaker { &POISONED_ENV } else { &[] },
+        );
         let mut peer = fixture.connect(&mut process);
         let approval = process.event("approval_required");
         let source: PortRef = serde_json::from_value(approval["source"].clone()).unwrap();
@@ -1491,4 +1535,12 @@ fn identities() -> (
         },
         client_pin,
     )
+}
+
+fn hosted_paired_store() -> bool {
+    match std::env::var_os("CAPYIO_AUDIO_PAIRED_STORE") {
+        None => false,
+        Some(value) if value == "1" => true,
+        Some(_) => panic!("exact paired-store hosted opt-in required"),
+    }
 }

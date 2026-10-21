@@ -425,8 +425,8 @@ def process_diagnostic(pid):
 
 
 class CaptureHarness(Harness):
-    def __init__(self, root, scenario, endpoint_mode='selected_source'):
-        super().__init__(root, e2e=True)
+    def __init__(self, root, scenario, endpoint_mode='selected_source', paired_store=False):
+        super().__init__(root, e2e=True, paired_store=paired_store)
         if endpoint_mode not in ('selected_source', 'virtual_speaker'):
             raise ValueError('explicit recognized capture endpoint mode required')
         allowed = VIRTUAL_SCENARIOS if endpoint_mode == 'virtual_speaker' else SCENARIOS
@@ -612,6 +612,7 @@ def main():
     parser.add_argument('--scenario', choices=tuple(dict.fromkeys(SCENARIOS + VIRTUAL_SCENARIOS)), required=True)
     parser.add_argument('--endpoint-mode', choices=('selected_source', 'virtual_speaker'),
                         default='selected_source')
+    parser.add_argument('--paired-store', action='store_true')
     args = parser.parse_args()
     if os.environ.get('GITHUB_ACTIONS') != 'true':
         parser.error('requires explicit disposable hosted CI environment')
@@ -621,9 +622,11 @@ def main():
     signal.signal(signal.SIGTERM, interrupted)
     signal.signal(signal.SIGINT, interrupted)
     with tempfile.TemporaryDirectory(prefix='capyio-capture-') as directory:
-        harness = CaptureHarness(Path(directory), args.scenario, args.endpoint_mode)
+        harness = CaptureHarness(Path(directory), args.scenario, args.endpoint_mode,
+                                 paired_store=args.paired_store)
         try:
             harness.run_capture(args.fixture.resolve(strict=True))
+            harness.verify_pairing()
         except Exception:
             for name in ('daemon.err', 'producer.err', 'source.err', 'command.err'):
                 path = Path(directory) / name
@@ -635,6 +638,9 @@ def main():
             signal.signal(signal.SIGTERM, signal.SIG_IGN)
             signal.signal(signal.SIGINT, signal.SIG_IGN)
             harness.close()
+    if args.paired_store:
+        mode = 'virtual_speaker' if args.endpoint_mode == 'virtual_speaker' else 'capture'
+        print(f'capyio_audio_paired_graph=passed mode={mode} scenario={args.scenario} protected_read=true cleanup=true')
     print((VIRTUAL_SUCCESS if args.endpoint_mode == 'virtual_speaker' else SUCCESS)
           .format(scenario=args.scenario))
 

@@ -88,6 +88,18 @@ impl Fixture {
     fn config(&self) -> Value {
         json!({"version":1,"node_id":self.owner,"source":{"node_id":self.peer,"capability_id":CapabilityId::new(),"port_id":PortId::new()},"listen":"127.0.0.1:0","duration_secs":3})
     }
+    fn audio_config(&self, command: &str) -> Value {
+        let mut config = self.config();
+        config["media"] = json!("127.0.0.1:40211");
+        config["target"] = json!("synthetic.test");
+        if command == "linux-capture" {
+            let source = config.as_object_mut().unwrap().remove("source").unwrap();
+            config["sink"] = source;
+        } else {
+            assert_eq!(command, "linux-playback");
+        }
+        config
+    }
     fn no_leak(&self, process: &Process) {
         self.assert_no_leak(&process.out);
         self.assert_no_leak(&process.err);
@@ -381,7 +393,12 @@ fn ipc_paired_store_rejects_legacy_credential_frames_in_selected_mode() {
 }
 #[test]
 fn paired_store_cli_rejects_incomplete_selector_set_without_access() {
-    for command in ["linux-camera", "linux-touchpad"] {
+    for command in [
+        "linux-camera",
+        "linux-touchpad",
+        "linux-playback",
+        "linux-capture",
+    ] {
         let mut process = Process::start(&[
             command.into(),
             "--trusted-lab".into(),
@@ -390,5 +407,148 @@ fn paired_store_cli_rejects_incomplete_selector_set_without_access() {
         ]);
         assert!(!process.finish().success());
         assert!(!String::from_utf8_lossy(&process.out).contains("listening"));
+    }
+}
+
+// These cases deliberately stop before peer admission: persisted credentials
+// permit a listener, never media, a PipeWire endpoint, or fresh Route consent.
+#[test]
+fn ipc_paired_store_audio_loads_credentials_without_helpers_and_stops() {
+    for (command, virtual_endpoint, incoming_draft) in [
+        ("linux-playback", false, false),
+        ("linux-playback", false, true),
+        ("linux-playback", true, true),
+        ("linux-capture", false, false),
+        ("linux-capture", true, false),
+    ] {
+        let fixture = Fixture::new();
+        let mut config = fixture.audio_config(command);
+        if virtual_endpoint {
+            config.as_object_mut().unwrap().remove("target");
+            config["endpoint_mode"] = json!(if command == "linux-playback" {
+                "virtual_microphone"
+            } else {
+                "virtual_speaker"
+            });
+        }
+        if incoming_draft {
+            config["proposal_mode"] = json!("incoming_draft");
+        }
+        let mut process = Process::start(&fixture.args(command));
+        process.frames(&[
+            &serde_json::to_vec(&config).unwrap(),
+            &serde_json::to_vec(&marker()).unwrap(),
+        ]);
+        process.event("listening");
+        process.no_helper();
+        process.command(json!({"version":1,"command":"stop"}));
+        process.event("stopped");
+        assert!(process.finish().success());
+        fixture.no_leak(&process);
+        let state = fixture.service.state.lock().unwrap();
+        assert!(
+            state.reads > 0,
+            "stored credentials must actually be loaded"
+        );
+        assert_eq!(state.forbidden, 0);
+        assert!(!String::from_utf8_lossy(&process.out).contains("approval_required"));
+    }
+}
+
+#[test]
+fn ipc_paired_store_audio_binding_and_backend_fail_before_listener() {
+    for command in ["linux-playback", "linux-capture"] {
+        for failure in [
+            "config-node",
+            "config-peer",
+            "revoked",
+            "locked",
+            "missing",
+            "digest",
+        ] {
+            let fixture = Fixture::new();
+            let mut config = fixture.audio_config(command);
+            match failure {
+                "config-node" => config["node_id"] = json!(NodeId::new()),
+                "config-peer" => {
+                    let remote = if command == "linux-playback" {
+                        "source"
+                    } else {
+                        "sink"
+                    };
+                    config[remote]["node_id"] = json!(NodeId::new());
+                }
+                "revoked" => fixture.revoke(),
+                "locked" => fixture.service.state.lock().unwrap().locked = true,
+                "missing" => fixture.service.state.lock().unwrap().missing = true,
+                "digest" => fixture.service.state.lock().unwrap().bytes[0] ^= 1,
+                _ => unreachable!(),
+            }
+            let mut process = Process::start(&fixture.args(command));
+            process.frames(&[
+                &serde_json::to_vec(&config).unwrap(),
+                &serde_json::to_vec(&marker()).unwrap(),
+            ]);
+            process.event("failed");
+            assert!(!process.finish().success(), "{command}: {failure}");
+            assert!(!String::from_utf8_lossy(&process.out).contains("listening"));
+            fixture.no_leak(&process);
+            let state = fixture.service.state.lock().unwrap();
+            assert_eq!(state.forbidden, 0);
+            if matches!(failure, "config-node" | "config-peer") {
+                assert_eq!(
+                    state.collection_property_reads, 0,
+                    "binding before keyring preflight"
+                );
+                assert_eq!(state.sessions, 0);
+            }
+            if failure == "digest" {
+                assert!(
+                    state.reads > 0,
+                    "changed stored bytes must actually be checked"
+                );
+            } else {
+                assert_eq!(
+                    state.reads, 0,
+                    "{failure} before protected credential reads"
+                );
+            }
+        }
+    }
+}
+
+#[test]
+fn ipc_paired_store_audio_rejects_mixed_bootstrap_without_keyring_access() {
+    for command in ["linux-playback", "linux-capture"] {
+        for selected_store in [false, true] {
+            let fixture = Fixture::new();
+            let args = if selected_store {
+                fixture.args(command)
+            } else {
+                vec![command.into(), "--trusted-lab".into()]
+            };
+            let mut process = Process::start(&args);
+            let store_marker = serde_json::to_vec(&marker()).unwrap();
+            process.frames(&[
+                &serde_json::to_vec(&fixture.audio_config(command)).unwrap(),
+                if selected_store {
+                    &fixture.directory
+                } else {
+                    &store_marker
+                },
+                &fixture.bundle,
+            ]);
+            // Supply a complete credential frame and keep stdin open: this must
+            // reject the mixed mode, not merely fail on missing input or EOF.
+            process.event("failed");
+            assert!(!process.finish().success());
+            assert!(!String::from_utf8_lossy(&process.out).contains("listening"));
+            fixture.no_leak(&process);
+            let state = fixture.service.state.lock().unwrap();
+            assert_eq!(state.sessions, 0);
+            assert_eq!(state.collection_property_reads, 0);
+            assert_eq!(state.reads, 0);
+            assert_eq!(state.forbidden, 0);
+        }
     }
 }
