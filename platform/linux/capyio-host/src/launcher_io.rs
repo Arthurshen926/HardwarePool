@@ -268,6 +268,11 @@ impl LauncherIo {
     /// Bounded nonblocking progress with a nonrenewable one-second frame timer
     /// starting at the first prefix byte. True idle has no frame timer. Callers
     /// remain responsible for any shorter deadline and overall phase lifetime.
+    #[cfg(feature = "paired-store")]
+    pub(crate) fn has_pending_frame(&self) -> bool {
+        self.reader.started_at.is_some()
+    }
+
     pub(crate) fn poll_frame(&mut self, max: usize) -> io::Result<Option<SecretBytes>> {
         if self.terminal {
             return Err(fail(

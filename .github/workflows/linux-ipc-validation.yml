@@ -50,6 +50,33 @@ jobs:
           timeout --signal=TERM --kill-after=10s 600s cargo test --locked -p capyio-node --features paired-store --test linux_paired_store --test linux_camera --test linux_touchpad -- --test-threads=1
           cargo test --locked -p capyio-node --features paired-store --bin capyio-node paired_store_cli_tests
           cargo clippy --locked -p capyio-node -p capyio-linux-host --features paired-store --all-targets -- -D warnings
+      - name: Require read-only authenticated catalog Node and terminal proof
+        run: |
+          set -euo pipefail
+          cargo build --locked -p capyio-node -p capyio-linux-console --features paired-store
+          cargo test --locked -p capyio-linux-host --features paired-store catalog_inspect::tests
+          cargo test --locked -p capyio-linux-console --features paired-store --bin capyio-linux-console
+          cargo test --locked -p capyio-node --features paired-store --test linux_catalog -- --list --color never | tee "$RUNNER_TEMP/catalog-tests.txt"
+          cat > "$RUNNER_TEMP/catalog-required.txt" <<'TESTS'
+          ipc_catalog_authenticated_ids_directions_formats_read_only
+          ipc_catalog_pin_and_node_binding_fail_closed
+          ipc_catalog_store_failures_never_dial_or_mutate
+          ipc_catalog_config_and_marker_reject_before_store_access
+          ipc_catalog_malformed_and_oversized_catalog_has_no_partial_output
+          ipc_catalog_route_and_control_payloads_close_without_response
+          ipc_catalog_peer_eof_and_absolute_timeout_are_bounded
+          ipc_catalog_untrusted_fields_are_ascii_escaped_and_metadata_omitted
+          pty_catalog_actual_console_and_node_show_verified_public_ids
+          pty_catalog_actual_console_rejects_incomplete_or_wrong_peer_catalog
+          TESTS
+          while IFS= read -r name; do
+            grep -Fx "$name: test" "$RUNNER_TEMP/catalog-tests.txt"
+          done < "$RUNNER_TEMP/catalog-required.txt"
+          timeout --signal=TERM --kill-after=10s 240s cargo test --locked -p capyio-node --features paired-store --test linux_catalog -- --test-threads=1 --color never | tee "$RUNNER_TEMP/catalog-results.txt"
+          while IFS= read -r name; do
+            grep -Fx "test $name ... ok" "$RUNNER_TEMP/catalog-results.txt"
+          done < "$RUNNER_TEMP/catalog-required.txt"
+          grep -F 'test result: ok. 10 passed; 0 failed; 0 ignored;' "$RUNNER_TEMP/catalog-results.txt"
       - name: Require explicit finite enrollment management against isolated peers
         run: |
           set -euo pipefail
@@ -285,6 +312,10 @@ jobs:
           capture_route::tests::ipc_capture_lifetime_elapsed_during_open_cannot_activate
           capture_route::tests::ipc_capture_lifetime_session_or_grant_change_stops_before_read_or_send
           capture_route::tests::ipc_capture_drop_releases_udp_without_claiming_runtime_transition
+          tests::ipc_connect_until_pinned_tls_exact_and_fresh_binding_succeed
+          tests::ipc_connect_until_stalled_handshake_times_out_and_shuts_down_peer
+          tests::ipc_connect_until_trickled_handshake_cannot_renew_whole_deadline
+          tests::ipc_connect_until_trickled_binding_shares_handshake_deadline
           camera_job::lifecycle_tests::stop_during_actual_tls_handshake_never_publishes_ready_and_finishes_bounded
           camera_job::lifecycle_tests::stop_after_actual_tls_connect_before_ready_installation_cannot_resurrect_job
           camera_job::lifecycle_tests::actual_source_lease_revoke_after_ready_closes_media_and_rejects_records

@@ -1,7 +1,7 @@
 # Linux build, passive staging and bounded operations
 
 This is a local software staging entry, not an installer, release package,
-finished user-facing pairing flow or authorization to operate a device. The primary
+complete identity/keyring provisioning flow or authorization to operate a device. The primary
 Speaker, Microphone, Camera and Touchpad software paths share one explicitly
 built node and fixed sibling helpers. Physical acceptance remains deferred.
 
@@ -173,8 +173,10 @@ only, never remote completion or service readiness. Manual welcome requires a
 concrete bind address and separately provisioned private invitation FIFO; PINs
 never appear in normal status output. Hosting is an explicit finite action, not
 a staging/build side effect. Default staging retains
-the trusted-bootstrap path only. A normal user-facing pairing/bootstrap flow and
-real-user backend acceptance remain open. Actual identity generation, persistent
+the trusted-bootstrap path only. The paired-store profile now includes the
+explicit interactive welcome/join/list/recover/revoke controller described below;
+identity provisioning, existing unlocked keyring/collection setup and real-user
+backend acceptance remain open. Actual identity generation, persistent
 access configuration, permissions, installation and physical operation remain
 separate deployment actions. Therefore this is not “install and use.”
 
@@ -194,7 +196,9 @@ status and error protocol; failed or Starting status is not Active.
   UDP for media; pinned TLS/control approval does not encrypt audio packets.
 - Camera: explicit Android Source to owned native Video/Source, canonical
   1280×720 at 30 fps NV12 BT.709 limited output from rotation-zero Annex B AVC;
-  finite ingress is capped at 60 seconds, 32 MiB and 120 frames, without renewal.
+  finite ingress is capped independently at 60 seconds, 32 MiB and 120 frames,
+  without renewal. At the fixed 30 fps profile, 120 frames is about four seconds
+  of continuous video; the 60-second time ceiling is not a 60-second video promise.
   Queued frames leave the Route Starting, not falsely Active; third-party
   application consumption is not inferred. No V4L2/portal/kernel camera promise.
 - Touchpad: owned five-contact 120×70 mm Type-B Sink, never a fake relative mouse.
@@ -349,6 +353,8 @@ loopback/private/link-local IPv4 address and exact paired peer Port IDs. Do not
 include credential material, audio media/target fields or implicit devices. The
 console never discovers or captures a physical local camera. Duration is 3–60
 seconds; the fixed profile is 1280×720 AVC at 30 fps with at most 120 frames.
+That frame cap represents about four seconds of continuous video at 30 fps;
+the separately selected time ceiling does not extend the frame or byte budgets.
 
 Review the remote Source → local virtual-camera Sink, exact peer, format, mutual
 TLS security and finite frame/byte/time limits. Only the exact fresh displayed
@@ -384,3 +390,29 @@ configure `/dev/uinput`. The hosted acceptance uses a separately compiled
 `touchpad-test-fixture` console/Node pair and fake syscalls only. Its explicit
 `touchpad-fixture` action and synthetic stderr traces are development instrumentation,
 not supported production deployment options; both staged profiles exclude them.
+
+## Read-only authenticated catalog inspection (ADR 1552)
+
+After pairing, inspect actual published Capability/Port IDs using an explicit
+existing peer control address. This requires the paired-store staging profile
+and an unlocked explicitly selected backend, but starts no media or local listener:
+
+```sh
+./capyio-linux-console --pairing-node LOCAL_NODE_UUID --pairing-state /absolute/private/state --pairing-bus-address unix:path=/explicit/bus --pairing-collection /org/freedesktop/secrets/collection/EXISTING catalog --peer PEER_NODE_UUID --endpoint 192.0.2.20:PORT
+```
+
+The address is illustrative; use the peer's existing reachable supported private
+or loopback IPv4 endpoint. The stored peer server name and leaf pin remain exact.
+Only an empty local catalog is sent, then one remote snapshot is validated and
+the connection closes. Results expose bounded public IDs, directions, formats
+and availability with escaped text. `needs_local_selection` is only a metadata
+hint, not compatibility, local-device discovery or authorization. No Route,
+proposal, grant, lease, helper or media endpoint is created. A published Port can
+change after inspection; the finite media launcher must revalidate it and obtain
+fresh local and counterpart consent. Manifest generation is not included yet.
+
+Do not expect this command to discover a peer address, configure its publication,
+unlock a collection, provision identity or verify physical hardware. Missing,
+revoked, locked, mismatched or oversized results fail rather than producing a
+partial usable catalog. Ctrl-C/EOF/cancel closes the bounded operation; no retry,
+renewal or resource approval is retained.

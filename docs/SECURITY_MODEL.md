@@ -1636,3 +1636,9 @@ Node schema. Binding never implies activation; independent software-helper
 acceptance retains full commit-before-ACK and contact-release proof. The fixture
 action is compile-time-only and excluded from both staging profiles. No real
 uinput device, permission change, OS gesture proof or renewal is introduced.
+
+
+ADR 1552 adds a bounded paired-store authenticated catalog snapshot and terminal
+inspection, without creating Routes, grants, leases or media endpoints. Empty
+local publication and exact peer/certificate binding precede a bounded escaped
+projection. Catalog-only hints never imply resource readiness or approval.

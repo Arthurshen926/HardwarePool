@@ -50,6 +50,14 @@ enum Command {
         #[arg(long)]
         pairing_collection: String,
     },
+    /// One read-only authenticated catalog snapshot; no resource authority.
+    #[cfg(feature = "paired-store")]
+    LinuxCatalog {
+        #[arg(long, required = true)]
+        trusted_lab: bool,
+        #[command(flatten)]
+        paired_store: PairedStoreArgs,
+    },
     /// Explicit one-shot trusted-lab playback. Private inherited FIFO bootstrap;
     /// no credentials in arguments, no enrollment, no listener without this command.
     LinuxPlayback {
@@ -125,7 +133,8 @@ fn main() -> anyhow::Result<()> {
     // This opt-in command accepts secret material only through framed stdin.
     // Never echo even accidentally supplied argv values on its syntax errors.
     let lab_command = std::env::args_os().nth(1).is_some_and(|arg| {
-        arg == "linux-playback"
+        arg == "linux-catalog"
+            || arg == "linux-playback"
             || arg == "linux-capture"
             || arg == "linux-camera"
             || arg == "linux-touchpad"
@@ -203,6 +212,26 @@ fn main() -> anyhow::Result<()> {
                     pairing_collection,
                 );
                 anyhow::bail!("Linux pairing management requires Linux")
+            }
+        }
+        #[cfg(feature = "paired-store")]
+        Command::LinuxCatalog {
+            trusted_lab,
+            paired_store,
+        } => {
+            anyhow::ensure!(trusted_lab, "explicit trusted-lab opt-in required");
+            #[cfg(target_os = "linux")]
+            {
+                let selection = paired_store
+                    .selection()?
+                    .context("explicit paired-store selectors required")?;
+                capyio_linux_host::run_catalog_inspect_stdio(selection)
+                    .map_err(|_| anyhow::anyhow!("Linux catalog inspection failed"))
+            }
+            #[cfg(not(target_os = "linux"))]
+            {
+                let _ = paired_store;
+                anyhow::bail!("Linux catalog inspection requires Linux")
             }
         }
         Command::LinuxPlayback {
@@ -556,6 +585,36 @@ impl PairedStoreArgs {
 #[cfg(all(test, feature = "paired-store"))]
 mod paired_store_cli_tests {
     use super::*;
+    #[test]
+    fn catalog_requires_explicit_command_and_complete_paired_selectors() {
+        assert!(Cli::try_parse_from(["node", "linux-catalog"]).is_err());
+        let parsed = Cli::try_parse_from(["node", "linux-catalog", "--trusted-lab"]).unwrap();
+        let Some(Command::LinuxCatalog { paired_store, .. }) = parsed.command else {
+            panic!("catalog command required")
+        };
+        assert!(paired_store.selection().unwrap().is_none());
+        assert!(
+            Cli::try_parse_from([
+                "node",
+                "linux-catalog",
+                "--trusted-lab",
+                "--pairing-state",
+                "/synthetic/state"
+            ])
+            .is_err()
+        );
+        assert!(
+            Cli::try_parse_from([
+                "node",
+                "linux-catalog",
+                "--trusted-lab",
+                "--credential",
+                "never-accepted"
+            ])
+            .is_err()
+        );
+    }
+
     #[test]
     fn pairing_management_requires_explicit_public_selectors_only() {
         let args = [

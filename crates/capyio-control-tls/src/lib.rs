@@ -378,6 +378,20 @@ impl AuthenticatedControlClientChannel {
         Self::connect(endpoint, server_name, identity, binding)
     }
 
+    /// Propose a fresh Session within one absolute TCP/TLS/binding deadline.
+    /// Expiry or any connection failure is terminal; no retry is performed.
+    pub fn connect_fresh_session_until(
+        endpoint: ControlTlsEndpoint,
+        server_name: &str,
+        identity: ControlTlsClientIdentity,
+        expected_nodes: ControlTlsNodeBinding,
+        deadline: Instant,
+    ) -> Result<Self, ControlTlsError> {
+        check_poll_deadline(deadline)?;
+        let binding = expected_nodes.with_session(SessionId::new())?;
+        Self::connect_until(endpoint, server_name, identity, binding, deadline)
+    }
+
     pub fn connect(
         endpoint: ControlTlsEndpoint,
         server_name: &str,
@@ -389,8 +403,64 @@ impl AuthenticatedControlClientChannel {
             return Err(ControlTlsError::InvalidEndpoint);
         }
         let socket = TcpStream::connect_timeout(&endpoint.address, endpoint.io_timeout)?;
-        socket.set_read_timeout(Some(endpoint.io_timeout))?;
-        socket.set_write_timeout(Some(endpoint.io_timeout))?;
+        Self::authenticate_socket(socket, endpoint.io_timeout, server_name, identity, expected)
+    }
+
+    /// Bound TCP connection, TLS handshake and the complete authenticated
+    /// binding exchange by the same absolute deadline, including trickled
+    /// input. The TCP timeout is the lesser of the remaining budget and the
+    /// endpoint timeout. Expired budgets fail before opening a socket; any
+    /// failure after connecting shuts down that connection without retry.
+    /// Success retains the endpoint's ordinary per-I/O timeout.
+    pub fn connect_until(
+        endpoint: ControlTlsEndpoint,
+        server_name: &str,
+        identity: ControlTlsClientIdentity,
+        expected: ControlTlsBinding,
+        deadline: Instant,
+    ) -> Result<Self, ControlTlsError> {
+        check_poll_deadline(deadline)?;
+        endpoint.validate()?;
+        if server_name.is_empty() || server_name.len() > 253 {
+            return Err(ControlTlsError::InvalidEndpoint);
+        }
+        let timeout = connect_timeout_until(endpoint.io_timeout, deadline)?;
+        let socket = match TcpStream::connect_timeout(&endpoint.address, timeout) {
+            Ok(socket) => socket,
+            Err(error) => {
+                check_poll_deadline(deadline)?;
+                return Err(error.into());
+            }
+        };
+        // Retain an owner for terminal cleanup, including cloning/watcher
+        // startup errors and expiry racing with successful authentication.
+        let result = (|| {
+            let watchdog_socket = socket.try_clone()?;
+            with_socket_deadline(watchdog_socket, deadline, || {
+                Self::authenticate_socket(
+                    socket.try_clone()?,
+                    endpoint.io_timeout,
+                    server_name,
+                    identity,
+                    expected,
+                )
+            })
+        })();
+        if result.is_err() {
+            let _ = socket.shutdown(Shutdown::Both);
+        }
+        result
+    }
+
+    fn authenticate_socket(
+        socket: TcpStream,
+        io_timeout: Duration,
+        server_name: &str,
+        identity: ControlTlsClientIdentity,
+        expected: ControlTlsBinding,
+    ) -> Result<Self, ControlTlsError> {
+        socket.set_read_timeout(Some(io_timeout))?;
+        socket.set_write_timeout(Some(io_timeout))?;
         socket.set_nodelay(true)?;
         let server_name = ServerName::try_from(server_name.to_owned())
             .map_err(|_| ControlTlsError::InvalidEndpoint)?;
@@ -547,6 +617,21 @@ impl AuthenticatedControlServerChannel {
         }
         result
     }
+}
+
+fn connect_timeout_until(
+    io_timeout: Duration,
+    deadline: Instant,
+) -> Result<Duration, ControlTlsError> {
+    let remaining = deadline.saturating_duration_since(Instant::now());
+    if remaining.is_zero() {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::TimedOut,
+            "control connection deadline expired",
+        )
+        .into());
+    }
+    Ok(io_timeout.min(remaining))
 }
 
 /// A bounded watcher shuts down only a clone of the same owned connection.
@@ -1265,6 +1350,299 @@ mod tests {
             std::io::ErrorKind::TimedOut
         );
         assert!(check_poll_deadline(Instant::now() + Duration::from_secs(1)).is_ok());
+    }
+
+    #[test]
+    fn connect_deadline_check_clamps_tcp_timeout_to_remaining_budget() {
+        let deadline = Instant::now() + Duration::from_millis(50);
+        let timeout = connect_timeout_until(Duration::from_secs(2), deadline).unwrap();
+        assert!(!timeout.is_zero());
+        assert!(timeout <= Duration::from_millis(50));
+        assert_eq!(
+            connect_timeout_until(
+                Duration::from_millis(100),
+                Instant::now() + Duration::from_secs(2),
+            )
+            .unwrap(),
+            Duration::from_millis(100)
+        );
+        assert!(matches!(
+            connect_timeout_until(
+                Duration::from_secs(2),
+                Instant::now() - Duration::from_millis(1),
+            ),
+            Err(ControlTlsError::Io(error)) if error.kind() == std::io::ErrorKind::TimedOut
+        ));
+    }
+
+    #[test]
+    fn connect_deadline_check_expired_dial_apis_fail_without_io() {
+        // Invalid endpoint/credential fixtures ensure this regression cannot
+        // open a socket even if the initial deadline check is accidentally lost.
+        let endpoint = ControlTlsEndpoint {
+            address: (Ipv4Addr::UNSPECIFIED, 0).into(),
+            io_timeout: Duration::from_secs(2),
+        };
+        let identity = ControlTlsClientIdentity {
+            expected_peer_certificate: CertificateFingerprint::new([7; 32]).unwrap(),
+            certificate_chain_der: Vec::new(),
+            private_key_der: Vec::new(),
+            server_ca_der: Vec::new(),
+        };
+        let expected = binding();
+        let deadline = Instant::now() - Duration::from_millis(1);
+        assert!(matches!(
+            AuthenticatedControlClientChannel::connect_until(
+                endpoint,
+                "localhost",
+                identity.clone(),
+                expected,
+                deadline,
+            ),
+            Err(ControlTlsError::Io(error)) if error.kind() == std::io::ErrorKind::TimedOut
+        ));
+        assert!(matches!(
+            AuthenticatedControlClientChannel::connect_fresh_session_until(
+                endpoint,
+                "localhost",
+                identity,
+                ControlTlsNodeBinding::new(expected.server_node_id, expected.client_node_id)
+                    .unwrap(),
+                deadline,
+            ),
+            Err(ControlTlsError::Io(error)) if error.kind() == std::io::ErrorKind::TimedOut
+        ));
+    }
+
+    #[test]
+    fn ipc_connect_until_pinned_tls_exact_and_fresh_binding_succeed() {
+        for fresh in [false, true] {
+            let (server_identity, client_identity) = test_identities();
+            let expected = binding();
+            let nodes =
+                ControlTlsNodeBinding::new(expected.server_node_id, expected.client_node_id)
+                    .unwrap();
+            let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).unwrap();
+            let endpoint = ControlTlsEndpoint {
+                address: listener.local_addr().unwrap(),
+                io_timeout: Duration::from_secs(2),
+            };
+            let server = if fresh {
+                AuthenticatedControlServer::from_listener_fresh_session(
+                    listener,
+                    server_identity,
+                    nodes,
+                    endpoint.io_timeout,
+                )
+            } else {
+                AuthenticatedControlServer::from_listener(
+                    listener,
+                    server_identity,
+                    expected,
+                    endpoint.io_timeout,
+                )
+            }
+            .unwrap();
+            let worker = thread::spawn(move || server.accept().unwrap());
+            let deadline = Instant::now() + Duration::from_secs(2);
+            let mut client = if fresh {
+                AuthenticatedControlClientChannel::connect_fresh_session_until(
+                    endpoint,
+                    "localhost",
+                    client_identity,
+                    nodes,
+                    deadline,
+                )
+            } else {
+                AuthenticatedControlClientChannel::connect_until(
+                    endpoint,
+                    "localhost",
+                    client_identity,
+                    expected,
+                    deadline,
+                )
+            }
+            .unwrap();
+            let mut accepted = worker.join().unwrap();
+            assert_eq!(client.binding(), accepted.binding());
+            assert_eq!(client.binding().server_node_id, expected.server_node_id);
+            assert_eq!(client.binding().client_node_id, expected.client_node_id);
+            if fresh {
+                assert_ne!(client.binding().session_id, expected.session_id);
+                assert!(!client.binding().session_id.as_uuid().is_nil());
+            } else {
+                assert_eq!(client.binding(), expected);
+            }
+            assert_eq!(
+                client.stream.io.sock.read_timeout().unwrap(),
+                Some(endpoint.io_timeout)
+            );
+            assert_eq!(
+                client.stream.io.sock.write_timeout().unwrap(),
+                Some(endpoint.io_timeout)
+            );
+            // A successful dial leaves no watcher that later closes the channel.
+            thread::sleep(deadline.saturating_duration_since(Instant::now()));
+            let payload = envelope(client.binding().session_id, "deadline dial");
+            client.send_envelope(&payload).unwrap();
+            assert_eq!(accepted.receive_envelope().unwrap(), payload);
+            accepted.send_envelope(&payload).unwrap();
+            assert_eq!(client.receive_envelope().unwrap(), payload);
+        }
+    }
+
+    #[test]
+    fn ipc_connect_until_stalled_handshake_times_out_and_shuts_down_peer() {
+        let (_, identity) = test_identities();
+        let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).unwrap();
+        let endpoint = ControlTlsEndpoint {
+            address: listener.local_addr().unwrap(),
+            io_timeout: Duration::from_secs(2),
+        };
+        let worker = thread::spawn(move || {
+            let (mut socket, _) = listener.accept().unwrap();
+            socket
+                .set_read_timeout(Some(Duration::from_secs(2)))
+                .unwrap();
+            let mut hello = Vec::new();
+            // EOF must arrive from terminal client shutdown, not our timeout.
+            socket.read_to_end(&mut hello).unwrap();
+            assert!(!hello.is_empty());
+        });
+        let start = Instant::now();
+        let result = AuthenticatedControlClientChannel::connect_until(
+            endpoint,
+            "localhost",
+            identity,
+            binding(),
+            start + Duration::from_millis(250),
+        );
+        let elapsed = start.elapsed();
+        worker.join().unwrap();
+        assert!(matches!(result, Err(ControlTlsError::Io(error))
+            if error.kind() == std::io::ErrorKind::TimedOut));
+        assert!(elapsed >= Duration::from_millis(250));
+        assert!(elapsed < Duration::from_secs(1));
+    }
+
+    #[test]
+    fn ipc_connect_until_trickled_handshake_cannot_renew_whole_deadline() {
+        let (server_identity, client_identity) = test_identities();
+        let config = build_server_config(server_identity).unwrap();
+        let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).unwrap();
+        let endpoint = ControlTlsEndpoint {
+            address: listener.local_addr().unwrap(),
+            io_timeout: Duration::from_secs(2),
+        };
+        let writer = thread::spawn(move || {
+            let (mut socket, _) = listener.accept().unwrap();
+            socket
+                .set_read_timeout(Some(Duration::from_secs(2)))
+                .unwrap();
+            socket
+                .set_write_timeout(Some(Duration::from_secs(2)))
+                .unwrap();
+            socket.set_nodelay(true).unwrap();
+            let mut connection = ServerConnection::new(config).unwrap();
+            while !connection.wants_write() {
+                assert!(connection.read_tls(&mut socket).unwrap() > 0);
+                connection.process_new_packets().unwrap();
+            }
+            let mut flight = Vec::new();
+            while connection.wants_write() {
+                connection.write_tls(&mut flight).unwrap();
+            }
+            assert!(flight.len() > 100);
+            let mut sent = 0;
+            // Keep the fixture finite even if the deadline regresses.
+            for byte in flight.iter().take(100) {
+                if socket.write_all(&[*byte]).is_err() {
+                    break;
+                }
+                sent += 1;
+                thread::sleep(Duration::from_millis(20));
+            }
+            sent
+        });
+        let start = Instant::now();
+        let result = AuthenticatedControlClientChannel::connect_until(
+            endpoint,
+            "localhost",
+            client_identity,
+            binding(),
+            start + Duration::from_millis(250),
+        );
+        let elapsed = start.elapsed();
+        let sent = writer.join().unwrap();
+        assert!(matches!(result, Err(ControlTlsError::Io(error))
+            if error.kind() == std::io::ErrorKind::TimedOut));
+        assert!(elapsed >= Duration::from_millis(250));
+        assert!(elapsed < Duration::from_secs(1));
+        assert!(sent > 0, "the peer started its TLS handshake response");
+        assert!(sent < 100, "the peer observed terminal shutdown");
+    }
+
+    #[test]
+    fn ipc_connect_until_trickled_binding_shares_handshake_deadline() {
+        let (server_identity, client_identity) = test_identities();
+        let config = build_server_config(server_identity).unwrap();
+        let expected = binding();
+        let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).unwrap();
+        let endpoint = ControlTlsEndpoint {
+            address: listener.local_addr().unwrap(),
+            io_timeout: Duration::from_secs(2),
+        };
+        let writer = thread::spawn(move || {
+            let (socket, _) = listener.accept().unwrap();
+            socket
+                .set_read_timeout(Some(Duration::from_secs(2)))
+                .unwrap();
+            socket
+                .set_write_timeout(Some(Duration::from_secs(2)))
+                .unwrap();
+            socket.set_nodelay(true).unwrap();
+            let connection = ServerConnection::new(config).unwrap();
+            let mut stream = StreamOwned::new(connection, socket);
+            while stream.conn.is_handshaking() {
+                stream.conn.complete_io(&mut stream.sock).unwrap();
+            }
+            let mut request = [0; CONTROL_BIND_BYTES];
+            stream.read_exact(&mut request).unwrap();
+            verify_bind(&request, expected, BIND_REQUEST).unwrap();
+            thread::sleep(Duration::from_millis(100));
+            let mut sent = 0;
+            for byte in encode_bind(expected, BIND_ACK) {
+                if stream
+                    .write_all(&[byte])
+                    .and_then(|()| stream.flush())
+                    .is_err()
+                {
+                    break;
+                }
+                sent += 1;
+                thread::sleep(Duration::from_millis(20));
+            }
+            sent
+        });
+        let start = Instant::now();
+        let result = AuthenticatedControlClientChannel::connect_until(
+            endpoint,
+            "localhost",
+            client_identity,
+            expected,
+            start + Duration::from_millis(400),
+        );
+        let elapsed = start.elapsed();
+        let sent = writer.join().unwrap();
+        assert!(matches!(result, Err(ControlTlsError::Io(error))
+            if error.kind() == std::io::ErrorKind::TimedOut));
+        assert!(elapsed >= Duration::from_millis(400));
+        assert!(elapsed < Duration::from_secs(1));
+        assert!(sent > 0, "the peer reached the binding acknowledgement");
+        assert!(
+            sent < CONTROL_BIND_BYTES,
+            "the peer observed terminal shutdown"
+        );
     }
 
     #[test]

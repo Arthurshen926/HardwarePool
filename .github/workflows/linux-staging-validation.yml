@@ -84,6 +84,15 @@ jobs:
           else:
               assert result.returncode == 2, result
               assert "unrecognized subcommand 'linux-pairing'" in result.stderr, result.stderr
+          catalog_help = help_for('linux-catalog')
+          if paired:
+              assert catalog_help.returncode == 0, catalog_help.stderr
+              assert '--pairing-peer' in catalog_help.stdout
+          else:
+              assert catalog_help.returncode == 1, catalog_help
+              assert catalog_help.stdout == ''
+              assert catalog_help.stderr == ('Error: invalid Linux lab playback command; '
+                  '--trusted-lab is required; credentials must not be supplied in arguments\n')
           for command in ('linux-camera', 'linux-touchpad', 'linux-playback', 'linux-capture'):
               result = help_for(command)
               assert result.returncode == 0, result.stderr
@@ -92,6 +101,7 @@ jobs:
                                      capture_output=True, text=True, timeout=10)
           assert root_help.returncode == 0, root_help.stderr
           assert 'linux-touchpad-fixture' not in root_help.stdout
+          assert ('linux-catalog' in root_help.stdout) == paired
           fixture_help = help_for('linux-touchpad-fixture')
           # Lab syntax errors deliberately use a static redacted anyhow error,
           # not Clap's usual exit 2, even when the fixture is compiled out.
@@ -105,7 +115,7 @@ jobs:
                                         capture_output=True, text=True, timeout=10)
           assert console_help.returncode == 0, console_help.stderr
           assert 'capyio-linux-console' in console_help.stdout, console_help.stdout
-          for command in ('welcome', 'join', 'list', 'recover', 'revoke', 'cancel', 'playback', 'capture', 'camera', 'touchpad'):
+          for command in ('welcome', 'join', 'list', 'recover', 'revoke', 'cancel', 'playback', 'capture', 'camera', 'touchpad', 'catalog'):
               assert command in console_help.stdout, (command, console_help.stdout)
           for flag in ('--pairing-node', '--pairing-state', '--pairing-bus-address',
                        '--pairing-collection'):

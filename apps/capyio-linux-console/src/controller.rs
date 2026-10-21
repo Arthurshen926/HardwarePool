@@ -1,4 +1,5 @@
 mod camera;
+mod catalog;
 mod media;
 mod touchpad;
 
@@ -95,6 +96,13 @@ enum Action {
         #[arg(long)]
         endpoint: SocketAddr,
     },
+    /// One read-only authenticated catalog snapshot; never grants resources.
+    Catalog {
+        #[arg(long)]
+        peer: NodeId,
+        #[arg(long)]
+        endpoint: SocketAddr,
+    },
     List,
     Recover,
     Revoke {
@@ -167,6 +175,9 @@ fn validate(args: &Args) -> io::Result<()> {
             }
         }
         Action::Revoke { peer } if peer.as_uuid().is_nil() => return Err(invalid()),
+        Action::Catalog { peer, .. } if peer.as_uuid().is_nil() || *peer == args.pairing_node => {
+            return Err(invalid());
+        }
         Action::Playback { config, peer }
         | Action::Capture { config, peer }
         | Action::Camera { config, peer }
@@ -367,6 +378,7 @@ fn require_node_capability() -> io::Result<()> {
 fn require_node_capability_for(command: &str) -> io::Result<()> {
     if ![
         "linux-pairing",
+        "linux-catalog",
         "linux-playback",
         "linux-capture",
         "linux-camera",
@@ -461,9 +473,12 @@ fn touchpad_fixture_mode(mode: &str) -> bool {
 fn valid_node_command(command: &str, has_peer: bool, fixture_mode: Option<&str>) -> bool {
     match (command, has_peer, fixture_mode) {
         ("linux-pairing", false, None) => true,
-        ("linux-playback" | "linux-capture" | "linux-camera" | "linux-touchpad", true, None) => {
-            true
-        }
+        (
+            "linux-catalog" | "linux-playback" | "linux-capture" | "linux-camera"
+            | "linux-touchpad",
+            true,
+            None,
+        ) => true,
         ("linux-touchpad-fixture", true, Some(mode)) => touchpad_fixture_mode(mode),
         _ => false,
     }
@@ -865,6 +880,7 @@ pub fn run() -> io::Result<()> {
     }
     validate(&args)?;
     match &args.action {
+        Action::Catalog { peer, endpoint } => return catalog::run(&args, *peer, *endpoint),
         Action::Playback { config, peer } => return media::run(&args, config, *peer),
         Action::Capture { config, peer } => return media::run_capture(&args, config, *peer),
         Action::Camera { config, peer } => return camera::run(&args, config, *peer),
@@ -914,7 +930,7 @@ pub fn run() -> io::Result<()> {
         Action::List=>node.send(&json!({"version":1,"action":"list"}),deadline)?,
         Action::Recover=>node.send(&json!({"version":1,"action":"recover"}),deadline)?,
         Action::Revoke{peer}=>node.send(&json!({"version":1,"action":"revoke","peer_node_id":peer}),deadline)?,
-        Action::Cancel | Action::Playback { .. } | Action::Capture { .. } | Action::Camera { .. } | Action::Touchpad { .. } =>unreachable!(),
+        Action::Cancel | Action::Catalog { .. } | Action::Playback { .. } | Action::Capture { .. } | Action::Camera { .. } | Action::Touchpad { .. } =>unreachable!(),
         #[cfg(feature = "touchpad-test-fixture")]
         Action::TouchpadFixture { .. } => unreachable!(),
     }

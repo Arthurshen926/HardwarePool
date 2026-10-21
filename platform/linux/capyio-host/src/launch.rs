@@ -1639,13 +1639,13 @@ pub struct PairedStoreSelection {
     pub peer: NodeId,
 }
 
-enum CredentialSource {
+pub(super) enum CredentialSource {
     PrivatePipe,
     #[cfg(feature = "paired-store")]
     PairedStore(PairedStoreSelection),
 }
 
-fn launcher_credentials(
+pub(super) fn launcher_credentials(
     io: &mut LauncherIo,
     local_node: NodeId,
     expected_peer: NodeId,

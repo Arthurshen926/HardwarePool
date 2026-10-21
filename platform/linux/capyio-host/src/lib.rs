@@ -7,6 +7,10 @@
 //! labeled synthetic peer/session context and mock-only authorization.
 
 #[cfg(all(target_os = "linux", feature = "paired-store"))]
+mod catalog_inspect;
+#[cfg(all(target_os = "linux", feature = "paired-store"))]
+pub use catalog_inspect::run_catalog_inspect_stdio;
+#[cfg(all(target_os = "linux", feature = "paired-store"))]
 mod invitation_pipe;
 #[cfg(all(target_os = "linux", feature = "paired-store"))]
 mod pairing_management;
