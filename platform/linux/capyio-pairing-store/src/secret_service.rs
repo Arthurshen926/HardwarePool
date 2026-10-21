@@ -133,16 +133,20 @@ impl SecretServiceBackend {
                         .map_err(|_| BackendError::Unavailable)?;
                     let namespace =
                         format!("org.capyio.Pairing.n{}", self.owner.as_uuid().simple());
-                    let reply = connection
-                        .request_name_with_flags(
-                            namespace.as_str(),
+                    // This is a client-only cooperative lock, not a service.
+                    // Connection::request_name_with_flags assumes an object server
+                    // and warns with the namespace. Use the typed bus method,
+                    // keeping ownership scoped to this ephemeral connection.
+                    let reply = bus
+                        .request_name(
+                            namespace
+                                .as_str()
+                                .try_into()
+                                .map_err(|_| BackendError::Invalid)?,
                             zbus::fdo::RequestNameFlags::DoNotQueue.into(),
                         )
-                        .await
-                        .map_err(map_namespace_error)?;
-                    if reply != zbus::fdo::RequestNameReply::PrimaryOwner {
-                        return Err(BackendError::Conflict);
-                    }
+                        .await;
+                    namespace_acquired(reply)?;
                     let mut context = Context {
                         connection: &connection,
                         destination: owner.to_string(),
@@ -493,12 +497,15 @@ fn map_error(error: zbus::Error) -> BackendError {
     }
 }
 
-// zbus turns RequestNameReply::Exists into NameTaken before returning the reply.
-// Preserve the contention category, without treating transport errors as conflicts.
-fn map_namespace_error(error: zbus::Error) -> BackendError {
-    match error {
-        zbus::Error::NameTaken => BackendError::Conflict,
-        other => map_error(other),
+// The direct D-Bus method returns Exists rather than zbus's service-helper
+// NameTaken conversion. Only a fresh PrimaryOwner reply grants the namespace.
+fn namespace_acquired(
+    reply: zbus::fdo::Result<zbus::fdo::RequestNameReply>,
+) -> Result<(), BackendError> {
+    match reply {
+        Ok(zbus::fdo::RequestNameReply::PrimaryOwner) => Ok(()),
+        Ok(_) => Err(BackendError::Conflict),
+        Err(_) => Err(BackendError::Unavailable),
     }
 }
 
@@ -507,14 +514,17 @@ mod tests {
     use super::*;
 
     #[test]
-    fn namespace_name_taken_is_conflict_not_transport_unavailability() {
+    fn namespace_reply_requires_primary_owner_and_preserves_transport_failure() {
+        use zbus::fdo::RequestNameReply::*;
+        assert_eq!(namespace_acquired(Ok(PrimaryOwner)), Ok(()));
+        for reply in [Exists, InQueue, AlreadyOwner] {
+            assert_eq!(namespace_acquired(Ok(reply)), Err(BackendError::Conflict));
+        }
         assert_eq!(
-            map_namespace_error(zbus::Error::NameTaken),
-            BackendError::Conflict
-        );
-        assert_eq!(
-            map_namespace_error(zbus::Error::Failure("synthetic transport failure".into())),
-            BackendError::Unavailable
+            namespace_acquired(Err(zbus::fdo::Error::Failed(
+                "synthetic transport failure".into()
+            ))),
+            Err(BackendError::Unavailable)
         );
     }
 }

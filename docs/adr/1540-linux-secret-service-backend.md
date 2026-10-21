@@ -26,7 +26,12 @@ Applications needing encrypted D-Bus sessions must not select this backend.
 Each call resolves the existing service's unique bus owner and sends all keyring
 calls to that unique name with NoAutoStart. A restart/disconnect fails that call;
 a later explicit call can resolve the new owner. A non-queued, non-replaceable
-bus name serializes cooperative clients for the local Node namespace. All clients
+bus name serializes cooperative clients for the local Node namespace. The
+client-only connection uses the typed bus RequestName method rather than the
+object-server registration helper; no server is installed and no diagnostic
+filter is added. Only PrimaryOwner succeeds; Exists/queued/already-owned replies
+fail as conflicts, while transport failures remain unavailable. Disconnect
+releases ownership. All clients
 must use the same bus and this serialization contract. Secret Service has no
 attribute compare-and-swap: noncooperative writers can create duplicates. Exact
 owner/handle attributes, duplicate pre/postchecks, replace=false, content-derived
