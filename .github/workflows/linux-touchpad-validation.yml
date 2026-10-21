@@ -1,0 +1,55 @@
+name: Linux touchpad software validation
+
+# Source-only gate. Never opens /dev/uinput or changes kernel/input permissions.
+on:
+  push:
+    branches: [codex/linux-ipc-validation-20261019]
+permissions:
+  contents: read
+concurrency:
+  group: linux-touchpad-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  touchpad:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: 1.97.1
+          components: rustfmt, clippy
+      - name: Install official compile-only dependency in disposable runner
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install --yes --no-install-recommends libevdev-dev pkg-config
+          dpkg-query -W libevdev-dev | tee "$RUNNER_TEMP/touchpad-dependencies.txt"
+          pkg-config --modversion libevdev | tee -a "$RUNNER_TEMP/touchpad-dependencies.txt"
+      - name: Portable and authenticated owner acceptance
+        run: |
+          set -euo pipefail
+          cargo fmt --all -- --check
+          cargo test --locked -p capyio-linux-touchpad -- --nocapture | tee "$RUNNER_TEMP/touchpad-rust.txt"
+          cargo clippy --locked -p capyio-linux-touchpad --all-targets -- -D warnings
+          # Require named acceptance cases so accidental cfg/ignore cannot silently pass.
+          for test in android_capture_policy_over_real_mtls_reaches_production_projector_and_stops missing_runtime_lease_and_mismatched_hello_never_open_device revoked_lease_eof_and_idle_deadline_release_active_contacts failed_native_commit_never_acknowledges_the_frame ack_waits_for_complete_backend_commit_not_queue_admission finite_grant_expiry_releases_contacts_without_new_packets revoke_during_blocked_commit_never_acknowledges_and_closes stop_or_changed_grant_before_hello_cannot_create_device initial_update_cannot_acknowledge_or_activate_route runtime_lock_contention_cannot_suspend_shutdown_or_leave_contacts; do
+            grep -Fx "test $test ... ok" "$RUNNER_TEMP/touchpad-rust.txt"
+          done
+      - name: Native compile and production-loop fake syscalls only
+        run: |
+          set -euo pipefail
+          cargo build --locked -p capyio-linux-touchpad --features native-uinput
+          cargo clippy --locked -p capyio-linux-touchpad --all-targets --features native-uinput -- -D warnings
+          python3 platform/linux/capyio-touchpad/native/test_helper.py | tee "$RUNNER_TEMP/touchpad-fake-native.txt"
+          grep -Fx "native helper fake-backend contracts passed (no kernel device accessed)" "$RUNNER_TEMP/touchpad-fake-native.txt"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: linux-touchpad-software-evidence
+          path: |
+            ${{ runner.temp }}/touchpad-*.txt
+          if-no-files-found: ignore

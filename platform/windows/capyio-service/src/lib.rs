@@ -802,8 +802,13 @@ impl BrokerProcess for ServiceBrokerProcess {
         let metrics = capyio_windows_capture_ring::CaptureRingObserver::attach()
             .ok()
             .map(|observer| observer.metrics());
+        #[cfg(windows)]
+        let (produced_frames, consumed_frames) = (
+            metrics.as_ref().map(|value| value.produced_frames),
+            metrics.as_ref().map(|value| value.consumed_frames),
+        );
         #[cfg(not(windows))]
-        let metrics: Option<capyio_windows_capture_ring::CaptureRingMetrics> = None;
+        let (produced_frames, consumed_frames) = (None, None);
         Ok(BrokerServiceSnapshot {
             schema_version: 1,
             state: match status {
@@ -818,8 +823,8 @@ impl BrokerProcess for ServiceBrokerProcess {
             problem_code: process.microphone_problem.clone(),
             local_endpoint: Some(process.microphone_local),
             peer_endpoint: Some(process.microphone_peer),
-            produced_frames: metrics.as_ref().map(|value| value.produced_frames),
-            consumed_frames: metrics.as_ref().map(|value| value.consumed_frames),
+            produced_frames,
+            consumed_frames,
         })
     }
     fn start(&mut self) -> Result<(), &'static str> {

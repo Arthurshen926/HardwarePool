@@ -1515,3 +1515,14 @@ resource consent and Source/Sink leases remain mandatory. Control disconnect,
 Stop/revoke/expiry, malformed input and bounded-queue failure close the dedicated
 session and reap decoder/projection. New source code does not authorize use or
 creation of real persistent credentials; software tests use ephemeral identities.
+
+## Linux touchpad device lifetime
+
+ADR 1535 permits only an explicitly admitted exact touchpad Route/Session/Stream
+and finite local Sink lease to create an owned Type-B device after matched pinned
+TLS Hello. Fixed `/dev/uinput`, immutable descriptor, single-use factory, bounded
+IPC and 240-report/s limit exclude peer-supplied paths and arbitrary injection.
+No module, udev, permission or privilege changes occur. Missing access fails closed.
+Stop/revoke/expiry/EOF faults the epoch; ACK requires a committed full SYN_REPORT
+and fresh admission. Normal cleanup releases slots/keys and destroys the device;
+hard process kill can only guarantee descriptor closure, not release events.

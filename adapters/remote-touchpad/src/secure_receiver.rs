@@ -166,6 +166,9 @@ where
                         .receiver
                         .receive_data(&record, arrival)
                         .map_err(|error| error.to_string())?;
+                    // Native submission may block. A revoked or expired local
+                    // lease must not be acknowledged after that write completes.
+                    self.check_admission(admission()?)?;
                     self.channel
                         .send_record(accepted.ack.as_bytes())
                         .map_err(|error| error.to_string())?;

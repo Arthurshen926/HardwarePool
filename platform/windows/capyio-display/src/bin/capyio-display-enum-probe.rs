@@ -1,7 +1,5 @@
 #[cfg(not(windows))]
 fn main() {
-    capyio_windows_display::configure_process_display_dpi_awareness()
-        .expect("display enum probe requires per-monitor-v2 DPI awareness");
     eprintln!("capyio-display-enum-probe is only available on Windows");
     std::process::exit(2);
 }

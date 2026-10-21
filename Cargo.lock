@@ -660,6 +660,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "capyio-linux-touchpad"
+version = "0.1.0"
+dependencies = [
+ "capyio-android-host",
+ "capyio-control-tls",
+ "capyio-core",
+ "capyio-input",
+ "capyio-remote-touchpad-adapter",
+ "capyio-runtime",
+ "capyio-testkit",
+ "rcgen",
+]
+
+[[package]]
 name = "capyio-micyou-adapter"
 version = "0.1.0"
 dependencies = [

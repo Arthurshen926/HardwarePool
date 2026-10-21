@@ -158,3 +158,13 @@ Root 设备、安装编排和重启返回代码已实现；用户确认当前没
 及材料清单。当前产物不含驱动，未做真实装卸，不能记为新机安装验收通过。
 详见 [统一交付记录](UNIFIED_WINDOWS_DELIVERY_20261004.md) 与
 [签名材料清单](WINDOWS_DRIVER_SIGNING_HANDOFF.md)。
+
+### Linux touchpad source increment (2026-10-21)
+
+ADR 1535 adds a bounded Type-B projector, exact Runtime/mTLS owner and optional
+libevdev helper. Tests cover actual Android touchpad policy through authenticated
+transport into fake Linux event recording, plus native-helper fake syscall
+lifecycle checks. Hosted native compilation is a distinct gate. No real input
+device, cursor or gesture was exercised; physical acceptance remains deferred.
+This is a library-owned input path, not a default launcher, enrollment flow or
+Linux desktop permission provisioning feature.

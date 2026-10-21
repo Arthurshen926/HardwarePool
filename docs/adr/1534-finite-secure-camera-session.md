@@ -1,6 +1,6 @@
 # ADR 1534: Finite paired camera session over pinned TLS
 
-- Status: implementation under software validation; no physical-device claim
+- Status: accepted policy/synthetic secure-session software slice; no physical-device claim
 - Date: 2026-10-21
 
 ## Decision
@@ -88,3 +88,15 @@ partial control responses. Recheck the fresh clock before accepting the lease.
 No grant or lease check is relaxed; late receipts remain denied. The expiry
 acceptance checks the authenticated actual Source lease deadline, which may be
 earlier than consent expiry, rather than assuming both deadlines coincide.
+
+## Hosted acceptance
+
+Commit `e2be08dc1597aeedab4a7d0d111fd1fc24a8fc3b` passed all eleven actual secure
+private-graph scenarios in [run 39570270828](https://github.com/Arthurshen926/HardwarePool/actions/runs/39570270828). The pixels case verifies
+20 decoded NV12 frames with an independent native consumer; negative cases require
+owned helper/decoder cleanup and the applicable exact verification markers. All
+six jobs across the secure-camera, offline-AVC and existing Linux IPC workflows
+were green at that commit. This acceptance combines actual Android Rust consent
+and Source lease policy with synthetic encoded frames, pinned control/data and
+the real Linux decoder/projection. It does not establish Camera2 app-to-Rust
+bridge implementation or physical capture; that bridge is a separate increment.

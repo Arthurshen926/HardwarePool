@@ -297,7 +297,7 @@ local intent and creates only a Pending Draft. Independent Linux approval and
 finite reciprocal grants still precede leases and media. This is software
 negotiation support, not a claim of incoming-mode physical audio acceptance.
 
-## Secure camera bridge (source-only, hardware acceptance pending)
+## Secure camera bridge (hosted software acceptance, hardware pending)
 
 The integrated camera path now has a separate, one-shot secure selection. The
 Node Service uses four typed JNI calls (Start, State, Record, Stop); only a
@@ -345,7 +345,19 @@ existing authenticated synthetic graph. Revocation during an actually blocked
 write syscall is not yet deterministically exercised. Run
 `:app:secureCameraContractTest` and `cargo test -p capyio-android-jni`. These do not
 claim physical Camera2 capture or actual JVM-to-Android-library invocation.
-The hosted Android build and ARM64 JNI export check remain required, alongside
-the secure Linux synthetic graph. No permission, foreground-service declaration,
-enrollment, credential creation or actual-device recording is added by this
-source-only increment. The legacy Windows plaintext lab path remains separate.
+Hosted acceptance on 2026-10-21 passed for bridge commit
+`54c026456375ed343767d6b465880db6106b0086`: all six jobs across three workflows
+were green (acceptance run `39571074260`). The Android job compiled the actual
+ARM64 Rust JNI shared library, checked generated Java native declarations against
+its exports, and successfully ran `:app:compileDebugJavaWithJavac` against the
+existing API 36 SDK. The Java compile excluded web-asset synchronization and the
+redundant JNI build task; ARM64 compilation was checked separately. Existing
+secure Linux synthetic graph regressions also passed.
+
+This establishes production-source compilation and export compatibility, not
+physical Camera2/MediaCodec encoder operation, an actual Android JVM calling the
+shared library, APK installation, or an end-to-end physical camera session. The
+one-shot initial lease and receiver Starting/Active reporting caveats above
+remain, as does the unproven revoke-inside-blocked-write boundary. No permission,
+foreground-service declaration, enrollment, credential creation or actual-device
+recording is added. The legacy Windows plaintext lab path remains separate.

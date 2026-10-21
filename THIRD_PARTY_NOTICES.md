@@ -89,3 +89,22 @@ media provenance live in `fixtures/linux-avc/provenance.json`. Hosted validation
 must capture its own actual package versions and library configuration/license.
 A separate reviewed dependency/distribution decision is required before shipping
 any decoder binary or library; this source-only slice makes no such approval.
+
+## Optional Linux touchpad dependency
+
+ADR 1535 uses externally installed official libevdev development packages for the
+opt-in `native-uinput` helper. Upstream and MIT license documentation:
+https://www.freedesktop.org/software/libevdev/doc/latest/ . Upstream source:
+https://gitlab.freedesktop.org/libevdev/libevdev . The library is actively packaged
+by major Linux distributions; hosted compilation records its resolved package and
+pkg-config versions. No upstream source or binary is imported, modified or
+redistributed. Default builds need no libevdev headers. This narrow process
+boundary avoids handwritten uinput creation ioctls and additional Rust bindings.
+A distribution/security review remains required before shipping native binaries.
+
+Local source-only compile used official Debian libevdev-dev 1.13.4+dfsg-1,
+extracted privately without installation:
+https://deb.debian.org/debian/pool/main/libe/libevdev/libevdev-dev_1.13.4+dfsg-1_amd64.deb
+SHA256 `daf65e62433c1154ffab87a8cfdf106efcb20095142134f972923277fe600797`.
+The native helper linked successfully against the already available libevdev.so.2
+runtime but was not executed. Hosted CI records its own resolved package version.

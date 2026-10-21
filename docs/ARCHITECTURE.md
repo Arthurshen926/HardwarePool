@@ -1633,3 +1633,12 @@ during transport and decoder waits. An explicit decoded-CAVC projection entry
 preserves the negotiated Route rather than relabeling it NV12. Android's new
 Rust sender uses existing paired credentials and actual Source authority; no
 Camera2/JNI media capture, default listener or new enrollment is claimed.
+
+## Linux owned touchpad boundary
+
+ADR 1535 adds an opt-in Runtime-owned touchpad Sink using the existing pinned TLS
+receiver and a separate Type-B uinput helper. The fixed bounded projector retains
+complete contact snapshots rather than translating to relative mouse commands.
+Only authenticated exact-Route local authority can open the helper. Network and
+helper I/O run off owner polling; independent watchdogs bound idle, revocation and
+finite lifetime. No input permission changes or default host launch are added.

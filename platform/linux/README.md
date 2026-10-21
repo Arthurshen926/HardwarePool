@@ -245,3 +245,14 @@ The Alpha's primary Speaker/Microphone/Camera/Touchpad versus experimental split
 is recorded in [current status](../../docs/CURRENT_STATUS.md). This backlog is
 planning only, not implementation or deployment evidence. Physical tests remain
 postponed until the separate software work is ready for consolidated acceptance.
+
+## Experimental owned Type-B touchpad
+
+`capyio-linux-touchpad` adds the fixed five-contact 120 × 70 mm touchpad Sink,
+Runtime owner and optional native libevdev helper behind existing pinned TLS.
+It preserves full contacts rather than faking relative mouse gestures. The default
+host still exposes no new device/listener and does not provision uinput access.
+See [ADR 1535](../../docs/adr/1535-linux-owned-type-b-touchpad.md) and the
+[crate guide](capyio-touchpad/README.md). Software acceptance uses fake native
+operations and actual authenticated owner/policy paths. Kernel creation, desktop
+recognition and physical gestures remain unverified and deferred.

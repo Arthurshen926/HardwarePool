@@ -1,0 +1,29 @@
+[package]
+name = "capyio-linux-touchpad"
+description = "Bounded owned Linux Type-B touchpad projection."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish = false
+
+[features]
+default = []
+native-uinput = []
+
+[dependencies]
+capyio-core = { path = "../../../crates/capyio-core" }
+capyio-input = { path = "../../../crates/capyio-input" }
+capyio-runtime = { path = "../../../crates/capyio-runtime" }
+capyio-control-tls = { path = "../../../crates/capyio-control-tls" }
+capyio-remote-touchpad-adapter = { path = "../../../adapters/remote-touchpad", features = ["tls"] }
+
+[dev-dependencies]
+capyio-testkit = { path = "../../../crates/capyio-testkit" }
+capyio-android-host = { path = "../../android/capyio-host" }
+rcgen = { version = "=0.14.5", default-features = false, features = ["ring"] }
+
+[[bin]]
+name = "capyio-linux-touchpad-helper"
+path = "src/helper.rs"
+required-features = ["native-uinput"]

@@ -31,7 +31,7 @@ Base: `30d0a59058b5e2426652fa5f3e16ee1c9ffb0457` on
 - Python repository suite: 71 tests passed with two platform-specific skips,
   including exact marker omission/spoof rejection for negative graph scenarios.
 
-## Required hosted acceptance
+## Hosted acceptance
 
 `Linux secure camera validation` adds eleven actual private-graph scenarios:
 pixels, no_consumer, expiry, control_stop, control_eof, partial_cavc, source_revoke,
@@ -43,15 +43,23 @@ failures from masquerading as expected terminal outcomes.
 
 Local graph execution stopped before launching a graph because `/usr/bin/pipewire`
 is absent. No security setting, permission bypass, daemon install or remote-device
-fallback was attempted. Hosted graph results remain pending for this candidate;
-compilation and TLS tests are not composed-camera evidence.
+fallback was attempted. Subsequent hosted commit
+`e2be08dc1597aeedab4a7d0d111fd1fc24a8fc3b` passed all eleven actual secure graph
+scenarios in [run 39570270828](https://github.com/Arthurshen926/HardwarePool/actions/runs/39570270828), including 20 independent decoded
+NV12 pixel/order checks and owned cleanup. All six jobs across the three workflows
+were green: [offline AVC run 39570270813](https://github.com/Arthurshen926/HardwarePool/actions/runs/39570270813)
+and [Linux IPC run 39570270974](https://github.com/Arthurshen926/HardwarePool/actions/runs/39570270974).
+The secure-camera job is `119122394927`; all eleven exact success markers were
+verified. Compilation and isolated TLS tests alone remain insufficient evidence.
 
 ## Not implemented or claimed
 
-Java/Camera2 complete-record delivery into the Rust secure sender is not yet
-wired. This is a policy/synthetic software-session slice, not a complete Android
-secure camera capture feature or merely an untested physical path. The next
-implementation increment must add that service-owned bridge before device tests.
+At accepted commit `e2be08dc`, Java/Camera2 complete-record delivery into the Rust
+secure sender was not wired. This acceptance is actual Android Rust policy with
+synthetic encoded frames, not a complete Android secure camera capture feature
+or merely an untested physical path. The separately developed service-owned
+Java/JNI bridge has its own implementation and validation gate; its later state
+does not expand the evidence recorded here.
 No new credentials/enrollment, camera permission, APK installation, kernel/V4L2
 change, general portal/browser compatibility or physical-device acceptance.
 
@@ -69,4 +77,5 @@ response completion against that same deadline. Tests delay real pinned-control
 request processing by 100 ms to prove grant-respecting acquisition, and by 1100 ms
 to require denial with no helpers. The expiry graph now verifies the actual
 shorter authenticated Source lease deadline. Consent and lease guards are not
-weakened. Remaining hosted scenarios must pass on the corrected commit.
+weakened. All eleven hosted scenarios subsequently passed on corrected commit
+`e2be08dc1597aeedab4a7d0d111fd1fc24a8fc3b`.

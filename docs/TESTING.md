@@ -1268,3 +1268,30 @@ Rust IPC markers and ten native tests passed; the existing four jobs remained
 green in [run 39564578050](https://github.com/Arthurshen926/HardwarePool/actions/runs/39564578050).
 This is bounded synthetic offline camera evidence, not authenticated live Android
 video or physical-device acceptance.
+
+Secure camera implementation `e2be08dc1597aeedab4a7d0d111fd1fc24a8fc3b` passed all
+eleven actual secure graph scenarios in [run 39570270828](https://github.com/Arthurshen926/HardwarePool/actions/runs/39570270828). This covers
+actual Android Rust consent/Source lease policy, pinned control/data, synthetic
+CAVC and the real Linux decoder/projection with independent 20-frame NV12 pixel
+readback and cleanup. All six jobs across three workflows were green. The
+Java/JNI Camera2 bridge is a separate implementation/validation increment; this
+result does not establish physical capture or general desktop camera availability.
+
+## Linux touchpad software-only acceptance (ADR 1535)
+
+`cargo test --locked -p capyio-linux-touchpad` exercises the production bounded
+projector and Runtime owner. Projector cases cover five contacts, reorder/removal,
+fresh local IDs for reused or u32-max wire IDs, pressure/confidence, initial and
+gap CancelAll, epoch/time validation and 4,096 deterministic randomized snapshots.
+Owner cases use actual loopback mTLS, Android touchpad policy and a fake event
+backend: before-Hello admission, missing leases, malformed Hello, delayed commits,
+write fault, Stop/revoke/EOF/idle/finite expiry and ACK ordering.
+
+`python3 platform/linux/capyio-touchpad/native/test_helper.py` compiles a fake
+backend into the production helper loop. Shared descriptor tables are recorded,
+and malformed/partial IPC, rate limits, missing/denied create, write failure,
+EOF, SIGTERM and finite/idle cleanup are checked without any input device.
+The separate hosted workflow compiles `native-uinput` with official libevdev
+headers; it never runs the real helper. Neither fake traces nor compilation prove
+kernel creation, desktop recognition, gestures or physical Android input. Those
+remain deferred and require separate explicit OS testing authority.

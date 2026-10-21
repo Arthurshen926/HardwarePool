@@ -76,8 +76,8 @@ fn run() -> Result<(), Box<dyn Error>> {
     #[cfg(windows)]
     let mut last_progress_frames = 0_u64;
     let mut decoded_bytes = 0_u64;
-    let mut first_decoded_checksum = None;
-    let mut last_decoded_checksum = None;
+    let mut first_decoded_checksum: Option<u64> = None;
+    let mut last_decoded_checksum: Option<u64> = None;
     let mut last_decoded_sequence = 0_u64;
     let mut decoder_low_latency = false;
     let mut max_decoder_pending_samples = 0_usize;
