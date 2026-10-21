@@ -54,3 +54,19 @@ secure camera capture feature or merely an untested physical path. The next
 implementation increment must add that service-owned bridge before device tests.
 No new credentials/enrollment, camera permission, APK installation, kernel/V4L2
 change, general portal/browser compatibility or physical-device acceptance.
+
+## First hosted result and bounded correction
+
+Published candidate `36bb8742a69c3f07c0b1d72bdeda2d6ebdcf7fc3` passed actual secure
+pixels and no-consumer graph scenarios in run 39569341792. The expiry scenario
+then correctly failed before helper launch: relative requested TTL consumed all
+remaining grant, so Source receipt-time addition could exceed its exact grant.
+This is not complete graph acceptance.
+
+The correction reserves the fixed one-second negotiation budget inside remaining
+authority, fails before request if the minimum TTL cannot fit, and clips/rechecks
+response completion against that same deadline. Tests delay real pinned-control
+request processing by 100 ms to prove grant-respecting acquisition, and by 1100 ms
+to require denial with no helpers. The expiry graph now verifies the actual
+shorter authenticated Source lease deadline. Consent and lease guards are not
+weakened. Remaining hosted scenarios must pass on the corrected commit.

@@ -473,6 +473,7 @@ fn main() -> io::Result<()> {
         }
         thread::sleep(Duration::from_millis(1));
     };
+    let source_deadline = owner.source_lease_expires_at_ms();
     let metrics = owner.metrics().unwrap_or_default();
     owner.stop()?;
     let _ = done_tx.send(());
@@ -511,10 +512,18 @@ fn main() -> io::Result<()> {
         println!("VERIFIED sink_revoke");
     }
     if scenario == "expiry" {
-        if now() + 100 < started_ms + ttl || result.is_ok() {
-            return Err(error("camera failed before finite grant expiry"));
+        let source_deadline =
+            source_deadline.ok_or_else(|| error("Source lease never acquired"))?;
+        if now() < source_deadline || source_deadline > started_ms + ttl || result.is_ok() {
+            return Err(error(
+                "camera failed before actual finite Source lease expiry",
+            ));
         }
-        println!("FINITE_GRANT_EXPIRED elapsed_ms={}", now() - started_ms);
+        println!(
+            "FINITE_SOURCE_LEASE_EXPIRED elapsed_ms={} lease_deadline_ms={}",
+            now() - started_ms,
+            source_deadline
+        );
     }
     result?;
     peer_result?;
@@ -546,7 +555,14 @@ mod tests {
     }
     #[test]
     fn authenticated_source_lease_precedes_offer_and_media_children() {
-        let (sink, mut source, id, binding) = fixture(now(), 12000);
+        delayed_lease_negotiation(Duration::from_millis(100), true);
+    }
+    #[test]
+    fn over_budget_lease_receipt_fails_without_opening_media() {
+        delayed_lease_negotiation(Duration::from_millis(1100), false);
+    }
+    fn delayed_lease_negotiation(delay: Duration, accepted: bool) {
+        let (sink, mut source, id, binding) = fixture(now(), 4000);
         let (identity, credential, pin) = identities();
         let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).unwrap();
         let address = listener.local_addr().unwrap();
@@ -597,8 +613,28 @@ mod tests {
                 .route_port_lease_claim(id, source.route(id).unwrap().source)
                 .is_none()
         );
+        // Reproduce receipt-clock drift that formerly exceeded the exact grant.
+        thread::sleep(delay);
         peer.answer_port_lease_request(&mut source, request, now())
             .unwrap();
+        if !accepted {
+            assert!(
+                source
+                    .route_port_lease_claim(id, source.route(id).unwrap().source)
+                    .is_none()
+            );
+            assert!(
+                owner
+                    .poll()
+                    .unwrap_err()
+                    .to_string()
+                    .contains("negotiation deadline")
+            );
+            assert!(owner.helper_pid().is_none());
+            assert!(owner.decoder_pid().is_none());
+            owner.stop().unwrap();
+            return;
+        }
         source.begin_route_start(id, now()).unwrap();
         loop {
             if owner.poll().unwrap() == Some(SecureCameraEvent::Listening) {

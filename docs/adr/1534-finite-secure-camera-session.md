@@ -76,3 +76,15 @@ consumer. Private graph execution must be reported separately from compilation
 and decoder-only tests. Hosted disposable CI is the authoritative graph gate;
 no local IPC restriction is bypassed. Negative scenarios require owned process
 and node cleanup. No kernel/V4L2/global daemon/network security changes occur.
+
+## Relative lease receipt headroom
+
+Source lease TTL is interpreted at the Source's receipt clock, not at the Sink's
+request clock. Reserve one second from the minimum remaining grant, Sink lease
+and owner lifetime before requesting it. If less than the protocol's one-second
+minimum TTL remains after this reservation, fail closed before sending. The
+same fixed one-second deadline bounds request/response completion, including
+partial control responses. Recheck the fresh clock before accepting the lease.
+No grant or lease check is relaxed; late receipts remain denied. The expiry
+acceptance checks the authenticated actual Source lease deadline, which may be
+earlier than consent expiry, rather than assuming both deadlines coincide.

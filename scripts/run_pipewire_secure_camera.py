@@ -25,8 +25,8 @@ class SecureCameraHarness(AvcHarness):
             raise ValueError('requested failure was not actually injected')
         if scenario in ('control_stop', 'sink_revoke') and 'VERIFIED ' + scenario not in lines:
             raise ValueError('expected terminal reason was not verified')
-        if scenario == 'expiry' and not any(line.startswith('FINITE_GRANT_EXPIRED elapsed_ms=') for line in lines):
-            raise ValueError('finite grant expiry was not reached')
+        if scenario == 'expiry' and not any(line.startswith('FINITE_SOURCE_LEASE_EXPIRED elapsed_ms=') for line in lines):
+            raise ValueError('finite Source lease expiry was not reached')
         if scenario == 'no_consumer' and 'expected_backpressure=true' not in text:
             raise ValueError('secure owner did not prove bounded backpressure rejection')
 

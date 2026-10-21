@@ -26,7 +26,7 @@ class SecureHarnessTests(TestCase):
             'source_revoke': ['INJECTED source_revoke'],
             'control_eof': ['INJECTED control_eof'],
             'partial_cavc': ['INJECTED partial_cavc'],
-            'expiry': ['FINITE_GRANT_EXPIRED elapsed_ms=4000'],
+            'expiry': ['FINITE_SOURCE_LEASE_EXPIRED elapsed_ms=4000'],
         }
         with tempfile.TemporaryDirectory() as tmp:
             h = object.__new__(SecureCameraHarness)

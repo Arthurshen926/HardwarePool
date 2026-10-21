@@ -67,6 +67,7 @@ pub struct SecureCameraOwner {
     original: Route,
     identity: Option<ControlTlsServerIdentity>,
     source_request: MessageId,
+    source_request_deadline: Instant,
     source_expiry: Option<u64>,
     sink_expiry: u64,
     started: Instant,
@@ -101,11 +102,14 @@ impl SecureCameraOwner {
         let grant = expiry(&original)?;
         let deadline =
             Instant::now() + Duration::from_millis((grant.min(sink_expiry) - now).min(1000));
+        // Lease TTL is relative to the Source's receipt time, not this clock.
+        // Leave the bounded control budget inside all finite local deadlines.
+        let source_ttl = source_lease_ttl(grant.min(sink_expiry), now, admission.lifetime)?;
         let source_request = match link.send_port_lease_request_until(
             original.id,
             original.source,
             PortLeaseAction::Acquire,
-            (grant - now).min(admission.lifetime.as_millis() as u64),
+            source_ttl,
             deadline,
         ) {
             Ok(id) => id,
@@ -122,6 +126,7 @@ impl SecureCameraOwner {
             original,
             identity: Some(identity),
             source_request,
+            source_request_deadline: deadline,
             source_expiry: None,
             sink_expiry,
             started: Instant::now(),
@@ -144,6 +149,10 @@ impl SecureCameraOwner {
         } else {
             self.runtime.as_mut().expect("owned runtime")
         }
+    }
+    /// Actual authenticated lease deadline, which may precede the consent grant.
+    pub fn source_lease_expires_at_ms(&self) -> Option<u64> {
+        self.source_expiry
     }
     pub fn metrics(&self) -> Option<capyio_linux_camera::CameraMetrics> {
         self.camera.as_ref().map(|c| c.metrics())
@@ -177,6 +186,8 @@ impl SecureCameraOwner {
             .map_err(error)?
         {
             if let ReceivedControlMessage::PortLeaseResponse(response) = message {
+                let now = now_ms()?;
+                self.check(now)?; // response completion must still fit the fixed negotiation budget
                 if self.source_expiry.is_some()
                     || response.request_message_id != self.source_request
                     || response.session_id != self.original.session_id
@@ -281,6 +292,9 @@ impl SecureCameraOwner {
         }
     }
     fn check(&mut self, now: u64) -> io::Result<()> {
+        if self.source_expiry.is_none() && Instant::now() >= self.source_request_deadline {
+            return Err(error("camera Source lease negotiation deadline"));
+        }
         if now < self.last_wall
             || self.started.elapsed() >= self.admission.lifetime
             || self.link.is_closed()
@@ -298,8 +312,13 @@ impl SecureCameraOwner {
             .unwrap_or(now)
             .min(self.sink_expiry)
             .min(self.source_expiry.unwrap_or(u64::MAX));
-        (self.started + self.admission.lifetime)
-            .min(Instant::now() + Duration::from_millis(wall.saturating_sub(now).min(1000)))
+        let deadline = (self.started + self.admission.lifetime)
+            .min(Instant::now() + Duration::from_millis(wall.saturating_sub(now).min(1000)));
+        if self.source_expiry.is_none() {
+            deadline.min(self.source_request_deadline)
+        } else {
+            deadline
+        }
     }
     fn deadline_lifetime(&self) -> Duration {
         (self.started + self.admission.lifetime)
@@ -414,6 +433,15 @@ impl Drop for SecureCameraOwner {
         let _ = self.stop();
     }
 }
+fn source_lease_ttl(deadline: u64, now: u64, lifetime: Duration) -> io::Result<u64> {
+    deadline
+        .checked_sub(now)
+        .map(|remaining| remaining.min(lifetime.as_millis() as u64))
+        .and_then(|remaining| remaining.checked_sub(1000))
+        .filter(|ttl| *ttl >= capyio_protocol::MIN_PORT_LEASE_TTL_MS)
+        .ok_or_else(|| error("insufficient finite camera lease negotiation headroom"))
+}
+
 fn expiry(route: &Route) -> io::Result<u64> {
     match route.authorization {
         AuthorizationState::Authorized {
@@ -652,5 +680,28 @@ mod authority_tests {
             ControlTlsBinding::new(route.session_id, route.sink.node_id, route.source.node_id)
                 .unwrap();
         assert!(validate(&runtime, route, tls, 1000).is_err());
+    }
+}
+
+#[cfg(test)]
+mod lease_budget_tests {
+    use super::*;
+    #[test]
+    fn relative_source_ttl_leaves_receipt_budget_inside_all_authority() {
+        assert_eq!(
+            source_lease_ttl(5000, 1000, Duration::from_secs(60)).unwrap(),
+            3000
+        );
+        assert_eq!(
+            source_lease_ttl(10000, 1000, Duration::from_secs(4)).unwrap(),
+            3000
+        );
+        for deadline in [999, 1000, 1999, 2999] {
+            assert!(source_lease_ttl(deadline, 1000, Duration::from_secs(60)).is_err());
+        }
+        assert_eq!(
+            source_lease_ttl(3000, 1000, Duration::from_secs(60)).unwrap(),
+            1000
+        );
     }
 }
