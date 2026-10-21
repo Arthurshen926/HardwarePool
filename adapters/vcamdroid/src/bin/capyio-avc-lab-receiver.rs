@@ -72,15 +72,36 @@ fn run() -> Result<(), Box<dyn Error>> {
     let mut discontinuities = 0_u64;
     let mut payload_bytes = 0_u64;
     let mut last_sequence = 0_u64;
+    #[cfg(windows)]
     let mut decoded_frames = 0_u64;
+    #[cfg(not(windows))]
+    let decoded_frames = 0_u64;
     #[cfg(windows)]
     let mut last_progress_frames = 0_u64;
+    #[cfg(windows)]
     let mut decoded_bytes = 0_u64;
+    #[cfg(not(windows))]
+    let decoded_bytes = 0_u64;
+    #[cfg(windows)]
     let mut first_decoded_checksum: Option<u64> = None;
+    #[cfg(not(windows))]
+    let first_decoded_checksum: Option<u64> = None;
+    #[cfg(windows)]
     let mut last_decoded_checksum: Option<u64> = None;
+    #[cfg(not(windows))]
+    let last_decoded_checksum: Option<u64> = None;
+    #[cfg(windows)]
     let mut last_decoded_sequence = 0_u64;
+    #[cfg(not(windows))]
+    let last_decoded_sequence = 0_u64;
+    #[cfg(windows)]
     let mut decoder_low_latency = false;
+    #[cfg(not(windows))]
+    let decoder_low_latency = false;
+    #[cfg(windows)]
     let mut max_decoder_pending_samples = 0_usize;
+    #[cfg(not(windows))]
+    let max_decoder_pending_samples = 0_usize;
     #[cfg(windows)]
     let mut decoder_latency = StageLatencyStats::default();
     #[cfg(windows)]
@@ -647,6 +668,7 @@ fn rotate_nv12_portrait_pillarbox(
     Ok(())
 }
 
+#[cfg(any(windows, test))]
 fn next_publication_timing(
     published_frames: u64,
     duration_nanos: u64,
@@ -1209,6 +1231,11 @@ mod tests {
         ));
         assert!(!peer_is_authorized("[::1]:50000".parse().unwrap(), allowed));
     }
+}
+
+#[cfg(test)]
+mod publication_timing_tests {
+    use super::next_publication_timing;
 
     #[test]
     fn reconnected_publication_timing_remains_monotonic() {

@@ -1,0 +1,65 @@
+name: Platform boundary validation
+
+on:
+  push:
+    branches: [codex/linux-ipc-validation-20261019]
+    paths:
+      - .github/workflows/platform-boundary-validation.yml
+      - platform/windows/capyio-credential-protection/src/lib.rs
+      - platform/windows/capyio-service/src/display_worker_failure.rs
+      - platform/windows/capyio-pairing-store/tests/store.rs
+      - adapters/vcamdroid/src/bin/capyio-avc-lab-receiver.rs
+
+permissions:
+  contents: read
+
+concurrency:
+  group: platform-boundary-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  platform-boundary:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    env:
+      CARGO_INCREMENTAL: "0"
+      CARGO_PROFILE_DEV_DEBUG: "0"
+      CARGO_PROFILE_TEST_DEBUG: "0"
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: 1.97.1
+          components: rustfmt, clippy
+      - run: cargo fmt --all -- --check
+      - run: cargo check --locked --workspace --exclude capyio-desktop --all-targets
+      - run: cargo clippy --locked --workspace --exclude capyio-desktop --all-targets -- -D warnings
+      - name: Compile affected test targets without running devices
+        run: cargo test --locked -p capyio-windows-credential-protection -p capyio-windows-service -p capyio-windows-pairing-store -p capyio-vcamdroid-adapter --all-targets --no-run
+      - name: Run exact hardware-free boundary regressions
+        shell: python {0}
+        run: |
+          import subprocess
+
+          cases = [
+              ("capyio-windows-credential-protection", ["--lib"], "tests::bounds_fail_before_platform_access"),
+              ("capyio-windows-service", ["--lib"], "display_worker_failure::tests::only_closed_stage_codes_are_retained"),
+              ("capyio-windows-pairing-store", ["--test", "store"], "credential_handles_are_closed_and_never_become_paths"),
+              ("capyio-vcamdroid-adapter", ["--bin", "capyio-avc-lab-receiver"], "publication_timing_tests::reconnected_publication_timing_remains_monotonic"),
+          ]
+          for package, target, test in cases:
+              command = ["cargo", "test", "--locked", "-p", package, *target, test, "--", "--exact", "--nocapture"]
+              result = subprocess.run(command, text=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, timeout=300)
+              print(result.stdout, flush=True)
+              if result.returncode != 0 or f"test {test} ... ok" not in result.stdout or "1 passed; 0 failed; 0 ignored" not in result.stdout:
+                  raise SystemExit(f"Required boundary test did not pass exactly once: {test}")

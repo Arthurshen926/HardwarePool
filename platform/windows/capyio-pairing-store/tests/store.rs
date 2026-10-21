@@ -1,5 +1,6 @@
 use std::{fs, path::PathBuf};
 
+#[cfg(windows)]
 use capyio_control_credentials::ControlCredentialBundle;
 use capyio_core::NodeId;
 use capyio_pairing::{

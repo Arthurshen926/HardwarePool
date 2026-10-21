@@ -28,6 +28,7 @@ pub fn display_worker_problem(exit_code: u32) -> &'static str {
     }
 }
 
+#[cfg(any(windows, test))]
 pub(crate) fn retained_display_worker_problem(code: &str) -> Option<&'static str> {
     (40..=48)
         .map(display_worker_problem)

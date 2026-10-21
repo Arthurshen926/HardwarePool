@@ -8,6 +8,7 @@ use thiserror::Error;
 pub const MAX_CREDENTIAL_BUNDLE_BYTES: usize = 65_536;
 pub const MAX_PROTECTED_CREDENTIAL_BYTES: usize = MAX_CREDENTIAL_BUNDLE_BYTES + 4_096;
 
+#[cfg(windows)]
 const ENTROPY_CONTEXT: &[u8] = b"CapyIO paired control credential v1";
 
 pub fn protect(plaintext: &[u8]) -> Result<Vec<u8>, CredentialProtectionError> {
