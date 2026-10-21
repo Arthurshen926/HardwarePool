@@ -447,6 +447,8 @@ jobs:
           "$RUNNER_TEMP/camera-protocol"
           cc -std=gnu11 -Wall -Wextra -Werror $(pkg-config --cflags libpipewire-0.3) "$native/test_helper.c" $(pkg-config --libs libpipewire-0.3) -o "$RUNNER_TEMP/camera-helper-tests"
           "$RUNNER_TEMP/camera-helper-tests"
+          cc -std=gnu11 -Wall -Wextra -Werror $(pkg-config --cflags libpipewire-0.3) "$native/test_consumer.c" $(pkg-config --libs libpipewire-0.3) -o "$RUNNER_TEMP/camera-consumer-tests"
+          "$RUNNER_TEMP/camera-consumer-tests"
           python3 -m unittest discover -s scripts -p test_pipewire_camera.py -v
       - name: Build production owner helper and independent native pixel consumer
         run: |

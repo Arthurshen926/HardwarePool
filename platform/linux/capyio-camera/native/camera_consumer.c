@@ -11,11 +11,14 @@
 #include <time.h>
 struct consumer {
     struct pw_main_loop *loop;struct pw_stream *stream;
-    unsigned required,seen;bool format_ok,have_last;int result;
+    unsigned required,seen;bool format_ok,have_last,stopping;int result;
     uint64_t last_seq,last_pts,start,last_frame;unsigned gaps;
 };
 static uint64_t monotonic(void){struct timespec t;clock_gettime(CLOCK_MONOTONIC,&t);return (uint64_t)t.tv_sec*1000000000+(uint64_t)t.tv_nsec;}
-static void quit(struct consumer *c,int result){c->result=result;pw_main_loop_quit(c->loop);}
+static void quit(struct consumer *c,int result){
+    if(c->stopping)return;
+    c->stopping=true;c->result=result;pw_main_loop_quit(c->loop);
+}
 static void param(void *v,uint32_t id,const struct spa_pod *p){
     struct consumer *c=v;if(id!=SPA_PARAM_Format)return;c->format_ok=false;if(!p)return;
     if(!camera_format_valid(p)||camera_buffers(c->stream)<0){quit(c,4);return;}c->format_ok=true;
