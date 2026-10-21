@@ -78,6 +78,16 @@ jobs:
               result = help_for(command)
               assert result.returncode == 0, result.stderr
               assert ('--pairing-state' in result.stdout) == paired, result.stdout
-          assert help_for('linux-touchpad-fixture').returncode == 2
+          root_help = subprocess.run([node, '--help'], stdin=subprocess.DEVNULL,
+                                     capture_output=True, text=True, timeout=10)
+          assert root_help.returncode == 0, root_help.stderr
+          assert 'linux-touchpad-fixture' not in root_help.stdout
+          fixture_help = help_for('linux-touchpad-fixture')
+          # Lab syntax errors deliberately use a static redacted anyhow error,
+          # not Clap's usual exit 2, even when the fixture is compiled out.
+          assert fixture_help.returncode == 1, fixture_help
+          assert fixture_help.stdout == '', fixture_help.stdout
+          assert fixture_help.stderr == ('Error: invalid Linux lab playback command; '
+              '--trusted-lab is required; credentials must not be supplied in arguments\n'), fixture_help.stderr
           print('Staged CLI help matches selected production features; no operation was started.')
           PY

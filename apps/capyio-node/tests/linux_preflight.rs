@@ -21,3 +21,23 @@ fn linux_preflight_missing_session_is_json_not_readiness() {
     assert_eq!(value["version"], 1);
     assert!(!output.stdout.windows(6).any(|value| value == b"Active"));
 }
+
+#[cfg(not(feature = "touchpad-test-fixture"))]
+#[test]
+fn production_help_omits_fixture_and_rejects_it_with_static_redaction() {
+    let help = Command::new(env!("CARGO_BIN_EXE_capyio-node"))
+        .arg("--help")
+        .env_clear()
+        .output()
+        .unwrap();
+    assert!(help.status.success());
+    assert!(!String::from_utf8_lossy(&help.stdout).contains("linux-touchpad-fixture"));
+    let rejected = Command::new(env!("CARGO_BIN_EXE_capyio-node"))
+        .args(["linux-touchpad-fixture", "--help"])
+        .env_clear()
+        .output()
+        .unwrap();
+    assert_eq!(rejected.status.code(), Some(1));
+    assert!(rejected.stdout.is_empty());
+    assert_eq!(rejected.stderr, b"Error: invalid Linux lab playback command; --trusted-lab is required; credentials must not be supplied in arguments\n");
+}
