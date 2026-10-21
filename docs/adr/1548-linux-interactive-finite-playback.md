@@ -81,7 +81,11 @@ never writes approval directly to the Node's private input. The existing isolate
 PipeWire graph, independent ordered waveform oracle, owner/PID checks and cleanup
 checks remain in force. Both playback and virtual-microphone profiles exercise
 waveform plus Stop, no approval, pretyped input, mismatched request/route/peer,
-finite expiry and authenticated peer EOF. The existing legacy and paired-store
+finite expiry and authenticated peer EOF. Expiry is checked against the actual
+negotiated Source lease, which production also applies to the local Sink. The
+four-second grant intentionally yields a shorter lease through the existing
+one-second transit reserve; the test rejects failure before that exact lease
+expiry and bounds termination afterward without extending authority. The existing legacy and paired-store
 media profiles remain separate and mandatory. Console evidence has its own exact
 marker and cannot be substituted by a paired-store-only run.
 

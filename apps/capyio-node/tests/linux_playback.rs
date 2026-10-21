@@ -1770,7 +1770,22 @@ mod hosted_pipewire {
         assert_eq!(offer.port, ingress.port());
         assert_eq!(offered.route.state, RouteState::Starting);
         assert!(!peer.runtime.audio_should_run(id, now_ms()));
-        assert_eq!(peer.runtime.snapshot().port_leases.len(), 1);
+        let leases = peer.runtime.snapshot().port_leases;
+        assert_eq!(leases.len(), 1);
+        let negotiated_lease = leases[0];
+        assert_eq!(negotiated_lease.route_id, id);
+        assert_eq!(negotiated_lease.port, offered.route.source);
+        assert_eq!(negotiated_lease.session_id, offered.route.session_id);
+        let AuthorizationState::Authorized {
+            expires_at_ms: Some(grant_expiry),
+        } = offered.route.authorization
+        else {
+            panic!("finite grant required before the actual Source lease")
+        };
+        assert!(negotiated_lease.expires_at_ms > now_ms());
+        assert!(negotiated_lease.expires_at_ms < grant_expiry);
+        let lease_deadline = Instant::now()
+            + Duration::from_millis(negotiated_lease.expires_at_ms.saturating_sub(now_ms()));
 
         // This is the synthetic platform endpoint. The real Android coordinator
         // must prepare and publish its own reciprocal Source offer, preserving
@@ -1912,9 +1927,16 @@ mod hosted_pipewire {
             process.event("failed");
             if console_scenario.as_deref() == Some("expiry") {
                 assert!(
-                    consent_started.elapsed()
-                        >= lifetime.saturating_sub(Duration::from_millis(250)),
-                    "a premature unrelated failure is not finite-expiry evidence"
+                    now_ms() >= negotiated_lease.expires_at_ms,
+                    "a failure before the actual negotiated lease expiry is not expiry evidence"
+                );
+                // Production reserves one second of transit headroom from the
+                // grant, then uses this exact Source lease expiry for its Sink.
+                // Neither idle failure nor waiting for the longer grant is proof.
+                assert!(!peer.runtime.audio_should_run(id, now_ms()));
+                assert!(
+                    Instant::now() <= lease_deadline + Duration::from_secs(2),
+                    "the actual finite lease cannot be silently renewed"
                 );
                 assert!(
                     consent_started.elapsed() <= lifetime + Duration::from_secs(2),
