@@ -21,7 +21,9 @@ static void param(void *v,uint32_t id,const struct spa_pod *p){
     if(!camera_format_valid(p)||camera_buffers(c->stream)<0){quit(c,4);return;}c->format_ok=true;
 }
 static void state(void *v,enum pw_stream_state old,enum pw_stream_state s,const char *error){
-    (void)error;if(s==PW_STREAM_STATE_ERROR||(old>=PW_STREAM_STATE_PAUSED&&s==PW_STREAM_STATE_UNCONNECTED))quit(v,3);
+    if(s==PW_STREAM_STATE_ERROR||(old>=PW_STREAM_STATE_PAUSED&&s==PW_STREAM_STATE_UNCONNECTED)){
+        fprintf(stderr,"camera_consumer_state old=%d new=%d detail=%.160s\n",old,s,error?error:"none");quit(v,3);
+    }
 }
 static void process(void *v){
     struct consumer *c=v;struct pw_buffer *p=pw_stream_dequeue_buffer(c->stream);if(!p)return;

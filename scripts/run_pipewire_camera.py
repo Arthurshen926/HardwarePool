@@ -48,6 +48,7 @@ def no_camera(objects):
 
 class CameraHarness(Harness):
     def prepare_daemon(self):
+        self.env['PIPEWIRE_DEBUG'] = '2'  # Private test processes only; no production env override.
         # Do not inherit the audio harness's DSP port configuration for raw video.
         client = CLIENT.split('stream.properties =', 1)[0]
         for name, content in [('daemon.conf', DAEMON), ('client.conf', client), ('client-rt.conf', client)]:
@@ -55,6 +56,16 @@ class CameraHarness(Harness):
                                       ' video.convert.* = videoconvert/libspa-videoconvert\n support.* = support/libspa-support')
             (self.root / name).write_text(content)
         return self.start_daemon()
+
+    def dump(self):
+        raw = self.command(['/usr/bin/pw-dump'])
+        try:
+            objects = json.loads(raw)
+        except (json.JSONDecodeError, UnicodeDecodeError) as reason:
+            raise ValueError(f'private graph dump invalid; bytes={len(raw)}') from reason
+        if not isinstance(objects, list):
+            raise ValueError('private graph dump is not an object list')
+        return objects
 
     def launch(self, args, name):
         out = open(self.root / (name + '.out'), 'wb')
@@ -210,7 +221,9 @@ def main():
         try:
             harness.run(args.driver.resolve(), args.helper.resolve(), args.consumer.resolve(), args.scenario)
         except Exception:
-            for label in ('daemon.err', 'owner.err', 'consumer.out', 'consumer.err', 'invalid.err'):
+            for child in harness.children:
+                print(f'camera_process name={Path(child.args[0]).name} pid={child.pid} exit={child.poll()}', file=sys.stderr)
+            for label in ('daemon.err', 'owner.err', 'consumer.out', 'consumer.err', 'invalid.err', 'command.err', 'command.out'):
                 path = root / label
                 if path.exists():
                     print(label + ': ' + path.read_text(errors='replace')[-4096:], file=sys.stderr)
