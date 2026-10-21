@@ -358,3 +358,12 @@ in [PipeWire run 39579126851](https://github.com/Arthurshen926/HardwarePool/acti
 This is native PipeWire software routing through the Android Rust receiver with
 simulated consumption, not physical AudioTrack or general desktop compatibility.
 UDP remains unauthenticated/unencrypted trusted-lab-only; default devices are unchanged.
+
+## Pairing persistence boundary (core only)
+
+`capyio-linux-pairing-store` supplies an owner-bound non-secret journal, explicit
+local recovery and typed single-peer bootstrap material for a caller-supplied
+protected credential backend. No native Linux secure-store backend or enrollment
+CLI is shipped, so this is not production secure persistence. It does not modify
+finite launcher, resource-consent or lease semantics. See
+[ADR 1539](../../docs/adr/1539-linux-pairing-persistence-boundary.md).

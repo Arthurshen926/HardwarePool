@@ -1552,3 +1552,12 @@ opening the no-autoconnect Audio/Sink. Private remote/config routing remains
 trusted and inherited: the scrub is not a general configuration or process
 sandbox. It changes neither default devices nor user/session settings, and does
 not make existing trusted-lab UDP confidential or authenticated.
+
+## Experimental Linux pairing-store boundary
+
+ADR 1539 adds bounded owner-bound non-secret metadata and recovery with an injected
+protected-credential backend. No native backend is shipped; no real Linux secure
+persistence claim is made. Content-derived handles, exact bundle digests, exclusive
+store ownership and revoked tombstones fail closed. Recovery never generates or
+deletes credentials and does not prove remote completion. The typed selected-peer
+bootstrap material changes no finite launcher, consent or lease checks.

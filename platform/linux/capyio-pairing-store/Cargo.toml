@@ -1,0 +1,26 @@
+[package]
+name = "capyio-linux-pairing-store"
+description = "Bounded Linux enrollment journal with an explicit protected-credential backend."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[dependencies]
+capyio-core = { path = "../../../crates/capyio-core" }
+capyio-pairing = { path = "../../../crates/capyio-pairing" }
+capyio-enrollment = { path = "../../../crates/capyio-enrollment" }
+capyio-control-credentials = { path = "../../../crates/capyio-control-credentials" }
+serde.workspace = true
+serde_json.workspace = true
+sha2.workspace = true
+thiserror.workspace = true
+rustix = { version = "=1.1.4", default-features = false, features = ["fs", "std", "process"] }
+
+[dev-dependencies]
+libc = "=0.2.189"
+
+[[test]]
+name = "fork_owner"
+path = "tests/fork_owner.rs"
+harness = false

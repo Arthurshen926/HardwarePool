@@ -1663,3 +1663,11 @@ is projected as an owned native PipeWire Audio/Sink with stereo input ports.
 Typed capture intent distinguishes an explicit external source from the fresh
 Source-derived virtual node. Existing control/lease admission, CapturePump,
 dynamic UDP and bounded child lifetime are reused without a new wire contract.
+
+## Experimental Linux pairing persistence
+
+ADR 1539 adds a platform-owned Linux pairing store with an explicit protected
+backend seam, bounded public journal and local-only recovery. A caller polls the
+shared enrollment manager; no service or thread is created by the store. Typed
+bootstrap material selects exactly one committed active peer for existing finite
+launchers. No native secure backend is shipped in this slice.

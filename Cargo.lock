@@ -662,6 +662,22 @@ dependencies = [
 ]
 
 [[package]]
+name = "capyio-linux-pairing-store"
+version = "0.1.0"
+dependencies = [
+ "capyio-control-credentials",
+ "capyio-core",
+ "capyio-enrollment",
+ "capyio-pairing",
+ "libc",
+ "rustix",
+ "serde",
+ "serde_json",
+ "sha2",
+ "thiserror 2.0.20",
+]
+
+[[package]]
 name = "capyio-linux-touchpad"
 version = "0.1.0"
 dependencies = [

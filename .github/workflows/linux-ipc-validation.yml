@@ -35,6 +35,10 @@ jobs:
         run: cargo fmt --all -- --check
       - name: Lint Linux host, node and mock adapters
         run: cargo clippy --locked -p capyio-mock-source -p capyio-mock-sink -p capyio-linux-host -p capyio-node -p capyio-linux-audio -p capyio-native-audio-lan -p capyio-control-tls -p capyio-control-link -p capyio-core -p capyio-runtime -p capyio-android-jni -p capyio-protocol --all-targets -- -D warnings
+      - name: Validate Linux pairing persistence boundary
+        run: |
+          cargo test --locked -p capyio-linux-pairing-store
+          cargo clippy --locked -p capyio-linux-pairing-store --all-targets -- -D warnings
       - name: Build repository mock adapters
         run: cargo build --locked -p capyio-mock-source -p capyio-mock-sink
       - name: Require finite IPC regression tests

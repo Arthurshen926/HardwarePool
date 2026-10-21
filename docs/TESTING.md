@@ -1328,3 +1328,13 @@ loss and expiry are required with precise ownership and unrelated-node cleanup.
 Poisoned environment tests are not satisfied by argument inspection alone.
 Local compilation/pure tests are not graph acceptance; exact-head hosted success
 is required. Physical AudioTrack and desktop application compatibility are deferred.
+
+## Linux pairing persistence boundary
+
+ADR 1539 is validated with `cargo test --locked -p capyio-linux-pairing-store`
+and strict all-target Clippy. Synthetic tests exercise bilateral manager
+preparation, crash-state replay, injected post-put failure, process-death lock
+release, full-directory admission, missing/locked/changed credentials, duplicate
+bindings, owner/pin mismatch, revoked replay, symlinks and oversized journals.
+No real user credentials/keyring, native Secret Service, physical devices,
+power-loss filesystem or long-lived service acceptance is included.
