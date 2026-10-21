@@ -67,6 +67,7 @@ impl EndpointMode {
     pub fn capture(self) -> bool {
         matches!(self, Self::StereoCapture | Self::VirtualSpeaker)
     }
+    #[cfg(target_os = "linux")]
     pub(crate) fn spec(self) -> capyio_audio::AudioStreamSpec {
         if self.capture() {
             capyio_audio::AudioStreamSpec::media_balanced()
@@ -74,6 +75,7 @@ impl EndpointMode {
             capyio_audio::AudioStreamSpec::voice_interactive()
         }
     }
+    #[cfg(target_os = "linux")]
     pub(crate) fn endpoint(self) -> capyio_protocol::NativeAudioEndpoint {
         if self.capture() {
             capyio_protocol::NativeAudioEndpoint::Source
@@ -81,6 +83,7 @@ impl EndpointMode {
             capyio_protocol::NativeAudioEndpoint::Sink
         }
     }
+    #[cfg(target_os = "linux")]
     pub(crate) fn preset(self) -> capyio_protocol::NativeAudioPreset {
         if self.capture() {
             capyio_protocol::NativeAudioPreset::PcmS16le48000Stereo
@@ -116,6 +119,7 @@ impl CaptureEndpoint {
             Self::VirtualSpeaker(source) => virtual_speaker_name(*source),
         }
     }
+    #[cfg(target_os = "linux")]
     pub(crate) fn validate(&self) -> Result<(), &'static str> {
         match self {
             Self::SelectedSource(target) => {
@@ -130,6 +134,7 @@ pub fn virtual_speaker_name(source: capyio_core::PortId) -> String {
     format!("capyio.virtual-speaker.{source}")
 }
 
+#[cfg(target_os = "linux")]
 pub(crate) fn validate_endpoint_target(
     mode: EndpointMode,
     target: &str,

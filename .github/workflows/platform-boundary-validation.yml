@@ -5,6 +5,7 @@ on:
     branches: [codex/linux-ipc-validation-20261019]
     paths:
       - .github/workflows/platform-boundary-validation.yml
+      - platform/linux/capyio-audio/src/lib.rs
       - platform/windows/capyio-credential-protection/src/lib.rs
       - platform/windows/capyio-service/src/display_worker_failure.rs
       - platform/windows/capyio-pairing-store/tests/store.rs
