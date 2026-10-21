@@ -607,6 +607,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "capyio-linux-camera"
+version = "0.1.0"
+dependencies = [
+ "capyio-core",
+ "capyio-runtime",
+ "capyio-testkit",
+ "capyio-video",
+]
+
+[[package]]
 name = "capyio-linux-host"
 version = "0.1.0"
 dependencies = [

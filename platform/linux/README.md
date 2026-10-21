@@ -199,7 +199,9 @@ Source/Sink leases must complete before the owned capture process starts.
 The network Source advertises 48 kHz S16LE stereo, matching Android's existing
 Speaker receiver. See [ADR 1531](../../docs/adr/1531-linux-explicit-stereo-capture.md).
 
-The new private graph acceptance is pending. Its five required scenarios use a
+All five private reverse graph scenarios passed at `e2316b06` in
+[run 39560030792](https://github.com/Arthurshen926/HardwarePool/actions/runs/39560030792),
+alongside all three CI jobs and prior virtual-source regression cases. They use a
 synthetic distinct-channel source, the production Linux sender, actual Android
 Rust policy/shared UDP receiver, and simulated consumption. They do not establish
 Java AudioTrack, physical audibility, user-session automatic routing or encrypted
@@ -208,8 +210,8 @@ media. Existing mono/virtual-source results above remain separate evidence.
 
 ## Next bounded backlog
 
-1. Complete hosted acceptance of the explicit Linux → Android stereo candidate
-   above, then consolidate deferred physical/AudioTrack acceptance separately.
+1. Consolidate deferred physical/AudioTrack acceptance separately; the explicit
+   Linux → Android stereo software slice above has passed its hosted gates.
 2. Camera, then touchpad, following the Alpha primary capability scope. Each needs
    its own platform projection, permission boundary and software acceptance gate.
 3. Gamepad, haptics, display and IMU remain experimental tracks, not mandatory

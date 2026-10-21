@@ -417,3 +417,52 @@ jobs:
             grep -Fx "capyio_pipewire_capture=passed scenario=$scenario pinned_tls=true independent_consent=true stereo=true real_graph=true simulated_app=true stop=true cleanup=true" \
               "$RUNNER_TEMP/pipewire-capture-$scenario-result.txt"
           done
+
+  linux-native-camera:
+    # Optional native dependency only in this disposable official Ubuntu runner.
+    # No physical camera, portal, user session, V4L2 or kernel module is used.
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: 1.97.1
+          components: rustfmt, clippy
+      - name: Install official optional native development dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes --no-install-recommends pipewire-bin libpipewire-0.3-dev libspa-0.2-dev pkg-config build-essential
+          dpkg-query -W pipewire-bin libpipewire-0.3-dev libspa-0.2-dev
+      - name: Require portable owner and native boundary checks
+        run: |
+          set -euo pipefail
+          cargo test --locked -p capyio-linux-camera
+          cargo clippy --locked -p capyio-linux-camera --all-targets --features native-pipewire -- -D warnings
+          native=platform/linux/capyio-camera/native
+          cc -std=c11 -Wall -Wextra -Werror "$native/test_protocol.c" -o "$RUNNER_TEMP/camera-protocol"
+          "$RUNNER_TEMP/camera-protocol"
+          cc -std=gnu11 -Wall -Wextra -Werror $(pkg-config --cflags libpipewire-0.3) "$native/test_helper.c" $(pkg-config --libs libpipewire-0.3) -o "$RUNNER_TEMP/camera-helper-tests"
+          "$RUNNER_TEMP/camera-helper-tests"
+          python3 -m unittest discover -s scripts -p test_pipewire_camera.py -v
+      - name: Build production owner helper and independent native pixel consumer
+        run: |
+          set -euo pipefail
+          cargo build --locked -p capyio-linux-camera --features native-pipewire --bins --examples
+          # Acceptance example lives in examples; install its exact packaged sibling.
+          cp target/debug/capyio-linux-camera-helper target/debug/examples/capyio-linux-camera-helper
+          cc -std=gnu11 -O2 -Wall -Wextra -Werror $(pkg-config --cflags libpipewire-0.3) platform/linux/capyio-camera/native/camera_consumer.c $(pkg-config --libs libpipewire-0.3) -o "$RUNNER_TEMP/camera-consumer"
+      - name: Require actual NV12 pixels ownership and bounded lifecycle cleanup
+        run: |
+          set -euo pipefail
+          for scenario in pixels no_consumer expiry child_exit server_disconnect malformed partial; do
+            timeout --signal=TERM --kill-after=10s 45s python3 scripts/run_pipewire_camera.py \
+              --hosted-private-camera --driver target/debug/examples/camera_graph_driver \
+              --helper target/debug/examples/capyio-linux-camera-helper \
+              --consumer "$RUNNER_TEMP/camera-consumer" --scenario "$scenario" \
+              | tee "$RUNNER_TEMP/camera-$scenario-result.txt"
+            grep -Fx "capyio_pipewire_camera=passed scenario=$scenario real_graph=true owned_cleanup=true" "$RUNNER_TEMP/camera-$scenario-result.txt"
+          done

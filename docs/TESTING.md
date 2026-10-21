@@ -1205,3 +1205,10 @@ PCM oracle and graph/ownership rejection predicates without starting IPC.
 Compilation, a normal ignored listing, or those pure tests are not graph evidence.
 Android policy and shared Rust UDP reception are real; consumption is simulated,
 not Java AudioTrack or device acceptance. Existing three hosted jobs remain gates.
+
+Reverse implementation `e2316b06` passed all three hosted jobs in
+[run 39560030792](https://github.com/Arthurshen926/HardwarePool/actions/runs/39560030792).
+All five reverse graph scenarios emitted their required pass markers, and the
+four prior virtual-microphone scenarios also passed. This validates private
+synthetic PipeWire capture through the production Linux sender and Android Rust
+policy/shared receiver with simulated consumption, not physical AudioTrack output.

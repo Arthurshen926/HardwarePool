@@ -1,6 +1,6 @@
 # ADR 1531: Explicit Linux stereo Source for Android playback
 
-Status: implemented candidate; hosted software acceptance pending.
+Status: bounded software acceptance passed at `e2316b06`; physical acceptance deferred.
 Date: 2026-10-21
 Base: 9473e9dbc2c8b46378a55a6841e81ea191f45d0e
 
@@ -67,7 +67,11 @@ execution or physical audibility. Fresh valid post-Stop packets must not reach
 the simulated consumer; child, UDP and surviving graph cleanup are also checked.
 
 Pure packetizer/oracle tests and compilation do not establish real graph capture.
-The new hosted cases remain pending until their exact pass markers are observed.
+Implementation `e2316b06` passed all three hosted CI jobs in
+[run 39560030792](https://github.com/Arthurshen926/HardwarePool/actions/runs/39560030792),
+including explicit pass markers for all five reverse graph scenarios above. The
+prior four virtual-microphone scenarios also passed. This establishes the bounded
+private graph/Rust receiver slice, not physical or AudioTrack acceptance.
 The existing mono playback, virtual Source, incoming-Draft policy, ARM64/JNI and
 Java contract gates remain required. UDP remains an unauthenticated trusted-lab
 transport, not production secure media. Native PipeWire only is in scope; no

@@ -1,0 +1,30 @@
+[package]
+name = "capyio-linux-camera"
+description = "Owned finite Linux PipeWire projection of decoded canonical NV12 frames."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish = false
+
+[features]
+default = []
+native-pipewire = []
+
+[dependencies]
+capyio-core = { path = "../../../crates/capyio-core" }
+capyio-runtime = { path = "../../../crates/capyio-runtime" }
+capyio-video = { path = "../../../crates/capyio-video" }
+
+[dev-dependencies]
+capyio-testkit = { path = "../../../crates/capyio-testkit" }
+
+[[bin]]
+name = "capyio-linux-camera-helper"
+path = "src/helper.rs"
+required-features = ["native-pipewire"]
+
+[[example]]
+name = "camera_graph_driver"
+path = "examples/camera_graph_driver.rs"
+required-features = ["native-pipewire"]
