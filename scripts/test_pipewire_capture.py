@@ -12,6 +12,9 @@ from run_pipewire_capture import (
     capture_process_id, graph_fingerprint, select_capture, signal_payload,
     stereo_ports, stereo_tone, verify_capture_removed, verify_stereo,
     parse_pipewire_version, graph_diagnostic, process_diagnostic,
+    VIRTUAL_PREFIX, VIRTUAL_SCENARIOS, POISONED_ENV, PRIVATE_ENV, virtual_expectation,
+    virtual_nodes, select_virtual_sink, verify_virtual_removed, read_environment,
+    verify_capture_environment,
 )
 
 
@@ -239,6 +242,215 @@ class StereoGraphTests(unittest.TestCase):
         self.assertNotIn('LD_PRELOAD', harness.env)
         self.assertNotIn('DBUS_SESSION_BUS_ADDRESS', harness.env)
         self.assertEqual(MARKER, 'capyio-hosted-pipewire-capture-v1\n')
+
+
+class VirtualSpeakerGraphTests(unittest.TestCase):
+    def setUp(self):
+        self.expected = {'owner_pid': 100,
+                         'source_port_id': '71a22bb9-1240-40ec-85d3-c832502a2f93',
+                         'node_name': VIRTUAL_PREFIX + '71a22bb9-1240-40ec-85d3-c832502a2f93',
+                         'endpoint_mode': 'virtual_speaker'}
+        self.source = node(10, {'node.name': SOURCE, 'media.class': 'Stream/Output/Audio',
+                                'client.id': 9, 'object.serial': 110})
+        self.sink = node(20, {'node.name': self.expected['node_name'],
+                              'node.description': 'CapyIO Virtual Speaker',
+                              'media.class': 'Audio/Sink', 'node.virtual': True,
+                              'node.autoconnect': False, 'node.dont-fallback': True,
+                              'node.dont-reconnect': True, 'node.dont-move': True,
+                              'client.id': 19, 'object.serial': 120})
+        self.client = {'id': 19, 'type': 'PipeWire:Interface:Client', 'info': {'props': {
+            'application.process.id': 123, 'pipewire.sec.pid': 123}}}
+        self.app_client = {'id': 9, 'type': 'PipeWire:Interface:Client', 'info': {'props': {
+            'application.process.id': 90, 'pipewire.sec.pid': 90}}}
+        self.sentinel = node(30, {'node.name': 'capyio.test.null', 'media.class': 'Audio/Sink',
+                                 'object.serial': 130})
+        self.ports = [port(11, 10, 'FL', 'out'), port(12, 10, 'FR', 'out'),
+                      port(21, 20, 'FL', 'in'), port(22, 20, 'FR', 'in')]
+        self.graph = [self.source, self.sink, self.client, self.app_client, self.sentinel] + self.ports
+
+    def test_exact_owned_sink_input_ports_not_sentinel_or_monitor_are_selected(self):
+        self.assertEqual(virtual_expectation(self.expected), self.expected)
+        self.assertEqual(virtual_nodes(self.graph), [self.sink])
+        self.assertEqual(select_virtual_sink(self.graph, self.expected),
+                         (self.sink, [(11, 21), (12, 22)]))
+        self.assertEqual(virtual_nodes([self.source, self.sentinel]), [])
+        graph = copy.deepcopy(self.graph)
+        for key in ('node.virtual', 'node.autoconnect', 'node.dont-fallback',
+                    'node.dont-reconnect', 'node.dont-move'):
+            graph[1]['info']['props'][key] = str(graph[1]['info']['props'][key]).lower()
+        self.assertEqual(select_virtual_sink(graph, self.expected)[1], [(11, 21), (12, 22)])
+
+    def test_expectation_rejects_unowned_noncanonical_nil_and_wrong_mode(self):
+        for changes in ({'owner_pid': True}, {'owner_pid': 1}, {'owner_pid': '100'},
+                        {'owner_pid': 1 << 31}, {'source_port_id': None},
+                        {'source_port_id': self.expected['source_port_id'].upper()},
+                        {'source_port_id': '00000000-0000-0000-0000-000000000000',
+                         'node_name': VIRTUAL_PREFIX + '00000000-0000-0000-0000-000000000000'},
+                        {'node_name': VIRTUAL_PREFIX + 'different'},
+                        {'node_name': SOURCE}, {'endpoint_mode': 'selected_source'},
+                        {'target': 'default'}):
+            with self.subTest(changes=changes), self.assertRaises(ValueError):
+                virtual_expectation(self.expected | changes)
+        for missing in self.expected:
+            with self.assertRaises(ValueError):
+                virtual_expectation({key: value for key, value in self.expected.items() if key != missing})
+
+    def test_properties_cannot_turn_sink_into_source_monitor_or_autoconnect(self):
+        for changes in ({'node.name': 'pw-cat'}, {'media.class': 'Audio/Source'},
+                        {'media.class': 'Stream/Input/Audio'}, {'node.virtual': False},
+                        {'node.virtual': 1}, {'node.autoconnect': True}, {'node.autoconnect': 0},
+                        {'node.dont-fallback': False}, {'node.dont-reconnect': False},
+                        {'node.dont-move': False}, {'node.description': 'other'},
+                        {'target.object': SOURCE}, {'target.object': False},
+                        {'node.rate': '1/44100'}, {'audio.rate': 44100},
+                        {'audio.channels': 1}, {'node.force-rate': 44100},
+                        {'node.force-rate': '44100'}, {'node.force-quantum': 128},
+                        {'node.force-quantum': '128'}, {'node.latency': '128/44100'}):
+            graph = copy.deepcopy(self.graph)
+            graph[1]['info']['props'].update(changes)
+            with self.subTest(changes=changes), self.assertRaises(ValueError):
+                select_virtual_sink(graph, self.expected)
+        for field in ('node.virtual', 'node.autoconnect', 'node.dont-fallback',
+                      'node.dont-reconnect', 'node.dont-move'):
+            graph = copy.deepcopy(self.graph)
+            del graph[1]['info']['props'][field]
+            with self.assertRaises(ValueError):
+                select_virtual_sink(graph, self.expected)
+        graph = copy.deepcopy(self.graph)
+        graph[0]['info']['props']['media.class'] = 'Audio/Source'
+        with self.assertRaises(ValueError):
+            select_virtual_sink(graph, self.expected)
+
+    def test_duplicate_missing_swapped_mono_and_monitor_ports_and_any_autolink_fail(self):
+        for changes in ({'audio.channel': 'MONO'}, {'audio.channel': 'FR'},
+                        {'port.direction': 'out'}, {'port.monitor': True},
+                        {'port.monitor': 0}, {'node.id': 999}):
+            graph = copy.deepcopy(self.graph)
+            graph[7]['info']['props'].update(changes)
+            with self.subTest(changes=changes), self.assertRaises(ValueError):
+                select_virtual_sink(graph, self.expected)
+        for graph in (self.graph[:-1], self.graph + [self.sink], self.graph + [self.source],
+                      self.graph + [self.ports[2]], self.graph + [port(25, 20, 'FL', 'out')]):
+            with self.assertRaises(ValueError):
+                select_virtual_sink(graph, self.expected)
+        for direction in ('input-node-id', 'output-node-id'):
+            link = {'id': 50, 'type': 'PipeWire:Interface:Link', 'info': {direction: 20}}
+            with self.assertRaises(ValueError):
+                select_virtual_sink(self.graph + [link], self.expected)
+
+    def test_stop_removes_sink_ports_links_but_preserves_sentinel_and_independent_app(self):
+        links = [{'id': 50, 'type': 'PipeWire:Interface:Link', 'info': {
+            'input-node-id': 20, 'output-node-id': 10, 'props': {'object.serial': 150}}}]
+        owned_objects = [self.sink] + self.ports[2:] + links
+        unrelated_objects = [self.source, self.sentinel] + self.ports[:2]
+        owned = graph_fingerprint(owned_objects)
+        unrelated = graph_fingerprint(unrelated_objects)
+        verify_virtual_removed(unrelated_objects, owned, unrelated)
+        for survivor in owned_objects:
+            with self.assertRaises(ValueError):
+                verify_virtual_removed(unrelated_objects + [survivor], owned, unrelated)
+        renamed = copy.deepcopy(self.sink)
+        renamed['id'] = 999
+        renamed['info']['props']['node.name'] = 'renamed.sink'
+        with self.assertRaises(ValueError):
+            verify_virtual_removed(unrelated_objects + [renamed], owned, unrelated)
+        for removed in unrelated_objects:
+            with self.assertRaises(ValueError):
+                verify_virtual_removed([o for o in unrelated_objects if o != removed], owned, unrelated)
+        replaced = copy.deepcopy(unrelated_objects)
+        replaced[1]['info']['props']['object.serial'] += 1
+        with self.assertRaises(ValueError):
+            verify_virtual_removed(replaced, owned, unrelated)
+        # After server loss, do not falsely claim sentinel preservation.
+        verify_virtual_removed([self.sentinel], {}, {})
+
+    def test_actual_child_requires_exact_client_parent_binary_and_owned_arguments(self):
+        properties = {key: value for key, value in self.sink['info']['props'].items()
+                      if key not in ('client.id', 'object.serial')}
+        args = [b'/usr/bin/pw-cat', b'--record', b'--rate=48000', b'--channels=2',
+                b'--channel-map=stereo', b'--format=s16', b'--latency=20ms',
+                b'--properties=' + json.dumps(properties).encode(), b'--target=0', b'-']
+        def verify(arguments=args, graph=None, parent=100, version='1.0.5',
+                   executable=Path('/usr/bin/pw-cat'), identity=(1, 2, 3, 4, 5)):
+            with patch.object(Path, 'read_text', return_value='PPid:\t' + str(parent)), \
+                 patch.object(Path, 'read_bytes', return_value=b'\0'.join(arguments) + b'\0'), \
+                 patch.object(Path, 'resolve', side_effect=[executable, Path('/usr/bin/pw-cat')]), \
+                 patch('run_pipewire_capture.pipewire_binary_identity', return_value=identity):
+                return capture_process_id(self.graph if graph is None else graph, self.sink,
+                                          100, version, (1, 2, 3, 4, 5), self.expected)
+        self.assertEqual(verify(), 123)
+        self.assertEqual(verify(args[:-1] + [b'--raw', b'-'], version='1.6.9'), 123)
+        for bad in ([arg for arg in args if arg != b'--record'],
+                    args[:-1] + [b'--playback', b'-'], args[:-1] + [b'--monitor', b'-'],
+                    args[:-1] + [b'--target=' + SOURCE.encode(), b'-'],
+                    args[:-1] + [b'--rate=44100', b'-'],
+                    args[:-1] + [b'--latency=128/44100', b'-'],
+                    args[:-1] + [b'--raw', b'-'],
+                    args[:-1] + [b'--properties={}', b'-'],
+                    [b'--properties={}' if arg.startswith(b'--properties=') else arg for arg in args]):
+            with self.subTest(args=bad), self.assertRaises(ValueError):
+                verify(bad)
+        for kwargs in ({'parent': 99}, {'executable': Path('/tmp/fake-pw-cat')},
+                       {'identity': (9, 9, 9, 9, 9)}, {'version': '1.6.9'}):
+            with self.assertRaises(ValueError):
+                verify(**kwargs)
+        for changed in ({'application.process.id': 90}, {'application.process.id': True},
+                        {'pipewire.sec.pid': 90}):
+            graph = copy.deepcopy(self.graph)
+            graph[2]['info']['props'].update(changed)
+            with self.assertRaises(ValueError):
+                verify(graph=graph)
+        for graph in (self.graph[:2] + self.graph[3:], self.graph + [self.client]):
+            with self.assertRaises(ValueError):
+                verify(graph=graph)
+
+    def test_all_six_poison_values_reach_owner_but_not_child_and_private_routing_survives(self):
+        harness = CaptureHarness(Path('/tmp/owned-private-test'), 'waveform', 'virtual_speaker')
+        clean = {key.encode(): harness.env[key].encode() for key in PRIVATE_ENV}
+        owner = clean | {key.encode(): value.encode() for key, value in POISONED_ENV.items()}
+        verify_capture_environment(owner, clean, harness.env)
+        self.assertEqual(set(POISONED_ENV), {'PIPEWIRE_NODE', 'PIPEWIRE_AUTOCONNECT',
+                                           'PIPEWIRE_PROPS', 'PIPEWIRE_QUANTUM',
+                                           'PIPEWIRE_LATENCY', 'PIPEWIRE_RATE'})
+        for key, value in POISONED_ENV.items():
+            with self.subTest(key=key), self.assertRaises(ValueError):
+                verify_capture_environment(owner, clean | {key.encode(): value.encode()}, harness.env)
+            with self.assertRaises(ValueError):
+                verify_capture_environment({k: v for k, v in owner.items() if k != key.encode()},
+                                           clean, harness.env)
+            with self.assertRaises(ValueError):
+                verify_capture_environment(owner | {key.encode(): b'not-poisoned'}, clean, harness.env)
+        for key in PRIVATE_ENV:
+            with self.assertRaises(ValueError):
+                verify_capture_environment(owner, clean | {key.encode(): b'wrong'}, harness.env)
+            with self.assertRaises(ValueError):
+                verify_capture_environment(owner | {key.encode(): b'wrong'}, clean, harness.env)
+        self.assertFalse(set(POISONED_ENV) & set(harness.env))
+
+    def test_environment_reads_are_bounded_owned_and_never_logged(self):
+        with patch.object(Path, 'open', return_value=io.BytesIO(b'A=B\0C=D\0')):
+            self.assertEqual(read_environment(123), {b'A': b'B', b'C': b'D'})
+        for raw in (b'A=B', b'A=B\0A=C\0', b'INVALID\0', b'A=' + b'x' * 32768 + b'\0'):
+            with patch.object(Path, 'open', return_value=io.BytesIO(raw)), self.assertRaises(ValueError):
+                read_environment(123)
+        with self.assertRaises(ValueError):
+            read_environment(True)
+
+    def test_virtual_scenarios_are_explicit_and_selected_capture_stays_default(self):
+        root = Path('/tmp/owned-private-test')
+        self.assertEqual(VIRTUAL_SCENARIOS, ('waveform', 'no_input', 'child_exit',
+                                           'server_disconnect', 'control_disconnect', 'expiry'))
+        for scenario in VIRTUAL_SCENARIOS:
+            harness = CaptureHarness(root, scenario, 'virtual_speaker')
+            self.assertEqual(harness.env['CAPYIO_PIPEWIRE_ENDPOINT_MODE'], 'virtual_speaker')
+            self.assertEqual(harness.env['CAPYIO_PIPEWIRE_CAPTURE'], scenario)
+            self.assertTrue(harness.virtual)
+        self.assertFalse(CaptureHarness(root, 'waveform').virtual)
+        self.assertEqual(CaptureHarness(root, 'waveform').endpoint_mode, 'selected_source')
+        for scenario, mode in (('no_input', 'selected_source'), ('expiry', 'selected_source'),
+                               ('timeout', 'virtual_speaker'), ('waveform', 'automatic')):
+            with self.assertRaises(ValueError):
+                CaptureHarness(root, scenario, mode)
 
 
 if __name__ == '__main__':

@@ -1315,3 +1315,16 @@ The native feature is compile/Clippy only in the official libevdev hosted job;
 no real `/dev/uinput`, kernel device, desktop gesture or physical input test is
 part of this slice. Five-contact traces and backend ACK ordering are not proof
 of visible OS gestures. Report local and hosted outcomes separately.
+
+## Owned Linux virtual speaker (ADR 1538)
+
+Socket-free capture schema, owned identity and fixed-command tests cover the
+virtual-speaker addition and all six upstream environment override removals for
+all audio modes. Existing selected-source tests stay unchanged. The additive
+private graph gate must prove direct Audio/Sink input ports, independent synthetic
+stereo application waveform and silence/order through the production sender into
+actual Android Rust policy/shared reception. No-input Stop, child/server/control
+loss and expiry are required with precise ownership and unrelated-node cleanup.
+Poisoned environment tests are not satisfied by argument inspection alone.
+Local compilation/pure tests are not graph acceptance; exact-head hosted success
+is required. Physical AudioTrack and desktop application compatibility are deferred.

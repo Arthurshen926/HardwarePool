@@ -54,9 +54,13 @@ struct Process {
 }
 impl Process {
     fn start(args: &[&str]) -> Self {
+        Self::start_with_env(args, &[])
+    }
+    fn start_with_env(args: &[&str], environment: &[(&str, &str)]) -> Self {
         let child = Command::new(env!("CARGO_BIN_EXE_capyio-node"))
             .args(args)
             .env_remove("RUST_LOG")
+            .envs(environment.iter().copied())
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
@@ -651,7 +655,14 @@ fn ipc_linux_capture_requires_explicit_opt_in_and_default_remains_demo() {
 #[test]
 #[ignore = "requires the dedicated hosted private-PipeWire stereo capture harness"]
 fn hosted_pipewire_linux_capture_android_sink_end_to_end() {
-    hosted_capture::run();
+    hosted_capture::run(false);
+}
+
+/// Separate actual Audio/Sink gate; retaining the selected-source graph is required.
+#[test]
+#[ignore = "requires the dedicated hosted private-PipeWire virtual speaker harness"]
+fn hosted_pipewire_linux_virtual_speaker_android_sink_end_to_end() {
+    hosted_capture::run(true);
 }
 
 mod hosted_capture {
@@ -674,6 +685,20 @@ mod hosted_capture {
     const SOURCE: &str = "capyio.test.stereo.source";
     const WHOLE_BUDGET: Duration = Duration::from_secs(22);
     const MAX_PCM: usize = 2 * 1024 * 1024;
+    // Poison only the production Node, never the private server or synthetic app.
+    // Python verifies these exact values in /proc/<owner>/environ and their
+    // absence in the actual recorder, alongside retained private routing keys.
+    const POISONED_ENV: [(&str, &str); 6] = [
+        ("PIPEWIRE_NODE", "capyio.poisoned.node"),
+        ("PIPEWIRE_AUTOCONNECT", "true"),
+        (
+            "PIPEWIRE_PROPS",
+            r#"{"node.name":"capyio.poisoned.override","media.class":"Audio/Source","node.autoconnect":true,"node.virtual":false}"#,
+        ),
+        ("PIPEWIRE_QUANTUM", "128/44100"),
+        ("PIPEWIRE_LATENCY", "128/44100"),
+        ("PIPEWIRE_RATE", "1/44100"),
+    ];
 
     #[derive(Clone, Copy, Debug, PartialEq, Eq)]
     enum Scenario {
@@ -682,6 +707,8 @@ mod hosted_capture {
         ServerDisconnect,
         ControlDisconnect,
         Timeout,
+        NoInput,
+        Expiry,
     }
     impl Scenario {
         fn parse(value: &str) -> Option<Self> {
@@ -691,6 +718,8 @@ mod hosted_capture {
                 "server_disconnect" => Some(Self::ServerDisconnect),
                 "control_disconnect" => Some(Self::ControlDisconnect),
                 "timeout" => Some(Self::Timeout),
+                "no_input" => Some(Self::NoInput),
+                "expiry" => Some(Self::Expiry),
                 _ => None,
             }
         }
@@ -701,6 +730,8 @@ mod hosted_capture {
                 Self::ServerDisconnect => "server_disconnect",
                 Self::ControlDisconnect => "control_disconnect",
                 Self::Timeout => "timeout",
+                Self::NoInput => "no_input",
+                Self::Expiry => "expiry",
             }
         }
     }
@@ -724,7 +755,16 @@ mod hosted_capture {
         assert_eq!(fs::read(path).unwrap(), MARKER);
         true
     }
-    fn private_runtime() -> PathBuf {
+    fn private_runtime(virtual_speaker: bool) -> PathBuf {
+        assert_eq!(
+            std::env::var("CAPYIO_PIPEWIRE_ENDPOINT_MODE").as_deref(),
+            Ok(if virtual_speaker {
+                "virtual_speaker"
+            } else {
+                "selected_source"
+            }),
+            "graph endpoint mode must match the exact ignored fixture",
+        );
         assert!(opted_in(
             std::env::var_os("CAPYIO_PIPEWIRE_TEST").as_deref(),
             std::env::var_os("CAPYIO_PIPEWIRE_CAPTURE").as_deref(),
@@ -849,22 +889,45 @@ mod hosted_capture {
         Ok(())
     }
 
-    pub(super) fn run() {
-        let root = private_runtime(); // Reject missing isolation before any IPC.
+    pub(super) fn run(virtual_speaker: bool) {
+        let root = private_runtime(virtual_speaker); // Reject missing isolation before any IPC.
         let scenario = Scenario::parse(&std::env::var("CAPYIO_PIPEWIRE_CAPTURE").unwrap()).unwrap();
+        assert!(
+            scenario_allowed(virtual_speaker, scenario),
+            "scenario must match endpoint mode"
+        );
+        let expires = matches!(scenario, Scenario::Timeout | Scenario::Expiry);
         let deadline = Instant::now() + WHOLE_BUDGET;
-        let lifetime = Duration::from_secs(if scenario == Scenario::Timeout { 5 } else { 30 });
+        let lifetime = Duration::from_secs(if expires { 5 } else { 30 });
         let reservation = UdpSocket::bind((Ipv4Addr::LOCALHOST, 0)).unwrap();
         let source_address = reservation.local_addr().unwrap();
         let mut fixture = Fixture::new();
         fixture.config["media"] = json!(source_address.to_string());
         fixture.config["target"] = json!(SOURCE);
+        if virtual_speaker {
+            fixture.config.as_object_mut().unwrap().remove("target");
+            fixture.config["endpoint_mode"] = json!("virtual_speaker");
+        }
         fixture.config["duration_secs"] = json!(lifetime.as_secs());
-        let mut process = Process::capture();
+        let mut process = if virtual_speaker {
+            Process::start_with_env(&["linux-capture", "--trusted-lab"], &POISONED_ENV)
+        } else {
+            Process::capture()
+        };
         fixture.bootstrap(&mut process);
         let mut peer = fixture.connect(&mut process);
         let approval = process.event("approval_required");
-        assert_eq!(approval["target"], SOURCE);
+        let source: PortRef = serde_json::from_value(approval["source"].clone()).unwrap();
+        let node_name = if virtual_speaker {
+            assert_eq!(approval["endpoint_mode"], "virtual_speaker");
+            assert!(approval["target"].is_null());
+            let owned = format!("capyio.virtual-speaker.{}", source.port_id);
+            assert_eq!(approval["node_name"], owned);
+            owned
+        } else {
+            assert_eq!(approval["target"], SOURCE);
+            SOURCE.to_owned()
+        };
         assert_eq!(approval["format"], "pcm-s16le-48000-stereo");
         assert_eq!(approval["duration_secs"], lifetime.as_secs());
         let id: RouteId = serde_json::from_value(approval["route_id"].clone()).unwrap();
@@ -971,22 +1034,45 @@ mod hosted_capture {
             .create_new(true)
             .open(owner_path)
             .unwrap();
-        serde_json::to_writer(owner, &json!({"owner_pid":process.child.id()})).unwrap();
+        let ownership = if virtual_speaker {
+            json!({"owner_pid":process.child.id(),"source_port_id":source.port_id,
+                   "node_name":node_name,"endpoint_mode":"virtual_speaker"})
+        } else {
+            json!({"owner_pid":process.child.id()})
+        };
+        serde_json::to_writer(owner, &ownership).unwrap();
         publish(&root, ".capyio-capture-owner-ready");
         wait_marker(&root, ".capyio-links-ready", deadline);
         let mut pcm = Vec::new();
         let mut last: Option<AudioMediaPacket> = None;
         let mut packets = 0_u64;
-        while scenario == Scenario::Timeout
-            || packets
-                < if scenario == Scenario::Waveform {
-                    650
-                } else {
-                    1
-                }
+        // An unlinked real Sink must remain stoppable without ever producing a
+        // packet. No synthetic PCM is supplied to its stdout or sender.
+        if scenario == Scenario::NoInput {
+            let observe = Instant::now() + Duration::from_millis(350);
+            while Instant::now() < observe {
+                assert!(
+                    matches!(
+                        receiver.receive(),
+                        Ok(NativeLanReceiveOutcome::Pending) | Err(NativeLanError::ReceiveTimeout)
+                    ),
+                    "no packet may originate from an unlinked virtual speaker"
+                );
+                assert!(peer.runtime.audio_should_run(id, now_ms()));
+                assert!(process.child.try_wait().unwrap().is_none());
+            }
+        }
+        while scenario != Scenario::NoInput
+            && (expires
+                || packets
+                    < if scenario == Scenario::Waveform {
+                        650
+                    } else {
+                        1
+                    })
         {
             assert!(Instant::now() < deadline, "bounded stereo receive");
-            if scenario == Scenario::Timeout && !peer.runtime.audio_should_run(id, now_ms()) {
+            if expires && !peer.runtime.audio_should_run(id, now_ms()) {
                 break;
             }
             match receiver.receive() {
@@ -1006,11 +1092,7 @@ mod hosted_capture {
                     if let Err(error) =
                         consume(&peer.runtime, id, &guarded, &binding, &packet, &mut pcm)
                     {
-                        assert_eq!(
-                            scenario,
-                            Scenario::Timeout,
-                            "unexpected consumption rejection: {error}"
-                        );
+                        assert!(expires, "unexpected consumption rejection: {error}");
                         break;
                     }
                     last = Some(packet);
@@ -1021,14 +1103,18 @@ mod hosted_capture {
             }
         }
         assert!(
-            packets > 0,
-            "actual production graph/packetizer traffic required"
+            scenario == Scenario::NoInput || packets > 0,
+            "actual production graph/packetizer traffic required outside no-input Stop"
         );
-        if scenario != Scenario::Timeout {
+        if !expires {
             process.command(json!({"version":1,"command":"status"}));
             let status = process.event("status");
             assert_eq!(status["state"], "active");
             assert!(status["packets_sent"].as_u64().unwrap() >= packets);
+            if scenario == Scenario::NoInput {
+                assert_eq!(status["packets_sent"], 0);
+                assert!(pcm.is_empty());
+            }
         }
         if matches!(scenario, Scenario::ChildExit | Scenario::ServerDisconnect) {
             publish(&root, ".capyio-fault-ready");
@@ -1047,6 +1133,8 @@ mod hosted_capture {
                 .open(root.join("received-stereo.pcm"))
                 .unwrap();
             file.write_all(&pcm).unwrap();
+        }
+        if matches!(scenario, Scenario::Waveform | Scenario::NoInput) {
             process.command(json!({"version":1,"command":"stop"}));
             process.event("stopped");
             assert!(process.finish().success());
@@ -1100,7 +1188,21 @@ mod hosted_capture {
             binding.clone(),
         )
         .unwrap();
-        let mut fresh = last.unwrap();
+        let mut fresh = last.unwrap_or_else(|| {
+            assert_eq!(scenario, Scenario::NoInput);
+            // Deliberately NEW post-Stop traffic, not capture evidence. It must
+            // pass wire admission and be rejected by actual Android lifecycle.
+            AudioMediaPacket {
+                stream_id: binding.stream_id,
+                stream_epoch: binding.stream_epoch,
+                sequence: 0,
+                source_timestamp_micros: 1,
+                first_sample_index: 0,
+                sample_count: 480,
+                discontinuity: false,
+                payload: vec![0; 480 * 2 * 2],
+            }
+        });
         fresh.sequence += 1000;
         fresh.first_sample_index = fresh.sequence * 480;
         fresh.source_timestamp_micros += 10_000_000;
@@ -1137,9 +1239,57 @@ mod hosted_capture {
             deadline,
         );
         eprintln!(
-            "capyio_capture_fixture=passed scenario={} android_policy=true shared_rust_receiver=true simulated_app=true fresh_post_stop=true",
+            "{}=passed scenario={} android_policy=true shared_rust_receiver=true simulated_app=true fresh_post_stop=true",
+            if virtual_speaker {
+                "capyio_virtual_speaker_fixture"
+            } else {
+                "capyio_capture_fixture"
+            },
             scenario.name()
         );
+    }
+
+    fn scenario_allowed(virtual_speaker: bool, scenario: Scenario) -> bool {
+        if virtual_speaker {
+            scenario != Scenario::Timeout
+        } else {
+            !matches!(scenario, Scenario::NoInput | Scenario::Expiry)
+        }
+    }
+
+    #[test]
+    fn pure_virtual_speaker_scenarios_and_all_six_environment_overrides_are_explicit() {
+        for name in [
+            "waveform",
+            "no_input",
+            "child_exit",
+            "server_disconnect",
+            "control_disconnect",
+            "expiry",
+        ] {
+            let scenario = Scenario::parse(name).unwrap();
+            assert_eq!(scenario.name(), name);
+            assert!(scenario_allowed(true, scenario));
+        }
+        assert!(!scenario_allowed(true, Scenario::Timeout));
+        assert!(!scenario_allowed(false, Scenario::NoInput));
+        assert!(!scenario_allowed(false, Scenario::Expiry));
+        assert_eq!(POISONED_ENV.len(), 6);
+        assert_eq!(
+            POISONED_ENV
+                .iter()
+                .map(|(key, _)| *key)
+                .collect::<BTreeSet<_>>(),
+            BTreeSet::from([
+                "PIPEWIRE_NODE",
+                "PIPEWIRE_AUTOCONNECT",
+                "PIPEWIRE_PROPS",
+                "PIPEWIRE_QUANTUM",
+                "PIPEWIRE_LATENCY",
+                "PIPEWIRE_RATE"
+            ])
+        );
+        assert!(POISONED_ENV.iter().all(|(_, value)| !value.is_empty()));
     }
 
     #[test]

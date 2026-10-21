@@ -1655,3 +1655,11 @@ bilateral consent and both leases. No new wire or crypto is introduced. Native
 helper creation follows authenticated Hello; Active follows committed input.
 The separately named fake-syscall executable fixture is software-only evidence,
 not kernel projection or desktop gesture acceptance.
+
+## Owned Linux virtual speaker
+
+ADR 1538 adds capture-only `virtual_speaker` mode: a local Speaker network Source
+is projected as an owned native PipeWire Audio/Sink with stereo input ports.
+Typed capture intent distinguishes an explicit external source from the fresh
+Source-derived virtual node. Existing control/lease admission, CapturePump,
+dynamic UDP and bounded child lifetime are reused without a new wire contract.

@@ -68,3 +68,13 @@ entry from `capyio-linux-host` with an already authenticated/admitted owner.
 The owner's `poll` fairly advances bounded incremental control and media without
 blocking on idle control. Existing blocking calls remain available. See ADR 1521
 for cancellation/expiry semantics and unfinished executable admission steps.
+
+## Application-selectable virtual speaker
+
+The finite `capyio-node linux-capture --trusted-lab` launcher accepts
+`endpoint_mode: "virtual_speaker"` with no external `target`. After independent
+consent and exact finite Route authority it exposes an owned native `Audio/Sink`
+and sends selected application stereo PCM to the admitted Android Speaker Sink.
+Default selected-source capture is unchanged. See
+[ADR 1538](../../../docs/adr/1538-linux-owned-virtual-speaker.md) for authority,
+shared environment hardening, pending hosted evidence and compatibility limits.

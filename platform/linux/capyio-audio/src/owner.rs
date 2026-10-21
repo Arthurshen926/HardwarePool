@@ -624,6 +624,13 @@ fn validate_admission(
             "virtual microphone identity differs from admitted local Sink",
         ));
     }
+    if target.endpoint_mode == crate::EndpointMode::VirtualSpeaker
+        && target.pipewire_target != crate::virtual_speaker_name(route.source.port_id)
+    {
+        return Err(error(
+            "virtual speaker identity differs from admitted local Source",
+        ));
+    }
     let (local, peer) = if target.endpoint_mode.capture() {
         (route.source, route.sink)
     } else {
@@ -739,6 +746,48 @@ mod tests {
         runtime.accept_peer_catalog(media.session_id, peer).unwrap();
         assert!(validate_catalog_endpoints(&runtime, route.id, false).is_err());
         validate_catalog_endpoints(&runtime, route.id, true).unwrap();
+    }
+
+    #[test]
+    fn virtual_speaker_admission_binds_owned_source_and_finite_authority() {
+        let (mut runtime, media) = crate::route::tests::fixture_for(true);
+        let route = runtime.route(media.route_id).unwrap().clone();
+        let admission = PlaybackAdmission {
+            expected: ControlTlsBinding::new(
+                media.session_id,
+                route.source.node_id,
+                route.sink.node_id,
+            )
+            .unwrap(),
+            route_id: route.id,
+            local_offer: NativeAudioDataOffer {
+                port: 40211,
+                stream_id: media.stream_id,
+                endpoint: NativeAudioEndpoint::Source,
+                preset: NativeAudioPreset::PcmS16le48000Stereo,
+            },
+        };
+        let mut target = PlaybackTarget {
+            local: "127.0.0.1:40211".parse().unwrap(),
+            duration: Duration::from_secs(10),
+            pipewire_target: crate::virtual_speaker_name(route.source.port_id),
+            endpoint_mode: crate::EndpointMode::VirtualSpeaker,
+        };
+        validate_admission(&runtime, admission.expected, admission, &target, 1_000).unwrap();
+        target.pipewire_target = crate::virtual_speaker_name(capyio_core::PortId::new());
+        assert!(
+            validate_admission(&runtime, admission.expected, admission, &target, 1_000).is_err()
+        );
+        target.pipewire_target = crate::virtual_speaker_name(route.source.port_id);
+        assert!(
+            validate_admission(&runtime, admission.expected, admission, &target, 5_000).is_err()
+        );
+        runtime
+            .release_route_port_lease(route.id, route.source, media.session_id)
+            .unwrap();
+        assert!(
+            validate_admission(&runtime, admission.expected, admission, &target, 1_000).is_err()
+        );
     }
 
     #[test]

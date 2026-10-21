@@ -1542,3 +1542,13 @@ Fixed helper siblings and `/dev/uinput` require existing permissions; no
 permission change, arbitrary executable or device path is accepted. Test-only
 fake syscalls use a separately named feature/command/helper and do not alter the
 production command. An interrupted cleanup remains an error, not a release claim.
+
+## Linux audio helper stream overrides
+
+ADR 1538 removes six upstream PipeWire stream override environment variables in
+the shared fixed helper builder for every audio endpoint and the capture probe.
+Virtual-speaker identity is checked against the admitted local Source before
+opening the no-autoconnect Audio/Sink. Private remote/config routing remains
+trusted and inherited: the scrub is not a general configuration or process
+sandbox. It changes neither default devices nor user/session settings, and does
+not make existing trusted-lab UDP confidential or authenticated.

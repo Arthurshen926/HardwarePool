@@ -84,20 +84,41 @@ struct CaptureLaunchConfig {
     sink: PortRef,
     listen: SocketAddrV4,
     media: SocketAddrV4,
-    target: String,
+    #[serde(default)]
+    target: Option<String>,
+    #[serde(default)]
+    endpoint_mode: CaptureMode,
     duration_secs: u64,
+}
+#[derive(Clone, Copy, Default, Deserialize, Eq, PartialEq)]
+#[serde(rename_all = "snake_case")]
+enum CaptureMode {
+    #[default]
+    SelectedSource,
+    VirtualSpeaker,
 }
 fn parse_capture(bytes: &[u8]) -> io::Result<LaunchConfig> {
     let value: CaptureLaunchConfig = sanitized(serde_json::from_slice(bytes))?;
-    if value.target.eq_ignore_ascii_case("auto") || value.target.eq_ignore_ascii_case("default") {
-        return Err(fail());
+    match value.endpoint_mode {
+        CaptureMode::SelectedSource => {
+            let target = value.target.as_deref().ok_or_else(fail)?;
+            if target.eq_ignore_ascii_case("auto") || target.eq_ignore_ascii_case("default") {
+                return Err(fail());
+            }
+        }
+        CaptureMode::VirtualSpeaker if value.target.is_some() => return Err(fail()),
+        CaptureMode::VirtualSpeaker => {}
     }
-    // Reuse address/duration validation without accepting playback schema fields.
+    // Validate shared addresses and lifetime with a non-resource placeholder.
     let encoded = sanitized(serde_json::to_vec(
-        &json!({"version":value.version,"node_id":value.node_id,"source":value.sink,"listen":value.listen,"media":value.media,"target":value.target,"duration_secs":value.duration_secs}),
+        &json!({"version":value.version,"node_id":value.node_id,"source":value.sink,"listen":value.listen,"media":value.media,"target":value.target.as_deref().unwrap_or("capyio.validation.only"),"duration_secs":value.duration_secs}),
     ))?;
     let mut config = LaunchConfig::parse(&encoded)?;
-    config.endpoint_mode = EndpointMode::StereoCapture;
+    config.target = value.target;
+    config.endpoint_mode = match value.endpoint_mode {
+        CaptureMode::SelectedSource => EndpointMode::StereoCapture,
+        CaptureMode::VirtualSpeaker => EndpointMode::VirtualSpeaker,
+    };
     Ok(config)
 }
 
@@ -119,6 +140,9 @@ impl LaunchConfig {
             }
             EndpointMode::VirtualMicrophone => {
                 Ok(capyio_linux_audio::virtual_microphone_name(sink.port_id))
+            }
+            EndpointMode::VirtualSpeaker => {
+                Ok(capyio_linux_audio::virtual_speaker_name(sink.port_id))
             }
         }
     }
@@ -350,7 +374,7 @@ fn prepare(
     }
     // This set opts Sources into publication; Sink-only capabilities are
     // already included. Selecting the Sink here is a NotSourceCapability error.
-    let capture = config.endpoint_mode == EndpointMode::StereoCapture;
+    let capture = config.endpoint_mode.capture();
     let selected = if capture {
         BTreeSet::from([sink.capability_id])
     } else {
@@ -399,7 +423,7 @@ fn prepare(
     let consent_deadline = Instant::now() + CONSENT;
     io.send_json(&json!({"version":1,"event":"approval_required","request_id":request_id,"route_id":route_id,
         "session_id":link.session_id(),"source":route_source,"sink":route_sink,"target":config.target,
-        "endpoint_mode":config.endpoint_mode.name(),"node_name":if config.endpoint_mode==EndpointMode::VirtualMicrophone { Some(config.output_target(sink)?) } else { None },
+        "endpoint_mode":config.endpoint_mode.name(),"node_name":if matches!(config.endpoint_mode, EndpointMode::VirtualMicrophone | EndpointMode::VirtualSpeaker) { Some(config.output_target(sink)?) } else { None },
         "format":format,"duration_secs":config.duration_secs,"approval_timeout_secs":CONSENT.as_secs(),"media_security":"unauthenticated_udp_trusted_lab_only"}), Instant::now() + Duration::from_secs(1))?;
     loop {
         check(consent_deadline)?;
@@ -936,14 +960,18 @@ fn local_runtime_endpoint(
     mode: ProposalMode,
     endpoint: EndpointMode,
 ) -> io::Result<(NodeRuntime, PortRef)> {
-    if endpoint == EndpointMode::StereoCapture && mode != ProposalMode::LinuxLed {
+    if endpoint.capture() && mode != ProposalMode::LinuxLed {
         return Err(fail());
     }
-    let capture = endpoint == EndpointMode::StereoCapture;
+    let capture = endpoint.capture();
     let mut node = NodeDescriptor::new(
         node_id,
         if capture {
-            "Linux explicit stereo capture"
+            if endpoint == EndpointMode::VirtualSpeaker {
+                "Linux virtual speaker"
+            } else {
+                "Linux explicit stereo capture"
+            }
         } else if endpoint == EndpointMode::VirtualMicrophone {
             "Linux virtual microphone"
         } else {
@@ -979,7 +1007,11 @@ fn local_runtime_endpoint(
         id: port,
         capability_id: capability,
         display_name: if capture {
-            "Selected stereo capture Source"
+            if endpoint == EndpointMode::VirtualSpeaker {
+                "Virtual speaker stereo Source"
+            } else {
+                "Selected stereo capture Source"
+            }
         } else if endpoint == EndpointMode::VirtualMicrophone {
             "Virtual microphone network Sink"
         } else {
@@ -1009,7 +1041,11 @@ fn local_runtime_endpoint(
             id: capability,
             adapter_instance_id: adapter,
             display_name: if capture {
-                "Selected PipeWire stereo capture"
+                if endpoint == EndpointMode::VirtualSpeaker {
+                    "Owned PipeWire virtual speaker"
+                } else {
+                    "Selected PipeWire stereo capture"
+                }
             } else if endpoint == EndpointMode::VirtualMicrophone {
                 "PipeWire virtual microphone"
             } else {
@@ -1050,6 +1086,37 @@ mod tests {
     fn config() -> serde_json::Value {
         json!({"version":1,"node_id":NodeId::new(),"source":PortRef{node_id:NodeId::new(),capability_id:CapabilityId::new(),port_id:PortId::new()},"listen":"127.0.0.1:0","media":"127.0.0.1:40211","target":"explicit.test","duration_secs":10})
     }
+    #[test]
+    fn virtual_speaker_capture_schema_derives_source_identity_without_external_target() {
+        let mut value = config();
+        value["sink"] = value["source"].clone();
+        value.as_object_mut().unwrap().remove("source");
+        value.as_object_mut().unwrap().remove("target");
+        value["endpoint_mode"] = json!("virtual_speaker");
+        let parsed = parse_capture(&serde_json::to_vec(&value).unwrap()).unwrap();
+        assert_eq!(parsed.endpoint_mode, EndpointMode::VirtualSpeaker);
+        let (runtime, source) =
+            local_runtime_endpoint(parsed.node_id, ProposalMode::LinuxLed, parsed.endpoint_mode)
+                .unwrap();
+        assert_eq!(
+            parsed.output_target(source).unwrap(),
+            capyio_linux_audio::virtual_speaker_name(source.port_id)
+        );
+        let snapshot = runtime.snapshot();
+        let capability = &snapshot.local_node.capabilities[&source.capability_id];
+        assert_eq!(capability.class, CapabilityClass::Speaker);
+        assert_eq!(
+            capability.ports[&source.port_id].direction,
+            PortDirection::Source
+        );
+        assert!(snapshot.port_leases.is_empty());
+        for target in ["external.sink", "0", "", "capyio.virtual-speaker.forged"] {
+            value["target"] = json!(target);
+            assert!(parse_capture(&serde_json::to_vec(&value).unwrap()).is_err());
+        }
+        assert!(LaunchConfig::parse(&serde_json::to_vec(&value).unwrap()).is_err());
+    }
+
     #[test]
     fn capture_launch_has_distinct_explicit_schema_and_published_stereo_source() {
         let original = config();

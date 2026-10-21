@@ -12,6 +12,7 @@ import subprocess
 import sys
 import tempfile
 import time
+import uuid
 
 from run_pipewire_loopback import (
     CLIENT, DAEMON, LIMIT, Harness, graph_fingerprint, ownership_number,
@@ -21,6 +22,23 @@ from run_pipewire_loopback import (
 SOURCE = 'capyio.test.stereo.source'
 MARKER = 'capyio-hosted-pipewire-capture-v1\n'
 SCENARIOS = ('waveform', 'child_exit', 'server_disconnect', 'control_disconnect', 'timeout')
+VIRTUAL_SCENARIOS = ('waveform', 'no_input', 'child_exit', 'server_disconnect',
+                     'control_disconnect', 'expiry')
+VIRTUAL_PREFIX = 'capyio.virtual-speaker.'
+POISONED_ENV = {
+    'PIPEWIRE_NODE': 'capyio.poisoned.node',
+    'PIPEWIRE_AUTOCONNECT': 'true',
+    'PIPEWIRE_PROPS': '{"node.name":"capyio.poisoned.override","media.class":"Audio/Source",'
+                      '"node.autoconnect":true,"node.virtual":false}',
+    'PIPEWIRE_QUANTUM': '128/44100',
+    'PIPEWIRE_LATENCY': '128/44100',
+    'PIPEWIRE_RATE': '1/44100',
+}
+PRIVATE_ENV = ('PIPEWIRE_REMOTE', 'PIPEWIRE_CONFIG_DIR', 'PIPEWIRE_RUNTIME_DIR',
+               'XDG_RUNTIME_DIR', 'XDG_CONFIG_HOME', 'HOME')
+VIRTUAL_SUCCESS = ('capyio_pipewire_virtual_speaker=passed scenario={scenario} pinned_tls=true '
+                   'independent_consent=true dynamic_udp=true stereo=true real_sink=true '
+                   'simulated_app=true environment_sanitized=true stop=true cleanup=true')
 SUCCESS = ('capyio_pipewire_capture=passed scenario={scenario} pinned_tls=true '
            'independent_consent=true stereo=true real_graph=true simulated_app=true '
            'stop=true cleanup=true')
@@ -88,7 +106,8 @@ def stereo_ports(objects, owner, direction):
         props = port.get('info', {}).get('props', {})
         channel = props.get('audio.channel')
         if (props.get('port.direction') != direction
-                or props.get('port.monitor') not in (None, False, 'false')
+                or (props.get('port.monitor') is not None
+                    and not strict_bool(props.get('port.monitor'), False))
                 or channel not in ('FL', 'FR') or channel in by_channel):
             raise ValueError('direct distinct FL/FR ports required')
         by_channel[channel] = port['id']
@@ -115,6 +134,111 @@ def select_capture(objects):
     return capture, [(outputs[channel], inputs[channel]) for channel in ('FL', 'FR')]
 
 
+def virtual_expectation(value):
+    """Accept only the exact fresh approval's local network Source Port identity."""
+    if not isinstance(value, dict) or set(value) != {
+            'owner_pid', 'source_port_id', 'node_name', 'endpoint_mode'}:
+        raise ValueError('exact virtual speaker ownership record required')
+    try:
+        port_id = str(uuid.UUID(value['source_port_id']))
+    except (ValueError, TypeError, AttributeError):
+        raise ValueError('canonical virtual speaker Source Port UUID required') from None
+    if (value['source_port_id'] != port_id or uuid.UUID(port_id).int == 0
+            or value['node_name'] != VIRTUAL_PREFIX + port_id
+            or value['endpoint_mode'] != 'virtual_speaker'
+            or type(value['owner_pid']) is not int or value['owner_pid'] <= 1):
+        raise ValueError('virtual speaker identity is not the exact owned Source Port')
+    ownership_number(value['owner_pid'], (1 << 31) - 1)
+    return value
+
+
+def virtual_nodes(objects):
+    # The fixed unrelated null sink is a sentinel, never our endpoint. Treat any
+    # other Sink or prefixed node as a candidate so renames/class changes fail shut.
+    return [o for o in objects if o.get('type') == 'PipeWire:Interface:Node'
+            and (str(o.get('info', {}).get('props', {}).get('node.name', '')).startswith(VIRTUAL_PREFIX)
+                 or (o.get('info', {}).get('props', {}).get('media.class') == 'Audio/Sink'
+                     and o.get('info', {}).get('props', {}).get('node.name') != 'capyio.test.null'))]
+
+
+def strict_bool(value, wanted):
+    return value is wanted or (isinstance(value, str) and value == str(wanted).lower())
+
+
+def select_virtual_sink(objects, expected):
+    expected = virtual_expectation(expected)
+    candidates = virtual_nodes(objects)
+    sources = [o for o in objects if o.get('type') == 'PipeWire:Interface:Node'
+               and o.get('info', {}).get('props', {}).get('node.name') == SOURCE]
+    if len(candidates) != 1 or len(sources) != 1:
+        raise ValueError('exact virtual speaker and independent app not uniquely ready')
+    sink, source = candidates[0], sources[0]
+    props = sink.get('info', {}).get('props', {})
+    if (props.get('node.name') != expected['node_name']
+            or props.get('node.description') != 'CapyIO Virtual Speaker'
+            or props.get('media.class') != 'Audio/Sink'
+            or ('node.rate' in props and props['node.rate'] != '1/48000')
+            or ('audio.rate' in props and props['audio.rate'] not in (48000, '48000'))
+            or ('audio.channels' in props and props['audio.channels'] not in (2, '2'))
+            or props.get('node.force-rate') in (44100, '44100')
+            or props.get('node.force-quantum') in (128, '128')
+            or props.get('node.latency') == '128/44100'
+            or not strict_bool(props.get('node.virtual'), True)
+            or not strict_bool(props.get('node.autoconnect'), False)
+            or any(not strict_bool(props.get(key), True) for key in
+                   ('node.dont-fallback', 'node.dont-reconnect', 'node.dont-move'))
+            or (props.get('target.object') is not None
+                and not (props.get('target.object') == '0'
+                         or (type(props.get('target.object')) is int
+                             and props.get('target.object') == 0)))):
+        raise ValueError('owned endpoint must be an exact no-autoconnect virtual Audio/Sink')
+    if source.get('info', {}).get('props', {}).get('media.class') != 'Stream/Output/Audio':
+        raise ValueError('independent synthetic application output required, not a monitor')
+    outputs = stereo_ports(objects, source['id'], 'out')
+    inputs = stereo_ports(objects, sink['id'], 'in')
+    if any(o.get('type') == 'PipeWire:Interface:Link'
+           and (str(o.get('info', {}).get('input-node-id')) == str(sink['id'])
+                or str(o.get('info', {}).get('output-node-id')) == str(sink['id']))
+           for o in objects):
+        raise ValueError('virtual speaker unexpectedly autolinked before explicit app routing')
+    return sink, [(outputs[channel], inputs[channel]) for channel in ('FL', 'FR')]
+
+
+def read_environment(pid):
+    pid = ownership_number(pid, (1 << 31) - 1)
+    with (Path('/proc') / str(pid) / 'environ').open('rb') as stream:
+        raw = stream.read(32769)
+    if len(raw) > 32768 or not raw.endswith(b'\0'):
+        raise ValueError('bounded owned process environment required')
+    items = raw[:-1].split(b'\0')
+    if any(b'=' not in item for item in items):
+        raise ValueError('invalid owned environment entry')
+    pairs = [item.split(b'=', 1) for item in items]
+    if len({key for key, _ in pairs}) != len(pairs):
+        raise ValueError('duplicate owned environment key')
+    return dict(pairs)
+
+
+def verify_capture_environment(owner_env, capture_env, private_env):
+    # Verify the poison really reached the production owner, then that its actual
+    # pw-cat child removed every override without losing the private daemon/config.
+    for key, value in POISONED_ENV.items():
+        if owner_env.get(key.encode()) != value.encode() or key.encode() in capture_env:
+            raise ValueError('all six poisoned PipeWire overrides must be removed by production')
+    for key in PRIVATE_ENV:
+        expected = private_env[key].encode()
+        if owner_env.get(key.encode()) != expected or capture_env.get(key.encode()) != expected:
+            raise ValueError('owned capture must preserve the exact private routing environment')
+
+
+def verify_virtual_removed(objects, owned, unrelated):
+    current = graph_fingerprint(objects)
+    if virtual_nodes(objects) or any(current.get(key) == value for key, value in owned.items()):
+        raise ValueError('owned virtual speaker node, ports or links survived Stop')
+    if any(current.get(key) != value for key, value in unrelated.items()):
+        raise ValueError('unrelated private graph object changed during virtual speaker Stop')
+
+
 def parse_pipewire_version(raw):
     """Recognize the exact same compiled/linked CLI contract as production."""
     if not isinstance(raw, bytes) or len(raw) > 1024:
@@ -133,10 +257,12 @@ def pipewire_binary_identity(path):
     return (stat.st_dev, stat.st_ino, stat.st_size, stat.st_mtime_ns, stat.st_ctime_ns)
 
 
-def capture_process_id(objects, capture, owner_pid, version, binary_identity):
+def capture_process_id(objects, capture, owner_pid, version, binary_identity, expected=None):
     owner_pid = ownership_number(owner_pid, (1 << 31) - 1)
     name = capture.get('info', {}).get('props', {}).get('node.name')
-    if not isinstance(name, str) or not name or capture not in capture_nodes(objects):
+    candidates = virtual_nodes(objects) if expected is not None else capture_nodes(objects)
+    if (not isinstance(name, str) or not name or capture not in candidates
+            or (expected is not None and name != virtual_expectation(expected)['node_name'])):
         raise ValueError('unexpected production capture identity')
     pid = source_process_id(objects, capture, {'node_name': name})
     process = Path('/proc') / str(pid)
@@ -148,15 +274,33 @@ def capture_process_id(objects, capture, owner_pid, version, binary_identity):
         raise ValueError('capture ownership requires a recognized exact CLI version')
     required = [b'--record', b'--rate=48000', b'--channels=2',
                 b'--channel-map=stereo', b'--format=s16',
-                b'--target=' + SOURCE.encode()]
+                b'--target=' + (b'0' if expected is not None else SOURCE.encode())]
     if (int(status['PPid']) != owner_pid
             or (process / 'exe').resolve() != Path('/usr/bin/pw-cat').resolve()
             or pipewire_binary_identity(process / 'exe') != binary_identity
             or pipewire_binary_identity(Path('/usr/bin/pw-cat')) != binary_identity
             or args.count(b'--raw') != (1 if version == '1.6.9' else 0)
             or not args or args[-1] != b'-'
-            or any(arg not in args for arg in required)):
+            or b'--playback' in args or b'--monitor' in args
+            or any(args.count(arg) != 1 for arg in required)
+            or any(sum(arg.startswith(prefix) for arg in args) != 1 for prefix in
+                   (b'--target=', b'--rate=', b'--channels=', b'--channel-map=', b'--format='))):
         raise ValueError('recorder is not production owner direct exact-target stereo pw-cat')
+    if expected is not None:
+        properties = [arg.split(b'=', 1)[1] for arg in args if arg.startswith(b'--properties=')]
+        wanted = {'media.class': 'Audio/Sink', 'node.virtual': True,
+                  'node.name': expected['node_name'], 'node.description': 'CapyIO Virtual Speaker',
+                  'node.autoconnect': False, 'node.dont-fallback': True,
+                  'node.dont-reconnect': True, 'node.dont-move': True}
+        if (len(properties) != 1 or args.count(b'--latency=20ms') != 1
+                or sum(arg.startswith(b'--latency=') for arg in args) != 1):
+            raise ValueError('virtual speaker requires exact owned arguments')
+        try:
+            actual = json.loads(properties[0])
+        except (ValueError, UnicodeError):
+            raise ValueError('virtual speaker requires exact owned properties') from None
+        if actual != wanted or any(type(actual[key]) is not type(value) for key, value in wanted.items()):
+            raise ValueError('virtual speaker requires exact owned properties')
     return pid
 
 
@@ -198,6 +342,9 @@ def graph_diagnostic(objects):
             'name': diagnostic_choice(props.get('node.name'),
                                       (SOURCE, 'pw-cat', 'Dummy-Driver', 'capyio.test.null')),
             'target_is_exact_source': target == SOURCE,
+            'name_is_virtual_speaker': str(props.get('node.name', '')).startswith(VIRTUAL_PREFIX),
+            'virtual': strict_bool(props.get('node.virtual'), True),
+            'autoconnect_disabled': strict_bool(props.get('node.autoconnect'), False),
             'target_present': 'target.object' in props,
             'target_numeric': diagnostic_number(target),
             'client_id': diagnostic_number(props.get('client.id')),
@@ -262,6 +409,7 @@ def process_diagnostic(pid):
             'raw_option': b'--raw' in args,
             'stereo': b'--channels=2' in args and b'--channel-map=stereo' in args,
             'target_exact': b'--target=' + SOURCE.encode() in args,
+            'target_disabled': b'--target=0' in args,
             'stdio_pcm': bool(args) and args[-1] == b'-',
         })
         with (root / 'task' / str(pid) / 'children').open('rb') as file:
@@ -277,9 +425,17 @@ def process_diagnostic(pid):
 
 
 class CaptureHarness(Harness):
-    def __init__(self, root, scenario):
+    def __init__(self, root, scenario, endpoint_mode='selected_source'):
         super().__init__(root, e2e=True)
+        if endpoint_mode not in ('selected_source', 'virtual_speaker'):
+            raise ValueError('explicit recognized capture endpoint mode required')
+        allowed = VIRTUAL_SCENARIOS if endpoint_mode == 'virtual_speaker' else SCENARIOS
+        if scenario not in allowed:
+            raise ValueError('scenario is not valid for this endpoint mode')
+        self.endpoint_mode = endpoint_mode
+        self.virtual = endpoint_mode == 'virtual_speaker'
         self.scenario = scenario
+        self.env['CAPYIO_PIPEWIRE_ENDPOINT_MODE'] = endpoint_mode
         self.env['CAPYIO_PIPEWIRE_CAPTURE'] = scenario
         self.diagnostic_processes = {}
         self.pipewire_version = None
@@ -322,7 +478,7 @@ class CaptureHarness(Harness):
         child = subprocess.Popen([
             '/usr/bin/pw-cat', '--playback', *raw_option, '--rate=48000', '--channels=2',
             '--format=s16', '--channel-map=stereo', '--latency=20ms', '--target=0',
-            '--properties=' + json.dumps({'node.name': SOURCE, 'media.class': 'Audio/Source',
+            '--properties=' + json.dumps({'node.name': SOURCE, 'media.class': ('Stream/Output/Audio' if self.virtual else 'Audio/Source'),
                                           'node.virtual': True, 'node.dont-fallback': True,
                                           'node.dont-reconnect': True, 'node.dont-move': True}), '-'],
             env=self.env, stdin=source_input, stdout=out, stderr=err, start_new_session=True,
@@ -341,7 +497,8 @@ class CaptureHarness(Harness):
         daemon = self.prepare_daemon()
         source = self.start_source()
         producer = self.spawn([str(fixture), '--ignored', '--exact',
-                               'hosted_pipewire_linux_capture_android_sink_end_to_end',
+                               ('hosted_pipewire_linux_virtual_speaker_android_sink_end_to_end' if self.virtual
+                                else 'hosted_pipewire_linux_capture_android_sink_end_to_end'),
                                '--nocapture', '--test-threads=1'], 'producer')
         self.diagnostic_processes = {'daemon': daemon.pid, 'source': source.pid, 'fixture': producer.pid}
         for announced, checked in [
@@ -349,12 +506,14 @@ class CaptureHarness(Harness):
                 ('.capyio-before-android-consent', '.capyio-android-consent-checked')]:
             self.wait_checkpoint(producer, announced)
             for _ in range(2):
-                if capture_nodes(self.dump()):
+                if (virtual_nodes if self.virtual else capture_nodes)(self.dump()):
                     raise ValueError('capture process appeared before both independent consents')
                 time.sleep(.1)
             publish_marker(self.root / checked)
         self.wait_checkpoint(producer, '.capyio-capture-owner-ready')
         owner = json.loads((self.root / '.capyio-capture-owner.json').read_text())
+        if self.virtual:
+            virtual_expectation(owner)
         self.diagnostic_processes['owner'] = owner['owner_pid']
         objects = []
         ready = time.monotonic() + 8
@@ -365,7 +524,8 @@ class CaptureHarness(Harness):
                 raise ValueError('private capture fixture exited before graph readiness')
             objects = self.dump()
             try:
-                capture, links = select_capture(objects)
+                capture, links = (select_virtual_sink(objects, owner) if self.virtual
+                                  else select_capture(objects))
                 break
             except ValueError:
                 if time.monotonic() >= ready:
@@ -374,7 +534,20 @@ class CaptureHarness(Harness):
                 time.sleep(.03)
         try:
             pid = capture_process_id(objects, capture, owner['owner_pid'],
-                                     self.pipewire_version, self.pipewire_identity)
+                                     self.pipewire_version, self.pipewire_identity,
+                                     owner if self.virtual else None)
+            if self.virtual:
+                app = next(o for o in objects if o.get('type') == 'PipeWire:Interface:Node'
+                           and o.get('info', {}).get('props', {}).get('node.name') == SOURCE)
+                if (source_process_id(objects, app, {'node_name': SOURCE}) != source.pid
+                        or source.pid in (pid, owner['owner_pid'])):
+                    raise ValueError('synthetic application must be an independent owned process')
+                verify_capture_environment(read_environment(owner['owner_pid']),
+                                           read_environment(pid), self.env)
+                sentinels = [o for o in objects if o.get('type') == 'PipeWire:Interface:Node'
+                             and o.get('info', {}).get('props', {}).get('node.name') == 'capyio.test.null']
+                if len(sentinels) != 1:
+                    raise ValueError('unrelated private sentinel must exist before Stop')
         except (OSError, ValueError, KeyError):
             self.report_graph_failure(objects)
             raise
@@ -382,13 +555,14 @@ class CaptureHarness(Harness):
         own_ids = {capture['id']} | {target for _, target in links}
         owned = {key: value for key, value in fingerprint.items() if key in own_ids}
         unrelated = {key: value for key, value in fingerprint.items() if key not in own_ids}
-        for output, target in links:
+        routed = [] if self.scenario == 'no_input' else links
+        for output, target in routed:
             self.command(['/usr/bin/pw-link', str(output), str(target)])
         objects = self.dump()
         actual_links = [o for o in objects if o.get('type') == 'PipeWire:Interface:Link']
         actual_pairs = {(o.get('info', {}).get('output-port-id'),
                          o.get('info', {}).get('input-port-id')) for o in actual_links}
-        if actual_pairs != set(links):
+        if len(actual_links) != len(routed) or actual_pairs != set(routed):
             raise ValueError('expected only explicit independent left/right capture links')
         owned.update(graph_fingerprint(actual_links))
         publish_marker(self.root / '.capyio-links-ready')
@@ -396,9 +570,10 @@ class CaptureHarness(Harness):
             self.wait_checkpoint(producer, '.capyio-fault-ready')
             if self.scenario == 'child_exit':
                 current = self.dump()
-                candidates = capture_nodes(current)
+                candidates = (virtual_nodes if self.virtual else capture_nodes)(current)
                 if len(candidates) != 1 or capture_process_id(current, candidates[0], owner['owner_pid'],
-                                                                   self.pipewire_version, self.pipewire_identity) != pid:
+                                                                   self.pipewire_version, self.pipewire_identity,
+                                                                   owner if self.virtual else None) != pid:
                     raise ValueError('capture child identity changed before fault injection')
                 os.kill(pid, signal.SIGTERM)
             else:
@@ -414,14 +589,15 @@ class CaptureHarness(Harness):
             owned, unrelated = {}, {}
         end = time.monotonic() + .35
         while time.monotonic() < end:
-            verify_capture_removed(self.dump(), owned, unrelated)
+            (verify_virtual_removed if self.virtual else verify_capture_removed)(self.dump(), owned, unrelated)
             self.check()
             time.sleep(.03)
         publish_marker(self.root / '.capyio-stop-checked')
         while producer.poll() is None:
             self.check()
             time.sleep(.02)
-        marker = ('capyio_capture_fixture=passed scenario=' + self.scenario
+        marker = (('capyio_virtual_speaker_fixture' if self.virtual else 'capyio_capture_fixture')
+                  + '=passed scenario=' + self.scenario
                   + ' android_policy=true shared_rust_receiver=true simulated_app=true fresh_post_stop=true')
         if producer.returncode or marker not in (self.root / 'producer.err').read_text():
             raise ValueError('integrated capture/Android lifecycle evidence absent')
@@ -433,7 +609,9 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--hosted-pipewire-capture', action='store_true', required=True)
     parser.add_argument('--fixture', required=True, type=Path)
-    parser.add_argument('--scenario', choices=SCENARIOS, required=True)
+    parser.add_argument('--scenario', choices=tuple(dict.fromkeys(SCENARIOS + VIRTUAL_SCENARIOS)), required=True)
+    parser.add_argument('--endpoint-mode', choices=('selected_source', 'virtual_speaker'),
+                        default='selected_source')
     args = parser.parse_args()
     if os.environ.get('GITHUB_ACTIONS') != 'true':
         parser.error('requires explicit disposable hosted CI environment')
@@ -443,7 +621,7 @@ def main():
     signal.signal(signal.SIGTERM, interrupted)
     signal.signal(signal.SIGINT, interrupted)
     with tempfile.TemporaryDirectory(prefix='capyio-capture-') as directory:
-        harness = CaptureHarness(Path(directory), args.scenario)
+        harness = CaptureHarness(Path(directory), args.scenario, args.endpoint_mode)
         try:
             harness.run_capture(args.fixture.resolve(strict=True))
         except Exception:
@@ -457,7 +635,8 @@ def main():
             signal.signal(signal.SIGTERM, signal.SIG_IGN)
             signal.signal(signal.SIGINT, signal.SIG_IGN)
             harness.close()
-    print(SUCCESS.format(scenario=args.scenario))
+    print((VIRTUAL_SUCCESS if args.endpoint_mode == 'virtual_speaker' else SUCCESS)
+          .format(scenario=args.scenario))
 
 
 if __name__ == '__main__':

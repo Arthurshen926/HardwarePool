@@ -1,4 +1,4 @@
-use crate::{PcmCaptureSource, validate_target};
+use crate::{CaptureEndpoint, PcmCaptureSource};
 use std::{
     ffi::OsString,
     io::{self, Read},
@@ -7,7 +7,6 @@ use std::{
         fd::OwnedFd,
         unix::{fs::MetadataExt, net::UnixStream},
     },
-    path::Path,
     process::{Child, Command, Stdio},
     thread,
     time::{Duration, Instant},
@@ -23,21 +22,23 @@ pub struct PipeWireCapture {
 
 impl PipeWireCapture {
     pub fn open(target: &str) -> io::Result<Self> {
-        Self::open_checked(target, &mut || Ok(()))
+        Self::open_checked(&CaptureEndpoint::SelectedSource(target.into()), &mut || {
+            Ok(())
+        })
     }
 
     pub(crate) fn open_checked(
-        target: &str,
+        endpoint: &CaptureEndpoint,
         revalidate: &mut dyn FnMut() -> io::Result<()>,
     ) -> io::Result<Self> {
         // Validate without opening any resource, then identify the exact binary.
-        capture_arguments(target, RawMode::Explicit)?;
+        capture_endpoint_arguments(endpoint, RawMode::Explicit)?;
         let identity = binary_identity()?;
         let mode = probe_raw_mode()?;
         if binary_identity()? != identity {
             return Err(unsupported("capture binary changed during probe"));
         }
-        let command = capture_command(target, mode)?;
+        let command = capture_endpoint_command(endpoint, mode)?;
         revalidate()?; // Probe delay never extends permission to start capture.
         let mut capture = Self::spawn(command)?;
         if binary_identity()? != identity {
@@ -173,11 +174,8 @@ fn binary_identity() -> io::Result<[u64; 7]> {
     ])
 }
 fn probe_raw_mode() -> io::Result<RawMode> {
-    let mut command = Command::new("/usr/bin/pw-cat");
-    command
-        .arg("--version")
-        .env("LC_ALL", "C")
-        .env_remove("PIPEWIRE_NODE");
+    let mut command = crate::pipewire_command::fixed_command();
+    command.arg("--version").env("LC_ALL", "C");
     probe_command(command)
 }
 fn probe_command(command: Command) -> io::Result<RawMode> {
@@ -227,23 +225,30 @@ fn probe_command(command: Command) -> io::Result<RawMode> {
     }
 }
 
+#[cfg(test)]
 fn capture_command(target: &str, mode: RawMode) -> io::Result<Command> {
-    let mut command = Command::new(Path::new("/usr/bin/pw-cat"));
-    command
-        .args(capture_arguments(target, mode)?)
-        .env_remove("PIPEWIRE_NODE");
+    capture_endpoint_command(&CaptureEndpoint::SelectedSource(target.into()), mode)
+}
+fn capture_endpoint_command(endpoint: &CaptureEndpoint, mode: RawMode) -> io::Result<Command> {
+    let mut command = crate::pipewire_command::fixed_command();
+    command.args(capture_endpoint_arguments(endpoint, mode)?);
     Ok(command)
 }
-
+#[cfg(test)]
 fn capture_arguments(target: &str, mode: RawMode) -> io::Result<Vec<OsString>> {
-    validate_target(target)
+    capture_endpoint_arguments(&CaptureEndpoint::SelectedSource(target.into()), mode)
+}
+fn capture_endpoint_arguments(
+    endpoint: &CaptureEndpoint,
+    mode: RawMode,
+) -> io::Result<Vec<OsString>> {
+    endpoint
+        .validate()
         .map_err(|reason| io::Error::new(io::ErrorKind::InvalidInput, reason))?;
-    if target.eq_ignore_ascii_case("auto") || target.eq_ignore_ascii_case("default") {
-        return Err(io::Error::new(
-            io::ErrorKind::InvalidInput,
-            "capture requires an exact source, not a default",
-        ));
-    }
+    let (target, properties) = match endpoint {
+        CaptureEndpoint::SelectedSource(target) => (target.clone(), r#"--properties={"node.dont-fallback":true,"node.dont-reconnect":true,"node.dont-move":true}"#.to_owned()),
+        CaptureEndpoint::VirtualSpeaker(_) => ("0".into(), format!(r#"--properties={{"media.class":"Audio/Sink","node.virtual":true,"node.name":"{}","node.description":"CapyIO Virtual Speaker","node.autoconnect":false,"node.dont-fallback":true,"node.dont-reconnect":true,"node.dont-move":true}}"#, endpoint.node_name())),
+    };
     if cfg!(target_endian = "big") {
         return Err(io::Error::new(
             io::ErrorKind::Unsupported,
@@ -257,7 +262,7 @@ fn capture_arguments(target: &str, mode: RawMode) -> io::Result<Vec<OsString>> {
         "--channel-map=stereo",
         "--format=s16",
         "--latency=20ms",
-        r#"--properties={"node.dont-fallback":true,"node.dont-reconnect":true,"node.dont-move":true}"#,
+        &properties,
         &format!("--target={target}"),
         "-",
     ]
@@ -274,6 +279,41 @@ fn capture_arguments(target: &str, mode: RawMode) -> io::Result<Vec<OsString>> {
 mod tests {
     use super::*;
     use crate::{CAPTURE_PCM_PACKET_BYTES, CapturePump};
+
+    #[test]
+    fn virtual_speaker_owned_sink_exact_stereo_no_target_and_scrubbed_env() {
+        let source = capyio_core::PortId::new();
+        let endpoint = CaptureEndpoint::VirtualSpeaker(source);
+        for mode in [RawMode::LegacyPipe, RawMode::Explicit] {
+            let command = capture_endpoint_command(&endpoint, mode).unwrap();
+            let args: Vec<_> = command.get_args().map(|a| a.to_str().unwrap()).collect();
+            assert!(args.contains(&"--record"));
+            assert!(args.contains(&"--target=0"));
+            assert!(args.contains(&"--rate=48000"));
+            assert!(args.contains(&"--channels=2"));
+            assert!(args.contains(&"--channel-map=stereo"));
+            assert!(args.contains(&"--format=s16"));
+            assert_eq!(args.contains(&"--raw"), mode == RawMode::Explicit);
+            assert_eq!(args.last(), Some(&"-"));
+            let props = args
+                .iter()
+                .find(|a| a.starts_with("--properties="))
+                .unwrap();
+            assert!(props.contains("\"media.class\":\"Audio/Sink\""));
+            assert!(props.contains("\"node.virtual\":true"));
+            assert!(props.contains("\"node.autoconnect\":false"));
+            assert!(props.contains(&crate::virtual_speaker_name(source)));
+            assert!(!props.contains("monitor"));
+            for key in crate::pipewire_command::STREAM_OVERRIDES {
+                assert!(command.get_envs().any(|(k, v)| k == key && v.is_none()));
+            }
+        }
+        let nil = "00000000-0000-0000-0000-000000000000".parse().unwrap();
+        assert!(
+            capture_endpoint_arguments(&CaptureEndpoint::VirtualSpeaker(nil), RawMode::Explicit)
+                .is_err()
+        );
+    }
 
     #[test]
     fn capture_pipewire_exact_raw_stereo_target_without_environment_override() {

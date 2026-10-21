@@ -91,3 +91,8 @@ PID against the production child's executable and direct parent. It retains the
 graph, consent, waveform and cleanup assertions. This correction is test-schema
 alignment, not relaxed process ownership. The failed run did not retain its Client
 properties; the successful run is the acceptance evidence, not that earlier run.
+
+ADR 1538 subsequently applies a shared six-variable stream-environment scrub to
+this helper path as well as playback and capture. Its narrow trust boundary and
+required regression tests supersede the single-variable description above;
+the accepted Source topology and default playback behavior are unchanged.

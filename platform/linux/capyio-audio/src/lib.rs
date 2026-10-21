@@ -8,6 +8,8 @@ use capyio_native_audio_lan::microphone_lab_binding;
 #[cfg(target_os = "linux")]
 mod pipewire;
 #[cfg(target_os = "linux")]
+mod pipewire_command;
+#[cfg(target_os = "linux")]
 pub use pipewire::PipeWirePlayback;
 
 #[cfg(target_os = "linux")]
@@ -58,10 +60,12 @@ pub enum EndpointMode {
     VirtualMicrophone,
     /// Explicit selected input only, never the default system source.
     StereoCapture,
+    /// Owned application-selectable Audio/Sink, producing network stereo PCM.
+    VirtualSpeaker,
 }
 impl EndpointMode {
-    pub(crate) fn capture(self) -> bool {
-        self == Self::StereoCapture
+    pub fn capture(self) -> bool {
+        matches!(self, Self::StereoCapture | Self::VirtualSpeaker)
     }
     pub(crate) fn spec(self) -> capyio_audio::AudioStreamSpec {
         if self.capture() {
@@ -89,6 +93,7 @@ impl EndpointMode {
             Self::Playback => "playback",
             Self::VirtualMicrophone => "virtual_microphone",
             Self::StereoCapture => "stereo_capture",
+            Self::VirtualSpeaker => "virtual_speaker",
         }
     }
 }
@@ -96,6 +101,33 @@ impl EndpointMode {
 /// Runtime-owned identity, never a peer-provided device name or default change.
 pub fn virtual_microphone_name(port: capyio_core::PortId) -> String {
     format!("capyio.virtual-microphone.{port}")
+}
+
+/// Capture intent cannot reinterpret an external target as a virtual endpoint.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum CaptureEndpoint {
+    SelectedSource(String),
+    VirtualSpeaker(capyio_core::PortId),
+}
+impl CaptureEndpoint {
+    pub fn node_name(&self) -> String {
+        match self {
+            Self::SelectedSource(target) => target.clone(),
+            Self::VirtualSpeaker(source) => virtual_speaker_name(*source),
+        }
+    }
+    pub(crate) fn validate(&self) -> Result<(), &'static str> {
+        match self {
+            Self::SelectedSource(target) => {
+                validate_endpoint_target(EndpointMode::StereoCapture, target)
+            }
+            Self::VirtualSpeaker(source) if !source.as_uuid().is_nil() => Ok(()),
+            Self::VirtualSpeaker(_) => Err("virtual speaker requires owned Source identity"),
+        }
+    }
+}
+pub fn virtual_speaker_name(source: capyio_core::PortId) -> String {
+    format!("capyio.virtual-speaker.{source}")
 }
 
 pub(crate) fn validate_endpoint_target(
@@ -107,6 +139,17 @@ pub(crate) fn validate_endpoint_target(
         && (target.eq_ignore_ascii_case("auto") || target.eq_ignore_ascii_case("default"))
     {
         return Err("capture requires an explicit source");
+    }
+    if mode == EndpointMode::VirtualSpeaker {
+        let suffix = target
+            .strip_prefix("capyio.virtual-speaker.")
+            .ok_or("virtual speaker name must be owned")?;
+        let id: capyio_core::PortId = suffix
+            .parse()
+            .map_err(|_| "invalid virtual speaker identity")?;
+        if id.as_uuid().is_nil() || virtual_speaker_name(id) != target {
+            return Err("invalid virtual speaker identity");
+        }
     }
     if mode == EndpointMode::VirtualMicrophone {
         let suffix = target

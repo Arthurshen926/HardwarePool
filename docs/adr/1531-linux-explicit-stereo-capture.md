@@ -77,3 +77,8 @@ Java contract gates remain required. UDP remains an unauthenticated trusted-lab
 transport, not production secure media. Native PipeWire only is in scope; no
 PulseAudio/ALSA compatibility, general pairing UI, auto-discovery or physical
 Android/AudioTrack result is claimed. Physical testing remains deferred.
+
+ADR 1538 subsequently adds explicit `virtual_speaker` capture mode without
+changing this default selected-source path. Its shared helper builder removes
+all six documented upstream stream override environment variables, not only
+`PIPEWIRE_NODE`; private server/config routing remains a trusted boundary.

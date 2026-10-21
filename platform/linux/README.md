@@ -320,3 +320,14 @@ Software acceptance instead builds the separate fixed fixture helper with
 That explicit fixture command uses fake syscalls only. It does not establish
 kernel/device/OS gesture behavior. Native and fixture features do not redirect
 one another's command or helper path.
+
+## Explicit virtual speaker capture mode
+
+The existing `linux-capture --trusted-lab` command accepts
+`endpoint_mode: "virtual_speaker"` without an external target. It creates a fresh
+owned native PipeWire Audio/Sink only after finite bilateral Route authority,
+then forwards explicitly routed application stereo audio to the Android Speaker
+Sink. Omitted mode still captures only the explicitly selected source. See
+[ADR 1538](../../docs/adr/1538-linux-owned-virtual-speaker.md) for the schema,
+six-variable helper hardening and pending hosted real-graph gate. This does not
+change default devices or establish physical/general desktop compatibility.

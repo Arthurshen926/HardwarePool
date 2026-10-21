@@ -304,7 +304,7 @@ impl RuntimePlayback {
         media: AudioMediaStreamBinding,
         config: &PlaybackConfig,
     ) -> io::Result<Self> {
-        if config.endpoint_mode == crate::EndpointMode::StereoCapture {
+        if config.endpoint_mode.capture() {
             return crate::capture_route::RuntimeCapture::open(runtime, media, config).map(
                 |worker| Self {
                     inner: RuntimeAudio::Capture(Box::new(worker)),

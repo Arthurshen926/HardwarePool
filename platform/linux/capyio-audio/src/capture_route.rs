@@ -1,7 +1,8 @@
 //! Runtime-owned stereo Source. No capture opens without exact live authority.
 use crate::route::{Guard, clock};
 use crate::{
-    CapturePump, EndpointMode, PcmCaptureSource, PipeWireCapture, PlaybackConfig, PlaybackMetrics,
+    CaptureEndpoint, CapturePump, EndpointMode, PcmCaptureSource, PipeWireCapture, PlaybackConfig,
+    PlaybackMetrics,
 };
 use capyio_audio::{AudioMediaStreamBinding, AudioStreamSpec};
 use capyio_core::{Problem, ProblemCategory, ProblemId, ProblemSeverity, RouteState};
@@ -37,9 +38,12 @@ impl RuntimeCapture {
         runtime: &mut NodeRuntime,
         media: AudioMediaStreamBinding,
         config: &PlaybackConfig,
-        open: impl FnOnce(&str, &mut dyn FnMut() -> io::Result<()>) -> io::Result<PipeWireCapture>,
+        open: impl FnOnce(
+            &CaptureEndpoint,
+            &mut dyn FnMut() -> io::Result<()>,
+        ) -> io::Result<PipeWireCapture>,
     ) -> io::Result<Self> {
-        if config.endpoint_mode != EndpointMode::StereoCapture
+        if !config.endpoint_mode.capture()
             || media.selected_spec != AudioStreamSpec::media_balanced()
             || config.duration.subsec_nanos() != 0
         {
@@ -54,6 +58,17 @@ impl RuntimeCapture {
         ])
         .map_err(error)?;
         crate::validate_endpoint_target(config.endpoint_mode, &config.target).map_err(error)?;
+        let capture = if config.endpoint_mode == EndpointMode::VirtualSpeaker {
+            let route = runtime.route(media.route_id).map_err(error)?;
+            if config.target != crate::virtual_speaker_name(route.source.port_id) {
+                return Err(error(
+                    "virtual speaker identity differs from admitted Source",
+                ));
+            }
+            CaptureEndpoint::VirtualSpeaker(route.source.port_id)
+        } else {
+            CaptureEndpoint::SelectedSource(config.target.clone())
+        };
         let started = Instant::now();
         let mut guard = Guard::new(runtime, media.clone(), clock(started)?.0)?;
         let pump = CapturePump::with_binding(config.duration, media.clone())?;
@@ -69,7 +84,7 @@ impl RuntimeCapture {
                 media,
             )
             .map_err(error)?;
-            let input = open(&config.target, &mut || {
+            let input = open(&capture, &mut || {
                 let (now, elapsed) = clock(started)?;
                 guard.check(runtime, now)?;
                 if elapsed >= config.duration {

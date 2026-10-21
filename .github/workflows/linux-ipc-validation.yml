@@ -205,6 +205,12 @@ jobs:
           ipc_linux_capture_no_reciprocal_offer_expires_without_media
           ipc_linux_capture_insufficient_lease_headroom_fails_before_offer
           hosted_capture::pure_capture_harness_requires_private_remote_and_exact_scenario
+          hosted_capture::pure_virtual_speaker_scenarios_and_all_six_environment_overrides_are_explicit
+          capture_pipewire::tests::virtual_speaker_owned_sink_exact_stereo_no_target_and_scrubbed_env
+          pipewire::tests::both_playback_modes_scrub_all_stream_overrides
+          pipewire_command::tests::all_stream_overrides_removed_private_routing_unchanged
+          owner::tests::virtual_speaker_admission_binds_owned_source_and_finite_authority
+          launch::tests::virtual_speaker_capture_schema_derives_source_identity_without_external_target
           launch::tests::capture_launch_has_distinct_explicit_schema_and_published_stereo_source
           owner::tests::capture_owner_requires_source_offer_and_exact_stereo_binding
           route::tests::capture_guard_requires_exact_local_source_stereo_grant_and_lease
@@ -428,6 +434,28 @@ jobs:
               | tee "$RUNNER_TEMP/pipewire-capture-$scenario-result.txt"
             grep -Fx "capyio_pipewire_capture=passed scenario=$scenario pinned_tls=true independent_consent=true stereo=true real_graph=true simulated_app=true stop=true cleanup=true" \
               "$RUNNER_TEMP/pipewire-capture-$scenario-result.txt"
+          done
+      - name: Require actual owned virtual speaker input and independent application routing
+        run: |
+          set -euo pipefail
+          fixture="$(python3 - "$RUNNER_TEMP/pipewire-capture-build.jsonl" <<'PYFIXTURE'
+          import json, sys
+          items = [json.loads(line) for line in open(sys.argv[1])]
+          matches = [item['executable'] for item in items
+                     if item.get('reason') == 'compiler-artifact'
+                     and item.get('target', {}).get('name') == 'linux_capture'
+                     and item.get('executable')]
+          assert len(matches) == 1, 'exact virtual speaker integration executable required'
+          print(matches[0])
+          PYFIXTURE
+          )"
+          for scenario in waveform no_input child_exit server_disconnect control_disconnect expiry; do
+            timeout --signal=TERM --kill-after=15s 75s python3 scripts/run_pipewire_capture.py \
+              --hosted-pipewire-capture --fixture "$fixture" --endpoint-mode virtual_speaker \
+              --scenario "$scenario" \
+              | tee "$RUNNER_TEMP/pipewire-virtual-speaker-$scenario-result.txt"
+            grep -Fx "capyio_pipewire_virtual_speaker=passed scenario=$scenario pinned_tls=true independent_consent=true dynamic_udp=true stereo=true real_sink=true simulated_app=true environment_sanitized=true stop=true cleanup=true" \
+              "$RUNNER_TEMP/pipewire-virtual-speaker-$scenario-result.txt"
           done
 
   linux-native-camera:

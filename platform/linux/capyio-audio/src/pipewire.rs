@@ -4,7 +4,6 @@ use std::{
     io::{self, Write},
     net::Shutdown,
     os::{fd::OwnedFd, unix::net::UnixStream},
-    path::Path,
     process::{Child, Command, Stdio},
     thread,
     time::{Duration, Instant},
@@ -115,10 +114,8 @@ impl Drop for PipeWirePlayback {
 
 fn endpoint_command(target: &str, mode: EndpointMode) -> io::Result<Command> {
     // Fixed distributor-owned path, not PATH search or peer-provided input.
-    let mut command = Command::new(Path::new("/usr/bin/pw-cat"));
-    command
-        .args(endpoint_arguments(target, mode)?)
-        .env_remove("PIPEWIRE_NODE");
+    let mut command = crate::pipewire_command::fixed_command();
+    command.args(endpoint_arguments(target, mode)?);
     Ok(command)
 }
 
@@ -128,7 +125,7 @@ fn playback_arguments(target: &str) -> io::Result<Vec<OsString>> {
 }
 
 fn endpoint_arguments(target: &str, mode: EndpointMode) -> io::Result<Vec<OsString>> {
-    if mode == EndpointMode::StereoCapture {
+    if mode.capture() {
         return Err(io::Error::other(
             "capture requires the separate capture endpoint",
         ));
@@ -142,12 +139,14 @@ fn endpoint_arguments(target: &str, mode: EndpointMode) -> io::Result<Vec<OsStri
         ));
     }
     let properties = match mode {
-        EndpointMode::StereoCapture => unreachable!("capture rejected above"),
+        EndpointMode::StereoCapture | EndpointMode::VirtualSpeaker => unreachable!("capture rejected above"),
         EndpointMode::Playback => r#"--properties={"node.dont-fallback":true,"node.dont-reconnect":true,"node.dont-move":true}"#.to_owned(),
         EndpointMode::VirtualMicrophone => format!(r#"--properties={{"media.class":"Audio/Source","node.virtual":true,"node.name":"{target}","node.description":"CapyIO Virtual Microphone","node.dont-fallback":true,"node.dont-reconnect":true,"node.dont-move":true}}"#),
     };
     let destination = match mode {
-        EndpointMode::StereoCapture => unreachable!("capture rejected above"),
+        EndpointMode::StereoCapture | EndpointMode::VirtualSpeaker => {
+            unreachable!("capture rejected above")
+        }
         EndpointMode::Playback => format!("--target={target}"),
         EndpointMode::VirtualMicrophone => "--target=0".to_owned(),
     };
@@ -170,6 +169,21 @@ fn endpoint_arguments(target: &str, mode: EndpointMode) -> io::Result<Vec<OsStri
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn both_playback_modes_scrub_all_stream_overrides() {
+        let name = crate::virtual_microphone_name(capyio_core::PortId::new());
+        for (mode, target) in [
+            (EndpointMode::Playback, "approved.sink"),
+            (EndpointMode::VirtualMicrophone, name.as_str()),
+        ] {
+            let command = endpoint_command(target, mode).unwrap();
+            for key in crate::pipewire_command::STREAM_OVERRIDES {
+                assert!(command.get_envs().any(|(k, v)| k == key && v.is_none()));
+            }
+        }
+        assert!(endpoint_arguments("approved.sink", EndpointMode::VirtualSpeaker).is_err());
+    }
 
     #[test]
     fn virtual_microphone_arguments_are_owned_source_without_autoconnect() {
