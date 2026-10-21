@@ -24,9 +24,10 @@ struct consumer {
   struct pw_main_loop *loop;
   struct pw_stream *stream;
   unsigned required, seen;
-  bool format_ok, have_last, stopping;
+  bool format_ok, have_last, stopping, finite_stream;
   int result;
-  uint64_t last_seq, last_pts, start, last_frame;
+  uint64_t first_seq, last_seq, first_pts, last_pts, start, first_frame, last_frame;
+  uint64_t min_last_seq, min_span_ms;
   unsigned gaps;
 };
 static uint64_t monotonic(void) {
@@ -81,7 +82,8 @@ static void process(void *v) {
       ok && d->data && d->chunk && h && d->chunk->size == CAMERA_BYTES &&
       d->chunk->stride == CAMERA_WIDTH && d->chunk->offset <= d->maxsize &&
       CAMERA_BYTES <= d->maxsize - d->chunk->offset && h->seq >= 1 &&
-      h->seq <= 90 && h->pts == (int64_t)(h->seq * UINT64_C(33333000)) &&
+      h->seq <= (c->finite_stream ? 1800 : 90) &&
+      h->pts == (int64_t)(h->seq * UINT64_C(33333000)) &&
       !(d->chunk->flags & (SPA_CHUNK_FLAG_CORRUPTED | SPA_CHUNK_FLAG_EMPTY)) &&
       !(h->flags & (SPA_META_HEADER_FLAG_CORRUPTED | SPA_META_HEADER_FLAG_GAP));
   if (ok && c->have_last) {
@@ -92,6 +94,11 @@ static void process(void *v) {
     }
   }
   if (ok) {
+    if (!c->have_last) {
+      c->first_seq = h->seq;
+      c->first_pts = (uint64_t)h->pts;
+      c->first_frame = monotonic();
+    }
     const uint8_t *bytes = (const uint8_t *)d->data + d->chunk->offset;
     for (size_t i = 0; i < CAMERA_BYTES; i++)
       if (bytes[i] != decoder_pattern(h->seq, i)) {
@@ -109,33 +116,54 @@ static void process(void *v) {
   pw_stream_queue_buffer(c->stream, p);
   if (!ok)
     quit(c, 4);
-  else if (c->seen >= c->required)
+  else if (c->seen >= c->required && c->last_seq >= c->min_last_seq &&
+           (c->last_frame - c->first_frame) / UINT64_C(1000000) >= c->min_span_ms &&
+           (c->last_pts - c->first_pts) / UINT64_C(1000000) >= c->min_span_ms)
     quit(c, 0);
 }
 static void timeout(void *v, uint64_t n) {
   struct consumer *c = v;
   (void)n;
   uint64_t now = monotonic();
-  if (now - c->start > UINT64_C(30000000000) ||
+  if (now - c->start > (c->finite_stream ? UINT64_C(60000000000)
+                                       : UINT64_C(30000000000)) ||
       now - c->last_frame > UINT64_C(10000000000))
     quit(c, 5);
 }
 static const struct pw_stream_events events = {
     PW_VERSION_STREAM_EVENTS, .param_changed = param, .state_changed = state,
     .process = process};
-int main(int argc, char **argv) {
-  if (argc != 5 || strcmp(argv[1], "--token") || !camera_token(argv[2]) ||
-      strcmp(argv[3], "--frames"))
-    return 64;
+static bool number(const char *text, unsigned long min, unsigned long max,
+                   unsigned long *value) {
+  if (!*text)
+    return false;
+  for (const char *p = text; *p; p++)
+    if (*p < '0' || *p > '9')
+      return false;
   char *end;
   errno = 0;
-  unsigned long count = strtoul(argv[4], &end, 10);
-  if (errno || !*argv[4] || *end || count < 1 || count > 300)
+  *value = strtoul(text, &end, 10);
+  return !errno && !*end && *value >= min && *value <= max;
+}
+int main(int argc, char **argv) {
+  bool finite_stream = argc == 10;
+  if ((argc != 5 && !finite_stream) || strcmp(argv[1], "--token") ||
+      !camera_token(argv[2]) ||
+      strcmp(argv[3], "--frames"))
     return 64;
-  for (const char *p = argv[4]; *p; p++)
-    if (*p < '0' || *p > '9')
-      return 64;
-  struct consumer c = {.required = (unsigned)count, .result = 3};
+  unsigned long count, min_last = 0, min_span = 0;
+  if (!number(argv[4], 1, finite_stream ? 1800 : 300, &count))
+    return 64;
+  if (finite_stream &&
+      (strcmp(argv[5], "--finite-stream") ||
+       strcmp(argv[6], "--min-last-sequence") ||
+       !number(argv[7], 1, 1800, &min_last) ||
+       strcmp(argv[8], "--min-span-ms") ||
+       !number(argv[9], 1, 59000, &min_span)))
+    return 64;
+  struct consumer c = {.required = (unsigned)count, .result = 3,
+                       .finite_stream = finite_stream,
+                       .min_last_seq = min_last, .min_span_ms = min_span};
   pw_init(NULL, NULL);
   c.loop = pw_main_loop_new(NULL);
   if (!c.loop) {
@@ -174,8 +202,13 @@ done:
     pw_stream_destroy(c.stream);
   pw_main_loop_destroy(c.loop);
   pw_deinit();
-  printf("{\"verified_frames\":%u,\"last_sequence\":%" PRIu64
-         ",\"sequence_gaps\":%u,\"result\":%d}\n",
-         c.seen, c.last_seq, c.gaps, c.result);
+  printf("{\"verified_frames\":%u,\"first_sequence\":%" PRIu64
+         ",\"last_sequence\":%" PRIu64 ",\"sequence_gaps\":%u"
+         ",\"observed_span_ms\":%" PRIu64 ",\"pts_span_us\":%" PRIu64
+         ",\"finite_stream\":%s,\"result\":%d}\n",
+         c.seen, c.first_seq, c.last_seq, c.gaps,
+         c.have_last ? (c.last_frame - c.first_frame) / UINT64_C(1000000) : 0,
+         c.have_last ? (c.last_pts - c.first_pts) / UINT64_C(1000) : 0,
+         c.finite_stream ? "true" : "false", c.result);
   return c.result;
 }

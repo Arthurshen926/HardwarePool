@@ -476,3 +476,34 @@ device starts. After inspecting it, the user may separately invoke `playback`,
 `capture` or `touchpad` with that config and the same explicit peer. That launch
 still requires a current catalog and fresh local/counterpart resource consent.
 Do not treat successful export as device existence, permission or delivery proof.
+
+## Experimental finite camera streaming profile (ADR 1555)
+
+The default camera manifest/export still uses the legacy 120-frame/32-MiB cap.
+For a Source that explicitly advertises `cavc-avc-finite-720p30-v1`, an engineer may
+prepare a nonsecret manifest using the actual authenticated catalog IDs and add
+`"stream_profile":"finite_720p30_v1"` alongside the existing fields. An example
+shape (all UUIDs/addresses must be replaced with the explicit current selections):
+
+```json
+{"version":1,"node_id":"LOCAL_NODE_UUID","source":{"node_id":"PEER_NODE_UUID","capability_id":"ACTUAL_CAPABILITY_UUID","port_id":"ACTUAL_PORT_UUID"},"listen":"192.0.2.10:0","duration_secs":12,"stream_profile":"finite_720p30_v1"}
+```
+
+Then use the existing explicit `camera --config /absolute/owned/finite-camera.json
+--peer PEER_NODE_UUID` console command with the same paired-store selectors. The
+fresh approval must match the exact profile, peer and duration-derived maxima.
+There is no fallback to an old Source, and `prepare-camera` does not automatically
+export this profile. Production Android currently advertises only legacy AVC;
+this increment therefore does not make an existing phone stream for ten seconds.
+
+The Linux path keeps fixed 720p30/zero-rotation codec rules, exact finite grants and
+leases, bounded queues and independent native limits. Maximum work is derived
+from remaining duration (at most 60 seconds/1,800 AUs), with a 32-MiB absolute input
+ceiling, 30-AU/s plus 3-AU burst and 2-MiB/s plus 4-MiB burst. Native memory and 10-CPU-
+second limits remain; any can terminate earlier. Handshake time consumes the
+original budget. There is no renewal or guarantee of sixty seconds of delivery.
+
+Hosted software acceptance targets 300 paced submitted frames over about ten
+seconds, with independently verified pixels and actual delivered count/span
+beyond frame 120. Queue counters, even without drops, are not delivery evidence.
+No physical camera, user keyring or production Android sender is exercised.

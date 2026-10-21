@@ -534,3 +534,10 @@ u32 big-endian length bounded to 4 MiB + 56 bytes before allocation. Existing
 profile u16/176-byte transport records remain unchanged. The one-shot camera
 listener closes after successful binding ACK. See ADR 1534 for finite authority,
 Source/Sink leases, cancellation and explicit Android synthetic-proof scope.
+
+### Explicit finite camera stream profile
+
+[ADR 1555](adr/1555-linux-explicit-finite-camera-stream.md) defines the additive
+secure-only `cavc-avc-finite-720p30-v1` descriptor and local immutable work/rate
+budgets. Legacy wire formats and limits remain unchanged. This Linux/synthetic
+profile is not advertised by the production Android camera path.

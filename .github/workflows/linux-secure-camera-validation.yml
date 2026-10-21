@@ -154,6 +154,25 @@ jobs:
             if [ "$scenario" = handshake_timeout ]; then graph=false; fi
             grep -Fx "capyio_pipewire_camera_launcher=passed scenario=$scenario actual_executable=true paired_store=true real_graph=$graph owned_cleanup=true" "$RUNNER_TEMP/camera-launcher-paired-$scenario.txt"
           done
+      - name: Require explicit finite-stream camera bounds and independent pixels
+        run: |
+          set -euo pipefail
+          driver="$(cat "$RUNNER_TEMP/camera-launcher-driver")"
+          "$driver" --list | tee "$RUNNER_TEMP/camera-finite-tests-list.txt"
+          grep -Fx 'hosted_linux_camera_finite_stream_graph: test' "$RUNNER_TEMP/camera-finite-tests-list.txt"
+          count=0
+          for scenario in sustained local_stop control_stop control_eof source_revoke expiry backpressure malicious_rate oversize profile_mismatch old_source_guard; do
+            timeout --signal=TERM --kill-after=5s 45s python3 scripts/run_pipewire_camera_launcher.py \
+              --hosted-private-camera-launcher --paired-store --finite-stream --driver "$driver" --node target/debug/capyio-node \
+              --helper target/debug/capyio-linux-camera-helper --decoder target/debug/capyio-linux-avc-helper \
+              --consumer "$RUNNER_TEMP/avc-consumer" --scenario "$scenario" \
+              | tee "$RUNNER_TEMP/camera-finite-$scenario.txt"
+            graph=true
+            if [ "$scenario" = profile_mismatch ] || [ "$scenario" = old_source_guard ]; then graph=false; fi
+            grep -Fx "capyio_pipewire_camera_finite_stream=passed scenario=$scenario actual_executable=true paired_store=true real_graph=$graph owned_cleanup=true" "$RUNNER_TEMP/camera-finite-$scenario.txt"
+            count=$((count + 1))
+          done
+          test "$count" -eq 11
       - name: Require thirteen actual-console paired camera profiles
         run: |
           set -euo pipefail
@@ -182,5 +201,6 @@ jobs:
           path: |
             ${{ runner.temp }}/camera-launcher-*.txt
             ${{ runner.temp }}/camera-console-*.txt
+            ${{ runner.temp }}/camera-finite-*.txt
             ${{ runner.temp }}/camera-launcher-build.jsonl
           if-no-files-found: ignore

@@ -1,4 +1,4 @@
-use crate::{admission::Request, error};
+use crate::{FiniteStreamBudget, admission::Request, error};
 use capyio_linux_camera::FRAME_BYTES;
 use std::{
     fs,
@@ -23,7 +23,14 @@ pub(crate) struct Decoder {
     reaped: bool,
 }
 impl Decoder {
+    #[cfg_attr(not(test), allow(dead_code))]
     pub fn spawn(lifetime: Duration) -> io::Result<Self> {
+        Self::spawn_profile(lifetime, None)
+    }
+    pub fn spawn_profile(
+        lifetime: Duration,
+        budget: Option<FiniteStreamBudget>,
+    ) -> io::Result<Self> {
         let exe = std::env::current_exe()?;
         let helper = exe
             .parent()
@@ -43,9 +50,15 @@ impl Decoder {
         let input: OwnedFd = child_socket.try_clone()?.into();
         let output: OwnedFd = child_socket.into();
         let deadline = Instant::now() + lifetime;
-        let child = Command::new(helper)
-            .env_clear()
-            .args(["--lifetime-ms", &lifetime.as_millis().to_string()])
+        let mut command = Command::new(helper);
+        command.env_clear();
+        let lifetime_ms =
+            budget.map_or_else(|| lifetime.as_millis(), |b| u128::from(b.lifetime_millis()));
+        command.args(["--lifetime-ms", &lifetime_ms.to_string()]);
+        if budget.is_some() {
+            command.args(["--profile", crate::FINITE_STREAM_FORMAT]);
+        }
+        let child = command
             .stdin(Stdio::from(input))
             .stdout(Stdio::from(output))
             .stderr(Stdio::null())

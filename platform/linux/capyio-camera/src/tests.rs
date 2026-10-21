@@ -13,6 +13,9 @@ fn fixture_format(encoded_avc: bool) -> (NodeRuntime, CameraBinding) {
     } else {
         VideoStreamSpec::camera_720p30_nv12().format_descriptor()
     };
+    fixture_descriptor(format)
+}
+fn fixture_descriptor(format: capyio_core::FormatDescriptor) -> (NodeRuntime, CameraBinding) {
     let lab = capyio_testkit::DemoLab::new().unwrap();
     let original = lab
         .runtime
@@ -348,7 +351,7 @@ fn encoded_projection_requires_explicit_boundary_and_preserves_route_format() {
         binding.clone(),
         Duration::from_secs(1),
         1000,
-        true,
+        guard::CameraFormat::LegacyAvc,
         |_, _| Ok(Box::new(Fake(handle))),
     )
     .unwrap();
@@ -397,4 +400,147 @@ fn encoded_owned_source_may_publish_busy_but_not_unavailable() {
         .accept_peer_catalog(binding.session_id, peer)
         .unwrap();
     assert!(validate_decoded_avc_authority(&runtime, binding, 1000).is_err());
+}
+
+#[test]
+fn finite_projection_is_explicit_and_pins_its_exact_format() {
+    let finite = capyio_core::FormatDescriptor::new("cavc-avc-finite-720p30-v1");
+    let (runtime, binding) = fixture_descriptor(finite.clone());
+    assert!(validate_decoded_avc_authority(&runtime, binding.clone(), 1000).is_err());
+    assert!(validate_decoded_avc_finite_authority(&runtime, binding.clone(), 1000).is_ok());
+    assert!(
+        RuntimeCamera::open_format(
+            runtime,
+            binding,
+            Duration::from_secs(1),
+            1000,
+            guard::CameraFormat::LegacyAvc,
+            |_, _| panic!("finite format must not open via the legacy boundary"),
+        )
+        .is_err()
+    );
+    let (runtime, binding) = fixture_format(true);
+    assert!(validate_decoded_avc_finite_authority(&runtime, binding, 1000).is_err());
+
+    let (runtime, binding) = fixture_descriptor(finite.clone());
+    let state = Arc::new(Mutex::new(State::default()));
+    let handle = state.clone();
+    let mut owner = RuntimeCamera::open_format(
+        runtime,
+        binding.clone(),
+        Duration::from_secs(1),
+        1000,
+        guard::CameraFormat::FiniteAvc,
+        |_, _| Ok(Box::new(Fake(handle))),
+    )
+    .unwrap();
+    owner
+        .submit_at(descriptor(&binding, 1), vec![0; FRAME_BYTES], 1000)
+        .unwrap();
+    assert_eq!(
+        owner
+            .runtime()
+            .route(binding.route_id)
+            .unwrap()
+            .selected_format,
+        Some(finite),
+    );
+    // Replacing the advertised Source with an old legacy-only catalog cannot
+    // silently downgrade an already admitted finite owner.
+    let source = owner.runtime().route(binding.route_id).unwrap().source;
+    let mut peer = owner
+        .runtime()
+        .snapshot()
+        .peers
+        .into_iter()
+        .find(|node| node.id == source.node_id)
+        .unwrap();
+    peer.capabilities
+        .get_mut(&source.capability_id)
+        .unwrap()
+        .ports
+        .get_mut(&source.port_id)
+        .unwrap()
+        .formats = vec![capyio_core::FormatDescriptor::new(
+        "cavc-avc-access-unit-v1",
+    )];
+    owner
+        .runtime_mut()
+        .accept_peer_catalog(binding.session_id, peer)
+        .unwrap();
+    assert!(owner.check_at(1000).is_err());
+    assert!(owner.stopped);
+    assert_eq!(state.lock().unwrap().frames.len(), 1);
+}
+
+#[test]
+fn finite_projection_rejects_format_parameters_before_open() {
+    for key in ["max_frames", "unknown"] {
+        let mut format = capyio_core::FormatDescriptor::new("cavc-avc-finite-720p30-v1");
+        format.parameters.insert(key.into(), "1".into());
+        let (runtime, binding) = fixture_descriptor(format);
+        assert!(
+            RuntimeCamera::open_format(
+                runtime,
+                binding,
+                Duration::from_secs(1),
+                1000,
+                guard::CameraFormat::FiniteAvc,
+                |_, _| panic!("unknown parameters must not open a helper"),
+            )
+            .is_err()
+        );
+    }
+}
+
+#[test]
+fn finite_projection_keeps_exact_duration_and_rejects_elapsed_authority() {
+    let (runtime, binding) = fixture_descriptor(capyio_core::FormatDescriptor::new(
+        "cavc-avc-finite-720p30-v1",
+    ));
+    let duration = Duration::from_micros(34_500);
+    let state = Arc::new(Mutex::new(State::default()));
+    let handle = state.clone();
+    let mut owner = RuntimeCamera::open_format(
+        runtime,
+        binding,
+        duration,
+        1000,
+        guard::CameraFormat::FiniteAvc,
+        |lifetime, deadline| {
+            assert_eq!(lifetime, duration);
+            assert_eq!(deadline, 1034); // no upward rounding to a second frame
+            Ok(Box::new(Fake(handle)))
+        },
+    )
+    .unwrap();
+    assert_eq!(owner.lifetime, duration);
+    owner.started = Instant::now() - duration;
+    assert!(owner.check_at(1000).is_err());
+    assert!(owner.stopped);
+    assert!(state.lock().unwrap().frames.is_empty());
+}
+
+#[test]
+fn finite_projection_rejects_out_of_profile_duration_before_open() {
+    for duration in [
+        Duration::ZERO,
+        Duration::from_micros(999),
+        Duration::from_secs(61),
+    ] {
+        let (runtime, binding) = fixture_descriptor(capyio_core::FormatDescriptor::new(
+            "cavc-avc-finite-720p30-v1",
+        ));
+        assert!(
+            RuntimeCamera::open_format(
+                runtime,
+                binding,
+                duration,
+                1000,
+                guard::CameraFormat::FiniteAvc,
+                |_, _| panic!("invalid finite lifetime must not open a helper"),
+            )
+            .is_err()
+        );
+    }
 }

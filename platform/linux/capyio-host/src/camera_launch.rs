@@ -4,6 +4,11 @@ use super::*;
 use capyio_linux_avc::secure::{SecureCameraAdmission, SecureCameraEvent, SecureCameraOwner};
 
 const FORMAT: &str = "cavc-avc-access-unit-v1";
+#[derive(Clone, Copy, Deserialize)]
+enum CameraStreamProfile {
+    #[serde(rename = "finite_720p30_v1")]
+    Finite720p30V1,
+}
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct CameraConfig {
@@ -13,6 +18,8 @@ struct CameraConfig {
     source: PortRef,
     listen: SocketAddrV4,
     duration_secs: u64,
+    #[serde(default)]
+    stream_profile: Option<CameraStreamProfile>,
 }
 fn deserialize_source<'de, D: serde::Deserializer<'de>>(
     deserializer: D,
@@ -32,6 +39,25 @@ fn deserialize_source<'de, D: serde::Deserializer<'de>>(
     })
 }
 impl CameraConfig {
+    fn format(&self) -> &'static str {
+        match self.stream_profile {
+            None => FORMAT,
+            Some(CameraStreamProfile::Finite720p30V1) => capyio_linux_avc::FINITE_STREAM_FORMAT,
+        }
+    }
+    fn work_limits(&self) -> io::Result<(usize, usize)> {
+        if self.stream_profile.is_some() {
+            let budget = sanitized(capyio_linux_avc::FiniteStreamBudget::for_lifetime(
+                Duration::from_secs(self.duration_secs),
+            ))?;
+            Ok((budget.max_frames, budget.max_input_bytes))
+        } else {
+            Ok((
+                capyio_linux_avc::MAX_FRAMES,
+                capyio_linux_avc::MAX_INPUT_BYTES,
+            ))
+        }
+    }
     fn parse(bytes: &[u8]) -> io::Result<Self> {
         // Require an object, retaining duplicate/unknown-field rejection.
         if bytes.iter().find(|b| !b.is_ascii_whitespace()) != Some(&b'{') {
@@ -43,6 +69,12 @@ impl CameraConfig {
         if !shape
             .get("source")
             .is_some_and(serde_json::Value::is_object)
+        {
+            return Err(fail());
+        }
+        if shape
+            .get("stream_profile")
+            .is_some_and(|value| value != "finite_720p30_v1")
         {
             return Err(fail());
         }
@@ -115,7 +147,7 @@ fn launch_camera(io: &mut LauncherIo, source: CredentialSource) -> io::Result<()
         launcher_credentials(io, config.node_id, config.source.node_id, deadline, source)?;
     let peer = directory.active_peers().next().ok_or_else(fail)?;
     let identity = ControlTlsServerIdentity::from_bundle(peer.peer_certificate_sha256, credentials);
-    let (mut runtime, sink) = camera_runtime(config.node_id)?;
+    let (mut runtime, sink) = camera_runtime(config.node_id, config.format())?;
     let expectation = sanitized(ControlTlsNodeBinding::new(config.node_id, peer.node_id))?;
     let server = sanitized(AuthenticatedControlServer::from_listener_fresh_session(
         sanitized(TcpListener::bind(config.listen))?,
@@ -199,11 +231,20 @@ fn camera_status(
     route_id: RouteId,
     event: &str,
 ) -> io::Result<()> {
-    io.send_json(&json!({"version":1,"event":event,"route_id":route_id,
-        "state":sanitized(owner.runtime().route(route_id))?.state,
-        "queued":owner.metrics().map(|m|m.queued).unwrap_or(0),
+    let route = sanitized(owner.runtime().route(route_id))?;
+    let metrics = owner.metrics();
+    let mut status = json!({"version":1,"event":event,"route_id":route_id,
+        "state":route.state,"queued":metrics.map(|m|m.queued).unwrap_or(0),
         "helper_pid":owner.helper_pid(),"decoder_pid":owner.decoder_pid(),"node_name":owner.node_name(),
-        "consumer_delivery_verified":false}), Instant::now() + Duration::from_secs(1))
+        "consumer_delivery_verified":false});
+    if route.selected_format
+        == Some(FormatDescriptor::new(
+            capyio_linux_avc::FINITE_STREAM_FORMAT,
+        ))
+    {
+        status["dropped"] = json!(metrics.map(|m| m.dropped).unwrap_or(0));
+    }
+    io.send_json(&status, Instant::now() + Duration::from_secs(1))
 }
 
 fn prepare_camera(
@@ -230,7 +271,7 @@ fn prepare_camera(
             None => thread::sleep(Duration::from_millis(2)),
         }
     }
-    validate_camera_source(runtime, config.source)?;
+    validate_camera_source(runtime, config.source, config.format())?;
     let catalog = sanitized(link.prepare_catalog(runtime, &BTreeSet::new()))?;
     sanitized(link.send_catalog_until(catalog, deadline))?;
     let route = sanitized(runtime.create_route(
@@ -241,10 +282,15 @@ fn prepare_camera(
     ))?;
     let request_id = MessageId::new();
     let deadline = Instant::now() + CONSENT;
-    io.send_json(&json!({"version":1,"event":"approval_required","request_id":request_id,"route_id":route,
-        "session_id":link.session_id(),"source":config.source,"sink":sink,"format":FORMAT,
+    let (max_frames, max_input_bytes) = config.work_limits()?;
+    let mut approval = json!({"version":1,"event":"approval_required","request_id":request_id,"route_id":route,
+        "session_id":link.session_id(),"source":config.source,"sink":sink,"format":config.format(),
         "duration_secs":config.duration_secs,"approval_timeout_secs":CONSENT.as_secs(),"media_security":"tls13_mtls_v1",
-        "width":1280,"height":720,"fps":30,"rotation":0,"max_frames":120,"max_input_bytes":33554432}), Instant::now()+Duration::from_secs(1))?;
+        "width":1280,"height":720,"fps":30,"rotation":0,"max_frames":max_frames,"max_input_bytes":max_input_bytes});
+    if config.stream_profile.is_some() {
+        approval["stream_profile"] = json!("finite_720p30_v1");
+    }
+    io.send_json(&approval, Instant::now() + Duration::from_secs(1))?;
     loop {
         check(deadline)?;
         if let Some(bytes) = io.poll_frame(LOCAL_FRAME)? {
@@ -280,7 +326,7 @@ fn prepare_camera(
             }
             Some(ReceivedControlMessage::Catalog(c)) => {
                 sanitized(link.apply_catalog(runtime, c))?;
-                validate_camera_source(runtime, config.source)?;
+                validate_camera_source(runtime, config.source, config.format())?;
             }
             Some(_) => return Err(fail()),
             None => {}
@@ -288,7 +334,7 @@ fn prepare_camera(
         thread::sleep(Duration::from_millis(2));
     }
     check(deadline)?;
-    validate_camera_source(runtime, config.source)?;
+    validate_camera_source(runtime, config.source, config.format())?;
     let approved_expiry = now_ms()?
         .checked_add(config.duration_secs * 1000)
         .ok_or_else(fail)?;
@@ -298,15 +344,8 @@ fn prepare_camera(
         negotiation_operation_deadline(deadline, approved_expiry)?,
     ))?;
     let peer_expiry = loop {
-        let Some(status) = camera_grant(
-            io,
-            runtime,
-            link,
-            config.source,
-            route,
-            deadline,
-            approved_expiry,
-        )?
+        let Some(status) =
+            camera_grant(io, runtime, link, config, route, deadline, approved_expiry)?
         else {
             return Ok(None);
         };
@@ -325,8 +364,7 @@ fn prepare_camera(
         negotiation_operation_deadline(deadline, expiry)?,
     ))?;
     loop {
-        let Some(status) = camera_grant(io, runtime, link, config.source, route, deadline, expiry)?
-        else {
+        let Some(status) = camera_grant(io, runtime, link, config, route, deadline, expiry)? else {
             return Ok(None);
         };
         match status.route.authorization {
@@ -347,7 +385,7 @@ fn prepare_camera(
     sanitized(runtime.acquire_route_port_lease(route, sink, expiry, now))?;
     sanitized(runtime.prepare_route(
         route,
-        Some(FormatDescriptor::new(FORMAT)),
+        Some(FormatDescriptor::new(config.format())),
         QosMode::Interactive,
         now,
     ))?;
@@ -358,7 +396,7 @@ fn camera_grant(
     io: &mut LauncherIo,
     runtime: &mut NodeRuntime,
     link: &mut CatalogControlLink,
-    source: PortRef,
+    config: &CameraConfig,
     route: RouteId,
     deadline: Instant,
     expiry: u64,
@@ -371,7 +409,7 @@ fn camera_grant(
         match sanitized(link.poll_control_message_until(operation))? {
             Some(ReceivedControlMessage::Catalog(c)) => {
                 sanitized(link.apply_catalog(runtime, c))?;
-                validate_camera_source(runtime, source)?;
+                validate_camera_source(runtime, config.source, config.format())?;
             }
             Some(ReceivedControlMessage::Heartbeat(h)) => {
                 if !h.acknowledgement {
@@ -395,7 +433,7 @@ fn camera_grant(
         }
     }
 }
-fn validate_camera_source(runtime: &NodeRuntime, source: PortRef) -> io::Result<()> {
+fn validate_camera_source(runtime: &NodeRuntime, source: PortRef, format: &str) -> io::Result<()> {
     let snapshot = runtime.snapshot();
     let peer = snapshot
         .peers
@@ -414,14 +452,14 @@ fn validate_camera_source(runtime: &NodeRuntime, source: PortRef) -> io::Result<
         || port.profile != ProfileId::video_frames_v1()
         || port.availability != Availability::Available
         || port.interoperability_mode != InteroperabilityMode::AdapterManaged
-        || !port.formats.contains(&FormatDescriptor::new(FORMAT))
+        || !port.formats.contains(&FormatDescriptor::new(format))
         || !port.qos_modes.contains(&QosMode::Interactive)
     {
         return Err(fail());
     }
     Ok(())
 }
-fn camera_runtime(node_id: NodeId) -> io::Result<(NodeRuntime, PortRef)> {
+fn camera_runtime(node_id: NodeId, format: &str) -> io::Result<(NodeRuntime, PortRef)> {
     let mut node = NodeDescriptor::new(
         node_id,
         "LinuxCameraSink",
@@ -464,7 +502,7 @@ fn camera_runtime(node_id: NodeId) -> io::Result<(NodeRuntime, PortRef)> {
                 direction: PortDirection::Sink,
                 profile: ProfileId::video_frames_v1(),
                 schema_id: None,
-                formats: vec![FormatDescriptor::new(FORMAT)],
+                formats: vec![FormatDescriptor::new(format)],
                 qos_modes: BTreeSet::from([QosMode::Interactive]),
                 clock_domain: None,
                 availability: Availability::Available,
@@ -488,6 +526,66 @@ mod tests {
     use super::*;
     fn config() -> serde_json::Value {
         json!({"version":1,"node_id":NodeId::new(),"source":PortRef {node_id:NodeId::new(),capability_id:CapabilityId::new(),port_id:PortId::new()},"listen":"127.0.0.1:0","duration_secs":60})
+    }
+    #[test]
+    fn camera_finite_stream_profile_is_explicit_with_bounded_work_not_extra_time() {
+        let mut value = config();
+        let legacy = CameraConfig::parse(&serde_json::to_vec(&value).unwrap()).unwrap();
+        assert_eq!(legacy.format(), FORMAT);
+        assert_eq!(legacy.work_limits().unwrap(), (120, 32 * 1024 * 1024));
+        value["stream_profile"] = json!("finite_720p30_v1");
+        for seconds in [3, 10, 60] {
+            value["duration_secs"] = json!(seconds);
+            let finite = CameraConfig::parse(&serde_json::to_vec(&value).unwrap()).unwrap();
+            assert_eq!(finite.format(), capyio_linux_avc::FINITE_STREAM_FORMAT);
+            assert_eq!(
+                finite.work_limits().unwrap(),
+                (
+                    seconds as usize * 30,
+                    (32 * 1024 * 1024).min(seconds as usize * 2 * 1024 * 1024 + 4 * 1024 * 1024)
+                )
+            );
+            assert_eq!(finite.duration_secs, seconds);
+        }
+        for profile in [
+            json!(null),
+            json!("legacy"),
+            json!("unlimited"),
+            json!({}),
+            json!(true),
+        ] {
+            value["stream_profile"] = profile;
+            assert!(CameraConfig::parse(&serde_json::to_vec(&value).unwrap()).is_err());
+        }
+        value["stream_profile"] = json!("finite_720p30_v1");
+        let encoded = serde_json::to_string(&value).unwrap();
+        assert!(
+            CameraConfig::parse(
+                encoded
+                    .replacen('{', "{\"stream_profile\":\"finite_720p30_v1\",", 1)
+                    .as_bytes()
+            )
+            .is_err()
+        );
+    }
+    #[test]
+    fn camera_finite_catalog_advertises_only_exact_opt_in_format() {
+        let (runtime, sink) =
+            camera_runtime(NodeId::new(), capyio_linux_avc::FINITE_STREAM_FORMAT).unwrap();
+        let snapshot = runtime.snapshot();
+        let port = snapshot
+            .local_node
+            .port(sink.capability_id, sink.port_id)
+            .unwrap();
+        assert_eq!(
+            port.formats,
+            [FormatDescriptor::new(
+                capyio_linux_avc::FINITE_STREAM_FORMAT
+            )]
+        );
+        assert!(!port.formats.contains(&FormatDescriptor::new(FORMAT)));
+        assert!(snapshot.routes.is_empty());
+        assert!(snapshot.sessions.is_empty());
     }
     #[test]
     fn camera_bootstrap_requires_exact_source_and_finite_private_listener() {
@@ -540,7 +638,7 @@ mod tests {
     }
     #[test]
     fn camera_catalog_is_a_real_single_linux_sink_without_fabricated_peer() {
-        let (runtime, sink) = camera_runtime(NodeId::new()).unwrap();
+        let (runtime, sink) = camera_runtime(NodeId::new(), FORMAT).unwrap();
         let snapshot = runtime.snapshot();
         assert_eq!(snapshot.local_node.platform, Platform::Linux);
         assert!(snapshot.peers.is_empty());
@@ -554,6 +652,6 @@ mod tests {
         assert_eq!(port.direction, PortDirection::Sink);
         assert_eq!(port.formats, [FormatDescriptor::new(FORMAT)]);
         assert_eq!(port.profile, ProfileId::video_frames_v1());
-        assert!(validate_camera_source(&runtime, sink).is_err());
+        assert!(validate_camera_source(&runtime, sink, FORMAT).is_err());
     }
 }

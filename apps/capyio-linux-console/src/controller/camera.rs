@@ -10,9 +10,32 @@ const CONSENT: Duration = Duration::from_secs(30);
 const STOP_GRACE: Duration = Duration::from_secs(3);
 const FRAME_TIMEOUT: Duration = Duration::from_secs(5);
 const FORMAT: &str = "cavc-avc-access-unit-v1";
+const FINITE_FORMAT: &str = "cavc-avc-finite-720p30-v1";
 const SECURITY: &str = "tls13_mtls_v1";
 const MAX_FRAMES: u64 = 120;
 const MAX_INPUT_BYTES: u64 = 33_554_432;
+const FINITE_FPS: u64 = 30;
+const FINITE_BYTES_PER_SECOND: u64 = 2_097_152;
+const FINITE_BURST_BYTES: u64 = 4_194_304;
+
+#[derive(Clone, Copy, Debug, Serialize, Eq, PartialEq)]
+enum StreamProfile {
+    #[serde(rename = "finite_720p30_v1")]
+    Finite720p30V1,
+}
+
+// Omission selects the legacy profile; an explicit null is never omission.
+fn deserialize_profile<'de, D>(deserializer: D) -> Result<Option<StreamProfile>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    match String::deserialize(deserializer)?.as_str() {
+        "finite_720p30_v1" => Ok(Some(StreamProfile::Finite720p30V1)),
+        _ => Err(serde::de::Error::custom(
+            "unsupported camera stream profile",
+        )),
+    }
+}
 
 #[derive(Clone, Copy, Debug, Deserialize, Serialize, Eq, PartialEq)]
 #[serde(deny_unknown_fields)]
@@ -39,6 +62,12 @@ struct Config {
     source: Port,
     listen: SocketAddrV4,
     duration_secs: u64,
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "deserialize_profile"
+    )]
+    stream_profile: Option<StreamProfile>,
 }
 impl Config {
     fn parse(bytes: &[u8], local: NodeId, peer: NodeId) -> io::Result<Self> {
@@ -46,10 +75,19 @@ impl Config {
             return Err(invalid());
         }
         let shape: Value = serde_json::from_slice(bytes).map_err(|_| invalid())?;
-        exact_keys(
-            &shape,
-            &["version", "node_id", "source", "listen", "duration_secs"],
-        )?;
+        let fields = if shape.get("stream_profile").is_some() {
+            &[
+                "version",
+                "node_id",
+                "source",
+                "listen",
+                "duration_secs",
+                "stream_profile",
+            ][..]
+        } else {
+            &["version", "node_id", "source", "listen", "duration_secs"][..]
+        };
+        exact_keys(&shape, fields)?;
         port_shape(&shape["source"])?;
         // Decode original bytes, not the shape, to retain duplicate-field checks.
         let config: Self = serde_json::from_slice(bytes).map_err(|_| invalid())?;
@@ -75,6 +113,24 @@ impl Config {
 
     fn wire(&self) -> io::Result<Value> {
         serde_json::to_value(self).map_err(|_| invalid())
+    }
+
+    fn format(&self) -> &'static str {
+        match self.stream_profile {
+            None => FORMAT,
+            Some(StreamProfile::Finite720p30V1) => FINITE_FORMAT,
+        }
+    }
+
+    fn work_limits(&self) -> (u64, u64) {
+        match self.stream_profile {
+            None => (MAX_FRAMES, MAX_INPUT_BYTES),
+            Some(StreamProfile::Finite720p30V1) => (
+                self.duration_secs * FINITE_FPS,
+                MAX_INPUT_BYTES
+                    .min(self.duration_secs * FINITE_BYTES_PER_SECOND + FINITE_BURST_BYTES),
+            ),
+        }
     }
 }
 
@@ -160,16 +216,24 @@ struct Approval {
     rotation: u32,
     max_frames: u64,
     max_input_bytes: u64,
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "deserialize_profile"
+    )]
+    stream_profile: Option<StreamProfile>,
 }
 impl Approval {
     fn validate(&self, config: &Config) -> io::Result<()> {
+        let (max_frames, max_input_bytes) = config.work_limits();
         if self.request_id.as_uuid().is_nil()
             || self.route_id.as_uuid().is_nil()
             || self.session_id.as_uuid().is_nil()
             || self.source != config.source
             || !self.sink.valid()
             || self.sink.node_id != config.node_id
-            || self.format != FORMAT
+            || self.format != config.format()
+            || self.stream_profile != config.stream_profile
             || self.media_security != SECURITY
             || self.duration_secs != config.duration_secs
             || self.approval_timeout_secs != CONSENT.as_secs()
@@ -177,8 +241,8 @@ impl Approval {
             || self.height != 720
             || self.fps != 30
             || self.rotation != 0
-            || self.max_frames != MAX_FRAMES
-            || self.max_input_bytes != MAX_INPUT_BYTES
+            || self.max_frames != max_frames
+            || self.max_input_bytes != max_input_bytes
         {
             return Err(invalid());
         }
@@ -224,6 +288,8 @@ struct CameraStatus {
     decoder_pid: Option<u32>,
     node_name: Option<String>,
     consumer_delivery_verified: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    dropped: Option<u64>,
 }
 #[derive(Debug, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
@@ -262,8 +328,10 @@ impl Event {
             name @ ("status" | "camera_bound" | "camera_record") => {
                 // Nulls are part of the protocol, not optional omission. Prevent
                 // missing process identity from silently decoding as None.
-                exact_keys(
-                    &value,
+                let fields = if value.get("dropped").is_some() {
+                    if value["dropped"].as_u64().is_none() {
+                        return Err(invalid());
+                    }
                     &[
                         "version",
                         "event",
@@ -274,8 +342,22 @@ impl Event {
                         "decoder_pid",
                         "node_name",
                         "consumer_delivery_verified",
-                    ],
-                )?;
+                        "dropped",
+                    ][..]
+                } else {
+                    &[
+                        "version",
+                        "event",
+                        "route_id",
+                        "state",
+                        "queued",
+                        "helper_pid",
+                        "decoder_pid",
+                        "node_name",
+                        "consumer_delivery_verified",
+                    ][..]
+                };
+                exact_keys(&value, fields)?;
                 let variant = match name {
                     "status" => Self::Status,
                     "camera_bound" => Self::Bound,
@@ -356,6 +438,7 @@ struct Session {
     route_seen: bool,
     bound: Option<ProcessBinding>,
     queued: u64,
+    dropped: u64,
     records: u64,
     stopping: bool,
     finished: Option<Finished>,
@@ -402,19 +485,27 @@ impl Session {
                 self.last_stage = Some(value.stage);
             }
             Event::Status(value) | Event::Bound(value) | Event::Record(value) => {
+                let max_frames = self.approval.as_ref().ok_or_else(invalid)?.max_frames;
+                let dropped = match (config.stream_profile, value.dropped) {
+                    (None, None) => 0,
+                    (Some(StreamProfile::Finite720p30V1), Some(dropped)) => dropped,
+                    _ => return Err(invalid()),
+                };
+                let frames = value.queued.checked_add(dropped).ok_or_else(invalid)?;
                 if !self.approved
                     || self.approval.as_ref().map(|a| a.route_id) != Some(value.route_id)
                     || value.state != RouteState::Starting
                     || value.consumer_delivery_verified
                     || value.queued < self.queued
-                    || value.queued > MAX_FRAMES
+                    || dropped < self.dropped
+                    || frames > max_frames
                 {
                     return Err(invalid());
                 }
                 let binding = ProcessBinding::parse(value)?;
                 match event {
                     Event::Bound(_) => {
-                        if self.bound.is_some() || binding.is_none() || value.queued != 0 {
+                        if self.bound.is_some() || binding.is_none() || frames != 0 {
                             return Err(invalid());
                         }
                         self.bound = binding;
@@ -425,21 +516,25 @@ impl Session {
                         // Thus duplicate Config/AU events cannot replay progress.
                         if self.bound.is_none()
                             || binding.as_ref() != self.bound.as_ref()
-                            || self.records > MAX_FRAMES
-                            || value.queued != self.records
+                            || self.records > max_frames
+                            || frames != self.records
                         {
                             return Err(invalid());
                         }
                         self.records += 1;
                     }
                     Event::Status(_) => {
-                        if binding.as_ref() != self.bound.as_ref() || value.queued != self.queued {
+                        if binding.as_ref() != self.bound.as_ref()
+                            || value.queued != self.queued
+                            || dropped != self.dropped
+                        {
                             return Err(invalid());
                         }
                     }
                     _ => unreachable!("camera telemetry variant"),
                 }
                 self.queued = value.queued;
+                self.dropped = dropped;
                 self.route_seen = true;
             }
             Event::Stopped(_) => {
@@ -478,10 +573,17 @@ impl Session {
                 approval.route_id
             ));
         }
+        let format = config.format();
+        let (max_frames, max_input_bytes) = config.work_limits();
         result.push_str(&format!(
-            "Format: {FORMAT}; media security: {SECURITY}; duration: {} seconds\r\n1280x720, 30 fps, rotation 0; at most {MAX_FRAMES} frames and {MAX_INPUT_BYTES} encoded bytes.\r\nExperimental finite camera; independent Source consent and both leases remain required.\r\nA bound helper or queued frame is not consumer delivery; Route remains Starting.\r\n",
+            "Format: {format}; media security: {SECURITY}; duration: {} seconds\r\n1280x720, 30 fps, rotation 0; at most {max_frames} frames and {max_input_bytes} encoded bytes.\r\nExperimental finite camera; independent Source consent and both leases remain required.\r\nA bound helper or queued frame is not consumer delivery; Route remains Starting.\r\n",
             config.duration_secs
         ));
+        if config.stream_profile.is_some() {
+            result.push_str(
+                "Stream profile: finite_720p30_v1. Fixed local-monotonic caps: 30 fps with a 3-frame burst; 2 MiB/s with a 4 MiB burst; 32 MiB absolute input; 10 CPU seconds for the decoder.\r\nThese are work ceilings, not guaranteed continuous duration; remaining owner lifetime may lower them without extending either lease.\r\nExperimental Linux and synthetic-peer profile only; production Android does not advertise it.\r\n",
+            );
+        }
         result
     }
 }
@@ -684,6 +786,13 @@ mod tests {
         parse_config(&config_json()).unwrap()
     }
 
+    fn finite_config(duration_secs: u64) -> Config {
+        let mut value = config_json();
+        value["duration_secs"] = json!(duration_secs);
+        value["stream_profile"] = json!("finite_720p30_v1");
+        parse_config(&value).unwrap()
+    }
+
     fn parse_config(value: &Value) -> io::Result<Config> {
         Config::parse(
             &serde_json::to_vec(value).unwrap(),
@@ -693,12 +802,17 @@ mod tests {
     }
 
     fn approval_json(config: &Config) -> Value {
-        json!({"version":1,"event":"approval_required","request_id":MessageId::new(),
+        let (max_frames, max_input_bytes) = config.work_limits();
+        let mut value = json!({"version":1,"event":"approval_required","request_id":MessageId::new(),
             "route_id":RouteId::new(),"session_id":SessionId::new(),"source":config.source,
             "sink":{"node_id":config.node_id,"capability_id":CapabilityId::new(),"port_id":PortId::new()},
-            "format":FORMAT,"duration_secs":config.duration_secs,"approval_timeout_secs":30,
+            "format":config.format(),"duration_secs":config.duration_secs,"approval_timeout_secs":30,
             "media_security":SECURITY,"width":1280,"height":720,"fps":30,"rotation":0,
-            "max_frames":MAX_FRAMES,"max_input_bytes":MAX_INPUT_BYTES})
+            "max_frames":max_frames,"max_input_bytes":max_input_bytes});
+        if let Some(profile) = config.stream_profile {
+            value["stream_profile"] = json!(profile);
+        }
+        value
     }
 
     fn listening() -> Event {
@@ -737,9 +851,14 @@ mod tests {
         } else {
             (None, None, None)
         };
-        json!({"version":1,"event":event,"route_id":session.approval.as_ref().unwrap().route_id,
+        let approval = session.approval.as_ref().unwrap();
+        let mut value = json!({"version":1,"event":event,"route_id":approval.route_id,
             "state":"starting","queued":queued,"helper_pid":helper,"decoder_pid":decoder,
-            "node_name":name,"consumer_delivery_verified":false})
+            "node_name":name,"consumer_delivery_verified":false});
+        if approval.stream_profile.is_some() {
+            value["dropped"] = json!(session.dropped);
+        }
+        value
     }
 
     fn accept(session: &mut Session, config: &Config, value: Value) -> io::Result<()> {
@@ -751,6 +870,191 @@ mod tests {
         let value = status_json(&session, "camera_bound", 0);
         accept(&mut session, config, value).unwrap();
         session
+    }
+
+    #[test]
+    fn pure_camera_legacy_wire_is_unchanged_and_has_no_profile_or_dropped_fields() {
+        let config = config();
+        let wire = config.wire().unwrap();
+        assert_eq!(wire.as_object().unwrap().len(), 5);
+        assert_eq!(config.stream_profile, None);
+        assert_eq!(config.format(), FORMAT);
+        assert_eq!(config.work_limits(), (120, 33_554_432));
+        assert_eq!(
+            serde_json::to_string(&config).unwrap(),
+            format!(
+                "{{\"version\":1,\"node_id\":\"{}\",\"source\":{},\"listen\":\"127.0.0.1:0\",\"duration_secs\":20}}",
+                config.node_id,
+                serde_json::to_string(&config.source).unwrap()
+            )
+        );
+        let event = Event::parse(approval_json(&config)).unwrap();
+        let Event::Approval(approval) = &event else {
+            panic!()
+        };
+        assert_eq!(
+            event.canonical().unwrap(),
+            format!(
+                concat!(
+                    "{{\"version\":1,\"event\":\"approval_required\",\"request_id\":\"{}\",",
+                    "\"route_id\":\"{}\",\"session_id\":\"{}\",\"source\":{},\"sink\":{},",
+                    "\"format\":\"cavc-avc-access-unit-v1\",\"duration_secs\":20,",
+                    "\"approval_timeout_secs\":30,\"media_security\":\"tls13_mtls_v1\",",
+                    "\"width\":1280,\"height\":720,\"fps\":30,\"rotation\":0,",
+                    "\"max_frames\":120,\"max_input_bytes\":33554432}}"
+                ),
+                approval.request_id,
+                approval.route_id,
+                approval.session_id,
+                serde_json::to_string(&approval.source).unwrap(),
+                serde_json::to_string(&approval.sink).unwrap(),
+            )
+        );
+        let session = approved(&config);
+        let event = Event::parse(status_json(&session, "status", 0)).unwrap();
+        assert_eq!(
+            event.canonical().unwrap(),
+            format!(
+                concat!(
+                    "{{\"version\":1,\"event\":\"status\",\"route_id\":\"{}\",",
+                    "\"state\":\"starting\",\"queued\":0,\"helper_pid\":null,",
+                    "\"decoder_pid\":null,\"node_name\":null,\"consumer_delivery_verified\":false}}"
+                ),
+                session.approval.as_ref().unwrap().route_id
+            )
+        );
+    }
+
+    #[test]
+    fn pure_camera_finite_profile_duration_derives_exact_work_maxima() {
+        for duration in 3..=60 {
+            let config = finite_config(duration);
+            let wire = config.wire().unwrap();
+            assert_eq!(wire.as_object().unwrap().len(), 6);
+            assert_eq!(wire["stream_profile"], "finite_720p30_v1");
+            assert_eq!(config.format(), FINITE_FORMAT);
+            assert_eq!(
+                config.work_limits(),
+                (
+                    duration * 30,
+                    (duration * 2_097_152 + 4_194_304).min(33_554_432)
+                )
+            );
+            let Event::Approval(approval) = Event::parse(approval_json(&config)).unwrap() else {
+                panic!()
+            };
+            approval.validate(&config).unwrap();
+            assert!(approval.max_frames <= 1800);
+            assert!(approval.max_input_bytes <= 33_554_432);
+        }
+        for (duration, frames, bytes) in [
+            (3, 90, 10_485_760),
+            (4, 120, 12_582_912),
+            (13, 390, 31_457_280),
+            (14, 420, 33_554_432),
+            (60, 1800, 33_554_432),
+        ] {
+            assert_eq!(finite_config(duration).work_limits(), (frames, bytes));
+        }
+        let mut value = finite_config(3).wire().unwrap();
+        for duration in [0, 1, 2, 61, u64::MAX] {
+            value["duration_secs"] = json!(duration);
+            assert!(parse_config(&value).is_err());
+        }
+    }
+
+    #[test]
+    fn pure_camera_profile_rejects_null_unknown_duplicate_and_rate_overrides() {
+        let config = finite_config(3);
+        for profile in [
+            Value::Null,
+            json!(""),
+            json!("legacy"),
+            json!("finite_720p30_v2"),
+            json!("FINITE_720P30_V1"),
+            json!(1),
+            json!(true),
+            json!({}),
+            json!({"finite_720p30_v1":null}),
+            json!([]),
+        ] {
+            let mut value = config.wire().unwrap();
+            value["stream_profile"] = profile.clone();
+            assert!(parse_config(&value).is_err());
+            let mut value = approval_json(&config);
+            value["stream_profile"] = profile;
+            assert!(Event::parse(value).is_err());
+        }
+        let bytes = serde_json::to_string(&config).unwrap();
+        for duplicate in [
+            "\"stream_profile\":\"finite_720p30_v1\",\"stream_profile\":\"finite_720p30_v1\"",
+            "\"stream_profile\":null,\"stream_profile\":\"finite_720p30_v1\"",
+            "\"stream_profile\":\"finite_720p30_v1\",\"stream_\\u0070rofile\":\"finite_720p30_v1\"",
+        ] {
+            let candidate = bytes.replace("\"stream_profile\":\"finite_720p30_v1\"", duplicate);
+            assert!(
+                Config::parse(candidate.as_bytes(), config.node_id, config.source.node_id).is_err()
+            );
+        }
+        // The rates, bursts and CPU resource cap are fixed locally, not knobs
+        // that either a manifest or a purported approval event can override.
+        for (field, expected) in [
+            ("max_fps", 30),
+            ("frame_burst", 3),
+            ("max_bytes_per_second", 2_097_152),
+            ("byte_burst", 4_194_304),
+            ("decoder_cpu_secs", 10),
+        ] {
+            for replacement in [json!(expected), json!(expected + 1), Value::Null] {
+                let mut value = config.wire().unwrap();
+                value[field] = replacement.clone();
+                assert!(parse_config(&value).is_err(), "config field {field}");
+                let mut value = approval_json(&config);
+                value[field] = replacement;
+                assert!(Event::parse(value).is_err(), "approval field {field}");
+            }
+        }
+    }
+
+    #[test]
+    fn pure_camera_profile_approval_rejects_mixed_legacy_and_finite_scope() {
+        let finite = finite_config(3);
+        let mut value = finite.wire().unwrap();
+        value.as_object_mut().unwrap().remove("stream_profile");
+        let legacy = parse_config(&value).unwrap();
+        for (config, other) in [(&finite, &legacy), (&legacy, &finite)] {
+            let Event::Approval(approval) = Event::parse(approval_json(other)).unwrap() else {
+                panic!()
+            };
+            assert!(approval.validate(config).is_err());
+        }
+        let valid = approval_json(&finite);
+        for (field, replacement) in [
+            ("format", json!(FORMAT)),
+            ("fps", json!(29)),
+            ("fps", json!(31)),
+            ("max_frames", json!(0)),
+            ("max_frames", json!(89)),
+            ("max_frames", json!(91)),
+            ("max_frames", json!(MAX_FRAMES)),
+            ("max_input_bytes", json!(10_485_759)),
+            ("max_input_bytes", json!(10_485_761)),
+            ("max_input_bytes", json!(MAX_INPUT_BYTES)),
+        ] {
+            let mut candidate = valid.clone();
+            candidate[field] = replacement;
+            let Event::Approval(approval) = Event::parse(candidate).unwrap() else {
+                panic!()
+            };
+            assert!(approval.validate(&finite).is_err(), "field {field}");
+        }
+        let mut missing = valid;
+        missing.as_object_mut().unwrap().remove("stream_profile");
+        let Event::Approval(approval) = Event::parse(missing).unwrap() else {
+            panic!()
+        };
+        assert!(approval.validate(&finite).is_err());
+        assert!(approval.validate(&legacy).is_err());
     }
 
     #[test]
@@ -1319,6 +1623,186 @@ mod tests {
         assert!(accept(&mut session, &config, gap).is_err());
         let ahead = status_json(&session, "status", 1);
         assert!(accept(&mut session, &config, ahead).is_err());
+    }
+
+    #[test]
+    fn pure_camera_finite_profile_preserves_exact_single_use_consent() {
+        let config = finite_config(60);
+        let challenge = Event::parse(approval_json(&config)).unwrap();
+        let mut session = Session::default();
+        assert!(session.accept(&challenge, &config).is_err());
+        assert!(input_action(b"start stale stale stale", &session).is_err());
+        session.accept(&listening(), &config).unwrap();
+        session.accept(&challenge, &config).unwrap();
+        assert!(session.accept(&challenge, &config).is_err());
+        for event in ["status", "camera_bound", "camera_record"] {
+            let candidate = status_json(&session, event, 0);
+            assert!(accept(&mut session, &config, candidate).is_err());
+        }
+        let approval = session.approval.as_ref().unwrap();
+        let expected = approval.expected();
+        assert_eq!(
+            input_action(expected.as_bytes(), &session).unwrap(),
+            Input::Approve
+        );
+        for wrong in [
+            format!("{expected} "),
+            format!("{expected}\n{expected}"),
+            format!(
+                "start {} {} {}",
+                MessageId::new(),
+                approval.route_id,
+                approval.source.node_id
+            ),
+            format!(
+                "start {} {} {}",
+                approval.request_id,
+                RouteId::new(),
+                approval.source.node_id
+            ),
+            format!(
+                "start {} {} {}",
+                approval.request_id,
+                approval.route_id,
+                NodeId::new()
+            ),
+        ] {
+            assert!(input_action(wrong.as_bytes(), &session).is_err());
+        }
+        exact_keys(
+            &approval.command(),
+            &["version", "command", "request_id", "route_id"],
+        )
+        .unwrap();
+        session.approved = true;
+        assert!(input_action(expected.as_bytes(), &session).is_err());
+        assert!(session.accept(&challenge, &config).is_err());
+        session.stopping = true;
+        assert_eq!(input_action(b"stop", &session).unwrap(), Input::Stop);
+        assert!(input_action(expected.as_bytes(), &session).is_err());
+        session
+            .accept(
+                &Event::parse(json!({"version":1,"event":"stopped"})).unwrap(),
+                &config,
+            )
+            .unwrap();
+        assert!(session.accept(&challenge, &config).is_err());
+    }
+
+    #[test]
+    fn pure_camera_finite_record_counters_include_drops_without_delivery_claims() {
+        for duration in [3, 60] {
+            let config = finite_config(duration);
+            let max_frames = config.work_limits().0;
+            let mut session = bound(&config);
+            let config_record = status_json(&session, "camera_record", 0);
+            accept(&mut session, &config, config_record.clone()).unwrap();
+            assert!(accept(&mut session, &config, config_record).is_err());
+            for count in 1..=max_frames {
+                let dropped = u64::from(count % 3 == 0);
+                let queued = session.queued + 1 - dropped;
+                let mut record = status_json(&session, "camera_record", queued);
+                record["dropped"] = json!(session.dropped + dropped);
+                accept(&mut session, &config, record.clone()).unwrap();
+                assert!(accept(&mut session, &config, record).is_err());
+                let status = status_json(&session, "status", session.queued);
+                accept(&mut session, &config, status.clone()).unwrap();
+                let mut ahead = status.clone();
+                ahead["dropped"] = json!(session.dropped + 1);
+                assert!(accept(&mut session, &config, ahead).is_err());
+                if session.dropped > 0 {
+                    let mut rollback = status.clone();
+                    rollback["dropped"] = json!(session.dropped - 1);
+                    assert!(accept(&mut session, &config, rollback).is_err());
+                }
+                if session.queued > 0 {
+                    let mut rollback = status;
+                    rollback["queued"] = json!(session.queued - 1);
+                    assert!(accept(&mut session, &config, rollback).is_err());
+                }
+            }
+            assert_eq!(session.queued + session.dropped, max_frames);
+            assert_eq!(session.records, max_frames + 1);
+            assert!(session.dropped > 0);
+            let overflow = status_json(&session, "camera_record", session.queued + 1);
+            assert!(accept(&mut session, &config, overflow).is_err());
+            let mut overflow = status_json(&session, "camera_record", u64::MAX);
+            overflow["dropped"] = json!(1);
+            assert!(accept(&mut session, &config, overflow).is_err());
+            for event in ["status", "camera_record"] {
+                let mut active = status_json(&session, event, session.queued);
+                active["state"] = json!("active");
+                assert!(accept(&mut session, &config, active).is_err());
+                let mut delivery = status_json(&session, event, session.queued);
+                delivery["consumer_delivery_verified"] = json!(true);
+                assert!(accept(&mut session, &config, delivery).is_err());
+            }
+            let mut session = bound(&config);
+            let mut gap = status_json(&session, "camera_record", 0);
+            gap["dropped"] = json!(1);
+            assert!(accept(&mut session, &config, gap).is_err());
+        }
+    }
+
+    #[test]
+    fn pure_camera_dropped_telemetry_is_exactly_profile_bound() {
+        let legacy = config();
+        let finite = finite_config(3);
+        for event in ["status", "camera_bound", "camera_record"] {
+            let mut session = approved(&legacy);
+            let mut value = status_json(&session, event, 0);
+            value["dropped"] = json!(0);
+            assert!(accept(&mut session, &legacy, value).is_err());
+            let mut session = approved(&finite);
+            let valid = status_json(&session, event, 0);
+            let mut value = valid.clone();
+            value.as_object_mut().unwrap().remove("dropped");
+            assert!(accept(&mut session, &finite, value).is_err());
+            for dropped in [Value::Null, json!(-1), json!("0"), json!(0.5), json!(true)] {
+                let mut value = valid.clone();
+                value["dropped"] = dropped;
+                assert!(Event::parse(value).is_err());
+            }
+        }
+        let mut session = approved(&finite);
+        for event in ["status", "camera_bound"] {
+            let mut value = status_json(&session, event, 0);
+            value["dropped"] = json!(1);
+            assert!(accept(&mut session, &finite, value).is_err());
+        }
+        let status = status_json(&session, "status", 0);
+        accept(&mut session, &finite, status.clone()).unwrap();
+        assert!(
+            Event::parse(status)
+                .unwrap()
+                .canonical()
+                .unwrap()
+                .contains("\"dropped\":0")
+        );
+    }
+
+    #[test]
+    fn pure_camera_finite_presentation_discloses_caps_and_no_duration_guarantee() {
+        let config = finite_config(3);
+        let summary = waiting(&config).summary(&config);
+        for expected in [
+            "finite_720p30_v1",
+            FINITE_FORMAT,
+            SECURITY,
+            "1280x720, 30 fps, rotation 0",
+            "at most 90 frames and 10485760 encoded bytes",
+            "local-monotonic caps: 30 fps with a 3-frame burst",
+            "2 MiB/s with a 4 MiB burst",
+            "32 MiB absolute input",
+            "10 CPU seconds for the decoder",
+            "work ceilings, not guaranteed continuous duration",
+            "without extending either lease",
+            "independent Source consent and both leases remain required",
+            "not consumer delivery; Route remains Starting",
+            "production Android does not advertise it",
+        ] {
+            assert!(summary.contains(expected), "missing {expected}");
+        }
     }
 
     #[test]

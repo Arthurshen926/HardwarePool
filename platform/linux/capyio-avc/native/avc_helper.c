@@ -14,6 +14,7 @@
 #include <string.h>
 #include <sys/resource.h>
 #include <sys/time.h>
+#include <time.h>
 #include <unistd.h>
 
 /* This executable has no URLs, demuxers, network, devices or arbitrary
@@ -492,7 +493,16 @@ static int limits(uint32_t lifetime_ms) {
   timer.it_value.tv_usec = (lifetime_ms % 1000) * 1000;
   return setitimer(ITIMER_REAL, &timer, NULL);
 }
-int capyio_avc_main(uint32_t lifetime_ms) {
+static int monotonic_ns(uint64_t *out) {
+  struct timespec now;
+  if (clock_gettime(CLOCK_MONOTONIC, &now) || now.tv_sec < 0 ||
+      now.tv_nsec < 0 || now.tv_nsec >= (long)DEC_TOKEN_SCALE ||
+      (uint64_t)now.tv_sec > (UINT64_MAX - (uint64_t)now.tv_nsec) / DEC_TOKEN_SCALE)
+    return -1;
+  *out = (uint64_t)now.tv_sec * DEC_TOKEN_SCALE + (uint64_t)now.tv_nsec;
+  return 0;
+}
+int capyio_avc_main(uint32_t lifetime_ms, uint32_t profile) {
   int status = 1;
   AVCodecContext *ctx = NULL;
   AVPacket *packet = NULL;
@@ -500,10 +510,11 @@ int capyio_avc_main(uint32_t lifetime_ms) {
   uint8_t *input = NULL, *pixels = NULL;
   struct config *cfg = NULL;
   uint64_t last_seq = 0, last_pts = 0;
-  unsigned frames = 0;
-  size_t total = 0;
+  struct dec_budget budget;
+  uint64_t now_ns;
   int configured = 0;
-  if (limits(lifetime_ms))
+  if (monotonic_ns(&now_ns) ||
+      dec_budget_init(&budget, profile, lifetime_ms, now_ns) || limits(lifetime_ms))
     return 1;
   av_log_set_level(AV_LOG_ERROR);
   input = av_mallocz(DEC_MAX_AU + AV_INPUT_BUFFER_PADDING_SIZE);
@@ -525,12 +536,11 @@ int capyio_avc_main(uint32_t lifetime_ms) {
     }
     uint32_t kind = be32(h + 4), n = be32(h + 8), flags = be32(h + 12);
     uint64_t seq = be64(h + 16), pts = be64(h + 24);
-    if (n > DEC_MAX_AU || total > DEC_MAX_INPUT - n ||
-        pts > INT64_MAX / 1000u) {
-      fail("input budget or timestamp");
+    if (pts > INT64_MAX / 1000u || monotonic_ns(&now_ns) ||
+        dec_budget_charge(&budget, kind, n, now_ns)) {
+      fail("input budget, local-monotonic rate or timestamp");
       goto done;
     }
-    total += n;
     if (exact_read(input, n)) {
       fail("truncated payload");
       goto done;
@@ -572,7 +582,7 @@ int capyio_avc_main(uint32_t lifetime_ms) {
       goto done;
     }
     if (kind == 3) {
-      if (n || flags || !frames || seq != last_seq + 1) {
+      if (n || flags || !budget.frames || last_seq == UINT64_MAX || seq != last_seq + 1) {
         fail("invalid EOS");
         goto done;
       }
@@ -591,7 +601,7 @@ int capyio_avc_main(uint32_t lifetime_ms) {
       status = 0;
       goto done;
     }
-    if (kind != 2 || !n || (flags & ~3u) || frames >= DEC_MAX_FRAMES ||
+    if (kind != 2 || !n || (flags & ~3u) ||
         ((last_seq ? seq != last_seq + 1 : seq != 1) && !(flags & 2)) ||
         (!last_seq && !(flags & 1)) || ((flags & 2) && !(flags & 1)) ||
         validate_nals(input, n, cfg, 0, flags & 1)) {
@@ -638,7 +648,6 @@ int capyio_avc_main(uint32_t lifetime_ms) {
       goto done;
     last_seq = seq;
     last_pts = pts;
-    frames++;
   }
 done:
   av_frame_free(&frame);

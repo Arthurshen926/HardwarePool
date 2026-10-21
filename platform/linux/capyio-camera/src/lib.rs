@@ -39,7 +39,23 @@ pub fn validate_decoded_avc_authority(
     binding: CameraBinding,
     now_ms: u64,
 ) -> io::Result<u64> {
-    Ok(guard::Guard::new_format(runtime, binding, now_ms, true)?.deadline_ms)
+    Ok(
+        guard::Guard::new_format(runtime, binding, now_ms, guard::CameraFormat::LegacyAvc)?
+            .deadline_ms,
+    )
+}
+
+/// Read-only admission for the separately negotiated exact finite AVC profile.
+/// Legacy CAVC authority is not sufficient to enter this boundary.
+pub fn validate_decoded_avc_finite_authority(
+    runtime: &NodeRuntime,
+    binding: CameraBinding,
+    now_ms: u64,
+) -> io::Result<u64> {
+    Ok(
+        guard::Guard::new_format(runtime, binding, now_ms, guard::CameraFormat::FiniteAvc)?
+            .deadline_ms,
+    )
 }
 
 /// Trusted control-to-decoded-media handoff, never authority by itself.
@@ -108,7 +124,7 @@ impl RuntimeCamera {
         binding: CameraBinding,
         lifetime: Duration,
     ) -> io::Result<Self> {
-        Self::start_format(runtime, binding, lifetime, false)
+        Self::start_format(runtime, binding, lifetime, guard::CameraFormat::DecodedNv12)
     }
     /// Explicit decoder boundary: authority stays bound to negotiated CAVC,
     /// while this projection accepts only validated canonical decoded NV12.
@@ -117,13 +133,22 @@ impl RuntimeCamera {
         binding: CameraBinding,
         lifetime: Duration,
     ) -> io::Result<Self> {
-        Self::start_format(runtime, binding, lifetime, true)
+        Self::start_format(runtime, binding, lifetime, guard::CameraFormat::LegacyAvc)
+    }
+    /// Explicit finite-profile decoder boundary. The selected format and
+    /// original authority deadline stay pinned while output remains canonical NV12.
+    pub fn start_decoded_avc_finite(
+        runtime: NodeRuntime,
+        binding: CameraBinding,
+        lifetime: Duration,
+    ) -> io::Result<Self> {
+        Self::start_format(runtime, binding, lifetime, guard::CameraFormat::FiniteAvc)
     }
     fn start_format(
         runtime: NodeRuntime,
         binding: CameraBinding,
         lifetime: Duration,
-        encoded_avc: bool,
+        format: guard::CameraFormat,
     ) -> io::Result<Self> {
         let now = wall_ms()?;
         Self::open_format(
@@ -131,7 +156,7 @@ impl RuntimeCamera {
             binding,
             lifetime,
             now,
-            encoded_avc,
+            format,
             |lifetime, deadline| {
                 #[cfg(all(target_os = "linux", feature = "native-pipewire"))]
                 {
@@ -156,20 +181,30 @@ impl RuntimeCamera {
         now: u64,
         open: impl FnOnce(Duration, u64) -> io::Result<Box<dyn Projection>>,
     ) -> io::Result<Self> {
-        Self::open_format(runtime, binding, lifetime, now, false, open)
+        Self::open_format(
+            runtime,
+            binding,
+            lifetime,
+            now,
+            guard::CameraFormat::DecodedNv12,
+            open,
+        )
     }
     fn open_format(
         runtime: NodeRuntime,
         binding: CameraBinding,
         lifetime: Duration,
         now: u64,
-        encoded_avc: bool,
+        format: guard::CameraFormat,
         open: impl FnOnce(Duration, u64) -> io::Result<Box<dyn Projection>>,
     ) -> io::Result<Self> {
         if lifetime.is_zero() || lifetime > MAX_LIFETIME {
             return Err(error("camera lifetime outside 1ms..=300s"));
         }
-        let guard = guard::Guard::new_format(&runtime, binding, now, encoded_avc)?;
+        if matches!(format, guard::CameraFormat::FiniteAvc) && lifetime > Duration::from_secs(60) {
+            return Err(error("finite AVC camera lifetime outside 1ms..=60s"));
+        }
+        let guard = guard::Guard::new_format(&runtime, binding, now, format)?;
         let lifetime = lifetime.min(Duration::from_millis(guard.deadline_ms - now));
         if lifetime.as_millis() == 0 {
             return Err(error("camera lifetime is less than 1ms"));

@@ -1654,3 +1654,10 @@ requires current catalog validation and independent finite session consent.
 [ADR 1554](adr/1554-linux-audio-touchpad-manifest-export.md) extends the same
 explicit snapshot/select/save path to four audio endpoint modes and touchpad.
 Export remains nonsecret configuration only, with no Start or resource authority.
+
+### Explicit finite camera stream profile
+
+[ADR 1555](adr/1555-linux-explicit-finite-camera-stream.md) defines the additive
+secure-only `cavc-avc-finite-720p30-v1` descriptor and local immutable work/rate
+budgets. Legacy wire formats and limits remain unchanged. This Linux/synthetic
+profile is not advertised by the production Android camera path.

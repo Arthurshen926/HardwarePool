@@ -6,7 +6,8 @@ from unittest import TestCase, mock
 
 from run_pipewire_camera_launcher import (
     CONSOLE_PENDING, CONSOLE_SCENARIOS, CONSOLE_TEST, LauncherHarness, SCENARIOS,
-    markers, verify_completion, verify_mode, verify_process,
+    FINITE_NO_MEDIA, FINITE_SCENARIOS, FINITE_TEST,
+    markers, verify_completion, verify_finite_pixels, verify_mode, verify_process,
 )
 
 
@@ -289,3 +290,126 @@ class ConsoleLauncherTests(TestCase):
                 self.assertEqual(h.env['CAPYIO_CAMERA_PAIRED_STORE'], '1')
                 removed.assert_called_once()
                 reaped.assert_called_once()
+
+
+class FiniteStreamLauncherTests(TestCase):
+    def transcript(self, scenario):
+        text = ('LAUNCHER_PID 20\nPAIRED_STORE_AUTH verified\n'
+                'FINITE_STREAM profile=finite_720p30_v1 source=synthetic_tls\n')
+        if scenario in FINITE_NO_MEDIA:
+            text += f'FINITE_REJECT_PENDING {scenario} no_data_listener=true no_media_children=true\n'
+        else:
+            text += LauncherTests.base.split('LAUNCHER_PID 20\n')[1]
+        if scenario in ('sustained', 'backpressure'):
+            text += 'FINITE_SENT frames=300 elapsed_ms=10035 queued=270 dropped=30\n'
+            text += 'FINITE_MEMORY decoder_vm_hwm_kib=30000 helper_vm_hwm_kib=15000 node_vm_hwm_kib=20000\n'
+        if scenario == 'oversize':
+            text += 'FINITE_ATTACK byte_burst complete_cavc=true wire_oversize=false\n'
+        return (text + f'VERIFIED {scenario}\nCAMERA_STOPPED\n'
+                f'test {FINITE_TEST} ... ok\n'
+                'test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 15 filtered out\n')
+
+    def test_eleven_explicit_finite_scenarios_do_not_replace_legacy_or_console(self):
+        self.assertEqual(len(SCENARIOS), 8)
+        self.assertEqual(len(CONSOLE_SCENARIOS), 13)
+        self.assertEqual(set(FINITE_SCENARIOS), {
+            'sustained', 'local_stop', 'control_stop', 'control_eof', 'source_revoke',
+            'expiry', 'backpressure', 'malicious_rate', 'oversize', 'profile_mismatch',
+            'old_source_guard'})
+        for scenario in FINITE_SCENARIOS:
+            verify_mode(scenario, paired_store=True, finite_stream=True)
+            for paired, console in ((False, False), (True, True), (False, True)):
+                with self.assertRaises(ValueError):
+                    verify_mode(scenario, paired, console, finite_stream=True)
+        for scenario in ('pixels', 'remote_eof', 'no_approval', 'unknown'):
+            with self.assertRaises(ValueError):
+                verify_mode(scenario, True, False, True)
+
+    def test_every_finite_profile_requires_exact_actual_test_and_all_evidence(self):
+        for scenario in FINITE_SCENARIOS:
+            text = self.transcript(scenario)
+            with self.subTest(scenario=scenario):
+                verify_completion(text, scenario, 0, paired_store=True, finite_stream=True)
+                for line in text.splitlines():
+                    with self.assertRaises(ValueError):
+                        verify_completion(text.replace(line + '\n', ''), scenario, 0,
+                                          paired_store=True, finite_stream=True)
+                for code in (1, 2, -15):
+                    with self.assertRaises(ValueError):
+                        verify_completion(text, scenario, code, paired_store=True, finite_stream=True)
+
+    def test_finite_skip_substitution_or_mode_confusion_fails_closed(self):
+        text = self.transcript('local_stop')
+        for before, after in ((FINITE_TEST, CONSOLE_TEST),
+                              ('1 passed; 0 failed; 0 ignored', '0 passed; 0 failed; 1 ignored'),
+                              ('VERIFIED local_stop', 'VERIFIED expiry'),
+                              ('source=synthetic_tls', 'source=android_production')):
+            with self.subTest(after=after), self.assertRaises(ValueError):
+                verify_completion(text.replace(before, after), 'local_stop', 0,
+                                  paired_store=True, finite_stream=True)
+        with self.assertRaises(ValueError):
+            verify_completion(text, 'local_stop', 0, paired_store=True)
+        with self.assertRaises(ValueError):
+            verify_completion(LauncherTests.base + 'VERIFIED local_stop\nCAMERA_STOPPED\n',
+                              'local_stop', 0, paired_store=True, finite_stream=True)
+
+    def test_incompatible_profile_never_claims_listener_or_helpers(self):
+        for scenario in FINITE_NO_MEDIA:
+            for extra in ('SECURE_LISTENING no_media_children=true\n',
+                          'CAMERA_READY 21 capyio.camera.fixture\n', 'DECODER_READY 22\n'):
+                with self.subTest(scenario=scenario, extra=extra), self.assertRaises(ValueError):
+                    verify_completion(extra + self.transcript(scenario), scenario, 0,
+                                      paired_store=True, finite_stream=True)
+
+    def test_sustained_submission_is_bounded_and_backpressure_must_be_observed(self):
+        for before, after in (('frames=300', 'frames=120'), ('elapsed_ms=10035', 'elapsed_ms=9999'),
+                              ('elapsed_ms=10035', 'elapsed_ms=12000'), ('queued=270', 'queued=269'),
+                              ('decoder_vm_hwm_kib=30000', 'decoder_vm_hwm_kib=524288'),
+                              ('queued=270 dropped=30', 'queued=300 dropped=0')):
+            with self.subTest(after=after), self.assertRaises(ValueError):
+                verify_completion(self.transcript('backpressure').replace(before, after),
+                                  'backpressure', 0, paired_store=True, finite_stream=True)
+
+    def pixels(self):
+        return dict(result=0, verified_frames=182, first_sequence=2, last_sequence=240,
+                    sequence_gaps=30, observed_span_ms=7935,
+                    pts_span_us=(240 - 2) * 33333, finite_stream=True)
+
+    def test_independent_full_pixel_stream_requires_count_late_sequence_and_both_spans(self):
+        for scenario in ('sustained', 'backpressure'):
+            verify_finite_pixels(self.pixels(), scenario)
+        for key, value in (('verified_frames', 120), ('verified_frames', 301),
+                           ('verified_frames', True), ('last_sequence', 239),
+                           ('last_sequence', 301), ('first_sequence', 240),
+                           ('sequence_gaps', 182), ('sequence_gaps', -1),
+                           ('observed_span_ms', 4999), ('observed_span_ms', 12000),
+                           ('pts_span_us', 5000000), ('finite_stream', False), ('result', 1)):
+            with self.subTest(key=key, value=value), self.assertRaises(ValueError):
+                verify_finite_pixels(dict(self.pixels(), **{key: value}), 'sustained')
+        for key in self.pixels():
+            result = self.pixels()
+            del result[key]
+            with self.assertRaises(ValueError):
+                verify_finite_pixels(result, 'sustained')
+        # Three hundred queued frames are never independent consumption evidence.
+        with self.assertRaises(ValueError):
+            verify_finite_pixels(dict(result=0, queued=300, dropped=0), 'sustained')
+
+    def test_finite_markers_reject_duplicates_malformed_and_incomplete_final_lines(self):
+        for scenario in ('backpressure', 'old_source_guard'):
+            text = self.transcript(scenario)
+            for line in text.splitlines():
+                if line.startswith('FINITE_'):
+                    with self.assertRaises(ValueError):
+                        markers(text + line + '\n')
+                    with self.assertRaises(ValueError):
+                        markers(text.replace(line, line + ' extra'))
+        self.assertNotIn('FINITE_STREAM', markers('FINITE_STREAM '))
+        with self.assertRaises(ValueError):
+            markers('FINITE_STREAM ', complete=True)
+
+    def test_invalid_finite_mode_fails_before_any_daemon_or_process_start(self):
+        h = object.__new__(LauncherHarness)
+        with mock.patch.object(h, 'prepare_daemon') as prepare, self.assertRaises(ValueError):
+            h.run_launcher(*(Path('/unused') for _ in range(5)), 'sustained', finite_stream=True)
+        prepare.assert_not_called()

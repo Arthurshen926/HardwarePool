@@ -1,9 +1,9 @@
-use crate::{MAX_FRAMES, MAX_INPUT_BYTES, error};
+use crate::{FiniteStreamBudget, MAX_FRAMES, MAX_INPUT_BYTES, error};
 use capyio_core::StreamId;
 use capyio_linux_camera::{FRAME_BYTES, FRAME_DURATION_NS};
 use capyio_vcamdroid_adapter::{AvcLayout, AvcRecord, AvcRecordGuard, AvcStreamKey, decode_record};
 use capyio_video::{VideoFrameDescriptor, VideoFrameFlags};
-use std::io;
+use std::{io, time::Instant};
 
 #[cfg_attr(
     not(all(target_os = "linux", feature = "native-avc")),
@@ -22,22 +22,115 @@ pub(crate) struct Admission {
     stream: AvcStreamKey,
     input_bytes: usize,
     frames: usize,
+    max_frames: usize,
+    max_input_bytes: usize,
+    rate: Option<RateBudget>,
+}
+
+const TOKEN_SCALE: u64 = 1_000_000_000;
+#[derive(Clone)]
+struct TokenBucket {
+    tokens: u64,
+    capacity: u64,
+    rate: u64,
+    last: Instant,
+}
+impl TokenBucket {
+    fn new(rate: u64, burst: u64, now: Instant) -> io::Result<Self> {
+        let capacity = burst
+            .checked_mul(TOKEN_SCALE)
+            .ok_or_else(|| error("token capacity overflow"))?;
+        Ok(Self {
+            tokens: capacity,
+            capacity,
+            rate,
+            last: now,
+        })
+    }
+    fn charge(&mut self, count: usize, now: Instant) -> io::Result<()> {
+        let elapsed = now
+            .checked_duration_since(self.last)
+            .ok_or_else(|| error("monotonic token clock regressed"))?;
+        let refill = u64::try_from(elapsed.as_nanos())
+            .ok()
+            .and_then(|v| v.checked_mul(self.rate))
+            .ok_or_else(|| error("token refill overflow"))?;
+        let available = self
+            .tokens
+            .checked_add(refill)
+            .ok_or_else(|| error("token balance overflow"))?
+            .min(self.capacity);
+        let cost = u64::try_from(count)
+            .ok()
+            .and_then(|v| v.checked_mul(TOKEN_SCALE))
+            .ok_or_else(|| error("token cost overflow"))?;
+        let remaining = available
+            .checked_sub(cost)
+            .ok_or_else(|| error("finite local-monotonic rate limit"))?;
+        self.tokens = remaining;
+        self.last = now;
+        Ok(())
+    }
+}
+#[derive(Clone)]
+struct RateBudget {
+    frames: TokenBucket,
+    bytes: TokenBucket,
+}
+impl RateBudget {
+    fn new(now: Instant) -> io::Result<Self> {
+        Ok(Self {
+            frames: TokenBucket::new(30, 3, now)?,
+            bytes: TokenBucket::new(2 * 1024 * 1024, 4 * 1024 * 1024, now)?,
+        })
+    }
 }
 impl Admission {
+    #[cfg_attr(not(test), allow(dead_code))]
     pub fn new(stream: AvcStreamKey) -> io::Result<Self> {
+        Self::with_budget(stream, None)
+    }
+    pub fn with_budget(
+        stream: AvcStreamKey,
+        budget: Option<FiniteStreamBudget>,
+    ) -> io::Result<Self> {
+        Self::with_budget_at(stream, budget, Instant::now())
+    }
+    fn with_budget_at(
+        stream: AvcStreamKey,
+        budget: Option<FiniteStreamBudget>,
+        now: Instant,
+    ) -> io::Result<Self> {
         Ok(Self {
             guard: AvcRecordGuard::new(stream).map_err(error)?,
             stream,
             input_bytes: 0,
             frames: 0,
+            max_frames: budget.map_or(MAX_FRAMES, |b| b.max_frames),
+            max_input_bytes: budget.map_or(MAX_INPUT_BYTES, |b| b.max_input_bytes),
+            rate: budget.map(|_| RateBudget::new(now)).transpose()?,
         })
     }
     pub fn accept(&mut self, bytes: &[u8]) -> io::Result<Request> {
+        self.accept_at(bytes, Instant::now())
+    }
+    fn accept_at(&mut self, bytes: &[u8], now: Instant) -> io::Result<Request> {
         let total = self
             .input_bytes
             .checked_add(bytes.len())
-            .filter(|v| *v <= MAX_INPUT_BYTES)
+            .filter(|v| *v <= self.max_input_bytes)
             .ok_or_else(|| error("cumulative CAVC input limit"))?;
+        // Header inspection here is only a conservative resource preflight.
+        // The shared parser/guard still validate every field before commit.
+        let is_frame = bytes.get(6) == Some(&2) && bytes.get(7).is_some_and(|f| f & 2 == 0);
+        if is_frame && self.frames >= self.max_frames {
+            return Err(error("decoded frame budget exhausted"));
+        }
+        let mut rate = self.rate.clone();
+        if let Some(rate) = &mut rate {
+            rate.bytes.charge(bytes.len(), now)?;
+            rate.frames.charge(usize::from(is_frame), now)?;
+        }
         let record = decode_record(bytes).map_err(error)?;
         let mut guard = self.guard.clone();
         guard.accept(&record).map_err(error)?;
@@ -78,7 +171,7 @@ impl Admission {
                 let descriptor = if u.end_of_stream {
                     None
                 } else {
-                    if self.frames >= MAX_FRAMES {
+                    if self.frames >= self.max_frames {
                         return Err(error("decoded frame budget exhausted"));
                     }
                     // Binding bytes were generated from this same typed StreamId.
@@ -106,9 +199,15 @@ impl Admission {
                 }
             }
         };
+        let frames = self
+            .frames
+            .checked_add(usize::from(request.kind == 2))
+            .filter(|v| *v <= self.max_frames)
+            .ok_or_else(|| error("decoded frame budget overflow"))?;
         self.guard = guard;
         self.input_bytes = total;
-        self.frames += usize::from(request.kind == 2);
+        self.frames = frames;
+        self.rate = rate;
         Ok(request)
     }
 }
@@ -267,6 +366,136 @@ mod tests {
         bad[52..56].copy_from_slice(&u32::MAX.to_be_bytes());
         assert!(a.accept(&bad).is_err());
         a.accept(&bytes).unwrap();
+    }
+    #[test]
+    fn legacy_121st_frame_is_still_rejected_without_rate_limit() {
+        let mut a = ready();
+        for n in 1..=120 {
+            a.accept(&encode_access_unit(&unit(n, n)).unwrap()).unwrap();
+        }
+        assert!(
+            a.accept(&encode_access_unit(&unit(121, 121)).unwrap())
+                .is_err()
+        );
+        assert_eq!(a.frames, 120);
+    }
+    fn finite_ready(now: Instant, millis: u64) -> Admission {
+        let budget =
+            FiniteStreamBudget::for_lifetime(std::time::Duration::from_millis(millis)).unwrap();
+        let mut a = Admission::with_budget_at(key(), Some(budget), now).unwrap();
+        a.accept_at(&encode_config(key(), &config()).unwrap(), now)
+            .unwrap();
+        a
+    }
+    #[test]
+    fn finite_allows_over_120_but_never_immutable_cap() {
+        let now = Instant::now();
+        let mut a = finite_ready(now, 5000);
+        for n in 1..=150 {
+            a.accept_at(
+                &encode_access_unit(&unit(n, n)).unwrap(),
+                now + std::time::Duration::from_nanos((n - 1) * 33_333_334),
+            )
+            .unwrap();
+        }
+        assert_eq!(a.frames, 150);
+        assert!(
+            a.accept_at(
+                &encode_access_unit(&unit(151, 151)).unwrap(),
+                now + std::time::Duration::from_secs(6)
+            )
+            .is_err()
+        );
+        assert_eq!(a.frames, 150);
+    }
+    #[test]
+    fn finite_rate_uses_local_time_not_pts_or_discontinuity() {
+        let now = Instant::now();
+        let mut a = finite_ready(now, 60_000);
+        for n in 1..=3 {
+            a.accept_at(&encode_access_unit(&unit(n, n)).unwrap(), now)
+                .unwrap();
+        }
+        let mut u = unit(99, 9_000_000_000);
+        u.discontinuity = true;
+        let bytes = encode_access_unit(&u).unwrap();
+        assert!(a.accept_at(&bytes, now).is_err());
+        assert!(
+            a.accept_at(&bytes, now + std::time::Duration::from_nanos(33_333_333))
+                .is_err()
+        );
+        a.accept_at(&bytes, now + std::time::Duration::from_nanos(33_333_334))
+            .unwrap();
+        // Recovery does not reset the consumed bucket or permit regressed PTS.
+        u.sequence += 1;
+        u.presentation_time_us += 1;
+        assert!(
+            a.accept_at(
+                &encode_access_unit(&u).unwrap(),
+                now + std::time::Duration::from_nanos(33_333_334)
+            )
+            .is_err()
+        );
+        u.presentation_time_us = 0;
+        assert!(
+            a.accept_at(
+                &encode_access_unit(&u).unwrap(),
+                now + std::time::Duration::from_secs(1)
+            )
+            .is_err()
+        );
+        assert_eq!(a.frames, 4);
+    }
+    #[test]
+    fn byte_rate_counts_complete_cavc_and_eos_is_not_a_frame() {
+        let now = Instant::now();
+        let mut a = finite_ready(now, 60_000);
+        let mut u = unit(1, 0);
+        // CSD bytes and both fixed headers consume burst, not only AU payload.
+        u.payload.resize(4 * 1024 * 1024 - a.input_bytes - 56, 0);
+        a.accept_at(&encode_access_unit(&u).unwrap(), now).unwrap();
+        let eos = AvcAccessUnit {
+            key_frame: false,
+            end_of_stream: true,
+            payload: vec![],
+            ..unit(2, 0)
+        };
+        let eos = encode_access_unit(&eos).unwrap();
+        assert!(a.accept_at(&eos, now).is_err());
+        a.accept_at(&eos, now + std::time::Duration::from_millis(1))
+            .unwrap();
+        assert_eq!(a.frames, 1);
+        assert_eq!(a.input_bytes, 4 * 1024 * 1024 + 56);
+    }
+    #[test]
+    fn checked_rate_arithmetic_and_byte_cap_are_transactional() {
+        let now = Instant::now();
+        let mut bucket = TokenBucket::new(30, 3, now).unwrap();
+        assert!(bucket.charge(usize::MAX, now).is_err());
+        assert!(
+            bucket
+                .charge(1, now - std::time::Duration::from_nanos(1))
+                .is_err()
+        );
+        bucket.rate = u64::MAX;
+        assert!(
+            bucket
+                .charge(0, now + std::time::Duration::from_secs(1))
+                .is_err()
+        );
+        assert_eq!(bucket.tokens, 3 * TOKEN_SCALE);
+        let mut a = finite_ready(now, 1000);
+        a.input_bytes = a.max_input_bytes;
+        assert!(
+            a.accept_at(&encode_access_unit(&unit(1, 0)).unwrap(), now)
+                .is_err()
+        );
+        assert_eq!(a.frames, 0);
+        a.input_bytes = usize::MAX;
+        assert!(
+            a.accept_at(&encode_access_unit(&unit(1, 0)).unwrap(), now)
+                .is_err()
+        );
     }
     #[test]
     fn generated_fixture_admission_and_metadata() {

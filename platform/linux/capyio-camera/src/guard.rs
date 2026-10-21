@@ -1,17 +1,36 @@
 use crate::{CameraBinding, error};
 use capyio_core::{
-    AuthorizationState, Availability, Platform, PortDirection, RouteBackend, RouteState,
-    SessionState,
+    AuthorizationState, Availability, FormatDescriptor, Platform, PortDirection, RouteBackend,
+    RouteState, SessionState,
 };
 use capyio_runtime::NodeRuntime;
 use capyio_video::{VideoStreamSpec, video_frames_profile};
 use std::io;
 
+#[derive(Clone, Copy)]
+pub(crate) enum CameraFormat {
+    DecodedNv12,
+    LegacyAvc,
+    FiniteAvc,
+}
+impl CameraFormat {
+    fn descriptor(self) -> FormatDescriptor {
+        match self {
+            Self::DecodedNv12 => VideoStreamSpec::camera_720p30_nv12().format_descriptor(),
+            Self::LegacyAvc => FormatDescriptor::new("cavc-avc-access-unit-v1"),
+            Self::FiniteAvc => FormatDescriptor::new("cavc-avc-finite-720p30-v1"),
+        }
+    }
+    fn encoded_avc(self) -> bool {
+        matches!(self, Self::LegacyAvc | Self::FiniteAvc)
+    }
+}
+
 pub(crate) struct Guard {
     pub binding: CameraBinding,
     pub deadline_ms: u64,
     grant_ms: u64,
-    encoded_avc: bool,
+    format: CameraFormat,
     last_ms: u64,
 }
 impl Guard {
@@ -19,7 +38,7 @@ impl Guard {
         runtime: &NodeRuntime,
         binding: CameraBinding,
         now: u64,
-        encoded_avc: bool,
+        format: CameraFormat,
     ) -> io::Result<Self> {
         let route = runtime.route(binding.route_id).map_err(error)?;
         if route.state != RouteState::Starting {
@@ -38,18 +57,16 @@ impl Guard {
             binding,
             deadline_ms: grant_ms.min(lease.expires_at_ms),
             grant_ms,
-            encoded_avc,
+            format,
             last_ms: now,
         };
         guard.check(runtime, now)?;
         Ok(guard)
     }
     pub fn check(&mut self, runtime: &NodeRuntime, now: u64) -> io::Result<()> {
-        let format = if self.encoded_avc {
-            capyio_core::FormatDescriptor::new("cavc-avc-access-unit-v1")
-        } else {
-            VideoStreamSpec::camera_720p30_nv12().format_descriptor()
-        };
+        // Pin one exact format for the entire owner lifetime, not an allowlist
+        // that could admit a different profile after a catalog/Route mutation.
+        let format = self.format.descriptor();
         let b = &self.binding;
         if now < self.last_ms
             || now >= self.deadline_ms
@@ -121,7 +138,7 @@ impl Guard {
         // CAVC boundary retains that owned Route; this never authorizes new use.
         let source_available = |availability| {
             availability == Availability::Available
-                || (self.encoded_avc && availability == Availability::Busy)
+                || (self.format.encoded_avc() && availability == Availability::Busy)
         };
         if source.direction != PortDirection::Source
             || !source_available(source_cap.availability)

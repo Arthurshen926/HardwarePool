@@ -1,12 +1,13 @@
 //! Finite single-peer camera session. No pairing, enrollment or default listener.
-use crate::{MAX_LIFETIME, RuntimeAvcCamera};
+use crate::{AvcProfile, FINITE_STREAM_FORMAT, MAX_LIFETIME, RuntimeAvcCamera};
 use capyio_control_link::{CatalogControlLink, ReceivedControlMessage};
 use capyio_control_tls::{
     ControlTlsBinding, ControlTlsServerIdentity,
     camera::{CameraTlsBinding, CameraTlsListener, CameraTlsStopHandle},
 };
 use capyio_core::{
-    AuthorizationState, MessageId, Route, RouteId, RouteState, SessionState, StreamId,
+    AuthorizationState, FormatDescriptor, MessageId, Route, RouteId, RouteState, SessionState,
+    StreamId,
 };
 use capyio_linux_camera::{CameraBinding, SubmitOutcome};
 use capyio_protocol::{
@@ -65,6 +66,7 @@ pub struct SecureCameraOwner {
     link: CatalogControlLink,
     admission: SecureCameraAdmission,
     original: Route,
+    profile: AvcProfile,
     identity: Option<ControlTlsServerIdentity>,
     source_request: MessageId,
     source_request_deadline: Instant,
@@ -86,8 +88,12 @@ impl SecureCameraOwner {
         identity: ControlTlsServerIdentity,
         admission: SecureCameraAdmission,
     ) -> io::Result<Self> {
+        // Negotiation and TLS binding consume the same one-shot lifetime as
+        // decoding. Neither handshake completion nor a profile budget renews it.
+        let started = Instant::now();
         let now = now_ms()?;
         let original = runtime.route(admission.route_id).map_err(error)?.clone();
+        let profile = camera_profile(&original)?;
         let sink_expiry = validate(&runtime, &original, admission.expected, now)?;
         if link.tls_binding() != admission.expected
             || link.peer_node_id() != original.source.node_id
@@ -100,8 +106,8 @@ impl SecureCameraOwner {
             return Err(error("invalid secure camera admission"));
         }
         let grant = expiry(&original)?;
-        let deadline =
-            Instant::now() + Duration::from_millis((grant.min(sink_expiry) - now).min(1000));
+        let deadline = (started + admission.lifetime)
+            .min(started + Duration::from_millis((grant.min(sink_expiry) - now).min(1000)));
         // Lease TTL is relative to the Source's receipt time, not this clock.
         // Leave the bounded control budget inside all finite local deadlines.
         let source_ttl = source_lease_ttl(grant.min(sink_expiry), now, admission.lifetime)?;
@@ -124,12 +130,13 @@ impl SecureCameraOwner {
             link,
             admission,
             original,
+            profile,
             identity: Some(identity),
             source_request,
             source_request_deadline: deadline,
             source_expiry: None,
             sink_expiry,
-            started: Instant::now(),
+            started,
             last_wall: now,
             stop: None,
             worker: None,
@@ -225,7 +232,7 @@ impl SecureCameraOwner {
             DataEvent::Failed(e) => Err(e),
             DataEvent::Bound => {
                 self.check(now_ms()?)?;
-                let duration = self.deadline_lifetime();
+                let duration = self.deadline_lifetime()?;
                 let binding = CameraBinding {
                     session_id: self.original.session_id,
                     route_id: self.original.id,
@@ -233,11 +240,15 @@ impl SecureCameraOwner {
                     stream_epoch: self.original.epoch,
                     local_sink: self.original.sink,
                 };
-                self.camera = Some(RuntimeAvcCamera::start_secure(
+                self.camera = Some(RuntimeAvcCamera::start_secure_profile(
                     self.runtime.take().expect("runtime"),
                     binding,
                     duration,
+                    self.profile,
                 )?);
+                // Helper startup also consumes the already pinned authority.
+                // A completed spawn is not permission to outlive the handshake.
+                self.check(now_ms()?)?;
                 Ok(Some(SecureCameraEvent::Bound))
             }
             DataEvent::Record(bytes) => {
@@ -247,19 +258,23 @@ impl SecureCameraOwner {
                     .ok_or_else(|| error("record before camera binding"))?;
                 let link = &mut self.link;
                 let original = &self.original;
-                let source_expiry = self.source_expiry.expect("leased");
+                let authority_expiry = self
+                    .source_expiry
+                    .expect("leased")
+                    .min(self.sink_expiry)
+                    .min(expiry(original)?);
                 let end = self.started + self.admission.lifetime;
                 let mut last = self.last_wall;
                 let outcome = camera.submit_record_supervised(&bytes, |runtime| {
                     let now = now_ms()?;
-                    if now < last || now >= source_expiry || Instant::now() >= end {
+                    if now < last || now >= authority_expiry || Instant::now() >= end {
                         return Err(error("camera authority expired"));
                     }
                     last = now;
                     let sink = validate(runtime, original, link.tls_binding(), now)?;
                     let deadline = end.min(
                         Instant::now()
-                            + Duration::from_millis((source_expiry.min(sink) - now).min(1000)),
+                            + Duration::from_millis((authority_expiry.min(sink) - now).min(1000)),
                     );
                     if let Some(message) =
                         link.poll_control_message_until(deadline).map_err(error)?
@@ -268,7 +283,7 @@ impl SecureCameraOwner {
                     }
                     let fresh = now_ms()?;
                     if fresh < last
-                        || fresh >= source_expiry
+                        || fresh >= authority_expiry
                         || Instant::now() >= end
                         || link.is_closed()
                     {
@@ -320,15 +335,16 @@ impl SecureCameraOwner {
             deadline
         }
     }
-    fn deadline_lifetime(&self) -> Duration {
-        (self.started + self.admission.lifetime)
-            .saturating_duration_since(Instant::now())
-            .min(Duration::from_millis(
-                self.source_expiry
-                    .unwrap_or(0)
-                    .min(self.sink_expiry)
-                    .saturating_sub(now_ms().unwrap_or(u64::MAX)),
-            ))
+    fn deadline_lifetime(&self) -> io::Result<Duration> {
+        remaining_authority_lifetime(
+            self.started + self.admission.lifetime,
+            self.source_expiry
+                .unwrap_or(0)
+                .min(self.sink_expiry)
+                .min(expiry(&self.original)?),
+            now_ms()?,
+            Instant::now(),
+        )
     }
     fn listen(&mut self, now: u64) -> io::Result<()> {
         self.check(now)?;
@@ -346,7 +362,7 @@ impl SecureCameraOwner {
                 .ok_or_else(|| error("identity already consumed"))?,
             binding,
             Duration::from_secs(5),
-            Instant::now() + self.deadline_lifetime(),
+            Instant::now() + self.deadline_lifetime()?,
         )
         .map_err(error)?;
         let offer = SecureCameraDataOffer {
@@ -433,6 +449,23 @@ impl Drop for SecureCameraOwner {
         let _ = self.stop();
     }
 }
+// The frame budget may round up; time authority must not. Compute this only
+// from the original monotonic end and pinned absolute grant/lease deadlines.
+fn remaining_authority_lifetime(
+    end: Instant,
+    wall_deadline: u64,
+    now_ms: u64,
+    now: Instant,
+) -> io::Result<Duration> {
+    let remaining = end
+        .saturating_duration_since(now)
+        .min(Duration::from_millis(wall_deadline.saturating_sub(now_ms)));
+    if remaining.as_millis() == 0 {
+        return Err(error("camera authority elapsed before decoder start"));
+    }
+    Ok(remaining)
+}
+
 fn source_lease_ttl(deadline: u64, now: u64, lifetime: Duration) -> io::Result<u64> {
     deadline
         .checked_sub(now)
@@ -450,12 +483,29 @@ fn expiry(route: &Route) -> io::Result<u64> {
         _ => Err(error("finite camera consent required")),
     }
 }
+fn camera_profile(route: &Route) -> io::Result<AvcProfile> {
+    match route.selected_format.as_ref() {
+        Some(format) if format == &FormatDescriptor::new("cavc-avc-access-unit-v1") => {
+            Ok(AvcProfile::Legacy)
+        }
+        Some(format) if format == &FormatDescriptor::new(FINITE_STREAM_FORMAT) => {
+            Ok(AvcProfile::Finite720p30)
+        }
+        _ => Err(error(
+            "secure camera requires an exact negotiated AVC profile",
+        )),
+    }
+}
+
 fn validate(
     runtime: &NodeRuntime,
     original: &Route,
     binding: ControlTlsBinding,
     now: u64,
 ) -> io::Result<u64> {
+    // Determine the profile from the immutable original, then require the live
+    // Route to remain identical. Never accept either supported format on polls.
+    let profile = camera_profile(original)?;
     let route = runtime.route(original.id).map_err(error)?;
     let session = runtime.session(binding.session_id).map_err(error)?;
     if route != original
@@ -486,19 +536,42 @@ fn validate(
     {
         return Err(error("camera Sink lease invalid"));
     }
-    capyio_linux_camera::validate_decoded_avc_authority(
-        runtime,
-        CameraBinding {
-            session_id: route.session_id,
-            route_id: route.id,
-            stream_id: StreamId::new(),
-            stream_epoch: route.epoch,
-            local_sink: route.sink,
-        },
-        now,
-    )?;
+    let binding = CameraBinding {
+        session_id: route.session_id,
+        route_id: route.id,
+        stream_id: StreamId::new(),
+        stream_epoch: route.epoch,
+        local_sink: route.sink,
+    };
+    match profile {
+        AvcProfile::Legacy => {
+            capyio_linux_camera::validate_decoded_avc_authority(runtime, binding, now)?;
+        }
+        AvcProfile::Finite720p30 => {
+            capyio_linux_camera::validate_decoded_avc_finite_authority(runtime, binding, now)?;
+        }
+    }
     Ok(lease.expires_at_ms)
 }
+fn validate_route_status(
+    original: &Route,
+    status: &capyio_protocol::ValidatedRouteStatus,
+) -> io::Result<()> {
+    if status.session_id != original.session_id
+        || status.route != *original
+        || status.secure_camera_data.is_some()
+        || status.camera_data.is_some()
+        || status.native_audio_data.is_some()
+        || status.touchpad_data.is_some()
+        || status.haptics_data.is_some()
+    {
+        return Err(error(
+            "camera status changed the original Route or data offer",
+        ));
+    }
+    Ok(())
+}
+
 fn handle(
     link: &mut CatalogControlLink,
     runtime: &mut NodeRuntime,
@@ -523,10 +596,9 @@ fn handle(
         {
             return Err(error("peer stopped camera"));
         }
-        ReceivedControlMessage::RouteStatus(s)
-            if s.route == *original
-                && s.secure_camera_data.is_none()
-                && s.camera_data.is_none() => {}
+        ReceivedControlMessage::RouteStatus(status) => {
+            validate_route_status(original, &status)?;
+        }
         _ => return Err(error("unexpected dedicated camera control message")),
     }
     validate(runtime, original, link.tls_binding(), now_ms()?)?;
@@ -545,6 +617,9 @@ mod authority_tests {
         } else {
             VideoStreamSpec::camera_720p30_nv12().format_descriptor()
         };
+        fixture_format(format)
+    }
+    fn fixture_format(format: FormatDescriptor) -> (NodeRuntime, CameraBinding) {
         let lab = capyio_testkit::DemoLab::new().unwrap();
         let original = lab
             .runtime
@@ -673,6 +748,94 @@ mod authority_tests {
         }
     }
     #[test]
+    fn finite_profile_admits_only_its_original_exact_format() {
+        let (runtime, binding) = fixture_format(FormatDescriptor::new(FINITE_STREAM_FORMAT));
+        let original = runtime.route(binding.route_id).unwrap();
+        let tls = ControlTlsBinding::new(
+            original.session_id,
+            original.sink.node_id,
+            original.source.node_id,
+        )
+        .unwrap();
+        assert_eq!(camera_profile(original).unwrap(), AvcProfile::Finite720p30);
+        assert_eq!(validate(&runtime, original, tls, 1000).unwrap(), 5000);
+        for format in [
+            FormatDescriptor::new("cavc-avc-access-unit-v1"),
+            FormatDescriptor::new("cavc-avc-finite-720p30-v2"),
+        ] {
+            let mut changed = original.clone();
+            changed.selected_format = Some(format);
+            assert!(validate(&runtime, &changed, tls, 1000).is_err());
+        }
+        for id in ["cavc-avc-access-unit-v1", FINITE_STREAM_FORMAT] {
+            let mut changed = original.clone();
+            let mut format = FormatDescriptor::new(id);
+            format.parameters.insert("max_frames".into(), "1800".into());
+            changed.selected_format = Some(format);
+            assert!(camera_profile(&changed).is_err());
+            assert!(validate(&runtime, &changed, tls, 1000).is_err());
+        }
+    }
+
+    #[test]
+    fn incoming_status_cannot_switch_between_valid_profiles() {
+        for (original_id, changed_id) in [
+            ("cavc-avc-access-unit-v1", FINITE_STREAM_FORMAT),
+            (FINITE_STREAM_FORMAT, "cavc-avc-access-unit-v1"),
+        ] {
+            let (runtime, binding) = fixture_format(FormatDescriptor::new(original_id));
+            let original = runtime.route(binding.route_id).unwrap();
+            let bytes =
+                capyio_protocol::encode_route_status(original.session_id, original).unwrap();
+            let mut status = capyio_protocol::decode_route_status(&bytes).unwrap();
+            assert!(validate_route_status(original, &status).is_ok());
+            status.route.selected_format = Some(FormatDescriptor::new(changed_id));
+            // Both are individually supported, but not interchangeable within
+            // one owner. No generic two-format allowlist is used on later polls.
+            assert!(camera_profile(&status.route).is_ok());
+            assert!(validate_route_status(original, &status).is_err());
+            status.route = original.clone();
+            status
+                .route
+                .selected_format
+                .as_mut()
+                .unwrap()
+                .parameters
+                .insert("unknown".into(), "1".into());
+            assert!(validate_route_status(original, &status).is_err());
+        }
+    }
+
+    #[test]
+    fn finite_owner_rejects_legacy_only_source_catalog() {
+        let (mut runtime, binding) = fixture_format(FormatDescriptor::new(FINITE_STREAM_FORMAT));
+        let original = runtime.route(binding.route_id).unwrap().clone();
+        let tls = ControlTlsBinding::new(
+            original.session_id,
+            original.sink.node_id,
+            original.source.node_id,
+        )
+        .unwrap();
+        let mut peer = runtime
+            .snapshot()
+            .peers
+            .into_iter()
+            .find(|node| node.id == original.source.node_id)
+            .unwrap();
+        peer.capabilities
+            .get_mut(&original.source.capability_id)
+            .unwrap()
+            .ports
+            .get_mut(&original.source.port_id)
+            .unwrap()
+            .formats = vec![FormatDescriptor::new("cavc-avc-access-unit-v1")];
+        runtime
+            .accept_peer_catalog(original.session_id, peer)
+            .unwrap();
+        assert!(validate(&runtime, &original, tls, 1000).is_err());
+    }
+
+    #[test]
     fn raw_projection_format_is_not_a_secure_cavc_grant() {
         let (runtime, binding) = fixture(false);
         let route = runtime.route(binding.route_id).unwrap();
@@ -686,6 +849,36 @@ mod authority_tests {
 #[cfg(test)]
 mod lease_budget_tests {
     use super::*;
+    #[test]
+    fn post_handshake_lifetime_consumes_original_deadlines_without_rounding_up() {
+        let start = Instant::now();
+        let end = start + Duration::from_micros(34_500);
+        let remaining = remaining_authority_lifetime(end, 5000, 1000, start).unwrap();
+        assert_eq!(remaining, Duration::from_micros(34_500));
+        assert_eq!(
+            crate::FiniteStreamBudget::for_lifetime(remaining)
+                .unwrap()
+                .max_frames,
+            2
+        );
+        assert!(remaining_authority_lifetime(end, 5000, 1000, end).is_err());
+        assert!(remaining_authority_lifetime(end, 1000, 1000, start).is_err());
+        assert!(remaining_authority_lifetime(end, 999, 1000, start).is_err());
+        assert!(
+            remaining_authority_lifetime(end, 5000, 1000, end - Duration::from_micros(999))
+                .is_err()
+        );
+        assert_eq!(
+            remaining_authority_lifetime(end, 1002, 1000, start).unwrap(),
+            Duration::from_millis(2),
+        );
+        let after_handshake = start + Duration::from_millis(20);
+        assert_eq!(
+            remaining_authority_lifetime(end, 5000, 1020, after_handshake).unwrap(),
+            Duration::from_micros(14_500),
+        );
+    }
+
     #[test]
     fn relative_source_ttl_leaves_receipt_budget_inside_all_authority() {
         assert_eq!(

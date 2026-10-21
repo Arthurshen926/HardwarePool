@@ -32,6 +32,7 @@ mod paired_store;
 mod playback_console;
 
 const BOUND: Duration = Duration::from_secs(5);
+const FINITE_FORMAT: &str = "cavc-avc-finite-720p30-v1";
 fn nonblocking(fd: impl AsFd) {
     let flags = rustix::fs::fcntl_getfl(&fd).unwrap();
     rustix::fs::fcntl_setfl(fd, flags | rustix::fs::OFlags::NONBLOCK).unwrap();
@@ -351,9 +352,13 @@ struct Fixture {
     client: ControlTlsClientIdentity,
     runtime: NodeRuntime,
     source: PortRef,
+    format: FormatDescriptor,
 }
 impl Fixture {
     fn new() -> Self {
+        Self::with_profile(false)
+    }
+    fn with_profile(finite: bool) -> Self {
         // Same synthetic descriptor preparation as Android camera_job tests;
         // authorization and leases are ALWAYS production Android Rust policy.
         let mut android = capyio_testkit::android_node();
@@ -375,7 +380,12 @@ impl Fixture {
             .unwrap();
         port.availability = Availability::Available;
         port.interoperability_mode = InteroperabilityMode::AdapterManaged;
-        port.formats = vec![FormatDescriptor::new("cavc-avc-access-unit-v1")];
+        let format = FormatDescriptor::new(if finite {
+            FINITE_FORMAT
+        } else {
+            "cavc-avc-access-unit-v1"
+        });
+        port.formats = vec![format.clone()];
         port.qos_modes.insert(QosMode::Interactive);
         let source = PortRef {
             node_id: android.id,
@@ -398,13 +408,19 @@ impl Fixture {
                 .unwrap(),
             )
             .unwrap();
+        let mut config = json!({"version":1,"node_id":local,"source":source,"listen":"127.0.0.1:0","duration_secs":10});
+        if finite {
+            config["stream_profile"] = json!("finite_720p30_v1");
+            config["duration_secs"] = json!(12);
+        }
         Self {
-            config: json!({"version":1,"node_id":local,"source":source,"listen":"127.0.0.1:0","duration_secs":10}),
+            config,
             directory: directory.encode_json().unwrap(),
             credentials,
             client,
             runtime: NodeRuntime::new(android).unwrap(),
             source,
+            format,
         }
     }
     fn bootstrap(&self, process: &mut Process) {
@@ -414,7 +430,10 @@ impl Fixture {
         process.frame(&encoded);
         encoded.fill(0);
     }
-    fn connect(mut self, process: &mut Process) -> Peer {
+    fn connect(self, process: &mut Process) -> Peer {
+        self.connect_catalog(process, false)
+    }
+    fn connect_catalog(mut self, process: &mut Process, reject_catalog: bool) -> Peer {
         let event = process.event("listening");
         let nodes = ControlTlsNodeBinding::new(
             serde_json::from_value(self.config["node_id"].clone()).unwrap(),
@@ -459,18 +478,37 @@ impl Fixture {
             "Synthetic Linux".into(),
         )
         .unwrap();
+        if reject_catalog {
+            no_children(process);
+            no_listening_sockets(process);
+            println!("PAIRED_STORE_AUTH verified");
+            println!(
+                "FINITE_REJECT_PENDING old_source_guard no_data_listener=true no_media_children=true"
+            );
+            io::stdout().flush().unwrap();
+            harness_line("check no media");
+        }
         let catalog = link
             .prepare_catalog(&self.runtime, &BTreeSet::from([self.source.capability_id]))
             .unwrap();
         link.send_catalog(catalog).unwrap();
-        let catalog = link.receive_catalog().unwrap();
-        link.apply_catalog(&mut self.runtime, catalog).unwrap();
+        let catalog = link.receive_catalog();
+        if reject_catalog {
+            assert!(
+                catalog.is_err(),
+                "incompatible Source rejected before Sink publication"
+            );
+        } else {
+            link.apply_catalog(&mut self.runtime, catalog.unwrap())
+                .unwrap();
+        }
         Peer {
             runtime: self.runtime,
             link,
             consent: CameraSourceConsent::default(),
             directory: directory.encode_json().unwrap(),
             credentials,
+            format: self.format,
         }
     }
 }
@@ -480,6 +518,7 @@ struct Peer {
     consent: CameraSourceConsent,
     directory: Vec<u8>,
     credentials: Vec<u8>,
+    format: FormatDescriptor,
 }
 impl Peer {
     fn proposal(&mut self, id: RouteId) {
@@ -566,7 +605,7 @@ impl Peer {
                     self.runtime
                         .prepare_route(
                             id,
-                            Some(FormatDescriptor::new("cavc-avc-access-unit-v1")),
+                            Some(self.format.clone()),
                             QosMode::Interactive,
                             now_ms(),
                         )
@@ -1051,6 +1090,579 @@ fn assert_camera_not_consumer_proof(event: &Value, id: RouteId) {
         "queued records are not consumer delivery or Active"
     );
     assert_eq!(event["consumer_delivery_verified"], false);
+}
+
+/// Synthetic finite Source only. Android's shipping catalog and
+/// SecureCameraSender remain legacy-only. This fixture reuses the real Android
+/// consent/lease policy and production pinned TLS, not a new transport or grant.
+#[cfg(feature = "paired-store")]
+struct FiniteFixtureSender {
+    channel: capyio_control_tls::camera::CameraTlsChannel,
+    binding: capyio_control_tls::camera::CameraTlsBinding,
+    records: capyio_vcamdroid_adapter::AvcRecordGuard,
+    lease_deadline: u64,
+    last_ms: u64,
+}
+#[cfg(feature = "paired-store")]
+impl FiniteFixtureSender {
+    fn connect(peer: &Peer, id: RouteId, offer: SecureCameraDataOffer) -> Self {
+        use capyio_control_tls::camera::{CameraTlsBinding, CameraTlsChannel};
+        let now = now_ms();
+        let route = peer.runtime.route(id).unwrap();
+        assert!(
+            capyio_android_jni::camera_sender::source_authority(&peer.runtime, route, now)
+                .is_some()
+        );
+        assert_eq!(
+            route.selected_format,
+            Some(FormatDescriptor::new(FINITE_FORMAT))
+        );
+        offer.validate(route).unwrap();
+        assert_eq!(peer.link.peer_node_id(), route.sink.node_id);
+        let directory =
+            PairedPeerDirectory::decode_json(route.source.node_id, &peer.directory).unwrap();
+        let paired = directory
+            .active_peers()
+            .find(|p| p.node_id == route.sink.node_id)
+            .unwrap();
+        let identity = ControlTlsClientIdentity::from_bundle(
+            paired.peer_certificate_sha256,
+            ControlCredentialBundle::decode(&peer.credentials).unwrap(),
+        );
+        let binding =
+            CameraTlsBinding::from_route(peer.link.tls_binding(), route, offer.stream_id, now)
+                .unwrap();
+        let lease_deadline = peer
+            .runtime
+            .route_port_lease_claim(id, route.source)
+            .unwrap()
+            .expires_at_ms;
+        let channel = CameraTlsChannel::connect_until(
+            ControlTlsEndpoint {
+                address: std::net::SocketAddr::new(
+                    peer.link.authenticated_peer_addr().unwrap().ip(),
+                    offer.port,
+                ),
+                io_timeout: Duration::from_millis(500),
+            },
+            &paired.server_name,
+            identity,
+            binding,
+            Instant::now() + Duration::from_millis(lease_deadline.checked_sub(now).unwrap()),
+        )
+        .unwrap();
+        Self {
+            channel,
+            binding,
+            records: capyio_vcamdroid_adapter::AvcRecordGuard::new(
+                capyio_vcamdroid_adapter::AvcStreamKey {
+                    stream_id: *binding.stream_id.as_uuid().as_bytes(),
+                    epoch: binding.epoch,
+                },
+            )
+            .unwrap(),
+            lease_deadline,
+            last_ms: now,
+        }
+    }
+    fn check(&mut self, runtime: &NodeRuntime) -> Result<(), String> {
+        let now = now_ms();
+        if now < self.last_ms || now >= self.lease_deadline {
+            return Err("finite fixture Source lease expired or clock regressed".into());
+        }
+        self.last_ms = now;
+        let route = runtime
+            .route(self.binding.route_id)
+            .map_err(|e| e.to_string())?;
+        capyio_android_jni::camera_sender::source_authority(runtime, route, now)
+            .ok_or("finite fixture Source authority revoked")?;
+        let current = capyio_control_tls::camera::CameraTlsBinding::from_route(
+            self.binding.session,
+            route,
+            self.binding.stream_id,
+            now,
+        )
+        .map_err(|e| e.to_string())?;
+        if current != self.binding
+            || route.selected_format != Some(FormatDescriptor::new(FINITE_FORMAT))
+        {
+            return Err("finite fixture binding or profile changed".into());
+        }
+        Ok(())
+    }
+    fn send(&mut self, runtime: &NodeRuntime, bytes: &[u8]) -> Result<(), String> {
+        let result = (|| {
+            self.check(runtime)?;
+            self.records
+                .accept(&capyio_vcamdroid_adapter::decode_record(bytes).map_err(|e| e.to_string())?)
+                .map_err(|e| e.to_string())?;
+            self.channel.send_record(bytes).map_err(|e| e.to_string())?;
+            self.check(runtime)
+        })();
+        if result.is_err() {
+            self.channel.close();
+        }
+        result
+    }
+}
+#[cfg(feature = "paired-store")]
+impl Drop for FiniteFixtureSender {
+    fn drop(&mut self) {
+        self.channel.close();
+    }
+}
+
+/// Only the independently identified owned projection child is paused. Drop
+/// resumes it even on assertion failure so normal owner cleanup can reap it.
+#[cfg(feature = "paired-store")]
+struct PausedProjection(std::os::fd::OwnedFd);
+#[cfg(feature = "paired-store")]
+impl PausedProjection {
+    fn new(pid: u32, owner: &Process) -> Self {
+        use std::os::fd::FromRawFd;
+        let expected = std::path::Path::new(env!("CARGO_BIN_EXE_capyio-node"))
+            .parent()
+            .unwrap()
+            .join("capyio-linux-camera-helper")
+            .canonicalize()
+            .unwrap();
+        let identity = || {
+            let status = std::fs::read_to_string(format!("/proc/{pid}/status")).unwrap();
+            assert_eq!(
+                status
+                    .lines()
+                    .find_map(|line| line.strip_prefix("PPid:"))
+                    .unwrap()
+                    .trim()
+                    .parse::<u32>()
+                    .unwrap(),
+                owner.owner_pid()
+            );
+            assert_eq!(
+                std::fs::read_link(format!("/proc/{pid}/exe")).unwrap(),
+                expected
+            );
+            let stat = std::fs::read_to_string(format!("/proc/{pid}/stat")).unwrap();
+            let fields: Vec<_> = stat
+                .rsplit_once(')')
+                .unwrap()
+                .1
+                .split_whitespace()
+                .collect();
+            assert!(
+                !matches!(fields[0], "Z" | "X"),
+                "owned helper already exited"
+            );
+            // Field 22 (starttime), with field 3 (state) at index zero here.
+            fields[19].parse::<u64>().unwrap()
+        };
+        let generation = identity();
+        let pid = libc::pid_t::try_from(pid).unwrap();
+        // SAFETY: pidfd_open only acquires a process handle; no signal is sent
+        // until both identity snapshots agree around this acquisition.
+        let descriptor = unsafe { libc::syscall(libc::SYS_pidfd_open, pid, 0u32) };
+        assert!(descriptor >= 0, "owned helper pidfd acquisition failed");
+        let descriptor = i32::try_from(descriptor).unwrap();
+        // SAFETY: the successful syscall returned a new descriptor owned here.
+        let descriptor = unsafe { std::os::fd::OwnedFd::from_raw_fd(descriptor) };
+        assert_eq!(
+            identity(),
+            generation,
+            "owned helper process generation changed"
+        );
+        let paused = Self(descriptor);
+        assert_eq!(
+            paused.signal(libc::SIGSTOP),
+            0,
+            "owned helper exited before pause"
+        );
+        paused
+    }
+    fn signal(&self, signal: libc::c_int) -> libc::c_long {
+        use std::os::fd::AsRawFd;
+        // SAFETY: this descriptor pins the verified process generation. Kernel
+        // rejection after exit cannot redirect the signal to a recycled PID.
+        unsafe {
+            libc::syscall(
+                libc::SYS_pidfd_send_signal,
+                self.0.as_raw_fd(),
+                signal,
+                std::ptr::null::<libc::siginfo_t>(),
+                0u32,
+            )
+        }
+    }
+}
+#[cfg(feature = "paired-store")]
+impl Drop for PausedProjection {
+    fn drop(&mut self) {
+        // ESRCH is harmless if the owner already reaped the pinned process.
+        let _ = self.signal(libc::SIGCONT);
+    }
+}
+
+#[cfg(feature = "paired-store")]
+fn assert_finite_not_early_expiry(process: &mut Process, expiry: u64) {
+    process.collect();
+    let mut bytes = process.stdout.as_slice();
+    while bytes.len() >= 4 {
+        let size = u32::from_be_bytes(bytes[..4].try_into().unwrap()) as usize;
+        assert!((1..=4096).contains(&size));
+        if bytes.len() < size + 4 {
+            break;
+        }
+        let event: Value = serde_json::from_slice(&bytes[4..size + 4]).unwrap();
+        if matches!(event["event"].as_str(), Some("failed" | "stopped")) {
+            assert!(
+                now_ms() >= expiry,
+                "terminal event before exact negotiated Source lease deadline"
+            );
+        }
+        bytes = &bytes[size + 4..];
+    }
+    if process.child.try_wait().unwrap().is_some() {
+        assert!(
+            now_ms() >= expiry,
+            "actual Node exited before exact negotiated Source lease deadline"
+        );
+    }
+}
+
+fn no_listening_sockets(process: &Process) {
+    let pid = process.owner_pid();
+    let sockets: BTreeSet<String> = std::fs::read_dir(format!("/proc/{pid}/fd"))
+        .unwrap()
+        .flatten()
+        .filter_map(|entry| std::fs::read_link(entry.path()).ok())
+        .filter_map(|path| {
+            path.to_str()
+                .and_then(|s| s.strip_prefix("socket:["))
+                .and_then(|s| s.strip_suffix(']'))
+                .map(str::to_owned)
+        })
+        .collect();
+    assert!(
+        !sockets.is_empty(),
+        "actual paired control connection must exist"
+    );
+    for family in ["tcp", "tcp6"] {
+        let table = std::fs::read_to_string(format!("/proc/{pid}/net/{family}")).unwrap();
+        for line in table.lines().skip(1) {
+            let fields: Vec<_> = line.split_whitespace().collect();
+            assert!(fields.len() >= 10);
+            assert!(
+                !(fields[3] == "0A" && sockets.contains(fields[9])),
+                "no owned data listener before current exact Source/Route profile admission"
+            );
+        }
+    }
+}
+
+#[cfg(feature = "paired-store")]
+fn observed_peak_kib(pid: u32) -> u64 {
+    let status = std::fs::read_to_string(format!("/proc/{pid}/status")).unwrap();
+    let peak = status
+        .lines()
+        .find_map(|line| line.strip_prefix("VmHWM:"))
+        .unwrap();
+    let fields: Vec<_> = peak.split_whitespace().collect();
+    assert_eq!(fields.len(), 2);
+    assert_eq!(fields[1], "kB");
+    let peak = fields[0].parse::<u64>().unwrap();
+    assert!(peak > 0);
+    peak
+}
+
+#[cfg(feature = "paired-store")]
+#[test]
+#[ignore = "requires explicit disposable paired-store finite-stream private PipeWire graph harness"]
+fn hosted_linux_camera_finite_stream_graph() {
+    use capyio_vcamdroid_adapter::{AvcAccessUnit, AvcStreamKey, encode_access_unit};
+    assert_eq!(
+        std::env::var("CAPYIO_CAMERA_LAUNCHER_HOSTED").as_deref(),
+        Ok("1")
+    );
+    assert_eq!(
+        std::env::var("CAPYIO_CAMERA_FINITE_STREAM").as_deref(),
+        Ok("1")
+    );
+    assert_eq!(
+        std::env::var("CAPYIO_CAMERA_PAIRED_STORE").as_deref(),
+        Ok("1")
+    );
+    assert_eq!(std::env::var("CAPYIO_CAMERA_CONSOLE").as_deref(), Ok("0"));
+    assert_eq!(
+        std::env::var("PIPEWIRE_REMOTE").as_deref(),
+        Ok("capyio-test")
+    );
+    let scenario = std::env::var("CAPYIO_CAMERA_SCENARIO").unwrap();
+    assert!(
+        [
+            "sustained",
+            "local_stop",
+            "control_stop",
+            "control_eof",
+            "source_revoke",
+            "expiry",
+            "backpressure",
+            "malicious_rate",
+            "oversize",
+            "profile_mismatch",
+            "old_source_guard"
+        ]
+        .contains(&scenario.as_str())
+    );
+    let mut fixture = Fixture::with_profile(scenario != "old_source_guard");
+    fixture.config["stream_profile"] = json!("finite_720p30_v1");
+    fixture.config["duration_secs"] = json!(12);
+    let store = persisted_fixture(&fixture);
+    let mut process = paired_process(&store);
+    println!("\nLAUNCHER_PID {}", process.child.id());
+    println!("FINITE_STREAM profile=finite_720p30_v1 source=synthetic_tls");
+    io::stdout().flush().unwrap();
+    harness_line("approve synthetic camera");
+    paired_bootstrap(&fixture, &mut process);
+    let mut peer = fixture.connect_catalog(&mut process, scenario == "old_source_guard");
+    if scenario != "old_source_guard" {
+        println!("PAIRED_STORE_AUTH verified");
+    }
+    io::stdout().flush().unwrap();
+    if scenario == "old_source_guard" {
+        no_children(&process);
+        assert!(peer.runtime.snapshot().routes.is_empty());
+        failed(&mut process);
+        assert_paired_no_leak(&store, &process);
+        println!("VERIFIED {scenario}\nCAMERA_STOPPED");
+        return;
+    }
+    let approval = process.event("approval_required");
+    assert_eq!(approval["stream_profile"], "finite_720p30_v1");
+    assert_eq!(approval["format"], FINITE_FORMAT);
+    assert_eq!(approval["duration_secs"], 12);
+    assert_eq!(approval["max_frames"], 360);
+    assert_eq!(approval["max_input_bytes"], 28 * 1024 * 1024);
+    peer.idle(&process);
+    process.command(approval_command(&approval));
+    let id = serde_json::from_value(approval["route_id"].clone()).unwrap();
+    peer.proposal(id);
+    if scenario == "profile_mismatch" {
+        no_children(&process);
+        no_listening_sockets(&process);
+        println!(
+            "FINITE_REJECT_PENDING profile_mismatch no_data_listener=true no_media_children=true"
+        );
+        io::stdout().flush().unwrap();
+        harness_line("check no media");
+        let mut altered = peer.runtime.route(id).unwrap().clone();
+        altered.selected_format = Some(FormatDescriptor::new("cavc-avc-access-unit-v1"));
+        peer.link.send_route_status(&altered).unwrap();
+        no_children(&process);
+        failed(&mut process);
+        assert_paired_no_leak(&store, &process);
+        println!("VERIFIED {scenario}\nCAMERA_STOPPED");
+        return;
+    }
+    peer.grant(id, true, if scenario == "expiry" { 4000 } else { 12000 });
+    let offer = peer.offer(id);
+    no_children(&process);
+    println!("SECURE_LISTENING no_media_children=true");
+    io::stdout().flush().unwrap();
+    let mut sender = FiniteFixtureSender::connect(&peer, id, offer);
+    let bound = process.event("camera_bound");
+    assert_camera_not_consumer_proof(&bound, id);
+    let helper = bound["helper_pid"].as_u64().unwrap();
+    let decoder = bound["decoder_pid"].as_u64().unwrap();
+    println!(
+        "CAMERA_READY {} {}",
+        helper,
+        bound["node_name"].as_str().unwrap()
+    );
+    println!("DECODER_READY {decoder}");
+    io::stdout().flush().unwrap();
+    harness_line("start frames");
+    let stream = AvcStreamKey {
+        stream_id: *sender.binding.stream_id.as_uuid().as_bytes(),
+        epoch: sender.binding.epoch,
+    };
+    let (config, units) = fixture_records(stream);
+    sender.send(&peer.runtime, &config).unwrap();
+    let record = process.event("camera_record");
+    assert_camera_not_consumer_proof(&record, id);
+    assert_eq!(record["queued"], 0);
+    let encode = |sequence| {
+        encode_access_unit(&AvcAccessUnit {
+            stream,
+            sequence,
+            presentation_time_us: sequence * 33333,
+            ..units[(sequence as usize - 1) % units.len()].clone()
+        })
+        .unwrap()
+    };
+    if scenario == "oversize" {
+        // Complete legal CAVC/TLS framing, deliberately over the finite local
+        // byte burst (including its 56-byte header). This is not outer framing.
+        let mut payload = units[0].payload.clone();
+        // Append a legal Annex B filler-data NAL to the real keyframe, rather
+        // than making decoder corruption an alternate explanation for failure.
+        payload.extend_from_slice(&[0, 0, 0, 1, 12]);
+        payload.resize(
+            capyio_vcamdroid_adapter::AVC_WIRE_MAX_ACCESS_UNIT_BYTES - 1,
+            0xff,
+        );
+        payload.push(0x80);
+        let bytes = encode_access_unit(&AvcAccessUnit {
+            stream,
+            sequence: 1,
+            presentation_time_us: 33333,
+            payload,
+            ..units[0].clone()
+        })
+        .unwrap();
+        assert_eq!(bytes.len(), 4 * 1024 * 1024 + 56);
+        println!("FINITE_ATTACK byte_burst complete_cavc=true wire_oversize=false");
+        let _ = sender.send(&peer.runtime, &bytes);
+    } else if scenario == "malicious_rate" {
+        // Individually valid unique records and timestamps, sent without pacing.
+        // No fixture-side rate guard masks the production receiver rejection.
+        for sequence in 1..=60 {
+            if sender.send(&peer.runtime, &encode(sequence)).is_err() {
+                break;
+            }
+        }
+    } else {
+        let count = if matches!(scenario.as_str(), "sustained" | "backpressure") {
+            300
+        } else {
+            30
+        };
+        let start = Instant::now();
+        let mut paused = None;
+        let mut queued = 0;
+        let mut dropped = 0;
+        for sequence in 1..=count {
+            if scenario == "backpressure" && sequence == 30 {
+                paused = Some(PausedProjection::new(helper as u32, &process));
+            }
+            if scenario == "backpressure" && sequence == 60 {
+                drop(paused.take());
+            }
+            let sent_at = Instant::now();
+            sender.send(&peer.runtime, &encode(sequence)).unwrap();
+            let record = process.event("camera_record");
+            assert_camera_not_consumer_proof(&record, id);
+            queued = record["queued"].as_u64().unwrap();
+            dropped = record["dropped"].as_u64().unwrap();
+            assert_eq!(
+                queued + dropped,
+                sequence,
+                "admitted AUs may queue OR drop, never imply delivery"
+            );
+            for field in ["helper_pid", "decoder_pid", "node_name"] {
+                assert_eq!(record[field], bound[field]);
+            }
+            // Pace from the previous actual send instead of catching up after a
+            // scheduler stall and accidentally violating the finite rate bucket.
+            if let Some(wait) =
+                (sent_at + Duration::from_nanos(33_333_334)).checked_duration_since(Instant::now())
+            {
+                thread::sleep(wait);
+            }
+        }
+        assert!(paused.is_none());
+        if matches!(scenario.as_str(), "sustained" | "backpressure") {
+            assert!(start.elapsed() >= Duration::from_secs(10));
+            assert!(
+                now_ms() < sender.lease_deadline,
+                "no authority extension for fixture drain"
+            );
+            if scenario == "backpressure" {
+                assert!(
+                    dropped > 0,
+                    "actual production backpressure evidence required"
+                );
+            }
+            println!(
+                "FINITE_SENT frames={count} elapsed_ms={} queued={queued} dropped={dropped}",
+                start.elapsed().as_millis()
+            );
+            let decoder_peak = observed_peak_kib(decoder as u32);
+            assert!(
+                decoder_peak < 512 * 1024,
+                "observed decoder high-water RSS below existing 512 MiB address-space limit"
+            );
+            println!(
+                "FINITE_MEMORY decoder_vm_hwm_kib={decoder_peak} helper_vm_hwm_kib={} node_vm_hwm_kib={}",
+                observed_peak_kib(helper as u32),
+                observed_peak_kib(process.owner_pid())
+            );
+            io::stdout().flush().unwrap();
+            let drain_until = Instant::now() + Duration::from_millis(200);
+            while Instant::now() < drain_until {
+                sender.check(&peer.runtime).unwrap();
+                assert!(process.child.try_wait().unwrap().is_none());
+                process.collect();
+                thread::sleep(Duration::from_millis(2));
+            }
+        }
+        match scenario.as_str() {
+            "sustained" | "backpressure" | "local_stop" => {
+                process.command(json!({"version":1,"command":"stop"}))
+            }
+            "control_stop" => peer
+                .link
+                .send_route_command_until(id, RouteCommandAction::Stop, Instant::now() + BOUND)
+                .unwrap(),
+            "control_eof" => peer.link.close(),
+            "source_revoke" => {
+                let route = peer.runtime.route(id).unwrap().clone();
+                peer.runtime
+                    .release_route_port_lease(id, route.source, route.session_id)
+                    .unwrap();
+                assert_eq!(
+                    sender.send(&peer.runtime, &encode(count + 1)).unwrap_err(),
+                    "finite fixture Source authority revoked"
+                );
+            }
+            "expiry" => {
+                let expiry = sender.lease_deadline;
+                let deadline =
+                    Instant::now() + Duration::from_millis(expiry.saturating_sub(now_ms())) + BOUND;
+                while now_ms() < expiry {
+                    assert!(Instant::now() < deadline);
+                    assert_finite_not_early_expiry(&mut process, expiry);
+                    thread::sleep(Duration::from_millis(2));
+                }
+                assert_eq!(
+                    sender.send(&peer.runtime, &encode(count + 1)).unwrap_err(),
+                    "finite fixture Source lease expired or clock regressed"
+                );
+            }
+            _ => unreachable!(),
+        }
+    }
+    terminal(
+        &mut process,
+        matches!(
+            scenario.as_str(),
+            "sustained" | "backpressure" | "local_stop"
+        ),
+    );
+    if matches!(scenario.as_str(), "malicious_rate" | "oversize") {
+        assert!(
+            now_ms() < sender.lease_deadline,
+            "malicious input rejected under still-live authority, not incidental expiry"
+        );
+        sender.check(&peer.runtime).unwrap();
+    }
+    drop(sender);
+    for pid in [helper, decoder] {
+        assert!(
+            !std::path::Path::new(&format!("/proc/{pid}")).exists(),
+            "owned media child reaped"
+        );
+    }
+    assert_paired_no_leak(&store, &process);
+    println!("VERIFIED {scenario}\nCAMERA_STOPPED");
 }
 
 /// This is run ONLY inside the disposable private PipeWire harness. Its caller

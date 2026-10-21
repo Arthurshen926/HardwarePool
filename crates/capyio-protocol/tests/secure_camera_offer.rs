@@ -190,3 +190,63 @@ fn exact_format_epoch_state_and_bounded_grant_are_required() {
         );
     }
 }
+
+#[test]
+fn finite_profile_is_an_exact_secure_only_opt_in() {
+    let (mut route, offer) = fixture();
+    let finite = FormatDescriptor::new("cavc-avc-finite-720p30-v1");
+    route.compatible_formats = vec![finite.clone()];
+    route.selected_format = Some(finite.clone());
+    let encoded =
+        encode_route_status_with_secure_camera_data(route.session_id, &route, offer).unwrap();
+    let decoded = decode_route_status(&encoded).unwrap();
+    assert_eq!(decoded.route.selected_format, Some(finite));
+    assert_eq!(decoded.secure_camera_data, Some(offer));
+    assert!(decoded.camera_data.is_none());
+    let plaintext = CameraDataOffer {
+        port: 38173,
+        stream_id: offer.stream_id,
+    };
+    assert!(plaintext.validate(&route).is_err());
+    assert!(encode_route_status_with_camera_data(route.session_id, &route, plaintext).is_err());
+
+    // A receiver must not accept the new format if a peer changes only the
+    // offer tag to the unauthenticated legacy transport.
+    let mut envelope = decode_envelope(&encoded).unwrap();
+    let Some(v1::envelope::Payload::RouteStatus(status)) = envelope.payload.as_mut() else {
+        panic!()
+    };
+    status.secure_camera_data = None;
+    status.camera_data = Some(v1::CameraDataOffer {
+        port: 38173,
+        stream_id: offer.stream_id.to_string(),
+    });
+    assert!(decode_route_status(&envelope.encode_to_vec()).is_err());
+}
+
+#[test]
+fn secure_formats_reject_all_parameters_and_unknown_versions() {
+    let (route, offer) = fixture();
+    for id in ["cavc-avc-access-unit-v1", "cavc-avc-finite-720p30-v1"] {
+        for key in ["max_frames", "lifetime_ms", "unknown"] {
+            let mut bad = route.clone();
+            let mut format = FormatDescriptor::new(id);
+            format.parameters.insert(key.into(), "1".into());
+            bad.compatible_formats = vec![format.clone()];
+            bad.selected_format = Some(format);
+            assert!(offer.validate(&bad).is_err(), "{id}, {key}");
+            assert!(
+                encode_route_status_with_secure_camera_data(bad.session_id, &bad, offer).is_err()
+            );
+        }
+    }
+    for id in [
+        "cavc-avc-finite-720p30-v2",
+        "cavc-avc-finite-1080p30-v1",
+        "h264",
+    ] {
+        let mut bad = route.clone();
+        bad.selected_format = Some(FormatDescriptor::new(id));
+        assert!(offer.validate(&bad).is_err(), "{id}");
+    }
+}

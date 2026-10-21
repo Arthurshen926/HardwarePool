@@ -367,3 +367,11 @@ protected credential backend. No native Linux secure-store backend or enrollment
 CLI is shipped, so this is not production secure persistence. It does not modify
 finite launcher, resource-consent or lease semantics. See
 [ADR 1539](../../docs/adr/1539-linux-pairing-persistence-boundary.md).
+
+### Explicit finite camera stream profile
+
+The opt-in Linux profile `cavc-avc-finite-720p30-v1` derives bounded work from
+the remaining finite lease instead of the legacy120-frame limit. It retains
+32MiB cumulative input and native resource ceilings; see
+[ADR1555](../../docs/adr/1555-linux-explicit-finite-camera-stream.md).
+Legacy defaults and Android production advertisement are unchanged.
