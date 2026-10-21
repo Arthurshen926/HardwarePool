@@ -30,9 +30,17 @@ media offers, and Start remain required. No capture child is opened on discovery
 Draft, or local consent alone. Each restart needs fresh stream identities and
 consent. A normal Busy update is accepted only for the exact started remote Port.
 
-Only the fixed `/usr/bin/pw-cat --record --raw` boundary is used, with 48 kHz S16LE,
+Only the fixed `/usr/bin/pw-cat --record` boundary is used, with 48 kHz S16LE,
 two channels and explicit stereo channel mapping. `PIPEWIRE_NODE` is removed;
 no-fallback, no-reconnect and no-move properties preserve the selected target.
+A bounded 512-byte/500-ms version probe accepts only matching compiled and linked
+1.0.5 (legacy raw stdout with `-`) or 1.6.9 (explicit `--raw` plus `-`). Unknown or
+mixed versions fail closed; no AU/WAV container is accepted by this contract. The
+fixed executable metadata must stay unchanged across probe and spawn, and current
+finite authority is rechecked after probing, before opening capture. These exact
+contracts follow upstream [1.0.5](https://github.com/PipeWire/pipewire/blob/1.0.5/src/tools/pw-cat.c)
+and [1.6.9](https://github.com/PipeWire/pipewire/blob/1.6.9/src/tools/pw-cat.c) source;
+they do not claim general version compatibility.
 Private PipeWire remote/configuration variables remain available for isolated
 acceptance. There is no device installation, service or global default change.
 

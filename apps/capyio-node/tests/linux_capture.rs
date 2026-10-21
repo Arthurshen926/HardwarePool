@@ -1231,6 +1231,28 @@ fn ipc_linux_capture_malformed_and_truncated_framing_fails_closed() {
 #[test]
 fn ipc_linux_capture_no_reciprocal_offer_expires_without_media() {
     let mut fixture = Fixture::new();
+    fixture.config["duration_secs"] = json!(3);
+    let mut process = Process::capture();
+    fixture.bootstrap(&mut process);
+    let mut peer = fixture.connect(&mut process);
+    let approval = process.event("approval_required");
+    process.command(approve(&approval));
+    let id = serde_json::from_value(approval["route_id"].clone()).unwrap();
+    peer.receive_proposal(id);
+    peer.consent(id, true);
+    peer.negotiate_to_offer_with_lifetime(id, Duration::from_secs(3));
+    process.event("awaiting_peer_offer");
+    process.event("failed");
+    assert!(!process.finish().success());
+    assert!(!peer.runtime.audio_should_run(id, now_ms()));
+    let AndroidPeer { link, mut runtime } = peer;
+    runtime.close_control_link(link).unwrap();
+    assert!(runtime.snapshot().port_leases.is_empty());
+}
+
+#[test]
+fn ipc_linux_capture_insufficient_lease_headroom_fails_before_offer() {
+    let mut fixture = Fixture::new();
     fixture.config["duration_secs"] = json!(1);
     let mut process = Process::capture();
     fixture.bootstrap(&mut process);
@@ -1240,10 +1262,36 @@ fn ipc_linux_capture_no_reciprocal_offer_expires_without_media() {
     let id = serde_json::from_value(approval["route_id"].clone()).unwrap();
     peer.receive_proposal(id);
     peer.consent(id, true);
-    peer.negotiate_to_offer_with_lifetime(id, Duration::from_secs(1));
-    process.event("awaiting_peer_offer");
+    let deadline = Instant::now() + BOUND;
+    let mut finite_grant = false;
+    loop {
+        match peer.link.receive_control_message_until(deadline) {
+            Ok(ReceivedControlMessage::RouteStatus(status)) => {
+                assert_eq!(status.route.id, id);
+                assert!(status.native_audio_data.is_none());
+                assert_eq!(status.route.state, RouteState::Draft);
+                let route = peer
+                    .runtime
+                    .receive_audio_route_status(&peer.link, &status, "127.0.0.1", now_ms())
+                    .unwrap();
+                let AuthorizationState::Authorized {
+                    expires_at_ms: Some(expiry),
+                } = route.authorization
+                else {
+                    panic!("finite grant required");
+                };
+                assert!(expiry <= now_ms() + 1000);
+                finite_grant = true;
+                peer.link.send_route_status(&route).unwrap();
+            }
+            Ok(_) => panic!("insufficient grant must not acquire lease or offer media"),
+            Err(_) => break,
+        }
+    }
+    assert!(finite_grant);
     process.event("failed");
     assert!(!process.finish().success());
+    assert!(peer.runtime.snapshot().port_leases.is_empty());
     assert!(!peer.runtime.audio_should_run(id, now_ms()));
     let AndroidPeer { link, mut runtime } = peer;
     runtime.close_control_link(link).unwrap();

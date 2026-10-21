@@ -203,6 +203,7 @@ jobs:
           ipc_linux_capture_requires_explicit_opt_in_and_default_remains_demo
           ipc_linux_capture_malformed_and_truncated_framing_fails_closed
           ipc_linux_capture_no_reciprocal_offer_expires_without_media
+          ipc_linux_capture_insufficient_lease_headroom_fails_before_offer
           hosted_capture::pure_capture_harness_requires_private_remote_and_exact_scenario
           launch::tests::capture_launch_has_distinct_explicit_schema_and_published_stereo_source
           owner::tests::capture_owner_requires_source_offer_and_exact_stereo_binding
@@ -217,6 +218,9 @@ jobs:
           capture::tests::capture_source_failure_invalid_read_and_timeline_exhaustion_fail_closed
           capture_pipewire::tests::capture_pipewire_exact_raw_stereo_target_without_environment_override
           capture_pipewire::tests::capture_pipewire_rejects_default_ambiguous_or_injected_targets
+          capture_pipewire::tests::capture_raw_contract_requires_exact_supported_tool_and_library
+          capture_pipewire::tests::ipc_capture_version_probe_bounds_output_failure_and_stalled_child
+          capture_route::tests::ipc_capture_probe_delay_rechecks_authority_before_opening_source
           capture_pipewire::tests::ipc_capture_owned_stdout_packet_and_repeated_stop_reap_child
           capture_pipewire::tests::ipc_capture_early_exit_and_backpressured_stdout_cleanup_are_bounded
           capture_pipewire::tests::ipc_capture_dynamic_stereo_packet_native_udp_preserves_exact_bytes

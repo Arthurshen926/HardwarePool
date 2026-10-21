@@ -3,7 +3,10 @@ use std::{
     ffi::OsString,
     io::{self, Read},
     net::Shutdown,
-    os::{fd::OwnedFd, unix::net::UnixStream},
+    os::{
+        fd::OwnedFd,
+        unix::{fs::MetadataExt, net::UnixStream},
+    },
     path::Path,
     process::{Child, Command, Stdio},
     thread,
@@ -20,7 +23,28 @@ pub struct PipeWireCapture {
 
 impl PipeWireCapture {
     pub fn open(target: &str) -> io::Result<Self> {
-        Self::spawn(capture_command(target)?)
+        Self::open_checked(target, &mut || Ok(()))
+    }
+
+    pub(crate) fn open_checked(
+        target: &str,
+        revalidate: &mut dyn FnMut() -> io::Result<()>,
+    ) -> io::Result<Self> {
+        // Validate without opening any resource, then identify the exact binary.
+        capture_arguments(target, RawMode::Explicit)?;
+        let identity = binary_identity()?;
+        let mode = probe_raw_mode()?;
+        if binary_identity()? != identity {
+            return Err(unsupported("capture binary changed during probe"));
+        }
+        let command = capture_command(target, mode)?;
+        revalidate()?; // Probe delay never extends permission to start capture.
+        let mut capture = Self::spawn(command)?;
+        if binary_identity()? != identity {
+            let _ = capture.stop();
+            return Err(unsupported("capture binary changed during opening"));
+        }
+        Ok(capture)
     }
 
     #[cfg(test)]
@@ -112,15 +136,106 @@ impl Drop for PipeWireCapture {
     }
 }
 
-fn capture_command(target: &str) -> io::Result<Command> {
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum RawMode {
+    LegacyPipe,
+    Explicit,
+}
+fn unsupported(message: &'static str) -> io::Error {
+    io::Error::new(io::ErrorKind::Unsupported, message)
+}
+// Fail closed outside source-verified pw-cat contracts. Versions describe both
+// the tool headers and linked library; they are not inferred from OS branding.
+fn raw_mode(version: &[u8]) -> io::Result<RawMode> {
+    match version {
+        b"pw-cat\nCompiled with libpipewire 1.0.5\nLinked with libpipewire 1.0.5\n" => {
+            Ok(RawMode::LegacyPipe)
+        }
+        b"pw-cat\nCompiled with libpipewire 1.6.9\nLinked with libpipewire 1.6.9\n" => {
+            Ok(RawMode::Explicit)
+        }
+        _ => Err(unsupported("unsupported pw-cat raw stdout contract")),
+    }
+}
+fn binary_identity() -> io::Result<[u64; 7]> {
+    let meta = std::fs::metadata("/usr/bin/pw-cat")?;
+    if !meta.is_file() {
+        return Err(unsupported("capture executable is not a file"));
+    }
+    Ok([
+        meta.dev(),
+        meta.ino(),
+        meta.len(),
+        meta.mtime() as u64,
+        meta.mtime_nsec() as u64,
+        meta.ctime() as u64,
+        meta.ctime_nsec() as u64,
+    ])
+}
+fn probe_raw_mode() -> io::Result<RawMode> {
+    let mut command = Command::new("/usr/bin/pw-cat");
+    command
+        .arg("--version")
+        .env("LC_ALL", "C")
+        .env_remove("PIPEWIRE_NODE");
+    probe_command(command)
+}
+fn probe_command(command: Command) -> io::Result<RawMode> {
+    // --version exits before connecting a PipeWire context. The same owned
+    // child boundary bounds output, waiting and cleanup; no wait_with_output.
+    let mut probe = PipeWireCapture::spawn(command)?;
+    let deadline = Instant::now() + Duration::from_millis(500);
+    let mut bytes = Vec::new();
+    let mut buffer = [0_u8; 513];
+    let mut eof = false;
+    loop {
+        if Instant::now() >= deadline {
+            return Err(io::Error::new(
+                io::ErrorKind::TimedOut,
+                "capture version probe timed out",
+            ));
+        }
+        if !eof {
+            match probe
+                .output
+                .as_mut()
+                .expect("owned probe output")
+                .read(&mut buffer)
+            {
+                Ok(0) => eof = true,
+                Ok(count) => {
+                    if bytes.len() + count > 512 {
+                        return Err(unsupported("capture version output exceeds bound"));
+                    }
+                    bytes.extend_from_slice(&buffer[..count]);
+                }
+                Err(error)
+                    if matches!(
+                        error.kind(),
+                        io::ErrorKind::WouldBlock | io::ErrorKind::Interrupted
+                    ) => {}
+                Err(error) => return Err(error),
+            }
+        }
+        if eof && let Some(status) = probe.child.try_wait()? {
+            if !status.success() {
+                return Err(unsupported("capture version probe failed"));
+            }
+            return raw_mode(&bytes);
+        }
+        thread::sleep(Duration::from_millis(2));
+    }
+}
+
+fn capture_command(target: &str, mode: RawMode) -> io::Result<Command> {
     let mut command = Command::new(Path::new("/usr/bin/pw-cat"));
     command
-        .args(capture_arguments(target)?)
+        .args(capture_arguments(target, mode)?)
         .env_remove("PIPEWIRE_NODE");
     Ok(command)
 }
 
-fn capture_arguments(target: &str) -> io::Result<Vec<OsString>> {
+fn capture_arguments(target: &str, mode: RawMode) -> io::Result<Vec<OsString>> {
     validate_target(target)
         .map_err(|reason| io::Error::new(io::ErrorKind::InvalidInput, reason))?;
     if target.eq_ignore_ascii_case("auto") || target.eq_ignore_ascii_case("default") {
@@ -135,9 +250,8 @@ fn capture_arguments(target: &str) -> io::Result<Vec<OsString>> {
             "S16LE capture requires little-endian Linux",
         ));
     }
-    Ok([
+    let mut args: Vec<OsString> = [
         "--record",
-        "--raw",
         "--rate=48000",
         "--channels=2",
         "--channel-map=stereo",
@@ -149,7 +263,11 @@ fn capture_arguments(target: &str) -> io::Result<Vec<OsString>> {
     ]
     .into_iter()
     .map(OsString::from)
-    .collect())
+    .collect();
+    if mode == RawMode::Explicit {
+        args.insert(1, OsString::from("--raw"));
+    }
+    Ok(args)
 }
 
 #[cfg(test)]
@@ -159,7 +277,7 @@ mod tests {
 
     #[test]
     fn capture_pipewire_exact_raw_stereo_target_without_environment_override() {
-        let command = capture_command("alsa_input.approved").unwrap();
+        let command = capture_command("alsa_input.approved", RawMode::Explicit).unwrap();
         assert_eq!(command.get_program(), "/usr/bin/pw-cat");
         let args: Vec<_> = command
             .get_args()
@@ -185,7 +303,7 @@ mod tests {
                 .get_envs()
                 .any(|(key, value)| key == "PIPEWIRE_NODE" && value.is_none())
         );
-        assert!(capture_arguments("91").is_ok());
+        assert!(capture_arguments("91", RawMode::Explicit).is_ok());
     }
 
     #[test]
@@ -205,9 +323,54 @@ mod tests {
             "$(id)",
             "source\nnext",
         ] {
-            assert!(capture_arguments(target).is_err(), "accepted {target:?}");
+            assert!(
+                capture_arguments(target, RawMode::Explicit).is_err(),
+                "accepted {target:?}"
+            );
         }
-        assert!(capture_arguments(&"a".repeat(129)).is_err());
+        assert!(capture_arguments(&"a".repeat(129), RawMode::Explicit).is_err());
+    }
+
+    #[test]
+    fn capture_raw_contract_requires_exact_supported_tool_and_library() {
+        for (version, mode) in [("1.0.5", RawMode::LegacyPipe), ("1.6.9", RawMode::Explicit)] {
+            let text = format!(
+                "pw-cat\nCompiled with libpipewire {version}\nLinked with libpipewire {version}\n"
+            );
+            assert_eq!(raw_mode(text.as_bytes()).unwrap(), mode);
+            let args = capture_arguments("approved.source", mode).unwrap();
+            assert_eq!(args.iter().any(|a| a == "--raw"), mode == RawMode::Explicit);
+            assert_eq!(args.last().unwrap(), "-");
+            assert!(args.iter().any(|a| a == "--format=s16"));
+        }
+        for bad in [
+            "",
+            "pw-cat\n",
+            "1.0.5",
+            "pw-cat\nCompiled with libpipewire 1.0.5\nLinked with libpipewire 1.6.9\n",
+            "pw-cat\nCompiled with libpipewire 1.7.0\nLinked with libpipewire 1.7.0\n",
+            ".snd",
+            "RIFF",
+        ] {
+            assert!(raw_mode(bad.as_bytes()).is_err());
+        }
+    }
+
+    #[test]
+    fn ipc_capture_version_probe_bounds_output_failure_and_stalled_child() {
+        let mut valid = Command::new("/usr/bin/printf");
+        valid.arg("pw-cat\nCompiled with libpipewire 1.0.5\nLinked with libpipewire 1.0.5\n");
+        assert_eq!(probe_command(valid).unwrap(), RawMode::LegacyPipe);
+        assert!(probe_command(Command::new("/usr/bin/false")).is_err());
+        assert!(probe_command(Command::new("/usr/bin/yes")).is_err());
+        let mut stalled = Command::new("/usr/bin/sleep");
+        stalled.arg("10");
+        let started = Instant::now();
+        assert_eq!(
+            probe_command(stalled).unwrap_err().kind(),
+            io::ErrorKind::TimedOut
+        );
+        assert!(started.elapsed() < Duration::from_secs(3));
     }
 
     // These mandatory tests need actual Unix sockets/processes (and UDP below).

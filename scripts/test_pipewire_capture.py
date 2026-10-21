@@ -1,5 +1,7 @@
 """Pure stereo capture acceptance checks: no subprocess, socket or audio devices."""
 import copy
+import io
+import json
 import struct
 import unittest
 from pathlib import Path
@@ -9,6 +11,7 @@ from run_pipewire_capture import (
     SOURCE, SCENARIOS, LIMIT, MARKER, CaptureHarness, capture_nodes,
     capture_process_id, graph_fingerprint, select_capture, signal_payload,
     stereo_ports, stereo_tone, verify_capture_removed, verify_stereo,
+    parse_pipewire_version, graph_diagnostic, process_diagnostic,
 )
 
 
@@ -122,15 +125,18 @@ class StereoGraphTests(unittest.TestCase):
 
     def test_pid_requires_exact_client_parent_executable_record_and_target(self):
         args = [b'/usr/bin/pw-cat', b'--record', b'--rate=48000', b'--channels=2',
-                b'--format=s16', b'--raw', b'--channel-map=stereo', b'--target=' + SOURCE.encode(), b'-']
-        def verify(arguments=args, parent=100, executable=Path('/usr/bin/pw-cat')):
+                b'--format=s16', b'--channel-map=stereo', b'--target=' + SOURCE.encode(), b'-']
+        def verify(arguments=args, parent=100, executable=Path('/usr/bin/pw-cat'),
+                   version='1.0.5', identity=(1, 2, 3, 4, 5)):
             with patch.object(Path, 'read_text', return_value='PPid:\t' + str(parent)), \
                  patch.object(Path, 'read_bytes', return_value=b'\0'.join(arguments) + b'\0'), \
-                 patch.object(Path, 'resolve', side_effect=[executable, Path('/usr/bin/pw-cat')]):
-                return capture_process_id(self.graph, self.capture, 100)
+                 patch.object(Path, 'resolve', side_effect=[executable, Path('/usr/bin/pw-cat')]), \
+                 patch('run_pipewire_capture.pipewire_binary_identity', return_value=identity):
+                return capture_process_id(self.graph, self.capture, 100, version, (1, 2, 3, 4, 5))
         self.assertEqual(verify(), 123)
         for args_bad in ([arg for arg in args if arg != b'--record'],
-                         [arg for arg in args if arg != b'--raw'],
+                         args[:-1] + [b'--raw', b'-'],
+                         args[:-1] + [b'output.wav'],
                          [b'--target=0' if arg.startswith(b'--target=') else arg for arg in args],
                          [b'--channels=1' if arg == b'--channels=2' else arg for arg in args]):
             with self.assertRaises(ValueError):
@@ -140,7 +146,87 @@ class StereoGraphTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             verify(executable=Path('/tmp/not-pw-cat'))
         with self.assertRaises(ValueError):
-            capture_process_id(self.graph, self.capture, True)
+            verify(identity=(9, 9, 9, 9, 9))
+        with self.assertRaises(ValueError):
+            verify(version='1.5.0')
+        with self.assertRaises(ValueError):
+            verify(version='1.6.9')
+        self.assertEqual(verify(args[:-1] + [b'--raw', b'-'], version='1.6.9'), 123)
+        with self.assertRaises(ValueError):
+            verify(args[:-1] + [b'--raw', b'--raw', b'-'], version='1.6.9')
+        with self.assertRaises(ValueError):
+            capture_process_id(self.graph, self.capture, True, '1.0.5', (1, 2, 3, 4, 5))
+
+    def test_exact_old_and_new_cli_versions_do_not_allow_unknown_or_mixed_builds(self):
+        for version in ('1.0.5', '1.6.9'):
+            value = ('pw-cat\nCompiled with libpipewire ' + version +
+                     '\nLinked with libpipewire ' + version + '\n').encode()
+            self.assertEqual(parse_pipewire_version(value), version)
+        for raw in (b'', b'x' * 1025, b'pw-cat\nCompiled with libpipewire 1.0.5\nLinked with libpipewire 1.6.9\n',
+                    b'pw-cat\nCompiled with libpipewire 1.5.0\nLinked with libpipewire 1.5.0\n',
+                    b'pw-cat\nCompiled with libpipewire 1.0.5-custom\nLinked with libpipewire 1.0.5-custom\n',
+                    b'pw-cat\nCompiled with libpipewire 1.0.5\nLinked with libpipewire 1.0.5\nextra',
+                    b'pw-cat\nCompiled with libpipewire 1.0.5\nLinked with libpipewire 1.0.5 \n'):
+            with self.subTest(raw=raw[:100]), self.assertRaises(ValueError):
+                parse_pipewire_version(raw)
+
+    def test_graph_failure_evidence_is_allowlisted_and_bounded_without_relaxing_selection(self):
+        secret = 'PRIVATE-PATH-OR-SECRET-DO-NOT-RETAIN'
+        graph = copy.deepcopy(self.graph)
+        graph[1]['info']['props'].update({'target.object': secret, 'node.name': secret,
+                                        'unrelated.secret': secret, 'media.class': secret})
+        graph[2]['info']['props']['application.process.id'] = secret
+        graph += [node(999, {'node.name': secret, 'object.serial': secret})] * 1000
+        report = graph_diagnostic(graph)
+        encoded = json.dumps(report)
+        self.assertNotIn(secret, encoded)
+        self.assertLess(len(encoded), 32768)
+        self.assertTrue(report['truncated'])
+        self.assertEqual(len(report['nodes']), 32)
+        self.assertEqual(report['counts']['Node'], 1003)
+        self.assertFalse(report['nodes'][1]['target_is_exact_source'])
+        self.assertTrue(report['nodes'][1]['target_present'])
+        self.assertIsNone(report['nodes'][1]['target_numeric'])
+        with self.assertRaises(ValueError):
+            select_capture(graph)
+
+    def test_owned_process_evidence_reports_only_safe_state_and_bounded_argv_flags(self):
+        secret = b'PRIVATE-PATH-OR-SECRET-DO-NOT-RETAIN'
+        files = [io.BytesIO(b'Name: ' + secret + b'\nPPid:\t100\nState:\tS (sleeping)\n'),
+                 io.BytesIO(secret + b'\0--record\0--raw\0--channels=2\0--channel-map=stereo\0' +
+                            b'--target=' + SOURCE.encode() + b'\0-\0'),
+                 io.BytesIO(b'124 125')]
+        with patch.object(Path, 'open', side_effect=files):
+            report = process_diagnostic(123)
+        self.assertNotIn(secret.decode(), json.dumps(report))
+        self.assertTrue(report['readable'])
+        self.assertEqual(report['ppid'], 100)
+        self.assertEqual(report['state'], 'S')
+        self.assertTrue(report['raw_option'])
+        self.assertTrue(report['target_exact'])
+        self.assertEqual(report['children'], [124, 125])
+        self.assertFalse(process_diagnostic(None)['readable'])
+        with patch.object(Path, 'open', side_effect=FileNotFoundError):
+            self.assertFalse(process_diagnostic(123)['readable'])
+        with patch.object(Path, 'open', side_effect=[io.BytesIO(b'x' * 8193), io.BytesIO(b'')]):
+            self.assertTrue(process_diagnostic(123)['truncated'])
+
+    def test_failure_report_uses_owned_processes_and_never_dumps_raw_graph(self):
+        harness = CaptureHarness(Path('/tmp/owned-private-test'), 'waveform')
+        harness.pipewire_version = '1.0.5'
+        harness.diagnostic_processes = {'source': 90, 'owner': 100}
+        with patch('run_pipewire_capture.process_diagnostic', side_effect=[
+                {'pid': 90, 'readable': True}, {'pid': 100, 'readable': False}]), \
+             patch('sys.stderr', new_callable=io.StringIO) as stderr:
+            harness.report_graph_failure(self.graph)
+        marker, text = stderr.getvalue().strip().split('=', 1)
+        self.assertEqual(marker, 'capyio_capture_graph_failure')
+        report = json.loads(text)
+        self.assertEqual(report['pipewire_version'], '1.0.5')
+        self.assertEqual(report['processes']['owner']['pid'], 100)
+        self.assertFalse(report['processes']['owner']['readable'])
+        self.assertEqual(report['owner_children'], [])
+        self.assertLess(len(text), 32768)
 
     def test_private_environment_and_scenarios_do_not_inherit_user_defaults(self):
         self.assertEqual(SCENARIOS, ('waveform', 'child_exit', 'server_disconnect',

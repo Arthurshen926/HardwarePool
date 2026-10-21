@@ -31,13 +31,13 @@ impl RuntimeCapture {
         media: AudioMediaStreamBinding,
         config: &PlaybackConfig,
     ) -> io::Result<Self> {
-        Self::open_with(runtime, media, config, PipeWireCapture::open)
+        Self::open_with(runtime, media, config, PipeWireCapture::open_checked)
     }
     fn open_with(
         runtime: &mut NodeRuntime,
         media: AudioMediaStreamBinding,
         config: &PlaybackConfig,
-        open: impl FnOnce(&str) -> io::Result<PipeWireCapture>,
+        open: impl FnOnce(&str, &mut dyn FnMut() -> io::Result<()>) -> io::Result<PipeWireCapture>,
     ) -> io::Result<Self> {
         if config.endpoint_mode != EndpointMode::StereoCapture
             || media.selected_spec != AudioStreamSpec::media_balanced()
@@ -55,7 +55,7 @@ impl RuntimeCapture {
         .map_err(error)?;
         crate::validate_endpoint_target(config.endpoint_mode, &config.target).map_err(error)?;
         let started = Instant::now();
-        let guard = Guard::new(runtime, media.clone(), clock(started)?.0)?;
+        let mut guard = Guard::new(runtime, media.clone(), clock(started)?.0)?;
         let pump = CapturePump::with_binding(config.duration, media.clone())?;
         // A packet has two fragments, each with a configured 1ms send timeout.
         let opened = (|| {
@@ -69,7 +69,14 @@ impl RuntimeCapture {
                 media,
             )
             .map_err(error)?;
-            let input = open(&config.target)?;
+            let input = open(&config.target, &mut || {
+                let (now, elapsed) = clock(started)?;
+                guard.check(runtime, now)?;
+                if elapsed >= config.duration {
+                    return Err(error("capture lifetime elapsed during compatibility probe"));
+                }
+                Ok(())
+            })?;
             Ok::<_, io::Error>((endpoint, input))
         })();
         let (endpoint, input) = match opened {
@@ -268,7 +275,7 @@ mod tests {
     #[test]
     fn ipc_capture_runtime_stop_discards_resources_without_offline_failure() {
         let (mut runtime, media, config, _receiver) = admitted();
-        let mut worker = RuntimeCapture::open_with(&mut runtime, media.clone(), &config, |_| {
+        let mut worker = RuntimeCapture::open_with(&mut runtime, media.clone(), &config, |_, _| {
             PipeWireCapture::synthetic_pcm()
         })
         .unwrap();
@@ -287,7 +294,7 @@ mod tests {
     #[test]
     fn ipc_capture_lost_lease_prevents_read_send_and_releases_udp() {
         let (mut runtime, media, config, _receiver) = admitted();
-        let mut worker = RuntimeCapture::open_with(&mut runtime, media.clone(), &config, |_| {
+        let mut worker = RuntimeCapture::open_with(&mut runtime, media.clone(), &config, |_, _| {
             PipeWireCapture::synthetic_pcm()
         })
         .unwrap();
@@ -324,7 +331,7 @@ mod tests {
     fn ipc_capture_source_open_failure_releases_udp_and_source_lease() {
         let (mut runtime, media, config, _receiver) = admitted();
         let mut opened = false;
-        let result = RuntimeCapture::open_with(&mut runtime, media.clone(), &config, |_| {
+        let result = RuntimeCapture::open_with(&mut runtime, media.clone(), &config, |_, _| {
             opened = true;
             Err(error("synthetic source-open failure"))
         });
@@ -337,7 +344,7 @@ mod tests {
     #[test]
     fn ipc_capture_exited_source_cannot_activate_and_releases_resources() {
         let (mut runtime, media, config, _receiver) = admitted();
-        let result = RuntimeCapture::open_with(&mut runtime, media.clone(), &config, |_| {
+        let result = RuntimeCapture::open_with(&mut runtime, media.clone(), &config, |_, _| {
             let mut source = PipeWireCapture::synthetic_pcm()?;
             source.stop()?;
             Ok(source)
@@ -351,7 +358,7 @@ mod tests {
     fn ipc_capture_lifetime_elapsed_during_open_cannot_activate() {
         let (mut runtime, media, mut config, _receiver) = admitted();
         config.duration = Duration::from_secs(1);
-        let result = RuntimeCapture::open_with(&mut runtime, media.clone(), &config, |_| {
+        let result = RuntimeCapture::open_with(&mut runtime, media.clone(), &config, |_, _| {
             // Exercise the actual nonrenewable opening deadline, not a fake
             // Runtime, clock or permission check. Hosted execution only.
             std::thread::sleep(Duration::from_millis(1_100));
@@ -372,7 +379,7 @@ mod tests {
         for case in 0..3 {
             let (mut runtime, media, config, _receiver) = admitted();
             let mut worker =
-                RuntimeCapture::open_with(&mut runtime, media.clone(), &config, |_| {
+                RuntimeCapture::open_with(&mut runtime, media.clone(), &config, |_, _| {
                     PipeWireCapture::synthetic_pcm()
                 })
                 .unwrap();
@@ -408,9 +415,26 @@ mod tests {
     }
 
     #[test]
+    fn ipc_capture_probe_delay_rechecks_authority_before_opening_source() {
+        let (mut runtime, media, mut config, _receiver) = admitted();
+        config.duration = Duration::from_secs(1);
+        let mut opened = false;
+        let result =
+            RuntimeCapture::open_with(&mut runtime, media.clone(), &config, |_, revalidate| {
+                std::thread::sleep(Duration::from_millis(1100));
+                revalidate()?;
+                opened = true;
+                PipeWireCapture::synthetic_pcm()
+            });
+        assert!(result.is_err());
+        assert!(!opened, "expired probe must not open capture");
+        assert_failed_open_released(&runtime, &media, &config);
+    }
+
+    #[test]
     fn ipc_capture_drop_releases_udp_without_claiming_runtime_transition() {
         let (mut runtime, media, config, _receiver) = admitted();
-        let worker = RuntimeCapture::open_with(&mut runtime, media.clone(), &config, |_| {
+        let worker = RuntimeCapture::open_with(&mut runtime, media.clone(), &config, |_, _| {
             PipeWireCapture::synthetic_pcm()
         })
         .unwrap();
