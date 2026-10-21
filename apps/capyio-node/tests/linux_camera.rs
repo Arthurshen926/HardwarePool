@@ -52,6 +52,11 @@ impl Process {
         let child = Command::new(env!("CARGO_BIN_EXE_capyio-node"))
             .args(args)
             .env_remove("RUST_LOG")
+            // The production entry maps all failures to a static message before
+            // anyhow renders it. Keep this protocol fixture deterministic even
+            // when the CI test runner requests diagnostic stack traces.
+            .env("RUST_BACKTRACE", "0")
+            .env("RUST_LIB_BACKTRACE", "0")
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
