@@ -1,6 +1,9 @@
 """Pure graph-oracle tests; not native graph evidence."""
 import unittest
-from run_pipewire_camera import camera_port, named, no_camera
+from unittest.mock import patch
+import resource
+from run_pipewire_camera import CAMERA_DAEMON_FILE_LIMIT, camera_daemon_limits, camera_port, named, no_camera
+from run_pipewire_loopback import LIMIT
 
 
 def node(number=10, name='capyio.camera.test'):
@@ -13,6 +16,15 @@ def port(direction='out'):
 
 
 class CameraOracleTests(unittest.TestCase):
+    def test_camera_memfd_budget_is_finite_without_widening_audio_or_log_limit(self):
+        self.assertEqual(LIMIT, 2 * 1024 * 1024)
+        self.assertGreater(CAMERA_DAEMON_FILE_LIMIT, 3 * 1382400 + 4096)
+        self.assertEqual(CAMERA_DAEMON_FILE_LIMIT, 16 * 1024 * 1024)
+        with patch('run_pipewire_camera.resource.setrlimit') as set_limit:
+            camera_daemon_limits()
+        set_limit.assert_called_once_with(resource.RLIMIT_FSIZE,
+                                          (CAMERA_DAEMON_FILE_LIMIT, CAMERA_DAEMON_FILE_LIMIT))
+
     def test_exact_named_node_and_single_directional_port(self):
         objects = [node(), port()]
         self.assertEqual(named(objects, 'capyio.camera.test')['id'], 10)

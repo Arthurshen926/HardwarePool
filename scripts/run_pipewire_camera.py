@@ -3,6 +3,7 @@
 import argparse
 import json
 import os
+import resource
 from pathlib import Path
 import signal
 import subprocess
@@ -14,6 +15,13 @@ from run_pipewire_loopback import CLIENT, DAEMON, Harness, graph_fingerprint, so
 
 SCENARIOS = ('pixels', 'no_consumer', 'expiry', 'child_exit', 'server_disconnect', 'malformed', 'partial')
 PREFIX = 'capyio.camera.'
+# Three 1.38 MiB NV12 buffers plus bounded metadata share a daemon memfd.
+# RLIMIT_FSIZE also applies to memfd ftruncate, unlike the separate 2 MiB log checks.
+CAMERA_DAEMON_FILE_LIMIT = 16 * 1024 * 1024
+
+
+def camera_daemon_limits():
+    resource.setrlimit(resource.RLIMIT_FSIZE, (CAMERA_DAEMON_FILE_LIMIT, CAMERA_DAEMON_FILE_LIMIT))
 
 
 def named(objects, name):
@@ -47,6 +55,18 @@ def no_camera(objects):
 
 
 class CameraHarness(Harness):
+    def spawn(self, args, name):
+        if name != 'daemon':
+            return super().spawn(args, name)
+        out = open(self.root / 'daemon.out', 'wb')
+        err = open(self.root / 'daemon.err', 'wb')
+        self.files.extend([out, err])
+        child = subprocess.Popen(args, env=self.env, stdin=subprocess.DEVNULL,
+                                 stdout=out, stderr=err, start_new_session=True,
+                                 preexec_fn=camera_daemon_limits)
+        self.children.append(child)
+        return child
+
     def prepare_daemon(self):
         self.env['PIPEWIRE_DEBUG'] = '2'  # Private test processes only; no production env override.
         # Do not inherit the audio harness's DSP port configuration for raw video.
