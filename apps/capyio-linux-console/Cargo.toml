@@ -1,0 +1,28 @@
+[package]
+name = "capyio-linux-console"
+description = "Explicit interactive terminal client of the finite Linux pairing command."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish = false
+
+[features]
+default = []
+paired-store = []
+
+[dependencies]
+clap.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+capyio-core = { path = "../../crates/capyio-core" }
+
+[target.'cfg(target_os = "linux")'.dependencies]
+libc = "=0.2.189"
+
+[target.'cfg(target_os = "linux")'.dev-dependencies]
+capyio-control-credentials = { path = "../../crates/capyio-control-credentials" }
+capyio-linux-pairing-store = { path = "../../platform/linux/capyio-pairing-store", features = ["native-secret-service"] }
+capyio-pairing = { path = "../../crates/capyio-pairing" }
+zbus = { version = "=5.19.0", default-features = false, features = ["tokio"] }
+tokio = { version = "=1.53.1", default-features = false, features = ["rt", "net", "time", "sync", "macros"] }

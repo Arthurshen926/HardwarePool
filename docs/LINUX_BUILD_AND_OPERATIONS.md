@@ -29,6 +29,7 @@ in a fresh private target directory, with the native host target explicitly set:
 | Binary | Package features |
 | --- | --- |
 | capyio-node | native-camera, native-touchpad |
+| capyio-linux-console | none (paired-store only in paired profile) |
 | capyio-linux-avc-helper | native-pipewire (includes native-avc) |
 | capyio-linux-camera-helper | native-pipewire |
 | capyio-linux-touchpad-helper | native-uinput |
@@ -42,7 +43,7 @@ features and all helper features, explicitly select:
 python3 scripts/linux_staging.py build --paired-store --output /absolute/new/private/paired-staging
 ```
 
-This adds only `paired-store` to the node feature list. There is no arbitrary
+This adds `paired-store` to both the node and console feature lists. There is no arbitrary
 feature override. The existing schema-1 manifest's exact `features` map records
 which of these two choices was built; preflight accepts only those complete maps
 and returns the selected map. Missing native flags, duplicate/extra flags and
@@ -53,7 +54,7 @@ freshly built choice; passive preflight never executes binaries to infer feature
 Neither build accesses a keyring, creates identities, enrolls peers, changes
 system permissions or installs a service.
 
-The output contains exactly those four regular sibling binaries and manifest.json.
+The output contains exactly those five regular sibling binaries and manifest.json.
 Audio uses the external fixed `/usr/bin/pw-cat`, not another bundled helper.
 Mock helpers, touchpad fixture helpers, example executables, test configuration,
 credential bundles and third-party shared libraries are not copied. There is no
@@ -135,7 +136,7 @@ The normal staging build never runs these tests and never includes their inputs.
 `python3 -m unittest discover -s scripts -p test_linux_staging.py -v` checks
 synthetic staging inventories without executing any staged program. The CI
 staging matrix additionally builds the default and explicit `paired-store`
-choices, stages their four production executables and passively verifies each at
+choices, stages their five production executables and passively verifies each at
 its exact clean checkout SHA. A separate CLI-help-only step verifies the opt-in
 node exposes pairing and persisted-store selectors while the default node does
 not, and neither exposes the touchpad fixture entry. Help exits before backend
@@ -204,3 +205,33 @@ After a Stop or terminal failure, require the documented owned cleanup before
 planning another separately approved session. Do not chmod /dev/uinput, load a
 module, start a service, change defaults, pair a real user or run a real device
 as a fallback for a failed passive check.
+
+
+## Explicit interactive pairing console (ADR 1547)
+
+Build the paired staging profile above; keep the five binaries as trusted siblings.
+The console requires a private foreground controlling terminal, an existing local
+Node ID/state path and an explicitly selected unlocked Secret Service collection.
+It does not configure these prerequisites or discover a default session bus.
+For example, substitute your explicit nonsecret selectors and bind address:
+
+```sh
+./capyio-linux-console --pairing-node NODE_UUID --pairing-state /absolute/private/state --pairing-bus-address unix:path=/explicit/bus --pairing-collection /org/freedesktop/secrets/collection/EXISTING welcome --name 'My Linux node' --bind 192.0.2.10:0
+./capyio-linux-console --pairing-node NODE_UUID --pairing-state /absolute/private/state --pairing-bus-address unix:path=/explicit/bus --pairing-collection /org/freedesktop/secrets/collection/EXISTING join --name 'My Linux node' --endpoint 192.0.2.10:PORT
+```
+
+These are usage templates, not deployment commands executed by validation. The
+join PIN is requested only with terminal echo disabled. Welcome displays its
+short-lived PIN only on the explicitly opened terminal; keep that terminal and
+its scrollback private. Never put the PIN in arguments, environment variables or
+shell scripts. Each side must independently type the displayed exact fresh
+confirmation. Use `cancel` at a waiting/confirmation prompt or Ctrl-C/Ctrl-D to
+stop. EOF/interruption does not undo a trust record already durably accepted.
+
+With the same four selectors, `list` reads metadata, `revoke --peer PEER_UUID`
+requires exact fresh confirmation and retains protected credentials, and `recover`
+requires exact peer/request/digest confirmation for local pending-journal repair.
+Recovery does not prove remote handshake completion. No command grants media/input
+resources. Default non-paired packages offer console help but reject actual
+operations; a paired console also checks its actual sibling Node before PIN input.
+The console is interactive-only, not an automation endpoint or persistent service.

@@ -36,7 +36,7 @@ jobs:
           sudo apt-get install --no-install-recommends -y build-essential pkg-config binutils python3 libavcodec-dev libavutil-dev libpipewire-0.3-dev libspa-0.2-dev libevdev-dev pipewire-bin
       - name: Inventory and passive preflight negative tests
         run: python3 -m unittest discover -s scripts -p test_linux_staging.py -v
-      - name: Build all production helpers and stage without executing devices
+      - name: Build all five production binaries and stage without executing devices
         run: |
           args=()
           if [[ "$STAGING_PROFILE" == paired-store ]]; then args+=(--paired-store); fi
@@ -49,16 +49,26 @@ jobs:
           manifest = json.load(open(sys.argv[1]))
           assert manifest['source'] == {'kind': 'git', 'sha': sys.argv[2], 'worktree': 'clean'}, manifest['source']
           assert manifest['libraries_bundled'] is False
-          assert len(manifest['files']) == 4
-          expected = ['native-camera', 'native-touchpad']
+          assert set(manifest['files']) == {
+              'capyio-node', 'capyio-linux-console', 'capyio-linux-avc-helper',
+              'capyio-linux-camera-helper', 'capyio-linux-touchpad-helper',
+          }, manifest['files']
+          expected = {
+              'capyio-node': ['native-camera', 'native-touchpad'],
+              'capyio-linux-console': [],
+              'capyio-linux-avc': ['native-pipewire'],
+              'capyio-linux-camera': ['native-pipewire'],
+              'capyio-linux-touchpad': ['native-uinput'],
+          }
           if os.environ['STAGING_PROFILE'] == 'paired-store':
-              expected.append('paired-store')
-          assert manifest['features']['capyio-node'] == expected, manifest['features']
-          print('Exact clean checkout SHA and four production binaries verified; environment remains unverified.')
+              expected['capyio-node'].append('paired-store')
+              expected['capyio-linux-console'].append('paired-store')
+          assert manifest['features'] == expected, manifest['features']
+          print('Exact clean checkout SHA and five production binaries verified; environment remains unverified.')
           PY
       - name: Check staged CLI help matches feature choice without opening a backend
         run: |
-          python3 - "$RUNNER_TEMP/capyio-linux-stage/capyio-node" <<'PY'
+          python3 - "$RUNNER_TEMP/capyio-linux-stage/capyio-node" "$RUNNER_TEMP/capyio-linux-stage/capyio-linux-console" <<'PY'
           import os, subprocess, sys
           node = sys.argv[1]
           paired = os.environ['STAGING_PROFILE'] == 'paired-store'
@@ -89,5 +99,16 @@ jobs:
           assert fixture_help.stdout == '', fixture_help.stdout
           assert fixture_help.stderr == ('Error: invalid Linux lab playback command; '
               '--trusted-lab is required; credentials must not be supplied in arguments\n'), fixture_help.stderr
+          # Console help is identical in both profiles and must succeed without
+          # a TTY, bus, credentials, child process or an interactive operation.
+          console_help = subprocess.run([sys.argv[2], '--help'], stdin=subprocess.DEVNULL,
+                                        capture_output=True, text=True, timeout=10)
+          assert console_help.returncode == 0, console_help.stderr
+          assert 'capyio-linux-console' in console_help.stdout, console_help.stdout
+          for command in ('welcome', 'join', 'list', 'recover', 'revoke', 'cancel'):
+              assert command in console_help.stdout, (command, console_help.stdout)
+          for flag in ('--pairing-node', '--pairing-state', '--pairing-bus-address',
+                       '--pairing-collection'):
+              assert flag in console_help.stdout, (flag, console_help.stdout)
           print('Staged CLI help matches selected production features; no operation was started.')
           PY

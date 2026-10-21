@@ -1381,3 +1381,11 @@ ADR 1546 adds hosted two-actual-Node welcome/join acceptance using only private
 fake Secret Services and synthetic identities, including the fixed invitation
 expiry and dedicated FIFO isolation. Pure policy tests preserve the existing
 welcome announcement default while manual welcome disables it.
+
+
+ADR 1547 defines the opt-in Linux terminal pairing controller: a private-TTY
+client of the existing finite Node management protocol, with exact fresh consent,
+owned invitation FIFO cleanup and mandatory isolated two-controller PTY acceptance.
+The five-binary staging inventory includes the console; only the paired profile
+enables both console and Node pairing operations. No resource grants or renewal
+are introduced.

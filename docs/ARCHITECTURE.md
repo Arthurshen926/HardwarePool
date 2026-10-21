@@ -1701,3 +1701,11 @@ ADR 1546 adds explicit finite manual welcome using the existing enrollment
 protocol and a separate owner-only invitation FIFO. Welcome and join share the
 same fresh peer-confirmation and persistence loop; existing platform welcome
 announcement behavior remains unchanged. No resource service is started.
+
+
+ADR 1547 defines the opt-in Linux terminal pairing controller: a private-TTY
+client of the existing finite Node management protocol, with exact fresh consent,
+owned invitation FIFO cleanup and mandatory isolated two-controller PTY acceptance.
+The five-binary staging inventory includes the console; only the paired profile
+enables both console and Node pairing operations. No resource grants or renewal
+are introduced.

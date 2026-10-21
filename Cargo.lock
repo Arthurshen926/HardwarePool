@@ -671,6 +671,22 @@ dependencies = [
 ]
 
 [[package]]
+name = "capyio-linux-console"
+version = "0.1.0"
+dependencies = [
+ "capyio-control-credentials",
+ "capyio-core",
+ "capyio-linux-pairing-store",
+ "capyio-pairing",
+ "clap",
+ "libc",
+ "serde",
+ "serde_json",
+ "tokio",
+ "zbus",
+]
+
+[[package]]
 name = "capyio-linux-host"
 version = "0.1.0"
 dependencies = [

@@ -8,6 +8,7 @@ on:
       - platform/linux/capyio-pairing-store/**
       - Cargo.lock
       - apps/capyio-node/**
+      - apps/capyio-linux-console/**
       - platform/linux/capyio-host/**
       - platform/linux/capyio-audio/src/lib.rs
       - platform/windows/capyio-credential-protection/src/lib.rs
@@ -53,6 +54,8 @@ jobs:
         run: cargo check --locked -p capyio-linux-pairing-store --features native-secret-service --all-targets
       - name: Compile paired launcher boundary on both platforms
         run: cargo check --locked -p capyio-node --features paired-store --all-targets
+      - name: Compile optional console boundary on both platforms
+        run: cargo check --locked -p capyio-linux-console --features paired-store --all-targets
       - name: Compile affected test targets without running devices
         run: cargo test --locked -p capyio-windows-credential-protection -p capyio-windows-service -p capyio-windows-pairing-store -p capyio-vcamdroid-adapter --all-targets --no-run
       - name: Run exact hardware-free boundary regressions

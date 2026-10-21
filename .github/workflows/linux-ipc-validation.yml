@@ -60,6 +60,18 @@ jobs:
           done
           timeout --signal=TERM --kill-after=10s 360s cargo test --locked -p capyio-node --features paired-store --test linux_pairing_management -- --test-threads=1 --nocapture 2>&1 | tee "$RUNNER_TEMP/pairing-management-results.txt"
           grep -F 'test result: ok. 14 passed; 0 failed; 0 ignored;' "$RUNNER_TEMP/pairing-management-results.txt"
+      - name: Require isolated interactive console pairing and terminal lifecycle
+        run: |
+          set -euo pipefail
+          cargo build --locked -p capyio-node -p capyio-linux-console --features capyio-node/paired-store,capyio-linux-console/paired-store
+          cargo clippy --locked -p capyio-linux-console --features paired-store --all-targets -- -D warnings
+          cargo test --locked -p capyio-linux-console --features paired-store --bin capyio-linux-console
+          cargo test --locked -p capyio-linux-console --features paired-store --test linux_console_pty -- --list | tee "$RUNNER_TEMP/console-tests.txt"
+          for test in ipc_console_bilateral_pairing_uses_actual_nodes_and_distinct_protected_identities ipc_console_waiting_cancel_interrupt_and_eof_close_and_reap_without_persistence ipc_console_one_sided_approval_cannot_persist_and_cancellation_reaps_both_nodes ipc_console_rejects_yes_stale_request_wrong_peer_and_prebuffered_approval ipc_console_missing_controlling_tty_refuses_before_protected_backend_access ipc_console_locked_backend_fails_before_invitation_or_networking ipc_console_list_and_exact_revoke_are_metadata_only_and_keep_protected_identity ipc_console_recovery_binds_exact_digest_and_never_claims_remote_completion ipc_console_malformed_partial_and_out_of_sequence_child_events_fail_closed_and_reap ipc_console_exact_preplayed_confirmation_is_flushed_before_fresh_challenge; do
+            grep -Fx "$test: test" "$RUNNER_TEMP/console-tests.txt"
+          done
+          timeout --signal=TERM --kill-after=10s 360s cargo test --locked -p capyio-linux-console --features paired-store --test linux_console_pty -- --test-threads=1 --nocapture 2>&1 | tee "$RUNNER_TEMP/console-results.txt"
+          grep -F 'test result: ok. 10 passed; 0 failed; 0 ignored;' "$RUNNER_TEMP/console-results.txt"
       - name: Require finite manual welcome through two actual nodes and private invitation FIFO
         run: |
           set -euo pipefail

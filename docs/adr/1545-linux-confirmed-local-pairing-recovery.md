@@ -88,7 +88,9 @@ is local-only, including when the peer never saved or is offline.
 The default staging build still omits `paired-store`. Use
 `python3 scripts/linux_staging.py build --paired-store --output /absolute/new/stage`
 to explicitly add it to the Node binary while retaining native camera/touchpad
-features. The four-binary inventory and existing native requirements remain.
+features. At this ADR the four-binary inventory and existing native requirements
+remain; ADR 1547 later supersedes packaging with a fifth console binary and
+coupled Node/console paired-store selection.
 Manifest schema 1 admits exactly the default and paired feature maps, not
 arbitrary helper or test-fixture features. Passive preflight reports the selected
 map without executing the staged binaries. The unsigned manifest is inventory,

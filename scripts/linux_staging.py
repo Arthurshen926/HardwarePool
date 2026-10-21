@@ -21,11 +21,13 @@ import tempfile
 
 FILES = {
     "capyio-node": ("capyio-node", "native-camera,native-touchpad"),
+    "capyio-linux-console": ("capyio-linux-console", ""),
     "capyio-linux-avc-helper": ("capyio-linux-avc", "native-pipewire"),
     "capyio-linux-camera-helper": ("capyio-linux-camera", "native-pipewire"),
     "capyio-linux-touchpad-helper": ("capyio-linux-touchpad", "native-uinput"),
 }
-FEATURES = {package: features.split(",") for package, features in FILES.values()}
+FEATURES = {package: features.split(",") if features else []
+            for package, features in FILES.values()}
 
 def package_features(paired_store=False):
     """Only two audited package feature selections; never arbitrary Cargo input."""
@@ -34,6 +36,7 @@ def package_features(paired_store=False):
     features = {package: list(flags) for package, flags in FEATURES.items()}
     if paired_store:
         features["capyio-node"].append("paired-store")
+        features["capyio-linux-console"].append("paired-store")
     return features
 
 
@@ -190,9 +193,11 @@ def build(root, output, paired_store=False):
         env = os.environ.copy()
         env["CARGO_TARGET_DIR"] = target
         for binary, (package, _) in FILES.items():
-            subprocess.run(["cargo", "build", "--locked", "--release", "--target", host,
-                            "-p", package, "--bin", binary, "--no-default-features",
-                            "--features", ",".join(features[package])], cwd=root, env=env, check=True)
+            command = ["cargo", "build", "--locked", "--release", "--target", host,
+                       "-p", package, "--bin", binary, "--no-default-features"]
+            if features[package]:
+                command.extend(["--features", ",".join(features[package])])
+            subprocess.run(command, cwd=root, env=env, check=True)
         after = source_state(root)
         if before != after:
             raise ValueError("source Git state changed during build; retry from stable source")
@@ -437,7 +442,7 @@ def main():
     builder = sub.add_parser("build", help="compile and stage only; never install or run devices")
     builder.add_argument("--output", type=Path, required=True)
     builder.add_argument("--paired-store", action="store_true",
-                         help="include paired-store in node only; does not access or configure credentials")
+                         help="include paired-store in node and console; does not access or configure credentials")
     checker = sub.add_parser("preflight", help="passive inventory inspection; never execute staged binaries")
     checker.add_argument("directory", type=Path)
     args = parser.parse_args()

@@ -1597,3 +1597,11 @@ owner-only FIFO distinct from standard streams. Concrete bind selection and
 manual-only discovery policy prevent implicit exposure. Bilateral approval,
 one-attempt lifetime and existing finite resource authority remain separate;
 revoking invitation validity cannot erase already-delivered caller bytes.
+
+
+ADR 1547 defines the opt-in Linux terminal pairing controller: a private-TTY
+client of the existing finite Node management protocol, with exact fresh consent,
+owned invitation FIFO cleanup and mandatory isolated two-controller PTY acceptance.
+The five-binary staging inventory includes the console; only the paired profile
+enables both console and Node pairing operations. No resource grants or renewal
+are introduced.

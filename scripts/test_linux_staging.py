@@ -59,9 +59,38 @@ class InventoryTests(unittest.TestCase):
         self.assertEqual(result['inventory'], 'passed')
         self.assertEqual(result['environment']['status'], 'unverified')
 
+    def test_exact_five_binary_and_feature_profiles(self):
+        self.assertEqual(set(staging.FILES), {
+            'capyio-node', 'capyio-linux-console', 'capyio-linux-avc-helper',
+            'capyio-linux-camera-helper', 'capyio-linux-touchpad-helper',
+        })
+        default = {
+            'capyio-node': ['native-camera', 'native-touchpad'],
+            'capyio-linux-console': [],
+            'capyio-linux-avc': ['native-pipewire'],
+            'capyio-linux-camera': ['native-pipewire'],
+            'capyio-linux-touchpad': ['native-uinput'],
+        }
+        self.assertEqual(staging.FEATURES, default)
+        self.assertEqual(staging.package_features(), default)
+        paired = copy.deepcopy(default)
+        paired['capyio-node'].append('paired-store')
+        paired['capyio-linux-console'].append('paired-store')
+        self.assertEqual(staging.package_features(True), paired)
+
     def test_missing_helper(self):
         (self.directory / 'capyio-linux-avc-helper').unlink()
         self.failed('missing or extra')
+
+    def test_missing_console(self):
+        (self.directory / 'capyio-linux-console').unlink()
+        self.failed('missing or extra')
+
+    def test_four_binary_manifest_is_rejected(self):
+        del self.manifest['files']['capyio-linux-console']
+        del self.manifest['features']['capyio-linux-console']
+        self.write()
+        self.failed('required binary set')
 
     def test_extra_fixture(self):
         (self.directory / 'capyio-linux-touchpad-fixture-helper').write_text('fixture')
@@ -134,6 +163,23 @@ class InventoryTests(unittest.TestCase):
         self.assertEqual(result['features'], self.manifest['features'])
         self.assertEqual(result['environment']['status'], 'unverified')
 
+    def test_paired_store_requires_both_node_and_console(self):
+        for package in ('capyio-node', 'capyio-linux-console'):
+            with self.subTest(package=package):
+                self.manifest['features'] = staging.package_features(True)
+                self.manifest['features'][package].remove('paired-store')
+                self.write()
+                self.failed('features')
+
+    def test_console_empty_and_unexpected_feature_values_rejected(self):
+        for choice in ([''], ['native-camera'], ['paired-store', 'paired-store'],
+                       ['paired-store', 'test-fixture'], '', None):
+            with self.subTest(choice=choice):
+                self.manifest['features'] = staging.package_features(True)
+                self.manifest['features']['capyio-linux-console'] = choice
+                self.write()
+                self.failed('features')
+
     def test_unsupported_paired_store_combinations_rejected(self):
         choices = [
             ['paired-store'],
@@ -144,7 +190,7 @@ class InventoryTests(unittest.TestCase):
         ]
         for choice in choices:
             with self.subTest(choice=choice):
-                self.manifest['features'] = staging.package_features()
+                self.manifest['features'] = staging.package_features(True)
                 self.manifest['features']['capyio-node'] = choice
                 self.write()
                 self.failed('features')
@@ -155,9 +201,10 @@ class InventoryTests(unittest.TestCase):
 
     def test_feature_choices_do_not_mutate_default(self):
         selected = staging.package_features(True)
-        self.assertNotIn('paired-store', staging.FEATURES['capyio-node'])
-        selected['capyio-node'].append('test-fixture')
-        self.assertNotIn('test-fixture', staging.package_features(True)['capyio-node'])
+        for package in ('capyio-node', 'capyio-linux-console'):
+            self.assertNotIn('paired-store', staging.FEATURES[package])
+            selected[package].append('test-fixture')
+            self.assertNotIn('test-fixture', staging.package_features(True)[package])
         for invalid in (1, 'paired-store', None, []):
             with self.assertRaisesRegex(ValueError, 'boolean'):
                 staging.package_features(invalid)
@@ -305,14 +352,21 @@ class InventoryTests(unittest.TestCase):
              patch.object(staging.shutil, 'copyfile', side_effect=RuntimeError('stop after builds')):
             with self.assertRaisesRegex(RuntimeError, 'stop after builds'):
                 staging.build(self.directory, self.directory / 'out', paired_store)
-        self.assertEqual(len(command.call_args_list), 4)
-        for call, (binary, (package, features)) in zip(command.call_args_list, staging.FILES.items()):
+        self.assertEqual(len(command.call_args_list), 5)
+        for call, (binary, (package, _)) in zip(command.call_args_list, staging.FILES.items()):
             args = call.args[0]
-            self.assertIn('--locked', args)
-            self.assertIn('--no-default-features', args)
-            self.assertEqual(args[args.index('--features') + 1],
-                             ','.join(staging.package_features(paired_store)[package]))
-            self.assertEqual(args[args.index('--bin') + 1], binary)
+            expected = ['cargo', 'build', '--locked', '--release', '--target',
+                        self.manifest['target'], '-p', package, '--bin', binary,
+                        '--no-default-features']
+            features = staging.package_features(paired_store)[package]
+            if features:
+                expected.extend(['--features', ','.join(features)])
+            else:
+                self.assertEqual(binary, 'capyio-linux-console')
+                self.assertFalse(paired_store)
+                self.assertNotIn('--features', args)
+            self.assertEqual(args, expected)
+            self.assertNotIn('', args)
             self.assertNotIn('test-fixture', str(args))
 
 
