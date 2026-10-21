@@ -1165,8 +1165,12 @@ mod tests {
             .err()
             .unwrap();
         assert_eq!(
-            fixture_help.kind() == clap::error::ErrorKind::DisplayHelp,
-            cfg!(feature = "touchpad-test-fixture")
+            fixture_help.kind(),
+            if cfg!(feature = "touchpad-test-fixture") {
+                clap::error::ErrorKind::DisplayHelp
+            } else {
+                clap::error::ErrorKind::InvalidSubcommand
+            }
         );
     }
     #[test]

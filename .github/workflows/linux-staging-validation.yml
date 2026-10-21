@@ -113,6 +113,12 @@ jobs:
           assert 'touchpad-fixture' not in console_help.stdout
           console_fixture = subprocess.run([sys.argv[2], 'touchpad-fixture', '--help'],
                                            stdin=subprocess.DEVNULL, capture_output=True, text=True, timeout=10)
-          assert console_fixture.returncode == 2, (console_fixture.stdout, console_fixture.stderr)
+          # Console syntax failures are deliberately redacted by main(), with
+          # exit 1 rather than Clap's default exit 2. Require that exact contract.
+          assert console_fixture.returncode == 1, console_fixture
+          assert console_fixture.stdout == '', console_fixture.stdout
+          assert console_fixture.stderr == ('Linux console operation failed; no automatic retry. '
+              'Check explicit selectors, paired-store build and interactive terminal. '
+              'Pairing persistence may require inspection.\n'), console_fixture.stderr
           print('Staged CLI help matches selected production features; no operation was started.')
           PY
