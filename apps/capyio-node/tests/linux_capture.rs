@@ -278,7 +278,8 @@ impl AndroidPeer {
         assert!(self.runtime.snapshot().port_leases.is_empty());
         self.link.send_route_status(&route).unwrap();
         let requests: Value =
-            serde_json::from_slice(&self.runtime.resink_requests_json(now_ms()).unwrap()).unwrap();
+            serde_json::from_slice(&self.runtime.resource_requests_json(now_ms()).unwrap())
+                .unwrap();
         assert_eq!(
             requests.as_array().unwrap().len(),
             1,
