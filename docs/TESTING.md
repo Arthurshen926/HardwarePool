@@ -1300,3 +1300,18 @@ remain deferred and require separate explicit OS testing authority.
 ## Finite camera executable acceptance
 
 ADR 1536 adds actual capyio-node subprocess coverage over inherited framed bootstrap/approval and Android camera policy, alongside a private PipeWire consumer gate for synthetic secure CAVC. Required named negatives guard malformed config, approval, Source, certificate pins, leases and finite lifecycle. Independent pixels and helper parentage/teardown, rather than queued output, establish graph acceptance. Native compilation, portable subprocess tests and real private-graph execution must be reported separately.
+
+## Finite Linux touchpad executable acceptance
+
+ADR 1537 adds `capyio-node --test linux_touchpad` for actual inherited-IPC Node
+bootstrap, Android consent, exact Source/Route controls and negative admission.
+The explicit `touchpad-test-fixture` feature also runs pinned touchpad data from
+the Android contact producer through the production projector and fixed sibling
+fake-syscall helper. Build that helper separately with the crate's `test-fixture`
+feature; absence must fail, not skip. Exact named tests and explicit negative
+outcomes are required. Existing ten library owner tests remain required.
+
+The native feature is compile/Clippy only in the official libevdev hosted job;
+no real `/dev/uinput`, kernel device, desktop gesture or physical input test is
+part of this slice. Five-contact traces and backend ACK ordering are not proof
+of visible OS gestures. Report local and hosted outcomes separately.

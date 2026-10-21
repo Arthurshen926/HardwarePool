@@ -46,3 +46,43 @@ See [ADR 1535](../../../docs/adr/1535-linux-owned-type-b-touchpad.md) for the fi
 descriptor, pressure/confidence policy, bounded IPC and acceptance limits.
 Physical Android contact capture and Linux desktop recognition/gestures remain
 unverified; compilation and fake event traces are not physical acceptance.
+
+## Executable software fixture boundary
+
+The separate `test-fixture` feature builds only the fixed
+`capyio-linux-touchpad-fixture-helper` sibling and exposes
+`RuntimeTouchpadWorker::start_fixture`. It is an explicit software-only test
+entrypoint, never a fallback for native access failure. `start` continues to
+select only `capyio-linux-touchpad-helper`, including when both features are
+built. Both siblings must be regular, same-owner files that are not writable
+by group or others; symlinks are rejected. Neither constructor accepts a helper
+path, device path, arbitrary command, or inherited environment override.
+
+The fixture compiles the same C parsing, limits, ACK and cleanup loop with the
+existing fake backend and a distinct archive/entrypoint. It requires no libevdev
+headers and cannot open or issue ioctls on `/dev/uinput`. The caller supplies a
+preopened trace descriptor and one closed enum mode: Normal, FailCreate,
+PartialWrite, DelayedCommit, or Backpressure. The latter three act on batch 3,
+after initial CancelAll and the first contact snapshot have committed. Partial
+write fails after one event; delayed commit waits 100 ms; backpressure waits
+1 s but aborts before writing the batch when its parent closes the private IPC.
+The ordinary 250 ms Rust IPC budget therefore terminates backpressure early.
+
+Trace records are `FRAME_BEGIN n`, `COMMIT_WAIT n` when applicable, each native
+`EVENT type code value`, then `FRAME_COMMITTED n` before ACK. `CLEANUP_BEGIN`
+marks terminal release events and `DESTROY` ends ownership. An interrupted
+delayed frame records `FRAME_ABORTED n`. Trace output is unbuffered and
+nonblocking; a full trace pipe fails closed instead of blocking the worker.
+Callers must drain trace pipes concurrently and must not treat incomplete
+traces as successful evidence. The fixture never records credentials.
+
+```text
+cargo test --locked -p capyio-linux-touchpad --features test-fixture
+cargo clippy --locked -p capyio-linux-touchpad --all-targets --features test-fixture -- -D warnings
+python3 platform/linux/capyio-touchpad/native/test_helper.py
+```
+
+The packaged fixture test executes only the distinct fixture binary; boundary
+unit tests reject missing, linked and group/world-writable siblings without
+executing any helper. None of these checks establishes desktop recognition,
+physical input, gestures, permissions or kernel-device acceptance.

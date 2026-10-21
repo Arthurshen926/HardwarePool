@@ -1548,3 +1548,9 @@ mod incoming_tests {
 #[path = "camera_launch.rs"]
 mod camera;
 pub use camera::run_camera_stdio;
+
+#[path = "touchpad_launch.rs"]
+mod touchpad;
+#[cfg(feature = "touchpad-test-fixture")]
+pub use touchpad::run_touchpad_fixture_stdio;
+pub use touchpad::run_touchpad_stdio;

@@ -8,6 +8,8 @@ license.workspace = true
 
 [features]
 default = []
+native-touchpad = ["capyio-linux-touchpad/native-uinput"]
+touchpad-test-fixture = ["capyio-linux-touchpad/test-fixture"]
 native-camera = ["capyio-linux-avc/native-pipewire"]
 
 [dependencies]
@@ -35,3 +37,5 @@ capyio-control-credentials = { path = "../../../crates/capyio-control-credential
 capyio-pairing = { path = "../../../crates/capyio-pairing" }
 
 capyio-linux-avc = { path = "../capyio-avc" }
+
+capyio-linux-touchpad = { path = "../capyio-touchpad" }

@@ -47,6 +47,19 @@ enum Command {
         #[arg(long, required = true)]
         trusted_lab: bool,
     },
+    /// Finite pinned Android touchpad reception via private inherited bootstrap.
+    LinuxTouchpad {
+        #[arg(long, required = true)]
+        trusted_lab: bool,
+    },
+    /// Software-only Type-B syscall fixture; never opens an input device.
+    #[cfg(feature = "touchpad-test-fixture")]
+    LinuxTouchpadFixture {
+        #[arg(long, required = true)]
+        trusted_lab: bool,
+        #[arg(long, value_parser = ["normal", "fail-create", "partial-write", "delayed-commit", "backpressure"])]
+        fixture_mode: String,
+    },
     /// Finite pinned Android camera reception via private inherited bootstrap.
     LinuxCamera {
         #[arg(long, required = true)]
@@ -83,7 +96,11 @@ fn main() -> anyhow::Result<()> {
     // This opt-in command accepts secret material only through framed stdin.
     // Never echo even accidentally supplied argv values on its syntax errors.
     let lab_command = std::env::args_os().nth(1).is_some_and(|arg| {
-        arg == "linux-playback" || arg == "linux-capture" || arg == "linux-camera"
+        arg == "linux-playback"
+            || arg == "linux-capture"
+            || arg == "linux-camera"
+            || arg == "linux-touchpad"
+            || arg == "linux-touchpad-fixture"
     });
     let cli = match Cli::try_parse() {
         Ok(cli) => cli,
@@ -149,6 +166,35 @@ fn main() -> anyhow::Result<()> {
             #[cfg(not(target_os = "linux"))]
             {
                 anyhow::bail!("Linux lab capture requires Linux")
+            }
+        }
+        Command::LinuxTouchpad { trusted_lab } => {
+            anyhow::ensure!(trusted_lab, "explicit trusted-lab opt-in required");
+            #[cfg(target_os = "linux")]
+            {
+                capyio_linux_host::run_touchpad_stdio()
+                    .map_err(|_| anyhow::anyhow!("Linux touchpad launch failed"))
+            }
+            #[cfg(not(target_os = "linux"))]
+            {
+                anyhow::bail!("Linux touchpad requires Linux")
+            }
+        }
+        #[cfg(feature = "touchpad-test-fixture")]
+        Command::LinuxTouchpadFixture {
+            trusted_lab,
+            fixture_mode,
+        } => {
+            anyhow::ensure!(trusted_lab, "explicit trusted-lab opt-in required");
+            #[cfg(target_os = "linux")]
+            {
+                capyio_linux_host::run_touchpad_fixture_stdio(&fixture_mode)
+                    .map_err(|_| anyhow::anyhow!("Linux touchpad launch failed"))
+            }
+            #[cfg(not(target_os = "linux"))]
+            {
+                let _ = fixture_mode;
+                anyhow::bail!("Linux touchpad requires Linux")
             }
         }
         Command::LinuxCamera { trusted_lab } => {

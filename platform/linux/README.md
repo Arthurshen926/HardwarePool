@@ -235,8 +235,8 @@ compatibility remain deferred.
 
 1. Consolidate deferred physical/AudioTrack acceptance separately; the explicit
    Linux → Android stereo software slice above has passed its hosted gates.
-2. Complete the explicit finite camera executable acceptance (ADR 1536), then
-   connect the accepted touchpad backend to its own headless executable entry.
+2. Connect the accepted touchpad backend to its own headless executable entry;
+   finite camera executable software acceptance is now recorded under ADR 1536.
    Physical camera use and actual uinput/desktop gesture acceptance stay deferred;
    decoded NV12 results alone do not prove these later integration slices.
 3. Gamepad, haptics, display and IMU remain experimental tracks, not mandatory
@@ -283,3 +283,40 @@ libraries are required to compile, but this does not install or authorize camera
 capture. The default binary remains hardware-free. Canonical 720p30 rotation-zero
 Annex B is capped at 60 seconds, 32 MiB and 120 frames without auto-renewal.
 Queued frames leave the Route Starting, never falsely Active.
+
+
+### Accepted camera executable evidence
+
+The finite `linux-camera --trusted-lab` entry passed all seven hosted jobs at
+`bbf6531731f27e7243f10fa4a2e80ae780f14b74`. All eight actual-node private graph
+scenarios passed in [run 39576272282](https://github.com/Arthurshen926/HardwarePool/actions/runs/39576272282),
+including independent NV12 pixels, exact helper ownership, Stop/EOF/revocation,
+finite expiry, malformed CAVC and handshake timeout (the last correctly reports
+no real graph). Legacy Linux IPC and new camera subprocess cases also passed.
+See the [camera executable report](../../docs/LINUX_CAMERA_LAUNCHER_20261021_REPORT.md).
+
+This proves the actual executable composition, not only the earlier library
+owner. Production queued-frame status still remains Starting: application
+consumption is not inferred from queue admission. Physical Camera2, Android
+permission/UI, ordinary-user application compatibility and device testing remain
+separate deferred acceptance. The next executable integration is the touchpad
+backend; this camera result does not grant input-device access.
+
+## Finite touchpad executable
+
+ADR 1537 adds `capyio-node linux-touchpad --trusted-lab` with the same private
+length-prefixed bootstrap/nonce approval envelope as camera, but the existing
+Android Source-listener touchpad data convention. Build production with
+`cargo build -p capyio-node --features native-touchpad` and separately
+`cargo build -p capyio-linux-touchpad --features native-uinput`; the owned native
+helper must be beside the node. These commands compile only. Running the native
+entry would create an input device after exact consent and must not be used for
+software-only validation. It requires existing `/dev/uinput` permissions and
+never installs modules, escalates or changes them.
+
+Software acceptance instead builds the separate fixed fixture helper with
+`cargo build -p capyio-linux-touchpad --features test-fixture` and runs
+`cargo test -p capyio-node --test linux_touchpad --features touchpad-test-fixture`.
+That explicit fixture command uses fake syscalls only. It does not establish
+kernel/device/OS gesture behavior. Native and fixture features do not redirect
+one another's command or helper path.

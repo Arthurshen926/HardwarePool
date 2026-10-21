@@ -2,6 +2,7 @@
 """Software-only production-loop tests; fake backend cannot open /dev/uinput."""
 import os
 import pathlib
+import select
 import struct
 import subprocess
 import tempfile
@@ -90,5 +91,62 @@ with tempfile.TemporaryDirectory() as directory:
     assert child.stdout.read(1) == b'\x01'
     child.terminate(); child.wait(timeout=2)
     assert child.stderr.read().endswith(b'EVENT 0 0 0\nDESTROY\n')
+    child.stdin.close(); child.stdout.close(); child.stderr.close()
+    # Packaged fixture modes use the same production parser, bounds, ACK and
+    # cleanup loop. The two successful batches model initial CancelAll + Down.
+    for mode in ('fail-create', 'not-a-mode'):
+        failed(start(), {'CAPYIO_FAKE_MODE': mode}, created=False)
+    for mode in ('partial-write', 'delayed-commit', 'backpressure'):
+        with tempfile.TemporaryFile() as trace:
+            child = subprocess.Popen([str(binary)], stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+                                     stderr=trace, env={**os.environ, 'CAPYIO_FAKE_MODE': mode})
+            payload = start() + frame([SYN]) * 2
+            child.stdin.write(payload); child.stdin.flush()
+            assert child.stdout.read(3) == b'\x01' * 3
+            child.stdin.write(frame([(1, 330, 1), SYN])); child.stdin.flush()
+            if mode == 'partial-write':
+                assert child.stdout.read(1) == b''  # partial batch is never ACKed
+                child.wait(timeout=2)
+                assert child.returncode != 0
+            else:
+                assert not select.select([child.stdout], [], [], 0.025)[0]
+                if mode == 'delayed-commit':
+                    assert select.select([child.stdout], [], [], 1)[0]
+                    assert child.stdout.read(1) == b'\x01'
+                    child.stdin.write(STOP); child.stdin.flush()
+                    assert child.stdout.read(1) == b'\x01'
+                    child.wait(timeout=2)
+                    assert child.returncode == 0
+                else:
+                    # Owner timeout/Stop must cancel the delayed batch before
+                    # it can commit. It still performs release + destroy.
+                    child.stdin.close()
+                    child.wait(timeout=2)
+                    assert child.returncode != 0
+            trace.seek(0); output = trace.read()
+            assert b'FRAME_COMMITTED 1\n' in output and b'FRAME_COMMITTED 2\n' in output
+            assert b'FRAME_BEGIN 3\n' in output
+            assert (b'FRAME_COMMITTED 3\n' in output) == (mode == 'delayed-commit')
+            assert output.endswith(b'EVENT 0 0 0\nDESTROY\n')
+            tail = output.split(b'FRAME_BEGIN 3\n', 1)[1]
+            if mode == 'partial-write':
+                assert tail.startswith(b'EVENT 1 330 1\nWRITE_FAILED\nCLEANUP_BEGIN\n')
+            if mode == 'backpressure':
+                assert tail.startswith(b'COMMIT_WAIT 3\nFRAME_ABORTED 3\nCLEANUP_BEGIN\n')
+            if not child.stdin.closed: child.stdin.close()
+            child.stdout.close()
+    # An undrained trace pipe is itself bounded: fail closed, never deadlock a
+    # native commit or Stop while waiting for a diagnostic consumer.
+    child = subprocess.Popen([str(binary)], stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+                             stderr=subprocess.PIPE)
+    child.stdin.write(start()); child.stdin.flush()
+    assert child.stdout.read(1) == b'\x01'
+    for _ in range(240):
+        child.stdin.write(frame([(1, 330, 0)] * 63 + [SYN])); child.stdin.flush()
+        if child.stdout.read(1) != b'\x01': break
+    else:
+        raise AssertionError('undrained trace unexpectedly accepted every full batch')
+    child.wait(timeout=2)
+    assert child.returncode != 0
     child.stdin.close(); child.stdout.close(); child.stderr.close()
 print('native helper fake-backend contracts passed (no kernel device accessed)')

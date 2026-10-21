@@ -1531,3 +1531,14 @@ hard process kill can only guarantee descriptor closure, not release events.
 ## Linux camera executable boundary
 
 ADR 1536 reuses private inherited framing and strict paired-directory/credential decoding. Exact request/Route approval, actual published Source validation, independent finite peer consent, both leases and data mTLS precede fixed sibling helpers. No password/helper path input, enrollment, auto-renew, physical camera permission or daemon/security change is added. Local Stop/EOF and all owner failures are bounded and dispose of owned resources.
+
+ADR 1537's finite Linux touchpad launcher never treats a paired control Session
+as input consent. Exact local nonce/Route approval, independent Android grant,
+Source lease and local Sink lease all precede pinned touchpad data/Hello and
+native open. Offered hosts are never accepted: the data IP is derived from the
+authenticated control socket. The existing independent worker watchdog also
+observes the shorter Source deadline through the shortened local Sink lease.
+Fixed helper siblings and `/dev/uinput` require existing permissions; no
+permission change, arbitrary executable or device path is accepted. Test-only
+fake syscalls use a separately named feature/command/helper and do not alter the
+production command. An interrupted cleanup remains an error, not a release claim.

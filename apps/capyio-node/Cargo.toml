@@ -8,6 +8,8 @@ license.workspace = true
 
 [features]
 default = []
+native-touchpad = ["capyio-linux-host/native-touchpad"]
+touchpad-test-fixture = ["capyio-linux-host/touchpad-test-fixture"]
 native-camera = ["capyio-linux-host/native-camera"]
 
 [dependencies]
@@ -34,3 +36,7 @@ capyio-native-audio-lan = { path = "../../adapters/native-audio-lan" }
 rcgen = { version = "=0.14.5", default-features = false, features = ["ring"] }
 rustix = { version = "=1.1.4", default-features = false, features = ["fs", "pipe", "std"] }
 capyio-vcamdroid-adapter = { path = "../../adapters/vcamdroid" }
+capyio-android-host = { path = "../../platform/android/capyio-host" }
+capyio-input = { path = "../../crates/capyio-input" }
+capyio-linux-touchpad = { path = "../../platform/linux/capyio-touchpad" }
+capyio-remote-touchpad-adapter = { path = "../../adapters/remote-touchpad", features = ["tls"] }

@@ -10,8 +10,13 @@
 mod launch;
 #[cfg(target_os = "linux")]
 mod launcher_io;
+#[cfg(all(target_os = "linux", feature = "touchpad-test-fixture"))]
+pub use launch::run_touchpad_fixture_stdio;
 #[cfg(target_os = "linux")]
-pub use launch::{run_camera_stdio, run_trusted_lab_capture_stdio, run_trusted_lab_playback_stdio};
+pub use launch::{
+    run_camera_stdio, run_touchpad_stdio, run_trusted_lab_capture_stdio,
+    run_trusted_lab_playback_stdio,
+};
 mod mock_routes;
 #[cfg(target_os = "linux")]
 mod preflight;

@@ -13,6 +13,7 @@ use std::{
             net::UnixStream,
         },
     },
+    path::Path,
     process::{Child, Command, Stdio},
     thread,
     time::{Duration, Instant},
@@ -20,6 +21,20 @@ use std::{
 const IO_BUDGET: Duration = Duration::from_millis(250);
 fn error(value: impl ToString) -> io::Error {
     io::Error::other(value.to_string())
+}
+
+fn verify_helper(executable: &Path, helper: &Path) -> io::Result<()> {
+    let metadata = fs::symlink_metadata(helper)?;
+    let owner = fs::metadata(executable)?;
+    if !metadata.file_type().is_file()
+        || metadata.permissions().mode() & 0o022 != 0
+        || metadata.uid() != owner.uid()
+    {
+        return Err(error(
+            "touchpad helper must be an owned non-writable regular sibling binary",
+        ));
+    }
+    Ok(())
 }
 
 fn write_bounded(stream: &mut UnixStream, mut bytes: &[u8]) -> io::Result<()> {
@@ -60,6 +75,67 @@ impl TouchpadHelperStopHandle {
         let _ = self.output.shutdown(Shutdown::Both);
     }
 }
+/// Deterministic software-only fault modes. Faults target batch three, after
+/// the initial CancelAll and one complete contact snapshot have committed.
+#[cfg(feature = "test-fixture")]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum TouchpadFixtureMode {
+    Normal,
+    FailCreate,
+    PartialWrite,
+    DelayedCommit,
+    Backpressure,
+}
+#[cfg(feature = "test-fixture")]
+impl TouchpadFixtureMode {
+    fn name(self) -> &'static str {
+        match self {
+            Self::Normal => "normal",
+            Self::FailCreate => "fail-create",
+            Self::PartialWrite => "partial-write",
+            Self::DelayedCommit => "delayed-commit",
+            Self::Backpressure => "backpressure",
+        }
+    }
+}
+/// A caller-owned trace descriptor, never a helper path or native device path.
+/// The fixture makes trace writes nonblocking and fails closed if a pipe cannot
+/// keep up. The caller must drain a pipe concurrently to retain complete evidence.
+/// The trace contains only synthetic fixture events, never credentials.
+#[cfg(feature = "test-fixture")]
+pub struct TouchpadFixtureConfig {
+    pub trace: fs::File,
+    pub mode: TouchpadFixtureMode,
+}
+enum HelperTarget {
+    #[cfg(feature = "native-uinput")]
+    Native,
+    #[cfg(feature = "test-fixture")]
+    Fixture(TouchpadFixtureConfig),
+}
+impl HelperTarget {
+    fn sibling_name(&self) -> &'static str {
+        match self {
+            #[cfg(feature = "native-uinput")]
+            Self::Native => "capyio-linux-touchpad-helper",
+            #[cfg(feature = "test-fixture")]
+            Self::Fixture(_) => "capyio-linux-touchpad-fixture-helper",
+        }
+    }
+    fn configure(self, command: &mut Command) {
+        match self {
+            #[cfg(feature = "native-uinput")]
+            Self::Native => {
+                command.stderr(Stdio::null());
+            }
+            #[cfg(feature = "test-fixture")]
+            Self::Fixture(fixture) => {
+                command.env("CAPYIO_FAKE_MODE", fixture.mode.name());
+                command.stderr(Stdio::from(fixture.trace));
+            }
+        }
+    }
+}
 pub struct OwnedTouchpadHelper {
     child: Child,
     input: UnixStream,
@@ -69,22 +145,24 @@ pub struct OwnedTouchpadHelper {
     failed: bool,
 }
 impl OwnedTouchpadHelper {
+    #[cfg(feature = "native-uinput")]
     pub(crate) fn spawn(deadline_ms: u64) -> io::Result<Self> {
+        Self::spawn_target(deadline_ms, HelperTarget::Native)
+    }
+    #[cfg(feature = "test-fixture")]
+    pub(crate) fn spawn_fixture(
+        deadline_ms: u64,
+        fixture: TouchpadFixtureConfig,
+    ) -> io::Result<Self> {
+        Self::spawn_target(deadline_ms, HelperTarget::Fixture(fixture))
+    }
+    fn spawn_target(deadline_ms: u64, target: HelperTarget) -> io::Result<Self> {
         let executable = std::env::current_exe()?;
         let helper = executable
             .parent()
             .ok_or_else(|| error("executable directory absent"))?
-            .join("capyio-linux-touchpad-helper");
-        let metadata = fs::symlink_metadata(&helper)?;
-        let owner = fs::metadata(&executable)?;
-        if !metadata.file_type().is_file()
-            || metadata.permissions().mode() & 0o022 != 0
-            || metadata.uid() != owner.uid()
-        {
-            return Err(error(
-                "touchpad helper must be an owned non-writable regular sibling binary",
-            ));
-        }
+            .join(target.sibling_name());
+        verify_helper(&executable, &helper)?;
         let remaining = deadline_ms
             .checked_sub(wall_ms()?)
             .filter(|v| *v > 0 && *v <= 300_000)
@@ -93,12 +171,13 @@ impl OwnedTouchpadHelper {
         let (output, child_output) = UnixStream::pair()?;
         input.set_write_timeout(Some(IO_BUDGET))?;
         output.set_read_timeout(Some(IO_BUDGET))?;
-        let child = Command::new(helper)
+        let mut command = Command::new(helper);
+        command
             .env_clear()
             .stdin(Stdio::from(OwnedFd::from(child_input)))
-            .stdout(Stdio::from(OwnedFd::from(child_output)))
-            .stderr(Stdio::null())
-            .spawn()?;
+            .stdout(Stdio::from(OwnedFd::from(child_output)));
+        target.configure(&mut command);
+        let child = command.spawn()?;
         let mut owned = Self {
             child,
             input,
@@ -220,5 +299,75 @@ impl TouchpadEventTransport for OwnedTouchpadHelper {
 impl Drop for OwnedTouchpadHelper {
     fn drop(&mut self) {
         let _ = self.close();
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    static NEXT: AtomicUsize = AtomicUsize::new(0);
+    struct Directory(std::path::PathBuf);
+    impl Directory {
+        fn new() -> Self {
+            let path = std::env::temp_dir().join(format!(
+                "capyio-touchpad-sibling-{}-{}",
+                std::process::id(),
+                NEXT.fetch_add(1, Ordering::Relaxed)
+            ));
+            fs::create_dir(&path).unwrap();
+            Self(path)
+        }
+        fn file(&self, name: &str, mode: u32) -> std::path::PathBuf {
+            let path = self.0.join(name);
+            fs::write(&path, b"never executed").unwrap();
+            fs::set_permissions(&path, fs::Permissions::from_mode(mode)).unwrap();
+            path
+        }
+    }
+    impl Drop for Directory {
+        fn drop(&mut self) {
+            let _ = fs::remove_dir_all(&self.0);
+        }
+    }
+    #[test]
+    fn sibling_checks_reject_missing_symlink_directory_and_writable_binary() {
+        let directory = Directory::new();
+        let owner = directory.file("owner", 0o700);
+        assert!(verify_helper(&owner, &directory.0.join("missing")).is_err());
+        assert!(verify_helper(&owner, &directory.0).is_err());
+        let helper = directory.file("owned", 0o700);
+        assert!(verify_helper(&owner, &helper).is_ok());
+        let link = directory.0.join("symlink");
+        std::os::unix::fs::symlink(&helper, &link).unwrap();
+        assert!(verify_helper(&owner, &link).is_err());
+        for mode in [0o720, 0o702, 0o777] {
+            fs::set_permissions(&helper, fs::Permissions::from_mode(mode)).unwrap();
+            assert!(verify_helper(&owner, &helper).is_err());
+        }
+        fs::set_permissions(&helper, fs::Permissions::from_mode(0o755)).unwrap();
+        assert!(verify_helper(&owner, &helper).is_ok());
+    }
+    #[test]
+    fn targets_keep_native_and_fixture_names_distinct() {
+        #[cfg(feature = "native-uinput")]
+        assert_eq!(
+            HelperTarget::Native.sibling_name(),
+            "capyio-linux-touchpad-helper"
+        );
+        #[cfg(feature = "test-fixture")]
+        {
+            let directory = Directory::new();
+            let path = directory.file("trace", 0o600);
+            let target = HelperTarget::Fixture(TouchpadFixtureConfig {
+                trace: fs::File::create(path).unwrap(),
+                mode: TouchpadFixtureMode::Normal,
+            });
+            assert_eq!(
+                target.sibling_name(),
+                "capyio-linux-touchpad-fixture-helper"
+            );
+            assert_ne!(target.sibling_name(), "capyio-linux-touchpad-helper");
+        }
     }
 }

@@ -1647,3 +1647,11 @@ finite lifetime. No input permission changes or default host launch are added.
 ## Explicit finite Linux camera entry
 
 ADR 1536 connects `capyio-node linux-camera --trusted-lab` to the existing authenticated camera owner through inherited private bootstrap and exact local approval. The executable publishes a real LinuxCameraSink, selects one authenticated Android Source, and requires independent finite consent plus both leases before dynamic-port pinned data and native helpers. It does not modify default host/audio behavior or introduce inbound camera admission.
+
+ADR 1537 composes the accepted Linux touchpad worker into an explicit finite
+headless Node command. Camera-style private bootstrap/approval joins existing
+Android touchpad Source-listener control/data conventions, exact pinned binding,
+bilateral consent and both leases. No new wire or crypto is introduced. Native
+helper creation follows authenticated Hello; Active follows committed input.
+The separately named fake-syscall executable fixture is software-only evidence,
+not kernel projection or desktop gesture acceptance.

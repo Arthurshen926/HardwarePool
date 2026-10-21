@@ -82,6 +82,9 @@ struct backend {
 #else
     unsigned writes;
     unsigned fail_at;
+    unsigned frames;
+    enum { FIXTURE_NORMAL, FIXTURE_PARTIAL_WRITE, FIXTURE_DELAYED_COMMIT,
+           FIXTURE_BACKPRESSURE } mode;
 #endif
 };
 #ifndef CAPYIO_FAKE_UINPUT
@@ -93,11 +96,17 @@ static int enable_abs(struct libevdev *device, unsigned code, int maximum, int r
 static int backend_create(struct backend *backend) {
     backend->fd = -1;
 #ifdef CAPYIO_FAKE_UINPUT
+    const char *mode = getenv("CAPYIO_FAKE_MODE");
+    if (!mode || !strcmp(mode, "normal")) backend->mode = FIXTURE_NORMAL;
+    else if (!strcmp(mode, "partial-write")) backend->mode = FIXTURE_PARTIAL_WRITE;
+    else if (!strcmp(mode, "delayed-commit")) backend->mode = FIXTURE_DELAYED_COMMIT;
+    else if (!strcmp(mode, "backpressure")) backend->mode = FIXTURE_BACKPRESSURE;
+    else return -1; /* Includes explicit fail-create and every unknown mode. */
     const char *fail = getenv("CAPYIO_FAKE_FAIL_CREATE");
     if (fail) return -1;
     const char *at = getenv("CAPYIO_FAKE_FAIL_WRITE");
     backend->fail_at = at ? (unsigned)strtoul(at, NULL, 10) : 0;
-    backend->writes = 0; backend->fd = 42;
+    backend->writes = 0; backend->frames = 0; backend->fd = 42;
     fprintf(stderr, "CREATE\n");
     fprintf(stderr, "OPEN %s %d\n", device_path, DEVICE_OPEN_FLAGS);
     fprintf(stderr, "PROPERTY %d\n", DEVICE_PROPERTY);
@@ -105,7 +114,7 @@ static int backend_create(struct backend *backend) {
         fprintf(stderr, "KEY %u\n", device_keys[i]);
     for (unsigned i = 0; i < sizeof(device_axes)/sizeof(device_axes[0]); ++i)
         fprintf(stderr, "AXIS %u %d %d\n", device_axes[i].code, device_axes[i].maximum, device_axes[i].resolution);
-    return 0;
+    return ferror(stderr) ? -1 : 0;
 #else
     struct libevdev *device = libevdev_new();
     if (!device) return -1;
@@ -129,8 +138,7 @@ static int backend_create(struct backend *backend) {
 static int backend_write(struct backend *backend, struct event event) {
 #ifdef CAPYIO_FAKE_UINPUT
     if (++backend->writes == backend->fail_at) { fprintf(stderr, "WRITE_FAILED\n"); return -1; }
-    fprintf(stderr, "EVENT %u %u %d\n", event.type, event.code, event.value);
-    return 0;
+    return fprintf(stderr, "EVENT %u %u %d\n", event.type, event.code, event.value) < 0 ? -1 : 0;
 #else
     return libevdev_uinput_write_event(backend->device, event.type, event.code, event.value);
 #endif
@@ -150,6 +158,9 @@ static void backend_destroy(struct backend *backend) {
 static int cleanup(struct backend *backend) {
     if (backend->fd < 0) return 0;
     int failed = 0;
+#ifdef CAPYIO_FAKE_UINPUT
+    fprintf(stderr, "CLEANUP_BEGIN\n");
+#endif
     /* BTN_TOUCH must be first in this complete synchronization frame. */
     for (unsigned i = 0; i < sizeof(device_keys)/sizeof(device_keys[0]); ++i)
         failed |= backend_write(backend, (struct event){EV_KEY, device_keys[i], 0}) != 0;
@@ -161,6 +172,37 @@ static int cleanup(struct backend *backend) {
     failed |= backend_write(backend, (struct event){EV_SYN, SYN_REPORT, 0}) != 0;
     backend_destroy(backend); return failed ? -1 : 0;
 }
+#ifdef CAPYIO_FAKE_UINPUT
+/* The fixture runs the real parser/ACK/cleanup loop. Only its backend and this
+ * deterministic fault boundary are fake. It never opens or ioctls a device.
+ * Wait on the parent's private input descriptor so Stop/EOF aborts before any
+ * delayed events can commit, rather than sleeping past a cancelled owner. */
+static int fixture_before_frame(struct backend *backend, int64_t deadline) {
+    if (fprintf(stderr, "FRAME_BEGIN %u\n", ++backend->frames) < 0) return -1;
+    if (backend->frames != 3) return 0;
+    if (backend->mode == FIXTURE_PARTIAL_WRITE) {
+        backend->fail_at = backend->writes + 2;
+        return 0;
+    }
+    int delay = backend->mode == FIXTURE_DELAYED_COMMIT ? 100 :
+        backend->mode == FIXTURE_BACKPRESSURE ? 1000 : 0;
+    if (!delay) return 0;
+    if (fprintf(stderr, "COMMIT_WAIT %u\n", backend->frames) < 0) return -1;
+    int64_t until = monotonic_ms() + delay;
+    while (!stopped && authority_valid()) {
+        int64_t now = monotonic_ms();
+        if (now < 0 || now >= deadline) break;
+        if (now >= until) return 0;
+        int remaining = (int)((until < deadline ? until : deadline) - now);
+        struct pollfd parent = { .fd = 0, .events = 0 };
+        int ready = poll(&parent, 1, remaining);
+        if (ready < 0 && errno == EINTR) continue;
+        if (ready != 0) break;
+    }
+    fprintf(stderr, "FRAME_ABORTED %u\n", backend->frames);
+    return -1;
+}
+#endif
 static int valid_event(struct event event, int final) {
     if (event.type == EV_SYN) return final && event.code == SYN_REPORT && event.value == 0;
     if (final) return 0;
@@ -182,6 +224,13 @@ static int valid_event(struct event event, int final) {
     }
 }
 int capyio_touchpad_main(void) {
+#ifdef CAPYIO_FAKE_UINPUT
+    setvbuf(stderr, NULL, _IONBF, 0);
+    /* The optional trace may be a pipe. Lost trace capacity must fail closed,
+     * never block commit/stop or permit unbounded diagnostic buffering. */
+    int trace_flags = fcntl(STDERR_FILENO, F_GETFL);
+    if (trace_flags < 0 || fcntl(STDERR_FILENO, F_SETFL, trace_flags | O_NONBLOCK)) return 1;
+#endif
     stopped = 0; absolute_expiry = UINT64_MAX; last_realtime = 0;
     struct sigaction action = { .sa_handler = stop_signal };
     sigemptyset(&action.sa_mask);
@@ -235,10 +284,17 @@ int capyio_touchpad_main(void) {
         int64_t now = monotonic_ms();
         if (!window || now - window >= 1000) { window = now; in_window = 0; }
         if (++in_window > 240) break;
+#ifdef CAPYIO_FAKE_UINPUT
+        if (fixture_before_frame(&backend, deadline)) break;
+#endif
         for (unsigned i = 0; i < count; ++i) {
             if (stopped || !authority_valid() || monotonic_ms() >= deadline || backend_write(&backend, events[i])) { valid = 0; break; }
         }
-        if (!valid || transfer(1, &ack, 1, 1, deadline)) break;
+        if (!valid) break;
+#ifdef CAPYIO_FAKE_UINPUT
+        if (fprintf(stderr, "FRAME_COMMITTED %u\n", backend.frames) < 0) break;
+#endif
+        if (transfer(1, &ack, 1, 1, deadline)) break;
         deadline = monotonic_ms() + idle;
         if (deadline > expires) deadline = expires;
     }
@@ -246,6 +302,6 @@ done:
     if (cleanup(&backend)) result = 1;
     return result;
 }
-#ifdef CAPYIO_FAKE_UINPUT
+#if defined(CAPYIO_FAKE_UINPUT) && !defined(CAPYIO_FAKE_LIBRARY)
 int main(void) { return capyio_touchpad_main(); }
 #endif

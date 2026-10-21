@@ -327,6 +327,19 @@ impl RuntimeTouchpadWorker {
             crate::transport::OwnedTouchpadHelper::spawn,
         )
     }
+    /// Explicit software-only owner using the fixed fixture sibling. This uses
+    /// the identical admission, projector, IPC ACK and terminal cleanup path,
+    /// but cannot open a kernel input device. It is never a native fallback.
+    #[cfg(all(target_os = "linux", feature = "test-fixture"))]
+    pub fn start_fixture(
+        runtime: Arc<Mutex<NodeRuntime>>,
+        channel: TouchpadTlsChannel,
+        fixture: crate::TouchpadFixtureConfig,
+    ) -> io::Result<Self> {
+        Self::start_with_transport(runtime, channel, move |deadline| {
+            crate::transport::OwnedTouchpadHelper::spawn_fixture(deadline, fixture)
+        })
+    }
     /// Nonblocking: no native or network I/O, no joins until already finished.
     pub fn poll(&mut self) -> io::Result<bool> {
         if self

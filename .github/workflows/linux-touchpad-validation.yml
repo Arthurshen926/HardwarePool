@@ -43,9 +43,31 @@ jobs:
         run: |
           set -euo pipefail
           cargo build --locked -p capyio-linux-touchpad --features native-uinput
-          cargo clippy --locked -p capyio-linux-touchpad --all-targets --features native-uinput -- -D warnings
+          cargo build --locked -p capyio-node --features native-touchpad
+          cargo clippy --locked -p capyio-linux-touchpad -p capyio-linux-host -p capyio-node --all-targets --features capyio-linux-touchpad/native-uinput,capyio-node/native-touchpad -- -D warnings
           python3 platform/linux/capyio-touchpad/native/test_helper.py | tee "$RUNNER_TEMP/touchpad-fake-native.txt"
           grep -Fx "native helper fake-backend contracts passed (no kernel device accessed)" "$RUNNER_TEMP/touchpad-fake-native.txt"
+      - name: Actual finite touchpad executable with fake syscalls only
+        run: |
+          set -euo pipefail
+          # Compile both feature paths together to guard their distinct symbols.
+          # Never execute the production native helper or native-touchpad command.
+          cargo build --locked -p capyio-linux-touchpad --features native-uinput,test-fixture
+          cargo build --locked -p capyio-node --features native-touchpad,touchpad-test-fixture
+          cargo test --locked -p capyio-linux-touchpad --features native-uinput,test-fixture --lib -- --nocapture | tee "$RUNNER_TEMP/touchpad-helper-boundaries.txt"
+          for test in sibling_checks_reject_missing_symlink_directory_and_writable_binary targets_keep_native_and_fixture_names_distinct; do
+            grep -Fx "test transport::tests::$test ... ok" "$RUNNER_TEMP/touchpad-helper-boundaries.txt"
+          done
+          cargo test --locked -p capyio-linux-touchpad --features test-fixture --test fixture_packaging -- --nocapture | tee "$RUNNER_TEMP/touchpad-fixture-package.txt"
+          grep -Fx "test packaged_fixture_runs_real_protocol_and_fake_backend ... ok" "$RUNNER_TEMP/touchpad-fixture-package.txt"
+          python3 scripts/test_touchpad_launcher_gate.py
+          cargo test --locked -p capyio-node --test linux_touchpad -- --list | tee "$RUNNER_TEMP/touchpad-launcher-default-list.txt"
+          cargo test --locked -p capyio-node --test linux_touchpad -- --nocapture | tee "$RUNNER_TEMP/touchpad-launcher-default.txt"
+          cargo test --locked -p capyio-node --test linux_touchpad --features touchpad-test-fixture -- --list | tee "$RUNNER_TEMP/touchpad-launcher-list.txt"
+          cargo test --locked -p capyio-node --test linux_touchpad --features touchpad-test-fixture -- --nocapture | tee "$RUNNER_TEMP/touchpad-launcher.txt"
+          cargo clippy --locked -p capyio-linux-touchpad -p capyio-linux-host -p capyio-node --all-targets --features capyio-linux-touchpad/test-fixture,capyio-node/touchpad-test-fixture -- -D warnings
+          # Require exact discovery and successful outcomes; no any-nonzero oracle.
+          python3 scripts/check_touchpad_launcher_tests.py "$RUNNER_TEMP"
       - uses: actions/upload-artifact@v4
         if: always()
         with:
