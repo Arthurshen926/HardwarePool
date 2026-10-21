@@ -1544,3 +1544,7 @@ mod incoming_tests {
         );
     }
 }
+
+#[path = "camera_launch.rs"]
+mod camera;
+pub use camera::run_camera_stdio;

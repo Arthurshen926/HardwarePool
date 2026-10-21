@@ -224,8 +224,9 @@ The other cases cover no consumer/full-pipe backpressure, expiry, child exit,
 server disconnect and malformed/partial IPC, with owned cleanup and sentinel
 isolation. See [ADR 1532](../../docs/adr/1532-linux-owned-native-camera.md).
 
-This is the production decoded-frame API plus software projection acceptance,
-not Android AVC/network integration or a user-facing camera launcher. Queuing
+These ADR 1532 results establish the decoded-frame API and software projection,
+not by themselves Android AVC/network or executable integration. Later secure
+camera and executable slices are documented separately below. Queuing
 alone never marks a Route Active. Physical camera and third-party application
 compatibility remain deferred.
 
@@ -234,10 +235,10 @@ compatibility remain deferred.
 
 1. Consolidate deferred physical/AudioTrack acceptance separately; the explicit
    Linux → Android stereo software slice above has passed its hosted gates.
-2. Connect bounded camera decode/network ingress to the accepted native projection,
-   then implement touchpad's own permission boundary and software acceptance gate.
-   Android AVC reception and physical camera use are not established by the
-   decoded NV12 graph results above.
+2. Complete the explicit finite camera executable acceptance (ADR 1536), then
+   connect the accepted touchpad backend to its own headless executable entry.
+   Physical camera use and actual uinput/desktop gesture acceptance stay deferred;
+   decoded NV12 results alone do not prove these later integration slices.
 3. Gamepad, haptics, display and IMU remain experimental tracks, not mandatory
    full-platform parity for closing this audio milestone.
 
@@ -256,3 +257,29 @@ See [ADR 1535](../../docs/adr/1535-linux-owned-type-b-touchpad.md) and the
 [crate guide](capyio-touchpad/README.md). Software acceptance uses fake native
 operations and actual authenticated owner/policy paths. Kernel creation, desktop
 recognition and physical gestures remain unverified and deferred.
+
+## Explicit finite camera command
+
+`capyio-node linux-camera --trusted-lab` now connects the existing pinned camera
+owner to a real one-shot executable. It consumes only private inherited framed
+bootstrap and exact approval, publishes a real LinuxCameraSink, and selects one
+explicit Android Source from its authenticated catalog. Independent finite
+consent and both leases precede secure dynamic-port data admission and native
+helpers. This is not an Android-initiated picker or Camera2 permission flow.
+See [ADR 1536](../../docs/adr/1536-linux-explicit-camera-launcher.md) for the schema,
+limits, failure semantics and software-only acceptance boundaries.
+
+Build the executable and fixed sibling helpers explicitly:
+
+```text
+cargo build --locked -p capyio-node --features native-camera
+cargo build --locked -p capyio-linux-avc --features native-pipewire --bin capyio-linux-avc-helper
+cargo build --locked -p capyio-linux-camera --features native-pipewire --bin capyio-linux-camera-helper
+```
+
+The three binaries must remain siblings with the same owner; helpers must be
+regular non-symlink files and not group/world-writable. Native development
+libraries are required to compile, but this does not install or authorize camera
+capture. The default binary remains hardware-free. Canonical 720p30 rotation-zero
+Annex B is capped at 60 seconds, 32 MiB and 120 frames without auto-renewal.
+Queued frames leave the Route Starting, never falsely Active.

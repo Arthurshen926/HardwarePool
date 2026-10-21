@@ -47,6 +47,11 @@ enum Command {
         #[arg(long, required = true)]
         trusted_lab: bool,
     },
+    /// Finite pinned Android camera reception via private inherited bootstrap.
+    LinuxCamera {
+        #[arg(long, required = true)]
+        trusted_lab: bool,
+    },
     /// Reports passive Linux playback prerequisites as JSON; never starts playback or connects.
     LinuxPlaybackPreflight {
         /// Optional intended PipeWire target; syntax only, not discovery or authorization.
@@ -77,9 +82,9 @@ fn main() -> anyhow::Result<()> {
 
     // This opt-in command accepts secret material only through framed stdin.
     // Never echo even accidentally supplied argv values on its syntax errors.
-    let lab_command = std::env::args_os()
-        .nth(1)
-        .is_some_and(|arg| arg == "linux-playback" || arg == "linux-capture");
+    let lab_command = std::env::args_os().nth(1).is_some_and(|arg| {
+        arg == "linux-playback" || arg == "linux-capture" || arg == "linux-camera"
+    });
     let cli = match Cli::try_parse() {
         Ok(cli) => cli,
         Err(error)
@@ -144,6 +149,18 @@ fn main() -> anyhow::Result<()> {
             #[cfg(not(target_os = "linux"))]
             {
                 anyhow::bail!("Linux lab capture requires Linux")
+            }
+        }
+        Command::LinuxCamera { trusted_lab } => {
+            anyhow::ensure!(trusted_lab, "explicit trusted-lab opt-in required");
+            #[cfg(target_os = "linux")]
+            {
+                capyio_linux_host::run_camera_stdio()
+                    .map_err(|_| anyhow::anyhow!("Linux camera launch failed"))
+            }
+            #[cfg(not(target_os = "linux"))]
+            {
+                anyhow::bail!("Linux camera requires Linux")
             }
         }
         Command::LinuxPlaybackPreflight { target } => {

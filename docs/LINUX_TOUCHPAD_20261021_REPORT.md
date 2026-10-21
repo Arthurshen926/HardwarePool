@@ -2,9 +2,12 @@
 
 ## Scope
 
-Source-only candidate based on green Android bridge commit
-`54c026456375ed343767d6b465880db6106b0086`. This adds the Runtime-owned
+Accepted source-only implementation
+`fda6080eb9e58844ebe52d6d8c957c22fd6de9da`, based on Android bridge
+`54c026456375ed343767d6b465880db6106b0086`, adds the Runtime-owned
 Type-B five-contact Sink and optional libevdev helper described by ADR 1535.
+This acceptance covers the library/backend, not an executable Linux touchpad
+launcher. Launcher composition remains the next separate software slice.
 No input device was opened or created and no cursor/gesture was injected.
 
 ## Passed local checks
@@ -48,11 +51,16 @@ feature. Full workspace tests and Windows execution were not rerun here.
 
 ## Hosted gate and deferred acceptance
 
-The new source-only hosted workflow compiles native code against official runner
-packages and requires all ten named authenticated owner cases plus the fake
-native-loop success marker, preventing ignored/cfg-omitted cases from silently
-passing. Hosted results belong to the final published SHA and are not implied by
-local success.
+All seven jobs across four workflows passed for
+`fda6080eb9e58844ebe52d6d8c957c22fd6de9da`. The dedicated
+[touchpad run 39573626828](https://github.com/Arthurshen926/HardwarePool/actions/runs/39573626828)
+([job 119133632399](https://github.com/Arthurshen926/HardwarePool/actions/runs/39573626828/job/119133632399))
+confirmed all 25 Rust tests, including the ten named real-mTLS owner cases,
+native compilation against official runner libevdev packages, strict focused
+clippy and the production-loop fake-backend success marker. No kernel input
+device was accessed. Required test-name checks prevent ignored/cfg-omitted
+acceptance cases from silently passing. These hosted gates do not supersede the
+separately recorded aggregate workspace-clippy failure above.
 
 Actual uinput device creation, OS permission availability, desktop/libinput
 recognition, cursor movement, scrolling, gestures, physical Android input and

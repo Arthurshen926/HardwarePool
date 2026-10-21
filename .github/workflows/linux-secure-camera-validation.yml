@@ -85,3 +85,63 @@ jobs:
             ${{ runner.temp }}/avc-decoder.txt
             ${{ runner.temp }}/avc-graph-*.txt
           if-no-files-found: ignore
+
+      - name: Require actual capyio-node launcher pure checks and build
+        run: |
+          set -euo pipefail
+          python3 -m unittest discover -s scripts -p test_pipewire_camera_launcher.py -v
+          python3 -m py_compile scripts/run_pipewire_camera_launcher.py scripts/test_pipewire_camera_launcher.py
+          cargo test --locked -p capyio-node --test linux_camera -- --list | tee "$RUNNER_TEMP/camera-launcher-tests-list.txt"
+          cargo test --locked -p capyio-node --test linux_camera -- --test-threads=1 | tee "$RUNNER_TEMP/camera-launcher-tests.txt"
+          while IFS= read -r test_name; do
+            grep -Fx "$test_name: test" "$RUNNER_TEMP/camera-launcher-tests-list.txt"
+            grep -Fx "test $test_name ... ok" "$RUNNER_TEMP/camera-launcher-tests.txt"
+          done <<'TESTS'
+          ipc_linux_camera_requires_exact_approval_and_independent_android_consent
+          ipc_linux_camera_wrong_request_or_route_fails_closed
+          ipc_linux_camera_android_denial_fails_before_media_children
+          ipc_linux_camera_bad_config_and_source_fail_closed
+          ipc_linux_camera_dynamic_offer_still_has_no_media_children_before_binding
+          ipc_linux_camera_preapproval_eof_is_terminal
+          ipc_linux_camera_partial_bootstrap_has_whole_frame_deadline
+          ipc_linux_camera_wrong_certificate_pin_fails_without_children
+          ipc_linux_camera_malformed_approval_commands_fail_closed
+          ipc_linux_camera_expired_or_wrong_source_grant_is_rejected
+          ipc_linux_camera_wrong_data_pin_never_spawns_helpers
+          ipc_linux_camera_denied_or_missing_source_lease_fails_before_helpers
+          ipc_linux_camera_configured_source_must_exist_in_authenticated_catalog
+          TESTS
+          grep -Fx 'hosted_linux_camera_graph: test' "$RUNNER_TEMP/camera-launcher-tests-list.txt"
+          cargo clippy --locked -p capyio-node --all-targets --features native-camera -- -D warnings
+          cargo build --locked -p capyio-node --features native-camera --bin capyio-node
+          cargo test --locked -p capyio-node --features native-camera --test linux_camera --no-run --message-format=json > "$RUNNER_TEMP/camera-launcher-build.jsonl"
+          python3 - "$RUNNER_TEMP/camera-launcher-build.jsonl" "$RUNNER_TEMP/camera-launcher-driver" <<'PY'
+          import json, pathlib, sys
+          records = [json.loads(line) for line in pathlib.Path(sys.argv[1]).read_text().splitlines()]
+          paths = {record['executable'] for record in records if record.get('reason') == 'compiler-artifact' and record.get('target', {}).get('name') == 'linux_camera' and record.get('executable')}
+          if len(paths) != 1:
+              raise SystemExit('expected exactly one launcher fixture executable')
+          pathlib.Path(sys.argv[2]).write_text(paths.pop())
+          PY
+      - name: Require actual executable private camera graph and verified failures
+        run: |
+          set -euo pipefail
+          driver="$(cat "$RUNNER_TEMP/camera-launcher-driver")"
+          for scenario in pixels local_stop control_stop control_eof source_revoke partial_cavc expiry handshake_timeout; do
+            timeout --signal=TERM --kill-after=5s 40s python3 scripts/run_pipewire_camera_launcher.py \
+              --hosted-private-camera-launcher --driver "$driver" --node target/debug/capyio-node \
+              --helper target/debug/capyio-linux-camera-helper --decoder target/debug/capyio-linux-avc-helper \
+              --consumer "$RUNNER_TEMP/avc-consumer" --scenario "$scenario" \
+              | tee "$RUNNER_TEMP/camera-launcher-$scenario.txt"
+            graph=true
+            if [ "$scenario" = handshake_timeout ]; then graph=false; fi
+            grep -Fx "capyio_pipewire_camera_launcher=passed scenario=$scenario actual_executable=true real_graph=$graph owned_cleanup=true" "$RUNNER_TEMP/camera-launcher-$scenario.txt"
+          done
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: linux-camera-launcher-text-evidence
+          path: |
+            ${{ runner.temp }}/camera-launcher-*.txt
+            ${{ runner.temp }}/camera-launcher-build.jsonl
+          if-no-files-found: ignore

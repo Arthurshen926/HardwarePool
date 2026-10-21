@@ -1642,3 +1642,8 @@ complete contact snapshots rather than translating to relative mouse commands.
 Only authenticated exact-Route local authority can open the helper. Network and
 helper I/O run off owner polling; independent watchdogs bound idle, revocation and
 finite lifetime. No input permission changes or default host launch are added.
+
+
+## Explicit finite Linux camera entry
+
+ADR 1536 connects `capyio-node linux-camera --trusted-lab` to the existing authenticated camera owner through inherited private bootstrap and exact local approval. The executable publishes a real LinuxCameraSink, selects one authenticated Android Source, and requires independent finite consent plus both leases before dynamic-port pinned data and native helpers. It does not modify default host/audio behavior or introduce inbound camera admission.

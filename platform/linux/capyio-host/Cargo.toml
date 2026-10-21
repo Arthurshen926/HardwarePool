@@ -6,6 +6,10 @@ edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 
+[features]
+default = []
+native-camera = ["capyio-linux-avc/native-pipewire"]
+
 [dependencies]
 capyio-mock-source = { path = "../../../adapters/mock-source" }
 capyio-core = { path = "../../../crates/capyio-core" }
@@ -29,3 +33,5 @@ capyio-control-tls = { path = "../../../crates/capyio-control-tls" }
 capyio-protocol = { path = "../../../crates/capyio-protocol" }
 capyio-control-credentials = { path = "../../../crates/capyio-control-credentials" }
 capyio-pairing = { path = "../../../crates/capyio-pairing" }
+
+capyio-linux-avc = { path = "../capyio-avc" }

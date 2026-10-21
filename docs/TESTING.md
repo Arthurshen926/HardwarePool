@@ -1295,3 +1295,8 @@ The separate hosted workflow compiles `native-uinput` with official libevdev
 headers; it never runs the real helper. Neither fake traces nor compilation prove
 kernel creation, desktop recognition, gestures or physical Android input. Those
 remain deferred and require separate explicit OS testing authority.
+
+
+## Finite camera executable acceptance
+
+ADR 1536 adds actual capyio-node subprocess coverage over inherited framed bootstrap/approval and Android camera policy, alongside a private PipeWire consumer gate for synthetic secure CAVC. Required named negatives guard malformed config, approval, Source, certificate pins, leases and finite lifecycle. Independent pixels and helper parentage/teardown, rather than queued output, establish graph acceptance. Native compilation, portable subprocess tests and real private-graph execution must be reported separately.

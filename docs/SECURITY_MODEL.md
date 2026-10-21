@@ -1526,3 +1526,8 @@ No module, udev, permission or privilege changes occur. Missing access fails clo
 Stop/revoke/expiry/EOF faults the epoch; ACK requires a committed full SYN_REPORT
 and fresh admission. Normal cleanup releases slots/keys and destroys the device;
 hard process kill can only guarantee descriptor closure, not release events.
+
+
+## Linux camera executable boundary
+
+ADR 1536 reuses private inherited framing and strict paired-directory/credential decoding. Exact request/Route approval, actual published Source validation, independent finite peer consent, both leases and data mTLS precede fixed sibling helpers. No password/helper path input, enrollment, auto-renew, physical camera permission or daemon/security change is added. Local Stop/EOF and all owner failures are bounded and dispose of owned resources.
