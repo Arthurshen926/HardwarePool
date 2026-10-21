@@ -723,3 +723,330 @@ fn ipc_pairing_uncertain_create_retains_item_without_claiming_saved_or_retrying(
     drop(state);
     fixture.no_leaks(&process, &welcome.pin, &welcome.endpoint);
 }
+
+// Recovery fixtures contain only newly generated test identities. Reconstruct the
+// crash boundary from a real bilateral enrollment, never from a user keyring.
+fn pending_fixture(stale_after_commit: bool) -> (Fixture, NodeId, Vec<u8>) {
+    let fixture = Fixture::new();
+    let (peer, _) = complete(&fixture);
+    let journal = fs::read(fixture.state_path.join("peers-v1.json")).unwrap();
+    let mut file = fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .mode(0o600)
+        .open(fixture.state_path.join("pending-v1.json"))
+        .unwrap();
+    file.write_all(&journal).unwrap();
+    drop(file);
+    if !stale_after_commit {
+        fs::remove_file(fixture.state_path.join("peers-v1.json")).unwrap();
+    }
+    (fixture, peer, journal)
+}
+fn backend_counts(fixture: &Fixture) -> (usize, usize, usize, usize, usize) {
+    let state = fixture.service.state.lock().unwrap();
+    (
+        state.sessions,
+        state.collection_property_reads,
+        state.reads,
+        state.creates,
+        state.forbidden,
+    )
+}
+fn offline_args(fixture: &Fixture) -> Vec<String> {
+    let mut args = fixture.args();
+    let index = args
+        .iter()
+        .position(|s| s == "--pairing-bus-address")
+        .unwrap()
+        + 1;
+    args[index] = format!("unix:path={}/absent", fixture.service.root.display());
+    args
+}
+fn recovery_challenge(process: &mut Process, peer: NodeId) -> Value {
+    process.command(json!({"version":1,"action":"recover"}));
+    let event = process.event("recovery_confirmation_required");
+    assert_eq!(event["peer_node_id"], peer.to_string());
+    assert_eq!(event["display_name"], "Synthetic welcome peer");
+    assert!(!event["request_id"].as_str().unwrap().is_empty());
+    let digest = event["transaction_digest"].as_str().unwrap();
+    assert_eq!(digest.len(), 64);
+    assert!(
+        digest
+            .bytes()
+            .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
+    );
+    event
+}
+fn confirm_recovery(challenge: &Value) -> Value {
+    json!({"version":1,"action":"confirm_recover",
+        "request_id":challenge["request_id"],"peer_node_id":challenge["peer_node_id"],
+        "transaction_digest":challenge["transaction_digest"]})
+}
+fn assert_pending_unchanged(fixture: &Fixture, journal: &[u8], credential: &[u8]) {
+    assert_eq!(
+        fs::read(fixture.state_path.join("pending-v1.json")).unwrap(),
+        journal
+    );
+    assert!(!fixture.state_path.join("peers-v1.json").exists());
+    let state = fixture.service.state.lock().unwrap();
+    assert_eq!(state.bytes, credential);
+    assert_eq!(state.creates, 1, "recovery must never create an identity");
+    assert_eq!(
+        state.forbidden, 0,
+        "recovery must never delete or unlock an item"
+    );
+}
+#[test]
+fn ipc_recovery_pending_inspection_and_challenge_are_metadata_only() {
+    let (fixture, peer, journal) = pending_fixture(false);
+    fixture.service.state.lock().unwrap().locked = true;
+    let before = backend_counts(&fixture);
+    let credential = fixture.service.state.lock().unwrap().bytes.clone();
+    let args = offline_args(&fixture);
+    let mut list = Process::start(&args);
+    list.command(json!({"version":1,"action":"list"}));
+    let listed = list.event("peers");
+    assert_eq!(listed["pending_enrollment"], true);
+    assert_eq!(listed["pending_peer"]["peer_node_id"], peer.to_string());
+    assert_eq!(
+        listed["pending_peer"]["display_name"],
+        "Synthetic welcome peer"
+    );
+    assert_eq!(listed["peers"].as_array().unwrap().len(), 0);
+    assert!(list.finish().success());
+    let mut process = Process::start(&args);
+    let challenge = recovery_challenge(&mut process, peer);
+    assert_eq!(
+        listed["pending_peer"]["transaction_digest"],
+        challenge["transaction_digest"]
+    );
+    assert_eq!(backend_counts(&fixture), before);
+    process.command(json!({"version":1,"action":"cancel"}));
+    process.finish();
+    assert_pending_unchanged(&fixture, &journal, &credential);
+    assert_eq!(backend_counts(&fixture), before);
+    fixture.no_leaks(&list, "not-a-real-pin", "not-a-real-endpoint");
+    fixture.no_leaks(&process, "not-a-real-pin", "not-a-real-endpoint");
+}
+#[test]
+fn ipc_recovery_rejects_mismatched_confirmation_cancel_and_eof() {
+    let (fixture, peer, journal) = pending_fixture(false);
+    let credential = fixture.service.state.lock().unwrap().bytes.clone();
+    let before = backend_counts(&fixture);
+    let mut stale_request = Value::Null;
+    for case in [
+        "cancel",
+        "stale_request",
+        "wrong_peer",
+        "wrong_digest",
+        "replay",
+        "eof",
+    ] {
+        let mut process = fixture.start();
+        let challenge = recovery_challenge(&mut process, peer);
+        assert_ne!(challenge["request_id"], stale_request);
+        let mut response = confirm_recovery(&challenge);
+        match case {
+            "cancel" => process.command(json!({"version":1,"action":"cancel"})),
+            "eof" => drop(process.child.stdin.take()),
+            "stale_request" => {
+                response["request_id"] = stale_request.clone();
+                process.command(response);
+            }
+            "wrong_peer" => {
+                response["peer_node_id"] = json!(NodeId::new());
+                process.command(response);
+            }
+            "wrong_digest" => {
+                response["transaction_digest"] = json!("0".repeat(64));
+                process.command(response);
+            }
+            "replay" => {
+                let bytes = serde_json::to_vec(&response).unwrap();
+                process.frames(&[&bytes, &bytes]);
+            }
+            _ => unreachable!(),
+        }
+        let status = process.finish();
+        if case != "cancel" {
+            assert!(!status.success(), "{case} must fail closed");
+        }
+        assert_pending_unchanged(&fixture, &journal, &credential);
+        assert_eq!(
+            backend_counts(&fixture),
+            before,
+            "{case} touched protected storage"
+        );
+        stale_request = challenge["request_id"].clone();
+    }
+}
+#[test]
+fn ipc_recovery_requires_fresh_challenge_and_revalidates_journal() {
+    let (fixture, peer, journal) = pending_fixture(false);
+    let credential = fixture.service.state.lock().unwrap().bytes.clone();
+    let before = backend_counts(&fixture);
+    let mut premature = fixture.start();
+    premature.command(json!({"version":1,"action":"confirm_recover",
+        "request_id":NodeId::new(),"peer_node_id":peer,"transaction_digest":"0".repeat(64)}));
+    assert!(!premature.finish().success());
+    assert_pending_unchanged(&fixture, &journal, &credential);
+    let mut pipelined = fixture.start();
+    let request = serde_json::to_vec(&json!({"version":1,"action":"recover"})).unwrap();
+    let premature = serde_json::to_vec(&json!({"version":1,"action":"confirm_recover",
+        "request_id":NodeId::new(),"peer_node_id":peer,"transaction_digest":"0".repeat(64)}))
+    .unwrap();
+    pipelined.frames(&[&request, &premature]);
+    assert!(!pipelined.finish().success());
+    assert_pending_unchanged(&fixture, &journal, &credential);
+    let mut process = fixture.start();
+    let challenge = recovery_challenge(&mut process, peer);
+    let mut document: Value = serde_json::from_slice(&journal).unwrap();
+    let mut directory: Value =
+        serde_json::from_str(document["directory"].as_str().unwrap()).unwrap();
+    directory["peers"][0]["display_name"] = json!("Changed synthetic peer");
+    document["directory"] = json!(serde_json::to_string(&directory).unwrap());
+    let changed = serde_json::to_vec(&document).unwrap();
+    fs::write(fixture.state_path.join("pending-v1.json"), &changed).unwrap();
+    process.command(confirm_recovery(&challenge));
+    assert!(!process.finish().success());
+    assert_pending_unchanged(&fixture, &changed, &credential);
+    assert_eq!(
+        backend_counts(&fixture),
+        before,
+        "changed transaction must fail before backend access"
+    );
+}
+#[test]
+fn ipc_recovery_missing_locked_or_corrupt_credential_retains_journal() {
+    for case in [
+        "missing_bus",
+        "locked",
+        "missing_collection",
+        "missing_item",
+        "corrupt_item",
+    ] {
+        let (fixture, peer, journal) = pending_fixture(false);
+        let mut args = fixture.args();
+        match case {
+            "missing_bus" => args = offline_args(&fixture),
+            "locked" => fixture.service.state.lock().unwrap().locked = true,
+            "missing_collection" => *args.last_mut().unwrap() = format!("{COLLECTION}_absent"),
+            "missing_item" => fixture.service.state.lock().unwrap().missing = true,
+            "corrupt_item" => {
+                fixture.service.state.lock().unwrap().bytes =
+                    b"corrupt synthetic credential".to_vec()
+            }
+            _ => unreachable!(),
+        }
+        let credential = fixture.service.state.lock().unwrap().bytes.clone();
+        let before = backend_counts(&fixture);
+        let mut process = Process::start(&args);
+        let challenge = recovery_challenge(&mut process, peer);
+        assert_eq!(
+            backend_counts(&fixture),
+            before,
+            "challenge must not inspect the backend"
+        );
+        process.command(confirm_recovery(&challenge));
+        assert!(!process.finish().success(), "{case} must fail closed");
+        assert_pending_unchanged(&fixture, &journal, &credential);
+    }
+}
+#[test]
+fn ipc_recovery_commits_pending_or_stale_journal_without_replacing_identity() {
+    for stale_after_commit in [false, true] {
+        let (fixture, peer, journal) = pending_fixture(stale_after_commit);
+        let credential = fixture.service.state.lock().unwrap().bytes.clone();
+        let before = backend_counts(&fixture);
+        let mut process = fixture.start();
+        let challenge = recovery_challenge(&mut process, peer);
+        assert_eq!(backend_counts(&fixture), before);
+        process.command(confirm_recovery(&challenge));
+        let event = process.event("locally_recovered");
+        assert_eq!(event["local_saved"], true);
+        assert_eq!(event["remote_completion_confirmed"], false);
+        assert_eq!(event["control_endpoint_available"], false);
+        assert!(process.finish().success());
+        assert_eq!(
+            process.cursor,
+            process.out.len(),
+            "no remote paired event may follow local recovery"
+        );
+        assert!(!fixture.state_path.join("pending-v1.json").exists());
+        assert_eq!(
+            fs::read(fixture.state_path.join("peers-v1.json")).unwrap(),
+            journal
+        );
+        {
+            let state = fixture.service.state.lock().unwrap();
+            assert_eq!(state.bytes, credential);
+            assert_eq!(state.creates, before.3);
+            assert_eq!(state.forbidden, before.4);
+            assert!(
+                state.reads > before.2,
+                "recovery must validate the protected credential"
+            );
+        }
+        fixture.no_leaks(&process, "not-a-real-pin", "not-a-real-endpoint");
+        assert!(fixture.store().bootstrap(peer).is_ok());
+        let after = backend_counts(&fixture);
+        let mut repeated = fixture.start();
+        repeated.command(json!({"version":1,"action":"recover"}));
+        assert!(
+            !repeated.finish().success(),
+            "no journal is not a new enrollment"
+        );
+        assert_eq!(backend_counts(&fixture), after);
+        let mut list = Process::start(&offline_args(&fixture));
+        list.command(json!({"version":1,"action":"list"}));
+        let event = list.event("peers");
+        assert_eq!(event["pending_enrollment"], false);
+        assert_eq!(event.get("pending_peer"), Some(&Value::Null));
+        assert_eq!(event["peers"][0]["peer_node_id"], peer.to_string());
+        assert!(list.finish().success());
+    }
+}
+#[test]
+fn ipc_recovery_rejects_corrupt_or_revoked_journal() {
+    for case in ["corrupt", "revoked_pending", "revoked_committed"] {
+        let (fixture, peer, original) = pending_fixture(true);
+        if case != "corrupt" {
+            let mut store = fixture.store();
+            let paired_at = store
+                .load_directory()
+                .unwrap()
+                .peers()
+                .next()
+                .unwrap()
+                .paired_at_ms;
+            store.revoke(peer, paired_at + 1).unwrap();
+        }
+        let committed = fs::read(fixture.state_path.join("peers-v1.json")).unwrap();
+        let journal = match case {
+            "corrupt" => b"corrupt synthetic journal".to_vec(),
+            "revoked_pending" => committed.clone(),
+            "revoked_committed" => original,
+            _ => unreachable!(),
+        };
+        fs::write(fixture.state_path.join("pending-v1.json"), &journal).unwrap();
+        let credential = fixture.service.state.lock().unwrap().bytes.clone();
+        let before = backend_counts(&fixture);
+        let mut process = fixture.start();
+        process.command(json!({"version":1,"action":"recover"}));
+        assert!(
+            !process.finish().success(),
+            "{case} must fail before confirmation"
+        );
+        assert_eq!(
+            fs::read(fixture.state_path.join("pending-v1.json")).unwrap(),
+            journal
+        );
+        assert_eq!(
+            fs::read(fixture.state_path.join("peers-v1.json")).unwrap(),
+            committed
+        );
+        assert_eq!(fixture.service.state.lock().unwrap().bytes, credential);
+        assert_eq!(backend_counts(&fixture), before);
+    }
+}

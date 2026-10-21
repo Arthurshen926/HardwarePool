@@ -1691,3 +1691,8 @@ ADR 1544 adds explicit finite `linux-pairing` join/list/revoke management over
 private pipes. It reuses EnrollmentManager and protected store receipts, requires
 fresh exact-peer confirmation and starts no control/resource service. Invitation
 hosting, interactive recovery and resource approval remain separate.
+
+ADR 1545 adds exact-peer/exact-journal confirmed local recovery to the finite
+management command. Metadata-only inspection and fresh consent precede protected
+loading; the original identity is reused without remote completion or service
+claims. Staging optionally records the paired-store feature; default stays off.

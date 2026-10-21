@@ -1,7 +1,7 @@
 # Linux build, passive staging and bounded operations
 
 This is a local software staging entry, not an installer, release package,
-user-facing pairing tool or authorization to operate a device. The primary
+finished user-facing pairing flow or authorization to operate a device. The primary
 Speaker, Microphone, Camera and Touchpad software paths share one explicitly
 built node and fixed sibling helpers. Physical acceptance remains deferred.
 
@@ -32,6 +32,26 @@ in a fresh private target directory, with the native host target explicitly set:
 | capyio-linux-avc-helper | native-pipewire (includes native-avc) |
 | capyio-linux-camera-helper | native-pipewire |
 | capyio-linux-touchpad-helper | native-uinput |
+
+The default build deliberately omits `paired-store`: its node does not expose
+`linux-pairing` or the persisted-store selectors on the four media/input entries.
+To package those existing opt-in commands while preserving both native node
+features and all helper features, explicitly select:
+
+```sh
+python3 scripts/linux_staging.py build --paired-store --output /absolute/new/private/paired-staging
+```
+
+This adds only `paired-store` to the node feature list. There is no arbitrary
+feature override. The existing schema-1 manifest's exact `features` map records
+which of these two choices was built; preflight accepts only those complete maps
+and returns the selected map. Missing native flags, duplicate/extra flags and
+changed helper combinations fail validation. This unsigned metadata is not binary
+feature attestation: an owner able to rewrite both binaries and inventory can
+forge a consistent claim. Hosted CLI-help checks independently exercise each
+freshly built choice; passive preflight never executes binaries to infer features.
+Neither build accesses a keyring, creates identities, enrolls peers, changes
+system permissions or installs a service.
 
 The output contains exactly those four regular sibling binaries and manifest.json.
 Audio uses the external fixed `/usr/bin/pw-cat`, not another bundled helper.
@@ -114,10 +134,14 @@ The normal staging build never runs these tests and never includes their inputs.
 
 `python3 -m unittest discover -s scripts -p test_linux_staging.py -v` checks
 synthetic staging inventories without executing any staged program. The CI
-staging job additionally builds the actual four production executables, stages
-and passively verifies them at its exact clean checkout SHA. It uploads no binary
-artifacts and starts no devices or private PipeWire server. Existing separate
-feature CI jobs remain unchanged, including their previously authorized temporary
+staging matrix additionally builds the default and explicit `paired-store`
+choices, stages their four production executables and passively verifies each at
+its exact clean checkout SHA. A separate CLI-help-only step verifies the opt-in
+node exposes pairing and persisted-store selectors while the default node does
+not, and neither exposes the touchpad fixture entry. Help exits before backend
+access; it is not a pairing or runtime readiness test. It uploads no binary
+artifacts and starts no devices, keyring operation or private PipeWire server.
+Existing separate feature CI jobs own the isolated pairing-service and temporary
 software-graph tests. See ADRs 1530–1537 and the dedicated feature reports for
 what those tests do and do not prove.
 
@@ -138,9 +162,15 @@ inherently trusted. Do not put bootstrap secrets in argv, shell history, general
 logs or this staging directory. Use the existing schema and bounded pipe protocol
 in ADR 1522, ADR 1531, ADR 1536 and ADR 1537; do not invent a new pairing protocol.
 
-Linux persistent protected identity storage and a normal user-facing pairing/
-bootstrap entry remain code gaps. Existing enrollment and credential primitives
-are not a finished Linux provisioning flow. Actual identity generation, persistent
+The opt-in `paired-store` node includes the bounded persistent-store launcher and
+finite `linux-pairing` management primitives (ADRs 1539–1545), not a finished
+Linux provisioning flow. They require an explicitly selected state directory,
+Node, Secret Service bus and collection plus the existing private framed protocol;
+packaging does not configure or unlock a user's backend. Explicit journal recovery
+requires a fresh exact-peer/transaction confirmation and reports local repair
+only, never remote completion or service readiness. Default staging retains
+the trusted-bootstrap path only. A normal user-facing pairing/bootstrap flow and
+real-user backend acceptance remain open. Actual identity generation, persistent
 access configuration, permissions, installation and physical operation remain
 separate deployment actions. Therefore this is not “install and use.”
 

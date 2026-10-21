@@ -88,7 +88,7 @@ absent. List reports `peers` with public ID/name/active-or-revoked state only.
 Bilateral completion is distinct from local persistence. A later failure or
 missing remote receipt must not claim rollback, regenerate an identity or
 silently retry. The pending journal and/or committed metadata remain for the
-existing recovery boundary; an interactive recovery command is deferred.
+existing recovery boundary; ADR 1545 adds a separately confirmed local recovery command without claiming remote completion.
 
 Backend calls retain a one-second timeout and no prompt, unlock, activation,
 collection creation, ambient bus lookup or plaintext-file fallback. Metadata

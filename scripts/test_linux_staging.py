@@ -126,6 +126,42 @@ class InventoryTests(unittest.TestCase):
         self.write()
         self.failed('features')
 
+    def test_paired_store_inventory_is_explicit_and_passive(self):
+        self.manifest['features'] = staging.package_features(True)
+        self.write()
+        result = self.result()
+        self.assertEqual(result['inventory'], 'passed')
+        self.assertEqual(result['features'], self.manifest['features'])
+        self.assertEqual(result['environment']['status'], 'unverified')
+
+    def test_unsupported_paired_store_combinations_rejected(self):
+        choices = [
+            ['paired-store'],
+            ['native-camera', 'paired-store'],
+            ['native-touchpad', 'paired-store'],
+            ['native-camera', 'native-touchpad', 'paired-store', 'paired-store'],
+            ['native-camera', 'native-touchpad', 'paired-store', 'touchpad-test-fixture'],
+        ]
+        for choice in choices:
+            with self.subTest(choice=choice):
+                self.manifest['features'] = staging.package_features()
+                self.manifest['features']['capyio-node'] = choice
+                self.write()
+                self.failed('features')
+        self.manifest['features'] = staging.package_features(True)
+        self.manifest['features']['capyio-linux-touchpad'].append('paired-store')
+        self.write()
+        self.failed('features')
+
+    def test_feature_choices_do_not_mutate_default(self):
+        selected = staging.package_features(True)
+        self.assertNotIn('paired-store', staging.FEATURES['capyio-node'])
+        selected['capyio-node'].append('test-fixture')
+        self.assertNotIn('test-fixture', staging.package_features(True)['capyio-node'])
+        for invalid in (1, 'paired-store', None, []):
+            with self.assertRaisesRegex(ValueError, 'boolean'):
+                staging.package_features(invalid)
+
     def test_manifest_duplicates_rejected(self):
         p = self.directory / staging.MANIFEST
         p.write_text(p.read_text()[:-1] + ', "schema": 1}')
@@ -231,7 +267,36 @@ class InventoryTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, 'output exceeds'):
                 staging.run(['/usr/bin/readelf', '--version'])
 
+    def test_build_records_selected_features_in_completed_manifest(self):
+        original_run = staging.run
+        original_copy = staging.shutil.copyfile
+        def metadata(args, **kwargs):
+            if args == ['rustc', '-vV']:
+                return 'host: ' + self.manifest['target']
+            return original_run(args, **kwargs)
+        for paired_store in (False, True):
+            with self.subTest(paired_store=paired_store):
+                output = self.directory / ('paired' if paired_store else 'default')
+                with patch.object(staging, 'source_state', return_value=self.manifest['source']), \
+                     patch.object(staging, 'ffmpeg_metadata', return_value=self.manifest['ffmpeg']), \
+                     patch.object(staging, 'pw_metadata', return_value={'status': 'unverified', 'reason': 'synthetic test'}), \
+                     patch.object(staging, 'run', side_effect=metadata), \
+                     patch.object(staging.subprocess, 'run'), \
+                     patch.object(staging.shutil, 'copyfile', side_effect=lambda source, dest: original_copy('/usr/bin/true', dest)), \
+                     patch.object(staging, 'runtime_metadata', return_value={'status': 'unverified', 'reason': 'synthetic test'}):
+                    result = staging.build(self.directory, output, paired_store)
+                self.assertEqual(result['inventory'], 'passed', result)
+                manifest = json.loads((output / staging.MANIFEST).read_text())
+                self.assertEqual(manifest['features'], staging.package_features(paired_store))
+                self.assertEqual(result['features'], manifest['features'])
+
     def test_build_commands_locked_exact_features_and_no_fixture(self):
+        self.check_build_commands(False)
+
+    def test_paired_build_preserves_native_features_and_helpers(self):
+        self.check_build_commands(True)
+
+    def check_build_commands(self, paired_store):
         with patch.object(staging, 'source_state', return_value=self.manifest['source']), \
              patch.object(staging, 'ffmpeg_metadata', return_value=self.manifest['ffmpeg']), \
              patch.object(staging, 'pw_metadata', return_value={'status': 'unverified', 'reason': 'synthetic test'}), \
@@ -239,13 +304,14 @@ class InventoryTests(unittest.TestCase):
              patch.object(staging.subprocess, 'run') as command, \
              patch.object(staging.shutil, 'copyfile', side_effect=RuntimeError('stop after builds')):
             with self.assertRaisesRegex(RuntimeError, 'stop after builds'):
-                staging.build(self.directory, self.directory / 'out')
+                staging.build(self.directory, self.directory / 'out', paired_store)
         self.assertEqual(len(command.call_args_list), 4)
         for call, (binary, (package, features)) in zip(command.call_args_list, staging.FILES.items()):
             args = call.args[0]
             self.assertIn('--locked', args)
             self.assertIn('--no-default-features', args)
-            self.assertEqual(args[args.index('--features') + 1], features)
+            self.assertEqual(args[args.index('--features') + 1],
+                             ','.join(staging.package_features(paired_store)[package]))
             self.assertEqual(args[args.index('--bin') + 1], binary)
             self.assertNotIn('test-fixture', str(args))
 

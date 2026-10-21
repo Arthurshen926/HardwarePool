@@ -26,6 +26,17 @@ FILES = {
     "capyio-linux-touchpad-helper": ("capyio-linux-touchpad", "native-uinput"),
 }
 FEATURES = {package: features.split(",") for package, features in FILES.values()}
+
+def package_features(paired_store=False):
+    """Only two audited package feature selections; never arbitrary Cargo input."""
+    if type(paired_store) is not bool:
+        raise ValueError("paired-store choice must be boolean")
+    features = {package: list(flags) for package, flags in FEATURES.items()}
+    if paired_store:
+        features["capyio-node"].append("paired-store")
+    return features
+
+
 ARCHES = {"x86_64-unknown-linux-gnu": (62, 2), "aarch64-unknown-linux-gnu": (183, 2)}
 PW_VERSIONS = ["1.0.5", "1.6.9"]
 MANIFEST = "manifest.json"
@@ -162,7 +173,8 @@ def pw_metadata():
             "version_output": output, "sha256": digest(path), "path": str(path)}
 
 
-def build(root, output):
+def build(root, output, paired_store=False):
+    features = package_features(paired_store)
     root = root.resolve()
     if output.exists() or output.is_symlink():
         raise ValueError("staging destination must not already exist")
@@ -177,10 +189,10 @@ def build(root, output):
     with tempfile.TemporaryDirectory(prefix="capyio-build-") as target:
         env = os.environ.copy()
         env["CARGO_TARGET_DIR"] = target
-        for binary, (package, features) in FILES.items():
+        for binary, (package, _) in FILES.items():
             subprocess.run(["cargo", "build", "--locked", "--release", "--target", host,
                             "-p", package, "--bin", binary, "--no-default-features",
-                            "--features", features], cwd=root, env=env, check=True)
+                            "--features", ",".join(features[package])], cwd=root, env=env, check=True)
         after = source_state(root)
         if before != after:
             raise ValueError("source Git state changed during build; retry from stable source")
@@ -197,7 +209,7 @@ def build(root, output):
                 records[name] = {"sha256": digest(destination), "size": s.st_size,
                                  "elf": elf_metadata(destination)}
             manifest = {"schema": 1, "purpose": "local-staging-not-release",
-                        "source": before, "target": host, "features": FEATURES,
+                        "source": before, "target": host, "features": features,
                         "files": records, "ffmpeg": ffmpeg,
                         "pw_cat": {"supported_versions": PW_VERSIONS, "build_host": pw_cat},
                         "libraries_bundled": False}
@@ -222,7 +234,7 @@ def validate_manifest(m):
         raise ValueError("invalid manifest schema")
     if m["purpose"] != "local-staging-not-release" or m["libraries_bundled"] is not False:
         raise ValueError("not a supported local staging manifest")
-    if not isinstance(m["target"], str) or m["target"] not in ARCHES or m["features"] != FEATURES or not exact_object(m["files"], FILES):
+    if not isinstance(m["target"], str) or m["target"] not in ARCHES or m["features"] not in (package_features(), package_features(True)) or not exact_object(m["files"], FILES):
         raise ValueError("unexpected target, features or required binary set")
     source = m["source"]
     if not exact_object(source, {"kind", "sha", "worktree"}):
@@ -408,7 +420,7 @@ def preflight(output):
         if set(os.listdir(directory_fd)) != set(FILES) | {MANIFEST}:
             raise ValueError("inventory changed during inspection")
         return {"inventory": "passed", "source": m["source"],
-                "environment": runtime_metadata(m),
+                "features": m["features"], "environment": runtime_metadata(m),
                 "warning": "Unsigned inventory only; not an authenticity, authorization, legal compliance or readiness claim."}
     except (OSError, ValueError, TypeError, KeyError, RecursionError, subprocess.SubprocessError) as error:
         errors.append(str(error))
@@ -424,11 +436,13 @@ def main():
     sub = parser.add_subparsers(dest="command", required=True)
     builder = sub.add_parser("build", help="compile and stage only; never install or run devices")
     builder.add_argument("--output", type=Path, required=True)
+    builder.add_argument("--paired-store", action="store_true",
+                         help="include paired-store in node only; does not access or configure credentials")
     checker = sub.add_parser("preflight", help="passive inventory inspection; never execute staged binaries")
     checker.add_argument("directory", type=Path)
     args = parser.parse_args()
     try:
-        result = build(Path(__file__).resolve().parents[1], args.output.absolute()) if args.command == "build" else preflight(args.directory)
+        result = build(Path(__file__).resolve().parents[1], args.output.absolute(), args.paired_store) if args.command == "build" else preflight(args.directory)
     except (OSError, ValueError, subprocess.SubprocessError) as error:
         result = {"inventory": "failed", "errors": [str(error)]}
     print(json.dumps(result, indent=2))

@@ -1,6 +1,6 @@
 name: Linux staging validation
 
-# Build and inspect only. No devices, pairing, PipeWire server or binary uploads.
+# Build, passive inspection and CLI help only. No devices, pairing, keyring or uploads.
 on:
   push:
     branches: [codex/linux-ipc-validation-20261019]
@@ -16,6 +16,12 @@ jobs:
   linux-staging:
     runs-on: ubuntu-24.04
     timeout-minutes: 25
+    strategy:
+      fail-fast: false
+      matrix:
+        profile: [default, paired-store]
+    env:
+      STAGING_PROFILE: ${{ matrix.profile }}
     steps:
       - uses: actions/checkout@v5
         with:
@@ -31,15 +37,47 @@ jobs:
       - name: Inventory and passive preflight negative tests
         run: python3 -m unittest discover -s scripts -p test_linux_staging.py -v
       - name: Build all production helpers and stage without executing devices
-        run: python3 scripts/linux_staging.py build --output "$RUNNER_TEMP/capyio-linux-stage"
+        run: |
+          args=()
+          if [[ "$STAGING_PROFILE" == paired-store ]]; then args+=(--paired-store); fi
+          python3 scripts/linux_staging.py build "${args[@]}" --output "$RUNNER_TEMP/capyio-linux-stage"
       - name: Independently inspect final staging inventory
         run: |
           python3 scripts/linux_staging.py preflight "$RUNNER_TEMP/capyio-linux-stage"
           python3 - "$RUNNER_TEMP/capyio-linux-stage/manifest.json" "$GITHUB_SHA" <<'PY'
-          import json, sys
+          import json, os, sys
           manifest = json.load(open(sys.argv[1]))
           assert manifest['source'] == {'kind': 'git', 'sha': sys.argv[2], 'worktree': 'clean'}, manifest['source']
           assert manifest['libraries_bundled'] is False
           assert len(manifest['files']) == 4
+          expected = ['native-camera', 'native-touchpad']
+          if os.environ['STAGING_PROFILE'] == 'paired-store':
+              expected.append('paired-store')
+          assert manifest['features']['capyio-node'] == expected, manifest['features']
           print('Exact clean checkout SHA and four production binaries verified; environment remains unverified.')
+          PY
+      - name: Check staged CLI help matches feature choice without opening a backend
+        run: |
+          python3 - "$RUNNER_TEMP/capyio-linux-stage/capyio-node" <<'PY'
+          import os, subprocess, sys
+          node = sys.argv[1]
+          paired = os.environ['STAGING_PROFILE'] == 'paired-store'
+          def help_for(command):
+              return subprocess.run([node, command, '--help'], stdin=subprocess.DEVNULL,
+                                    capture_output=True, text=True, timeout=10)
+          result = help_for('linux-pairing')
+          if paired:
+              assert result.returncode == 0, result.stderr
+              for flag in ('--trusted-lab', '--pairing-state', '--pairing-node',
+                           '--pairing-bus-address', '--pairing-collection'):
+                  assert flag in result.stdout, (flag, result.stdout)
+          else:
+              assert result.returncode == 2, result
+              assert "unrecognized subcommand 'linux-pairing'" in result.stderr, result.stderr
+          for command in ('linux-camera', 'linux-touchpad', 'linux-playback', 'linux-capture'):
+              result = help_for(command)
+              assert result.returncode == 0, result.stderr
+              assert ('--pairing-state' in result.stdout) == paired, result.stdout
+          assert help_for('linux-touchpad-fixture').returncode == 2
+          print('Staged CLI help matches selected production features; no operation was started.')
           PY

@@ -1585,3 +1585,9 @@ only through private FIFO input; no manager error/PIN/credential status is echoe
 Existing and revoked peers cannot be replaced by first enrollment. Local saved
 state is distinguished from bilateral completion, without automatic retry or
 rollback claims; pairing never grants a resource or renews a lease.
+
+ADR 1545 binds explicit recovery to a fresh request, exact peer and domain/owner-
+bound journal digest. The store lock spans confirmation and local replay; revoked,
+changed or missing records fail closed. No protected write/delete or remote trust
+completion is inferred. Same-UID malicious filesystem races are outside flock
+serialization; the staged feature inventory remains unsigned, not authorization.

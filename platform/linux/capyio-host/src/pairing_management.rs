@@ -1,11 +1,14 @@
 //! Explicit, finite first-enrollment management over trusted inherited FIFOs.
-//! No listener, discovery, recovery, credential export or resource grant exists here.
+//! No listener, discovery, credential export or resource grant exists here.
+//! Recovery is explicit local journal replay, never a remote completion claim.
 
 use std::{
+    cell::RefCell,
     collections::BTreeSet,
     io,
     net::SocketAddr,
     path::PathBuf,
+    rc::Rc,
     time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
 
@@ -66,6 +69,9 @@ enum Request {
         version: u8,
         peer_node_id: NodeId,
     },
+    Recover {
+        version: u8,
+    },
 }
 
 #[derive(Deserialize)]
@@ -80,6 +86,12 @@ enum Command {
         version: u8,
         request_id: MessageId,
         peer_node_id: NodeId,
+    },
+    ConfirmRecover {
+        version: u8,
+        request_id: MessageId,
+        peer_node_id: NodeId,
+        transaction_digest: String,
     },
     Cancel {
         version: u8,
@@ -127,7 +139,7 @@ fn parse_request(bytes: &[u8]) -> io::Result<Request> {
                 && pin.0.len() == 8
                 && pin.0.bytes().all(|b| b.is_ascii_digit())
         }
-        Request::List { version } => *version == 1,
+        Request::List { version } | Request::Recover { version } => *version == 1,
         Request::Revoke {
             version,
             peer_node_id,
@@ -143,6 +155,7 @@ fn parse_command(bytes: &[u8]) -> io::Result<Command> {
     let version = match &command {
         Command::Approve { version, .. }
         | Command::ConfirmRevoke { version, .. }
+        | Command::ConfirmRecover { version, .. }
         | Command::Cancel { version } => *version,
     };
     if version == 1 {
@@ -179,8 +192,9 @@ impl Confirmation {
 // Reserve the full one-second backend budget before *each* protected operation,
 // including multiple load/put calls inside a single store poll. No call can renew
 // the overall management deadline. Filesystem scheduling is not a hard RT bound.
+type BackendSlot = Rc<RefCell<Option<SecretServiceBackend>>>;
 struct DeadlineBackend {
-    inner: Option<SecretServiceBackend>,
+    inner: BackendSlot,
     deadline: Instant,
 }
 impl DeadlineBackend {
@@ -196,6 +210,7 @@ impl CredentialBackend for DeadlineBackend {
     fn load(&self, owner: NodeId, handle: &CredentialHandle) -> Result<SecretBytes, BackendError> {
         self.check()?;
         self.inner
+            .borrow()
             .as_ref()
             .ok_or(BackendError::Unavailable)?
             .load(owner, handle)
@@ -208,6 +223,7 @@ impl CredentialBackend for DeadlineBackend {
     ) -> Result<(), BackendError> {
         self.check()?;
         self.inner
+            .borrow()
             .as_ref()
             .ok_or(BackendError::Unavailable)?
             .put_exact(owner, handle, bytes)
@@ -244,11 +260,12 @@ pub fn run_pairing_management_stdio(selection: PairingManagementSelection) -> io
     } else {
         None
     };
+    let backend = Rc::new(RefCell::new(backend));
     let mut store = LinuxPairingStore::open(
         &selection.state_path,
         selection.local_node,
         DeadlineBackend {
-            inner: backend,
+            inner: Rc::clone(&backend),
             deadline,
         },
     )
@@ -260,15 +277,25 @@ pub fn run_pairing_management_stdio(selection: PairingManagementSelection) -> io
     check_deadline(deadline)?;
     match request {
         Request::List { .. } => {
+            let pending_peer = store
+                .pending_enrollment()
+                .map_err(|_| storage_error())?
+                .map(|p| {
+                    json!({"peer_node_id":p.peer_node_id,"display_name":p.display_name,
+                    "transaction_digest":digest_hex(p.transaction_digest)})
+                });
             let peers: Vec<_> = directory.peers().map(|peer| json!({
                 "peer_node_id":peer.node_id, "display_name":peer.display_name,
                 "state":match peer.state { PairingState::Active => "active", PairingState::Revoked { .. } => "revoked" },
             })).collect();
             channel.send_json(
                 &json!({"version":1,"event":"peers","peers":peers,
-                "pending_enrollment":pending}),
+                "pending_enrollment":pending,"pending_peer":pending_peer}),
                 deadline,
             )
+        }
+        Request::Recover { .. } => {
+            recover(&mut channel, &mut store, &selection, &backend, deadline)
         }
         Request::Revoke { peer_node_id, .. } => {
             revoke(&mut channel, &mut store, &directory, peer_node_id, deadline)
@@ -296,6 +323,114 @@ pub fn run_pairing_management_stdio(selection: PairingManagementSelection) -> io
             )
         }
     }
+}
+
+fn digest_hex(digest: [u8; 32]) -> String {
+    digest.iter().map(|b| format!("{b:02x}")).collect()
+}
+fn parse_digest(value: &str) -> io::Result<[u8; 32]> {
+    if value.len() != 64
+        || !value
+            .bytes()
+            .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
+    {
+        return Err(invalid());
+    }
+    let mut result = [0; 32];
+    for (index, byte) in result.iter_mut().enumerate() {
+        *byte = u8::from_str_radix(&value[index * 2..index * 2 + 2], 16).map_err(|_| invalid())?;
+    }
+    Ok(result)
+}
+
+fn recover(
+    channel: &mut LauncherIo,
+    store: &mut LinuxPairingStore<DeadlineBackend>,
+    selection: &PairingManagementSelection,
+    backend: &BackendSlot,
+    deadline: Instant,
+) -> io::Result<()> {
+    let pending = store
+        .pending_enrollment()
+        .map_err(|_| storage_error())?
+        .ok_or_else(invalid)?;
+    if channel.poll_frame(MAX_FRAME)?.is_some() {
+        return Err(invalid());
+    }
+    let mut confirmation = Confirmation::new(pending.peer_node_id);
+    channel.send_json(&json!({"version":1,"event":"recovery_confirmation_required",
+        "request_id":confirmation.request_id,"peer_node_id":pending.peer_node_id,
+        "display_name":pending.display_name,"transaction_digest":digest_hex(pending.transaction_digest),
+        "remote_completion_confirmed":false,"control_endpoint_available":false}), deadline)?;
+    let frame = channel.read_frame(MAX_FRAME, deadline)?;
+    match parse_command(frame.as_slice())? {
+        Command::Cancel { .. } => {
+            return channel.send_json(
+                &json!({"version":1,"event":"cancelled","remote_completion_confirmed":false}),
+                deadline,
+            );
+        }
+        Command::ConfirmRecover {
+            request_id,
+            peer_node_id,
+            transaction_digest,
+            ..
+        } => {
+            confirmation.consume(request_id, peer_node_id)?;
+            if parse_digest(&transaction_digest)? != pending.transaction_digest {
+                return Err(invalid());
+            }
+        }
+        _ => return Err(invalid()),
+    }
+    if channel.poll_frame(MAX_FRAME)?.is_some() {
+        return Err(invalid());
+    }
+    check_deadline(deadline)?;
+    // The metadata lock never leaves this process. Revalidate before ANY keyring
+    // access, then recover_confirmed revalidates again before protected loading.
+    let current = store
+        .pending_enrollment()
+        .map_err(|_| storage_error())?
+        .ok_or_else(invalid)?;
+    if current.peer_node_id != pending.peer_node_id
+        || current.transaction_digest != pending.transaction_digest
+    {
+        return Err(invalid());
+    }
+    if deadline.saturating_duration_since(Instant::now()) < BACKEND_TIMEOUT {
+        return Err(storage_error());
+    }
+    *backend.borrow_mut() = Some(
+        SecretServiceBackend::connect_unix(
+            &selection.bus_address,
+            &selection.collection,
+            selection.local_node,
+            BACKEND_TIMEOUT,
+        )
+        .map_err(|_| storage_error())?,
+    );
+    let manager = EnrollmentManager::default();
+    let result =
+        store.recover_confirmed(&manager, pending.peer_node_id, pending.transaction_digest);
+    if !matches!(result, Ok(true)) {
+        // Recovery may commit metadata before a later filesystem error. Never
+        // imply rollback or identity replacement; unknown metadata stays null.
+        let (saved, pending) = persistence_status(store, Some(&confirmation), false);
+        let _ = channel.send_json(
+            &json!({"version":1,"event":"failed",
+            "local_saved":saved,"pending_enrollment":pending,"remote_completion_confirmed":false,
+            "control_endpoint_available":false}),
+            deadline,
+        );
+        return Err(storage_error());
+    }
+    check_deadline(deadline)?;
+    channel.send_json(
+        &json!({"version":1,"event":"locally_recovered","local_saved":true,
+        "remote_completion_confirmed":false,"control_endpoint_available":false}),
+        deadline,
+    )
 }
 
 fn revoke<B: CredentialBackend>(
@@ -528,7 +663,7 @@ mod tests {
         for input in [
             br#"{"version":2,"action":"list"}"#.as_slice(),
             br#"{"version":1,"action":"list","pin":"12345678"}"#,
-            br#"{"version":1,"action":"recover"}"#,
+            br#"{"version":1,"action":"recover","pin":"12345678"}"#,
             br#"{"version":1,"action":"list","version":1}"#,
             br#"{"version":1,"action":"join","name":"Linux","endpoint":"127.0.0.1:0","pin":"12345678"}"#,
             br#"{"version":1,"action":"join","name":"Linux","endpoint":"example.org:1234","pin":"12345678"}"#,
@@ -551,6 +686,22 @@ mod tests {
     }
 
     #[test]
+    fn recovery_digest_requires_exact_canonical_transaction_encoding() {
+        let digest = [0xab; 32];
+        assert_eq!(parse_digest(&digest_hex(digest)).unwrap(), digest);
+        for value in [
+            "ab".repeat(31),
+            "AB".repeat(32),
+            "gg".repeat(32),
+            "é".repeat(32),
+        ] {
+            assert!(parse_digest(&value).is_err());
+        }
+        assert!(parse_request(br#"{"version":1,"action":"recover"}"#).is_ok());
+        assert!(parse_command(br#"{"version":1,"action":"confirm_recover"}"#).is_err());
+    }
+
+    #[test]
     fn followups_reject_unknown_missing_and_cross_action_fields() {
         assert!(parse_command(br#"{"version":1,"action":"cancel"}"#).is_ok());
         for input in [
@@ -567,7 +718,7 @@ mod tests {
     #[test]
     fn metadata_only_backend_cannot_load_or_write_credentials() {
         let backend = DeadlineBackend {
-            inner: None,
+            inner: Rc::new(RefCell::new(None)),
             deadline: Instant::now() + LIFETIME,
         };
         let handle = CredentialHandle::new("linux-protected:synthetic").unwrap();

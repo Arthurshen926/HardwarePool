@@ -13,6 +13,7 @@ static SEQ: AtomicU64 = AtomicU64::new(1);
 #[derive(Clone, Default)]
 struct Fake {
     reads: Arc<AtomicU64>,
+    puts: Arc<AtomicU64>,
     entries: Arc<Mutex<BTreeMap<String, Vec<u8>>>>,
     error: Arc<Mutex<Option<BackendError>>>,
 }
@@ -37,6 +38,7 @@ impl CredentialBackend for Fake {
         handle: &CredentialHandle,
         bytes: &[u8],
     ) -> Result<(), BackendError> {
+        self.puts.fetch_add(1, Ordering::Relaxed);
         if let Some(e) = *self.error.lock().unwrap() {
             return Err(e);
         }
@@ -528,6 +530,7 @@ fn duplicate_binding_keys_and_mismatched_handle_digest_fail_closed() {
         serde_json::to_string(digest).unwrap()
     );
     s.files.write(JOURNAL, duplicate.as_bytes()).unwrap();
+    assert!(s.pending_enrollment().is_err());
     assert!(s.commit_pending_enrollment().is_err());
     s.write(
         JOURNAL,
@@ -536,4 +539,269 @@ fn duplicate_binding_keys_and_mismatched_handle_digest_fail_closed() {
     )
     .unwrap();
     assert!(s.commit_pending_enrollment().is_err());
+}
+
+#[test]
+fn pending_summary_and_confirmed_recovery_are_exact_and_read_only_until_confirmed() {
+    let t = Temp::new();
+    let owner = NodeId::new();
+    let peer = NodeId::new();
+    let b = Fake::default();
+    let mut s = store(&t, owner, b.clone());
+    let manager = EnrollmentManager::default();
+    assert!(s.pending_enrollment().unwrap().is_none());
+    assert!(!s.recover_confirmed(&manager, peer, [0; 32]).unwrap());
+    s.stage_enrollment(&fixture(owner, peer, 1)).unwrap();
+    let reads = b.reads.load(Ordering::Relaxed);
+    let puts = b.puts.load(Ordering::Relaxed);
+    let entries = b.entries.lock().unwrap().clone();
+    let summary = s.pending_enrollment().unwrap().unwrap();
+    assert_eq!(summary.peer_node_id, peer);
+    assert_eq!(summary.display_name, "synthetic peer");
+    assert_eq!(b.reads.load(Ordering::Relaxed), reads);
+    assert!(matches!(
+        s.recover_confirmed(&manager, NodeId::new(), summary.transaction_digest),
+        Err(StoreError::Metadata)
+    ));
+    assert!(matches!(
+        s.recover_confirmed(&manager, peer, [0; 32]),
+        Err(StoreError::Metadata)
+    ));
+    assert_eq!(b.reads.load(Ordering::Relaxed), reads);
+    assert_eq!(manager.status().phase, "idle");
+    assert!(
+        s.recover_confirmed(&manager, peer, summary.transaction_digest)
+            .unwrap()
+    );
+    assert_eq!(manager.status().phase, "recovered");
+    assert!(
+        !s.recover_confirmed(&manager, peer, summary.transaction_digest)
+            .unwrap()
+    );
+    assert_eq!(b.puts.load(Ordering::Relaxed), puts);
+    assert_eq!(*b.entries.lock().unwrap(), entries);
+}
+
+#[test]
+fn changed_exact_journal_bytes_invalidate_confirmation_without_secret_access() {
+    let t = Temp::new();
+    let owner = NodeId::new();
+    let peer = NodeId::new();
+    let b = Fake::default();
+    let mut s = store(&t, owner, b.clone());
+    s.stage_enrollment(&fixture(owner, peer, 1)).unwrap();
+    let summary = s.pending_enrollment().unwrap().unwrap();
+    let reads = b.reads.load(Ordering::Relaxed);
+    let mut bytes = fs::read(t.0.join(JOURNAL)).unwrap();
+    bytes.push(b' '); // Semantically identical, but not the confirmed transaction bytes.
+    s.files.write(JOURNAL, &bytes).unwrap();
+    let changed = s.pending_enrollment().unwrap().unwrap();
+    assert_ne!(summary.transaction_digest, changed.transaction_digest);
+    assert!(
+        s.recover_confirmed(
+            &EnrollmentManager::default(),
+            peer,
+            summary.transaction_digest
+        )
+        .is_err()
+    );
+    assert_eq!(b.reads.load(Ordering::Relaxed), reads);
+    assert!(s.load_directory().unwrap().peers().next().is_none());
+    assert_eq!(fs::read(t.0.join(JOURNAL)).unwrap(), bytes);
+}
+
+#[test]
+fn confirmed_recovery_backend_failures_preserve_journal_and_never_put() {
+    let t = Temp::new();
+    let owner = NodeId::new();
+    let peer = NodeId::new();
+    let b = Fake::default();
+    let mut s = store(&t, owner, b.clone());
+    s.stage_enrollment(&fixture(owner, peer, 1)).unwrap();
+    let summary = s.pending_enrollment().unwrap().unwrap();
+    let bytes = fs::read(t.0.join(JOURNAL)).unwrap();
+    let entries = b.entries.lock().unwrap().clone();
+    let puts = b.puts.load(Ordering::Relaxed);
+    for error in [
+        BackendError::Locked,
+        BackendError::Missing,
+        BackendError::Unavailable,
+        BackendError::Conflict,
+    ] {
+        *b.error.lock().unwrap() = Some(error);
+        let reads = b.reads.load(Ordering::Relaxed);
+        assert_eq!(s.pending_enrollment().unwrap().unwrap(), summary);
+        assert_eq!(b.reads.load(Ordering::Relaxed), reads);
+        assert!(
+            matches!(s.recover_confirmed(&EnrollmentManager::default(), peer, summary.transaction_digest), Err(StoreError::Backend(e)) if e == error)
+        );
+        assert_eq!(fs::read(t.0.join(JOURNAL)).unwrap(), bytes);
+        assert!(s.load_directory().unwrap().peers().next().is_none());
+        assert_eq!(b.puts.load(Ordering::Relaxed), puts);
+        assert_eq!(*b.entries.lock().unwrap(), entries);
+    }
+}
+
+#[test]
+fn pending_summary_rejects_revoked_conflicting_and_corrupt_metadata_before_reads() {
+    let t = Temp::new();
+    let owner = NodeId::new();
+    let peer = NodeId::new();
+    let b = Fake::default();
+    let mut s = store(&t, owner, b.clone());
+    s.stage_enrollment(&fixture(owner, peer, 1)).unwrap();
+    let summary = s.pending_enrollment().unwrap().unwrap();
+    let journal = fs::read(t.0.join(JOURNAL)).unwrap();
+    s.commit_pending_enrollment().unwrap();
+    s.files.write(JOURNAL, &journal).unwrap();
+    // The crash window after directory write is a valid idempotent transaction.
+    assert_eq!(s.pending_enrollment().unwrap().unwrap(), summary);
+    assert!(
+        s.recover_confirmed(
+            &EnrollmentManager::default(),
+            peer,
+            summary.transaction_digest
+        )
+        .unwrap()
+    );
+    s.files.write(JOURNAL, &journal).unwrap();
+    s.revoke(peer, 2).unwrap();
+    let reads = b.reads.load(Ordering::Relaxed);
+    assert!(s.pending_enrollment().is_err());
+    assert!(
+        s.recover_confirmed(
+            &EnrollmentManager::default(),
+            peer,
+            summary.transaction_digest
+        )
+        .is_err()
+    );
+    assert_eq!(b.reads.load(Ordering::Relaxed), reads);
+    // A different pin for the same peer is not the staged approval.
+    let other = PairingInvitation::decode_for(owner, &fixture(owner, peer, 2)).unwrap();
+    let directory = PairedPeerDirectory::decode_json(owner, other.directory_json()).unwrap();
+    let record = directory.peers().next().unwrap();
+    s.write(
+        DIRECTORY,
+        &directory,
+        Bindings::from([(
+            record.credential_handle.as_str().to_owned(),
+            Sha256::digest(other.credential_bundle()).into(),
+        )]),
+    )
+    .unwrap();
+    assert!(s.pending_enrollment().is_err());
+    assert!(
+        s.recover_confirmed(
+            &EnrollmentManager::default(),
+            peer,
+            summary.transaction_digest
+        )
+        .is_err()
+    );
+    s.files.write(DIRECTORY, b"{}").unwrap();
+    assert!(s.pending_enrollment().is_err());
+    assert!(
+        s.recover_confirmed(
+            &EnrollmentManager::default(),
+            peer,
+            summary.transaction_digest
+        )
+        .is_err()
+    );
+    assert_eq!(b.reads.load(Ordering::Relaxed), reads);
+}
+
+#[test]
+fn pending_summary_rejects_wrong_owner_duplicate_and_corrupt_journal_before_reads() {
+    let t = Temp::new();
+    let owner = NodeId::new();
+    let peer = NodeId::new();
+    let b = Fake::default();
+    let mut s = store(&t, owner, b.clone());
+    s.stage_enrollment(&fixture(owner, peer, 1)).unwrap();
+    let summary = s.pending_enrollment().unwrap().unwrap();
+    let bytes = fs::read(t.0.join(JOURNAL)).unwrap();
+    let reads = b.reads.load(Ordering::Relaxed);
+    let mut wrong_owner: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+    wrong_owner["owner"] = serde_json::to_value(NodeId::new()).unwrap();
+    let duplicate = String::from_utf8(bytes.clone())
+        .unwrap()
+        .replacen("{", "{\"version\":1,", 1);
+    for invalid in [
+        serde_json::to_vec(&wrong_owner).unwrap(),
+        duplicate.into_bytes(),
+        b"{}".to_vec(),
+        vec![b' '; MAX_DOCUMENT],
+    ] {
+        s.files.write(JOURNAL, &invalid).unwrap();
+        assert!(s.pending_enrollment().is_err());
+        assert!(
+            s.recover_confirmed(
+                &EnrollmentManager::default(),
+                peer,
+                summary.transaction_digest
+            )
+            .is_err()
+        );
+        assert_eq!(b.reads.load(Ordering::Relaxed), reads);
+    }
+    s.files.write(JOURNAL, &bytes).unwrap();
+    drop(s);
+    let wrong = store(&t, NodeId::new(), b.clone());
+    assert!(wrong.pending_enrollment().is_err());
+    assert_eq!(b.reads.load(Ordering::Relaxed), reads);
+}
+
+#[test]
+fn replacement_during_protected_read_is_not_committed_or_removed() {
+    struct ReplacesJournal {
+        fake: Fake,
+        root: PathBuf,
+        replacement: Vec<u8>,
+    }
+    impl CredentialBackend for ReplacesJournal {
+        fn load(
+            &self,
+            owner: NodeId,
+            handle: &CredentialHandle,
+        ) -> Result<SecretBytes, BackendError> {
+            let secret = self.fake.load(owner, handle)?;
+            fs::write(self.root.join(JOURNAL), &self.replacement).unwrap();
+            Ok(secret)
+        }
+        fn put_exact(&self, _: NodeId, _: &CredentialHandle, _: &[u8]) -> Result<(), BackendError> {
+            panic!("confirmed recovery must never write protected storage")
+        }
+    }
+    let t = Temp::new();
+    let owner = NodeId::new();
+    let peer = NodeId::new();
+    let b = Fake::default();
+    let mut s = store(&t, owner, b.clone());
+    s.stage_enrollment(&fixture(owner, peer, 1)).unwrap();
+    let summary = s.pending_enrollment().unwrap().unwrap();
+    let mut replacement = fs::read(t.0.join(JOURNAL)).unwrap();
+    replacement.push(b' ');
+    drop(s);
+    let mut s = LinuxPairingStore::open(
+        &t.0,
+        owner,
+        ReplacesJournal {
+            fake: b,
+            root: t.0.clone(),
+            replacement: replacement.clone(),
+        },
+    )
+    .unwrap();
+    assert!(
+        s.recover_confirmed(
+            &EnrollmentManager::default(),
+            peer,
+            summary.transaction_digest
+        )
+        .is_err()
+    );
+    assert_eq!(fs::read(t.0.join(JOURNAL)).unwrap(), replacement);
+    assert!(!t.0.join(DIRECTORY).exists());
 }

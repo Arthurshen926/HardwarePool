@@ -1370,3 +1370,9 @@ ADR 1544 adds actual `linux-pairing` subprocess tests with a bilateral synthetic
 EnrollmentManager peer and private create-capable fake Secret Service. Mandatory
 hosted tests exercise fresh confirmation, protected persistence, list/revoke and
 rejection/cancellation boundaries. No real keyring, identity or device is used.
+
+ADR 1545 adds actual-process confirmed recovery cases to the private fake-service
+suite, with metadata-only inspection, exact transaction confirmation and byte-
+preserving local replay. Core faults reject journal replacement and credential
+loss. Staging CI separately builds default/paired profiles and checks help-only
+command availability; this is not enrollment or device acceptance.

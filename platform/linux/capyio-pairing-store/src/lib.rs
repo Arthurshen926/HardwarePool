@@ -113,6 +113,23 @@ struct Document {
     credential_sha256: Bindings,
 }
 
+/// Nonsecret summary of one validated local recovery transaction.
+/// The digest binds the owner and exact journal bytes, not just its credential.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct PendingEnrollment {
+    pub peer_node_id: NodeId,
+    pub display_name: String,
+    pub transaction_digest: [u8; 32],
+}
+
+struct PendingSnapshot {
+    summary: PendingEnrollment,
+    peer: PairedPeerRecord,
+    directory: PairedPeerDirectory,
+    bindings: Bindings,
+    journal_bytes: Vec<u8>,
+}
+
 pub struct LinuxPairingStore<B: CredentialBackend> {
     files: files::Files,
     owner: NodeId,
@@ -156,8 +173,14 @@ impl<B: CredentialBackend> LinuxPairingStore<B> {
         let Some(bytes) = self.files.read(name, MAX_DOCUMENT)? else {
             return Ok(None);
         };
-        let document: Document =
-            serde_json::from_slice(&bytes).map_err(|_| StoreError::Metadata)?;
+        self.decode_document(&bytes, pending).map(Some)
+    }
+    fn decode_document(
+        &self,
+        bytes: &[u8],
+        pending: bool,
+    ) -> Result<(PairedPeerDirectory, Bindings), StoreError> {
+        let document: Document = serde_json::from_slice(bytes).map_err(|_| StoreError::Metadata)?;
         if document.version != 1 || document.owner != self.owner {
             return Err(StoreError::Metadata);
         }
@@ -183,7 +206,7 @@ impl<B: CredentialBackend> LinuxPairingStore<B> {
         if pending && (directory.peers().len() != 1 || directory.active_peers().count() != 1) {
             return Err(StoreError::Metadata);
         }
-        Ok(Some((directory, document.credential_sha256)))
+        Ok((directory, document.credential_sha256))
     }
     fn write(
         &self,
@@ -214,6 +237,47 @@ impl<B: CredentialBackend> LinuxPairingStore<B> {
     /// Presence is not proof of remote completion and never initiates recovery.
     pub fn has_pending_enrollment(&self) -> Result<bool, StoreError> {
         Ok(self.read(JOURNAL, true)?.is_some())
+    }
+    /// Validate both the bounded journal and current directory without accessing
+    /// protected credentials. This is local preparation, not remote completion.
+    pub fn pending_enrollment(&self) -> Result<Option<PendingEnrollment>, StoreError> {
+        Ok(self.pending_snapshot()?.map(|snapshot| snapshot.summary))
+    }
+    fn pending_snapshot(&self) -> Result<Option<PendingSnapshot>, StoreError> {
+        let Some(journal_bytes) = self.files.read(JOURNAL, MAX_DOCUMENT)? else {
+            return Ok(None);
+        };
+        // Hash and decode the very same bounded read, never a second pathname read.
+        let (pending, digest) = self.decode_document(&journal_bytes, true)?;
+        let peer = pending.peers().next().ok_or(StoreError::Metadata)?.clone();
+        let (mut directory, mut bindings) = self
+            .read(DIRECTORY, false)?
+            .unwrap_or((PairedPeerDirectory::new(self.owner)?, Bindings::new()));
+        check_existing(&directory, &peer)?;
+        if !directory.peers().any(|p| p.node_id == peer.node_id) {
+            directory.add(peer.clone())?;
+        }
+        // Reject capacity and encoding failures before touching protected storage.
+        directory.encode_json()?;
+        bindings.extend(digest);
+        let mut hash = Sha256::new();
+        hash.update(b"capyio-linux-pairing-pending-v1\0");
+        // NodeId's canonical textual representation is fixed-width and unambiguous.
+        hash.update(self.owner.to_string().as_bytes());
+        hash.update(b"\0");
+        hash.update(&journal_bytes);
+        let summary = PendingEnrollment {
+            peer_node_id: peer.node_id,
+            display_name: peer.display_name.clone(),
+            transaction_digest: hash.finalize().into(),
+        };
+        Ok(Some(PendingSnapshot {
+            summary,
+            peer,
+            directory,
+            bindings,
+            journal_bytes,
+        }))
     }
     /// Only invoke via EnrollmentManager::stage_with after bilateral approval.
     pub fn stage_enrollment(&mut self, bytes: &[u8]) -> Result<(), StoreError> {
@@ -285,22 +349,36 @@ impl<B: CredentialBackend> LinuxPairingStore<B> {
     /// Idempotent local replay of a durable journal; never creates an identity.
     /// Normal enrollment calls this only from persist_with (remote prepared).
     pub fn commit_pending_enrollment(&mut self) -> Result<Option<PairedPeerRecord>, StoreError> {
-        let Some((pending, digest)) = self.read(JOURNAL, true)? else {
+        let Some(snapshot) = self.pending_snapshot()? else {
             return Ok(None);
         };
-        let peer = pending.peers().next().ok_or(StoreError::Metadata)?.clone();
-        let (mut directory, mut bindings) = self
-            .read(DIRECTORY, false)?
-            .unwrap_or((PairedPeerDirectory::new(self.owner)?, BTreeMap::new()));
-        check_existing(&directory, &peer)?;
-        self.load_exact(&peer, digest.get(peer.credential_handle.as_str()).copied())?;
-        if !directory.peers().any(|p| p.node_id == peer.node_id) {
-            directory.add(peer.clone())?;
-        }
-        bindings.extend(digest);
-        self.write(DIRECTORY, &directory, bindings)?;
+        self.commit_snapshot(snapshot).map(Some)
+    }
+    fn commit_snapshot(
+        &mut self,
+        snapshot: PendingSnapshot,
+    ) -> Result<PairedPeerRecord, StoreError> {
+        self.load_exact(
+            &snapshot.peer,
+            snapshot
+                .bindings
+                .get(snapshot.peer.credential_handle.as_str())
+                .copied(),
+        )?;
+        self.check_journal_bytes(&snapshot.journal_bytes)?;
+        self.write(DIRECTORY, &snapshot.directory, snapshot.bindings)?;
+        // Never intentionally clear a replacement journal. The lifetime flock
+        // serializes cooperating owners; it cannot exclude malicious same-UID
+        // writers between this check and unlink (or metadata replacement).
+        self.check_journal_bytes(&snapshot.journal_bytes)?;
         self.files.remove(JOURNAL)?;
-        Ok(Some(peer))
+        Ok(snapshot.peer)
+    }
+    fn check_journal_bytes(&self, expected: &[u8]) -> Result<(), StoreError> {
+        if self.files.read(JOURNAL, MAX_DOCUMENT)?.as_deref() != Some(expected) {
+            return Err(StoreError::Metadata);
+        }
+        Ok(())
     }
     /// One poll, not a thread/service. Manager errors become terminal failure.
     pub fn poll_enrollment(&mut self, manager: &EnrollmentManager) -> Result<bool, StoreError> {
@@ -326,6 +404,39 @@ impl<B: CredentialBackend> LinuxPairingStore<B> {
         result
     }
     pub fn recover(&mut self, manager: &EnrollmentManager) -> Result<bool, StoreError> {
+        self.check_recovery_manager(manager)?;
+        let Some(peer) = self.commit_pending_enrollment()? else {
+            return Ok(false);
+        };
+        manager.note_local_recovery(peer.node_id, peer.display_name);
+        Ok(true)
+    }
+    /// Recover only the exact local transaction the caller confirmed. Revalidates
+    /// metadata under the lifetime store lock and checks both identifiers before
+    /// any protected credential read. No identity creation, protected-storage
+    /// put, or credential deletion is performed. Recovery says nothing about the
+    /// remote peer's completion.
+    /// The lock assumes cooperating local owners, not hostile same-UID writers.
+    pub fn recover_confirmed(
+        &mut self,
+        manager: &EnrollmentManager,
+        expected_peer: NodeId,
+        expected_digest: [u8; 32],
+    ) -> Result<bool, StoreError> {
+        self.check_recovery_manager(manager)?;
+        let Some(snapshot) = self.pending_snapshot()? else {
+            return Ok(false);
+        };
+        if snapshot.summary.peer_node_id != expected_peer
+            || snapshot.summary.transaction_digest != expected_digest
+        {
+            return Err(StoreError::Metadata);
+        }
+        let peer = self.commit_snapshot(snapshot)?;
+        manager.note_local_recovery(peer.node_id, peer.display_name);
+        Ok(true)
+    }
+    fn check_recovery_manager(&self, manager: &EnrollmentManager) -> Result<(), StoreError> {
         self.files.check_owner()?;
         if !matches!(
             manager.status().phase.as_str(),
@@ -333,11 +444,7 @@ impl<B: CredentialBackend> LinuxPairingStore<B> {
         ) {
             return Err(StoreError::Busy);
         }
-        let Some(peer) = self.commit_pending_enrollment()? else {
-            return Ok(false);
-        };
-        manager.note_local_recovery(peer.node_id, peer.display_name);
-        Ok(true)
+        Ok(())
     }
     /// Persist local revocation without removing a protected credential. A stale
     /// pending journal cannot reactivate this tombstone; remote propagation is separate.
