@@ -224,7 +224,7 @@ impl Process {
             }
         };
         #[cfg(feature = "touchpad-test-fixture")]
-        'helpers: for pid in owner.into_iter().flat_map(child_pids) {
+        for pid in owner.into_iter().flat_map(child_pids) {
             let Some(identity) = process_identity(pid).expect("owned helper process identity")
             else {
                 continue;
@@ -237,78 +237,29 @@ impl Process {
             if let Some(started) = self.helper_pids.get(&pid) {
                 assert_eq!(*started, identity.started, "owned helper PID was reused");
             }
-            if identity.ended() {
-                continue 'helpers;
-            }
-            let executable = match std::fs::read_link(format!("/proc/{pid}/exe")) {
-                Ok(executable) => executable,
-                Err(error)
-                    if matches!(
-                        error.kind(),
-                        io::ErrorKind::NotFound | io::ErrorKind::PermissionDenied
-                    ) =>
-                {
-                    assert!(
-                        same_owned_process_ended(
-                            identity,
-                            process_identity(pid).expect("owned helper exit identity")
-                        ),
-                        "cannot inspect live owned helper executable: {error}"
-                    );
-                    // Disappearance/exit is not successful identity evidence.
-                    continue;
-                }
-                Err(error) => panic!("cannot inspect owned helper executable: {error}"),
-            };
             let expected = std::path::Path::new(env!("CARGO_BIN_EXE_capyio-node"))
                 .parent()
                 .unwrap()
                 .join("capyio-linux-touchpad-fixture-helper")
                 .canonicalize()
                 .unwrap();
-            assert_eq!(
-                executable, expected,
-                "only the fixed fixture sibling may be spawned"
-            );
-            #[cfg(feature = "paired-store")]
-            if let Some(store) = &self.paired_store {
-                for name in ["cmdline", "environ"] {
-                    match std::fs::read(format!("/proc/{pid}/{name}")) {
-                        Ok(bytes) => store.assert_no_leak(&bytes),
-                        Err(error)
-                            if matches!(
-                                error.kind(),
-                                io::ErrorKind::NotFound | io::ErrorKind::PermissionDenied
-                            ) =>
-                        {
-                            assert!(
-                                same_owned_process_ended(
-                                    identity,
-                                    process_identity(pid).expect("owned helper exit identity")
-                                ),
-                                "cannot inspect live owned helper public metadata: {error}"
-                            );
-                            // Linux may withdraw /proc metadata during exit.
-                            // Keep prior verified evidence, but never count this
-                            // incomplete scan as identity/redaction success.
-                            continue 'helpers;
-                        }
-                        Err(error) => {
-                            panic!("cannot inspect owned helper public metadata: {error}")
-                        }
+            let verified = inspect_owned_helper(identity, &expected, |pid| {
+                #[cfg(feature = "paired-store")]
+                if let Some(store) = &self.paired_store {
+                    for name in ["cmdline", "environ"] {
+                        store.assert_no_leak(&std::fs::read(format!("/proc/{pid}/{name}"))?);
                     }
                 }
-            }
-            let Some(after) = process_identity(pid).expect("owned helper final identity") else {
-                continue;
-            };
-            assert!(
-                identity.same_generation(after),
-                "owned helper PID changed during inspection"
-            );
-            if !after.ended() {
+                #[cfg(not(feature = "paired-store"))]
+                let _ = pid;
+                Ok(())
+            })
+            .expect("bounded fixed-helper identity and metadata inspection");
+            if verified {
                 self.helper_pids.insert(pid, identity.started);
             }
+            // An ended or vanished helper retains prior verified evidence but
+            // never earns new identity/redaction evidence from an incomplete scan.
         }
         if !self.is_console() {
             drain(self.child.stdout.as_mut().unwrap(), &mut self.stdout);
@@ -539,6 +490,222 @@ fn process_identity(pid: u32) -> io::Result<Option<ProcessIdentity>> {
 #[cfg(feature = "touchpad-test-fixture")]
 fn same_owned_process_ended(before: ProcessIdentity, after: Option<ProcessIdentity>) -> bool {
     after.is_none_or(|after| before.same_generation(after) && after.ended())
+}
+
+// Read-only /proc observation only: no control/data, lease, native-commit,
+// terminal or reap deadline is extended by this fixed inspection budget.
+#[cfg(feature = "touchpad-test-fixture")]
+const HELPER_OBSERVATION_BUDGET: Duration = Duration::from_millis(100);
+
+#[cfg(feature = "touchpad-test-fixture")]
+#[derive(Clone, Copy)]
+struct HelperObservation {
+    identity: Option<ProcessIdentity>,
+    inspected: bool,
+}
+
+#[cfg(feature = "touchpad-test-fixture")]
+fn inspect_owned_helper(
+    before: ProcessIdentity,
+    expected: &std::path::Path,
+    mut inspect_metadata: impl FnMut(u32) -> io::Result<()>,
+) -> io::Result<bool> {
+    let started = Instant::now();
+    observe_owned_helper(
+        before,
+        || {
+            let observation = probe_owned_helper(before, expected, &mut inspect_metadata)?;
+            Ok((started.elapsed(), observation))
+        },
+        || thread::sleep(Duration::from_millis(2)),
+    )
+}
+
+#[cfg(feature = "touchpad-test-fixture")]
+fn probe_owned_helper(
+    before: ProcessIdentity,
+    expected: &std::path::Path,
+    inspect_metadata: &mut impl FnMut(u32) -> io::Result<()>,
+) -> io::Result<HelperObservation> {
+    let identity = process_identity(before.pid)?;
+    let pending = HelperObservation {
+        identity,
+        inspected: false,
+    };
+    let Some(current) = identity else {
+        return Ok(pending);
+    };
+    if !before.same_generation(current) || current.ended() {
+        return Ok(pending);
+    }
+    let inspection = (|| {
+        let executable = std::fs::read_link(format!("/proc/{}/exe", before.pid))?;
+        if executable != expected {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "fixed fixture helper executable mismatch",
+            ));
+        }
+        inspect_metadata(before.pid)
+    })();
+    match inspection {
+        Ok(()) => Ok(HelperObservation {
+            // All successful reads are bracketed by the same live generation.
+            // Exit or reuse here cannot earn successful inspection evidence.
+            identity: process_identity(before.pid)?,
+            inspected: true,
+        }),
+        Err(error)
+            if matches!(
+                error.kind(),
+                io::ErrorKind::NotFound | io::ErrorKind::PermissionDenied
+            ) =>
+        {
+            Ok(pending)
+        }
+        Err(error) => Err(error),
+    }
+}
+
+#[cfg(feature = "touchpad-test-fixture")]
+fn observe_owned_helper(
+    before: ProcessIdentity,
+    mut observe: impl FnMut() -> io::Result<(Duration, HelperObservation)>,
+    mut pause: impl FnMut(),
+) -> io::Result<bool> {
+    let mut first_incomplete = None;
+    loop {
+        let (observed_at, observation) = observe()?;
+        if observation
+            .identity
+            .is_some_and(|after| !before.same_generation(after))
+        {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "owned helper generation changed",
+            ));
+        }
+        if first_incomplete
+            .is_some_and(|started| observed_at.saturating_sub(started) >= HELPER_OBSERVATION_BUDGET)
+        {
+            return Err(io::Error::new(
+                io::ErrorKind::TimedOut,
+                "owned helper inspection stayed incomplete",
+            ));
+        }
+        if same_owned_process_ended(before, observation.identity) {
+            return Ok(false);
+        }
+        if observation.inspected {
+            return Ok(true);
+        }
+        // exe/environ can disappear before Z/X appears. Retry the complete
+        // exact proof, never treating bare live stat or permission denial as
+        // success. The first unavailable read fixes the one shared budget.
+        first_incomplete.get_or_insert(observed_at);
+        pause();
+    }
+}
+
+#[cfg(feature = "touchpad-test-fixture")]
+#[test]
+fn pure_helper_observation_retries_full_proof_with_one_generation_bound_budget() {
+    fn run(
+        before: ProcessIdentity,
+        samples: &[(u64, HelperObservation)],
+    ) -> (io::Result<bool>, usize) {
+        let mut used = 0;
+        let result = observe_owned_helper(
+            before,
+            || {
+                let (elapsed, observation) = samples
+                    .get(used)
+                    .expect("must stop within scripted observations");
+                used += 1;
+                Ok((Duration::from_millis(*elapsed), *observation))
+            },
+            || {},
+        );
+        (result, used)
+    }
+    let live = ProcessIdentity {
+        pid: 42,
+        parent: 7,
+        started: 12345,
+        state: b'S',
+    };
+    let pending = HelperObservation {
+        identity: Some(live),
+        inspected: false,
+    };
+    let complete = HelperObservation {
+        inspected: true,
+        ..pending
+    };
+    let gone = HelperObservation {
+        identity: None,
+        inspected: false,
+    };
+    assert!(run(live, &[(0, complete)]).0.unwrap());
+    assert!(
+        run(live, &[(0, pending), (2, pending), (4, complete)])
+            .0
+            .unwrap()
+    );
+    for state in *b"ZX" {
+        let ended = HelperObservation {
+            identity: Some(ProcessIdentity { state, ..live }),
+            inspected: false,
+        };
+        let (result, used) = run(live, &[(0, pending), (2, ended)]);
+        assert!(
+            !result.unwrap(),
+            "ended process never earns new successful evidence"
+        );
+        assert_eq!(used, 2);
+    }
+    assert!(!run(live, &[(0, pending), (2, gone)]).0.unwrap());
+    for last in [pending, complete, gone] {
+        let (result, used) = run(live, &[(0, pending), (99, pending), (100, last)]);
+        assert_eq!(result.unwrap_err().kind(), io::ErrorKind::TimedOut);
+        assert_eq!(used, 3, "retries must not reset the original budget");
+    }
+    assert!(run(live, &[(23, pending), (122, complete)]).0.unwrap());
+    assert_eq!(
+        run(live, &[(23, pending), (123, complete)])
+            .0
+            .unwrap_err()
+            .kind(),
+        io::ErrorKind::TimedOut
+    );
+    for changed in [
+        ProcessIdentity { pid: 43, ..live },
+        ProcessIdentity { parent: 8, ..live },
+        ProcessIdentity {
+            started: 12346,
+            ..live
+        },
+    ] {
+        for inspected in [false, true] {
+            let replaced = HelperObservation {
+                identity: Some(changed),
+                inspected,
+            };
+            let (result, used) = run(live, &[(0, pending), (2, replaced), (4, gone)]);
+            assert_eq!(result.unwrap_err().kind(), io::ErrorKind::InvalidData);
+            assert_eq!(
+                used, 2,
+                "identity change rejects before later disappearance"
+            );
+        }
+    }
+    let error = observe_owned_helper(
+        live,
+        || Err(io::Error::from(io::ErrorKind::PermissionDenied)),
+        || panic!("stat read error must not be retried or treated as disappearance"),
+    )
+    .unwrap_err();
+    assert_eq!(error.kind(), io::ErrorKind::PermissionDenied);
 }
 
 #[cfg(feature = "touchpad-test-fixture")]

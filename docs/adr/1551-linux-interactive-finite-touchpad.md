@@ -82,10 +82,13 @@ Exact test discovery, zero skips and one precise console marker per case are
 required, alongside independent process ancestry, full commit-before-ACK,
 contact-release trace and all-process cleanup. Helper inspection brackets executable
 and public-metadata reads with PID, parent and process-start-time identity. A
-missing or permission-denied procfs read is accepted only after proving that the
-same owned generation exited or disappeared; an incomplete scan never counts as
-successful identity/redaction evidence. Live-process denial and PID reuse remain
-failures. Existing touchpad software tests,
+missing or permission-denied executable/metadata read triggers one bounded
+100 ms observation window with 2 ms spacing, not a media or lease extension.
+Every retry repeats the complete proof for the same generation. Only a complete
+live inspection earns identity/redaction evidence; proven exit or disappearance
+ends observation without new evidence. Persistent live denial, PID reuse, wrong
+executable and malformed/stat-read errors remain failures. The window is never
+reset; it bounds retries, not arbitrary filesystem latency. Existing touchpad software tests,
 13 camera console profiles and all 64 audio graph profiles remain mandatory.
 No test opens `/dev/uinput`, changes kernel/input permissions or touches a user's
 keyring, real terminal or physical device. Production transport, cryptography,
