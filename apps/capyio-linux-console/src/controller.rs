@@ -1,5 +1,6 @@
 mod camera;
 mod catalog;
+mod catalog_export;
 mod media;
 mod touchpad;
 
@@ -103,6 +104,19 @@ enum Action {
         #[arg(long)]
         endpoint: SocketAddr,
     },
+    /// Export one explicitly selected camera manifest, without starting resources.
+    PrepareCamera {
+        #[arg(long)]
+        peer: NodeId,
+        #[arg(long)]
+        endpoint: SocketAddr,
+        #[arg(long)]
+        output: PathBuf,
+        #[arg(long)]
+        listen: SocketAddr,
+        #[arg(long)]
+        duration_secs: u64,
+    },
     List,
     Recover,
     Revoke {
@@ -176,6 +190,18 @@ fn validate(args: &Args) -> io::Result<()> {
         }
         Action::Revoke { peer } if peer.as_uuid().is_nil() => return Err(invalid()),
         Action::Catalog { peer, .. } if peer.as_uuid().is_nil() || *peer == args.pairing_node => {
+            return Err(invalid());
+        }
+        Action::PrepareCamera {
+            peer,
+            output,
+            duration_secs,
+            ..
+        } if peer.as_uuid().is_nil()
+            || *peer == args.pairing_node
+            || !output.is_absolute()
+            || !(3..=60).contains(duration_secs) =>
+        {
             return Err(invalid());
         }
         Action::Playback { config, peer }
@@ -881,6 +907,22 @@ pub fn run() -> io::Result<()> {
     validate(&args)?;
     match &args.action {
         Action::Catalog { peer, endpoint } => return catalog::run(&args, *peer, *endpoint),
+        Action::PrepareCamera {
+            peer,
+            endpoint,
+            output,
+            listen,
+            duration_secs,
+        } => {
+            return catalog::run_prepare_camera(
+                &args,
+                *peer,
+                *endpoint,
+                output,
+                *listen,
+                *duration_secs,
+            );
+        }
         Action::Playback { config, peer } => return media::run(&args, config, *peer),
         Action::Capture { config, peer } => return media::run_capture(&args, config, *peer),
         Action::Camera { config, peer } => return camera::run(&args, config, *peer),
@@ -930,7 +972,7 @@ pub fn run() -> io::Result<()> {
         Action::List=>node.send(&json!({"version":1,"action":"list"}),deadline)?,
         Action::Recover=>node.send(&json!({"version":1,"action":"recover"}),deadline)?,
         Action::Revoke{peer}=>node.send(&json!({"version":1,"action":"revoke","peer_node_id":peer}),deadline)?,
-        Action::Cancel | Action::Catalog { .. } | Action::Playback { .. } | Action::Capture { .. } | Action::Camera { .. } | Action::Touchpad { .. } =>unreachable!(),
+        Action::Cancel | Action::Catalog { .. } | Action::PrepareCamera { .. } | Action::Playback { .. } | Action::Capture { .. } | Action::Camera { .. } | Action::Touchpad { .. } =>unreachable!(),
         #[cfg(feature = "touchpad-test-fixture")]
         Action::TouchpadFixture { .. } => unreachable!(),
     }
@@ -1112,6 +1154,48 @@ pub fn run() -> io::Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn prepare_camera_requires_all_explicit_nonsecret_options() {
+        let local = NodeId::new();
+        let peer = NodeId::new();
+        let arguments = vec![
+            "console".to_owned(),
+            "--pairing-node".into(),
+            local.to_string(),
+            "--pairing-state".into(),
+            "/synthetic/state".into(),
+            "--pairing-bus-address".into(),
+            "unix:path=/synthetic/bus".into(),
+            "--pairing-collection".into(),
+            "/synthetic/collection".into(),
+            "prepare-camera".into(),
+            "--peer".into(),
+            peer.to_string(),
+            "--endpoint".into(),
+            "127.0.0.1:4000".into(),
+            "--output".into(),
+            "/synthetic/new.json".into(),
+            "--listen".into(),
+            "127.0.0.1:0".into(),
+            "--duration-secs".into(),
+            "10".into(),
+        ];
+        assert!(validate(&Args::try_parse_from(&arguments).unwrap()).is_ok());
+        for index in [10, 12, 14, 16, 18] {
+            let mut missing = arguments.clone();
+            missing.drain(index..index + 2);
+            assert!(Args::try_parse_from(missing).is_err());
+        }
+        for (index, value) in [
+            (11, local.to_string()),
+            (15, "relative.json".into()),
+            (19, "61".into()),
+        ] {
+            let mut invalid_arguments = arguments.clone();
+            invalid_arguments[index] = value;
+            assert!(validate(&Args::try_parse_from(invalid_arguments).unwrap()).is_err());
+        }
+    }
     #[test]
     fn media_commands_require_explicit_absolute_manifest_and_distinct_peer() {
         let local = NodeId::new();

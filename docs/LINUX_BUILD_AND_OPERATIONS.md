@@ -409,10 +409,34 @@ and availability with escaped text. `needs_local_selection` is only a metadata
 hint, not compatibility, local-device discovery or authorization. No Route,
 proposal, grant, lease, helper or media endpoint is created. A published Port can
 change after inspection; the finite media launcher must revalidate it and obtain
-fresh local and counterpart consent. Manifest generation is not included yet.
+fresh local and counterpart consent. Camera-only manifest preparation is described below; other media kinds still require an explicit manifest.
 
 Do not expect this command to discover a peer address, configure its publication,
 unlock a collection, provision identity or verify physical hardware. Missing,
 revoked, locked, mismatched or oversized results fail rather than producing a
 partial usable catalog. Ctrl-C/EOF/cancel closes the bounded operation; no retry,
 renewal or resource approval is retained.
+
+## Prepare a camera manifest without starting it (ADR 1553)
+
+Use the same paired-store selectors and explicit peer endpoint as `catalog`:
+
+```sh
+./capyio-linux-console --pairing-node LOCAL_NODE_UUID --pairing-state /absolute/private/state --pairing-bus-address unix:path=/explicit/bus --pairing-collection /org/freedesktop/secrets/collection/EXISTING prepare-camera --peer PEER_NODE_UUID --endpoint 192.0.2.20:PORT --output /absolute/owned/new-camera.json --listen 192.0.2.10:0 --duration-secs 10
+```
+
+Addresses are illustrative; supply actual supported private/loopback IPv4 values.
+The command fetches and closes an authenticated read-only snapshot first. Select
+the exact displayed peer/Capability/Port with its fresh request ID, then inspect
+the generated public config and separately confirm the exact new output path
+with the second fresh request ID. There is no default choice and no generic yes.
+The path must be bounded printable ASCII, in an owned safe directory, and must
+not already exist or traverse a symlink. Existing files are never overwritten.
+
+Export does not open the requested listener or start a camera, helper or Route.
+The file contains no credentials or authorization and may become stale at once.
+A later separately invoked `camera --config /absolute/owned/new-camera.json
+--peer PEER_NODE_UUID` still revalidates the peer catalog and requires fresh
+local/counterpart consent and finite leases. The 120-frame ceiling at 30 fps is
+about four seconds of continuous video even when the time ceiling is longer.
+Preparation for audio and touchpad is not provided by this command.

@@ -23,7 +23,10 @@ use std::{
     net::{SocketAddr, TcpListener},
     os::{
         fd::{AsFd, AsRawFd, FromRawFd},
-        unix::process::CommandExt,
+        unix::{
+            fs::{DirBuilderExt, PermissionsExt, symlink},
+            process::CommandExt,
+        },
     },
     path::{Path, PathBuf},
     process::{Child, Command, ExitStatus, Stdio},
@@ -172,6 +175,29 @@ impl Process {
         Self::spawn(command, None)
     }
     fn console(pairing: &PersistedPairing, endpoint: SocketAddr) -> Self {
+        Self::console_command(pairing, endpoint, "catalog", &[])
+    }
+    fn prepare_camera(pairing: &PersistedPairing, endpoint: SocketAddr, output: &Path) -> Self {
+        Self::console_command(
+            pairing,
+            endpoint,
+            "prepare-camera",
+            &[
+                "--output".into(),
+                output.to_str().unwrap().into(),
+                "--listen".into(),
+                "127.0.0.1:43197".into(),
+                "--duration-secs".into(),
+                "7".into(),
+            ],
+        )
+    }
+    fn console_command(
+        pairing: &PersistedPairing,
+        endpoint: SocketAddr,
+        action: &str,
+        extra: &[String],
+    ) -> Self {
         let node = Path::new(env!("CARGO_BIN_EXE_capyio-node"))
             .canonicalize()
             .unwrap();
@@ -194,12 +220,13 @@ impl Process {
                 &pairing.service.address,
                 "--pairing-collection",
                 paired_store::COLLECTION,
-                "catalog",
+                action,
                 "--peer",
                 &pairing.peer.to_string(),
                 "--endpoint",
                 &endpoint.to_string(),
             ])
+            .args(extra)
             .stdin(Stdio::null());
         // SAFETY: only async-signal-safe operations after fork; the owned slave
         // remains live, and this child receives a new private session.
@@ -1212,5 +1239,502 @@ fn pty_catalog_actual_console_rejects_incomplete_or_wrong_peer_catalog() {
         }
         assert!(!text.contains("Type start"));
         fixture.unchanged(&process);
+    }
+}
+
+// Manifest preparation uses the same actual sibling Node, synthetic pinned peer
+// and private Secret Service as catalog inspection. It never opens the manifest
+// with a launcher, creates a media listener or invokes a camera/device helper.
+const CAMERA_FORMAT: &str = "cavc-avc-access-unit-v1";
+const SELECT_END: &str = "Selection (30 seconds; cancel, Ctrl-C or Ctrl-D abort): ";
+const SAVE_END: &str = "Save (30 seconds; cancel, Ctrl-C or Ctrl-D abort): ";
+
+fn camera_fixture(count: usize) -> Fixture {
+    let mut fixture = Fixture::new(count);
+    fixture.node.platform = Platform::Android;
+    for capability in fixture.node.capabilities.values_mut() {
+        capability.class = CapabilityClass::Camera;
+        capability.availability = Availability::Available;
+        for port in capability.ports.values_mut() {
+            port.direction = PortDirection::Source;
+            port.profile = ProfileId::video_frames_v1();
+            port.formats = vec![FormatDescriptor::new(CAMERA_FORMAT)];
+            port.availability = Availability::Available;
+        }
+    }
+    fixture.node.validate().unwrap();
+    fixture
+}
+
+fn camera_rows(fixture: &Fixture) -> Vec<(CapabilityId, PortId)> {
+    fixture
+        .node
+        .capabilities
+        .values()
+        .flat_map(|capability| {
+            capability
+                .ports
+                .keys()
+                .map(move |port| (capability.id, *port))
+        })
+        .collect()
+}
+
+fn terminal_text(process: &Process) -> &str {
+    std::str::from_utf8(&process.pty.as_ref().unwrap().bytes).unwrap()
+}
+
+fn type_camera(process: &mut Process, text: &[u8]) {
+    assert!(text.len() <= 512, "bounded private terminal fixture input");
+    process
+        .pty
+        .as_mut()
+        .unwrap()
+        .master
+        .write_all(text)
+        .unwrap();
+}
+
+fn camera_prompt(process: &mut Process, marker: &str, end: &str) -> MessageId {
+    loop {
+        process.collect();
+        if terminal_text(process).contains(end) {
+            let text = terminal_text(process);
+            let request = text
+                .rsplit_once(marker)
+                .unwrap()
+                .1
+                .split_whitespace()
+                .next()
+                .unwrap()
+                .parse::<MessageId>()
+                .unwrap();
+            assert!(!request.as_uuid().is_nil());
+            let node = process.pty.as_ref().unwrap().node_pid.unwrap();
+            assert!(
+                !Path::new(&format!("/proc/{node}")).exists(),
+                "actual catalog Node must be reaped before either local prompt"
+            );
+            no_children(process.child.id());
+            // begin_prompt flushes after writing. Do not race that final flush
+            // with a fixture answer to an already visible prompt.
+            thread::sleep(Duration::from_millis(20));
+            return request;
+        }
+        assert!(
+            process.child.try_wait().unwrap().is_none(),
+            "console exited before {marker}; terminal={}; stderr={}",
+            terminal_text(process),
+            String::from_utf8_lossy(&process.err)
+        );
+        assert!(process.started.elapsed() < BOUND, "bounded manifest prompt");
+        thread::sleep(Duration::from_millis(2));
+    }
+}
+
+fn begin_camera(fixture: &Fixture, output: &Path) -> (Process, MessageId) {
+    let mut process = Process::prepare_camera(&fixture.pairing, fixture.endpoint, output);
+    let mut peer = fixture.accept_empty(&mut process);
+    fixture.send(&mut peer, &process);
+    closed_without_resource_commands(&mut peer, process.started + BOUND);
+    let request = camera_prompt(&mut process, "Selection request: ", SELECT_END);
+    (process, request)
+}
+
+fn selection_line(fixture: &Fixture, request: MessageId, row: (CapabilityId, PortId)) -> String {
+    format!("select {request} {} {} {}\n", fixture.node.id, row.0, row.1)
+}
+
+fn select_camera(
+    fixture: &Fixture,
+    process: &mut Process,
+    request: MessageId,
+    row: (CapabilityId, PortId),
+) -> MessageId {
+    type_camera(process, selection_line(fixture, request, row).as_bytes());
+    let save = camera_prompt(process, "Save request: ", SAVE_END);
+    assert_ne!(save, request, "output needs independent fresh confirmation");
+    save
+}
+
+fn save_line(request: MessageId, output: &Path) -> String {
+    format!("save {request} {}\n", output.display())
+}
+
+fn camera_finished(fixture: &Fixture, process: &mut Process, success: bool) {
+    assert_eq!(process.finish().success(), success);
+    let text = terminal_text(process);
+    assert!(!text.contains("Type start"));
+    assert!(!text.contains("Route approval"));
+    assert_eq!(
+        text.contains("Camera manifest saved; no camera session started."),
+        success
+    );
+    assert!(
+        fixture
+            .server
+            .try_accept_until(Instant::now() + Duration::from_millis(50))
+            .unwrap()
+            .is_none(),
+        "manifest preparation must not reconnect or start a camera session"
+    );
+    fixture.unchanged(process);
+}
+
+fn expected_camera(fixture: &Fixture, row: (CapabilityId, PortId)) -> Value {
+    json!({
+        "version": 1,
+        "node_id": fixture.pairing.owner,
+        "source": {
+            "node_id": fixture.node.id,
+            "capability_id": row.0,
+            "port_id": row.1,
+        },
+        "listen": "127.0.0.1:43197",
+        "duration_secs": 7,
+    })
+}
+
+#[test]
+fn pty_prepare_camera_exports_only_explicit_current_selection() {
+    let fixture = camera_fixture(2);
+    let output = fixture.pairing.service.root.join("camera.json");
+    let rows = camera_rows(&fixture);
+    let (mut process, selection) = begin_camera(&fixture, &output);
+    assert!(
+        !output.exists(),
+        "catalog visibility must not create a manifest"
+    );
+    let candidates: Vec<Value> = terminal_text(&process)
+        .lines()
+        .filter_map(|line| line.trim().strip_prefix("Camera candidate: "))
+        .map(|line| serde_json::from_str(line).unwrap())
+        .collect();
+    assert_eq!(candidates.len(), 2, "never silently choose the first row");
+    for row in &rows {
+        assert!(candidates.iter().any(|candidate| {
+            candidate["capability_id"] == row.0.to_string()
+                && candidate["port_id"] == row.1.to_string()
+                && candidate["peer_node_id"] == fixture.node.id.to_string()
+                && candidate["compatibility"]
+                    == json!({"status":"needs_local_selection","reason":"camera_needs_local_selection"})
+        }));
+    }
+    let selected = rows[1];
+    let save = select_camera(&fixture, &mut process, selection, selected);
+    assert!(!output.exists(), "selection is not file-write confirmation");
+    let displayed: Value = terminal_text(&process)
+        .lines()
+        .find_map(|line| line.trim().strip_prefix("Camera config: "))
+        .map(|line| serde_json::from_str(line).unwrap())
+        .unwrap();
+    assert_eq!(displayed, expected_camera(&fixture, selected));
+    type_camera(&mut process, save_line(save, &output).as_bytes());
+    camera_finished(&fixture, &mut process, true);
+    let metadata = fs::symlink_metadata(&output).unwrap();
+    assert!(metadata.file_type().is_file());
+    assert_eq!(metadata.permissions().mode() & 0o777, 0o600);
+    let bytes = fs::read(&output).unwrap();
+    assert!(!bytes.is_empty() && bytes.len() <= 4096);
+    assert_eq!(
+        serde_json::from_slice::<Value>(&bytes).unwrap(),
+        expected_camera(&fixture, selected),
+        "exact closed nonsecret launcher schema, not the peer catalog or credentials"
+    );
+    fixture.pairing.assert_no_leak(&bytes);
+    let text = std::str::from_utf8(&bytes).unwrap();
+    for forbidden in [
+        OMITTED,
+        SERVER_NAME,
+        "linux-protected:",
+        &fixture.endpoint.to_string(),
+    ] {
+        assert!(!text.contains(forbidden));
+    }
+    // Deliberately stop at inspecting bytes: no launcher, media or device use.
+}
+
+#[test]
+fn pty_prepare_camera_rejects_unsupported_catalog_rows() {
+    for fault in [
+        "sink",
+        "profile",
+        "format",
+        "parameters",
+        "port-busy",
+        "cap-busy",
+        "platform",
+        "class",
+    ] {
+        let mut fixture = camera_fixture(1);
+        let capability = fixture.node.capabilities.values_mut().next().unwrap();
+        let port = capability.ports.values_mut().next().unwrap();
+        match fault {
+            "sink" => port.direction = PortDirection::Sink,
+            "profile" => port.profile.major = 2,
+            "format" => port.formats[0].id = "not-camera-v1".into(),
+            "parameters" => {
+                port.formats[0]
+                    .parameters
+                    .insert("unrequested".into(), "1".into());
+            }
+            "port-busy" => port.availability = Availability::Busy,
+            "cap-busy" => capability.availability = Availability::Busy,
+            "platform" => fixture.node.platform = Platform::Linux,
+            "class" => capability.class = CapabilityClass::Custom("not-camera".into()),
+            _ => unreachable!(),
+        }
+        let output = fixture.pairing.service.root.join("camera.json");
+        let mut process = Process::prepare_camera(&fixture.pairing, fixture.endpoint, &output);
+        let mut peer = fixture.accept_empty(&mut process);
+        fixture.send(&mut peer, &process);
+        closed_without_resource_commands(&mut peer, process.started + BOUND);
+        camera_finished(&fixture, &mut process, false);
+        assert!(
+            !output.exists(),
+            "unsupported {fault} must never create output"
+        );
+        assert!(!terminal_text(&process).contains("Camera candidate: "));
+        assert!(!terminal_text(&process).contains("Selection request: "));
+    }
+}
+
+#[test]
+fn pty_prepare_camera_rejects_mismatched_stale_multiple_and_pretyped_selection() {
+    let mut stale = None;
+    for fault in [
+        "seed",
+        "stale",
+        "peer",
+        "capability",
+        "port",
+        "crossed",
+        "unsupported",
+        "multiple",
+        "pretyped",
+    ] {
+        let mut fixture = camera_fixture(2);
+        if fault == "unsupported" {
+            fixture
+                .node
+                .capabilities
+                .values_mut()
+                .next_back()
+                .unwrap()
+                .ports
+                .values_mut()
+                .next()
+                .unwrap()
+                .availability = Availability::Busy;
+        }
+        let output = fixture.pairing.service.root.join("camera.json");
+        if fault == "pretyped" {
+            let mut process = Process::prepare_camera(&fixture.pairing, fixture.endpoint, &output);
+            let mut peer = fixture.accept_empty(&mut process);
+            // Still waiting for the sole snapshot: no selection prompt exists.
+            type_camera(
+                &mut process,
+                selection_line(&fixture, stale.unwrap(), camera_rows(&fixture)[0]).as_bytes(),
+            );
+            closed_without_resource_commands(&mut peer, process.started + BOUND);
+            camera_finished(&fixture, &mut process, false);
+            assert!(!terminal_text(&process).contains("Save request: "));
+            assert!(!output.exists());
+            continue;
+        }
+        let (mut process, request) = begin_camera(&fixture, &output);
+        let rows = camera_rows(&fixture);
+        let line = match fault {
+            "seed" => {
+                stale = Some(request);
+                "cancel\n".into()
+            }
+            "stale" => {
+                assert_ne!(request, stale.unwrap());
+                selection_line(&fixture, stale.unwrap(), rows[0])
+            }
+            "peer" => format!(
+                "select {request} {} {} {}\n",
+                NodeId::new(),
+                rows[0].0,
+                rows[0].1
+            ),
+            "capability" => selection_line(&fixture, request, (CapabilityId::new(), rows[0].1)),
+            "port" => selection_line(&fixture, request, (rows[0].0, PortId::new())),
+            "crossed" => selection_line(&fixture, request, (rows[0].0, rows[1].1)),
+            "unsupported" => selection_line(&fixture, request, rows[1]),
+            "multiple" => format!(
+                "{}{}",
+                selection_line(&fixture, request, rows[0]),
+                selection_line(&fixture, request, rows[1])
+            ),
+            _ => unreachable!(),
+        };
+        assert!(!output.exists());
+        type_camera(&mut process, line.as_bytes());
+        camera_finished(&fixture, &mut process, false);
+        assert!(
+            !output.exists(),
+            "invalid {fault} selection must not create output"
+        );
+        assert!(!terminal_text(&process).contains("Save request: "));
+    }
+}
+
+#[test]
+fn pty_prepare_camera_requires_fresh_exact_output_confirmation() {
+    let mut stale = None;
+    for fault in [
+        "seed",
+        "stale",
+        "selection-request",
+        "path",
+        "multiple",
+        "pretyped",
+    ] {
+        let fixture = camera_fixture(1);
+        let output = fixture.pairing.service.root.join("camera.json");
+        let alternate = fixture.pairing.service.root.join("other.json");
+        let (mut process, selection) = begin_camera(&fixture, &output);
+        let row = camera_rows(&fixture)[0];
+        if fault == "pretyped" {
+            type_camera(
+                &mut process,
+                format!(
+                    "{}{}",
+                    selection_line(&fixture, selection, row),
+                    save_line(stale.unwrap(), &output)
+                )
+                .as_bytes(),
+            );
+        } else {
+            let save = select_camera(&fixture, &mut process, selection, row);
+            assert!(!output.exists(), "save prompt must precede creation");
+            let line = match fault {
+                "seed" => {
+                    stale = Some(save);
+                    "cancel\n".into()
+                }
+                "stale" => {
+                    assert_ne!(save, stale.unwrap());
+                    save_line(stale.unwrap(), &output)
+                }
+                "selection-request" => save_line(selection, &output),
+                "path" => save_line(save, &alternate),
+                "multiple" => format!("{}{}", save_line(save, &output), save_line(save, &output)),
+                _ => unreachable!(),
+            };
+            type_camera(&mut process, line.as_bytes());
+        }
+        camera_finished(&fixture, &mut process, false);
+        assert!(
+            !output.exists(),
+            "invalid {fault} save must not create output"
+        );
+        assert!(!alternate.exists());
+    }
+}
+
+#[test]
+fn pty_prepare_camera_cancel_and_eof_never_create_output() {
+    for stage in ["selection", "save"] {
+        for input in [b"cancel\n".as_slice(), b"\x04".as_slice()] {
+            let fixture = camera_fixture(1);
+            let output = fixture.pairing.service.root.join("camera.json");
+            let (mut process, selection) = begin_camera(&fixture, &output);
+            if stage == "save" {
+                select_camera(&fixture, &mut process, selection, camera_rows(&fixture)[0]);
+            }
+            assert!(!output.exists());
+            type_camera(&mut process, input);
+            camera_finished(&fixture, &mut process, false);
+            assert!(
+                !output.exists(),
+                "{stage} cancellation must not create output"
+            );
+        }
+    }
+}
+
+#[test]
+fn pty_prepare_camera_refuses_existing_and_symlink_outputs() {
+    const SENTINEL: &[u8] = b"existing synthetic file must remain unchanged";
+    for fault in [
+        "existing",
+        "file-symlink",
+        "parent-symlink",
+        "file-race",
+        "parent-race",
+    ] {
+        let fixture = camera_fixture(1);
+        let root = &fixture.pairing.service.root;
+        let original = root.join("original");
+        let parent = root.join("exports");
+        let substitute = root.join("substitute");
+        for directory in [&parent, &substitute] {
+            fs::DirBuilder::new().mode(0o700).create(directory).unwrap();
+        }
+        let output = parent.join("camera.json");
+        let sentinel = root.join("sentinel");
+        fs::write(&sentinel, SENTINEL).unwrap();
+        fs::set_permissions(&sentinel, fs::Permissions::from_mode(0o640)).unwrap();
+        match fault {
+            "existing" => {
+                fs::write(&output, SENTINEL).unwrap();
+                fs::set_permissions(&output, fs::Permissions::from_mode(0o640)).unwrap();
+            }
+            "file-symlink" => symlink(&sentinel, &output).unwrap(),
+            "parent-symlink" => {
+                fs::rename(&parent, &original).unwrap();
+                symlink(&substitute, &parent).unwrap();
+            }
+            _ => {}
+        }
+        let (mut process, selection) = begin_camera(&fixture, &output);
+        let row = camera_rows(&fixture)[0];
+        if fault == "parent-symlink" {
+            type_camera(
+                &mut process,
+                selection_line(&fixture, selection, row).as_bytes(),
+            );
+        } else {
+            let save = select_camera(&fixture, &mut process, selection, row);
+            match fault {
+                "file-race" => {
+                    fs::write(&output, SENTINEL).unwrap();
+                    fs::set_permissions(&output, fs::Permissions::from_mode(0o640)).unwrap();
+                }
+                "parent-race" => {
+                    fs::rename(&parent, &original).unwrap();
+                    symlink(&substitute, &parent).unwrap();
+                }
+                _ => {}
+            }
+            type_camera(&mut process, save_line(save, &output).as_bytes());
+        }
+        camera_finished(&fixture, &mut process, false);
+        assert_eq!(fs::read(&sentinel).unwrap(), SENTINEL);
+        assert_eq!(
+            fs::metadata(&sentinel).unwrap().permissions().mode() & 0o777,
+            0o640
+        );
+        if matches!(fault, "existing" | "file-race") {
+            assert_eq!(fs::read(&output).unwrap(), SENTINEL);
+            assert_eq!(
+                fs::metadata(&output).unwrap().permissions().mode() & 0o777,
+                0o640
+            );
+        } else if fault == "file-symlink" {
+            assert!(
+                fs::symlink_metadata(&output)
+                    .unwrap()
+                    .file_type()
+                    .is_symlink()
+            );
+        } else {
+            assert!(!original.join("camera.json").exists());
+            assert!(!substitute.join("camera.json").exists());
+            assert!(!output.exists());
+        }
     }
 }

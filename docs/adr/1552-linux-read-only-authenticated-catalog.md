@@ -14,7 +14,8 @@ is introduced. The server name and exact certificate pin come from the selected
 committed active paired record.
 
 This closes the missing authenticated Port-ID inspection step, not automatic
-media setup. Manifest generation and selection remain a later increment.
+media setup. Camera-only explicit manifest generation/selection is added separately by ADR 1553;
+other media kinds remain outside this inspection command.
 Pairing/listing a peer does not imply that any particular resource is published,
 available locally, approved or usable. Inspection requires an explicit existing
 peer endpoint and a peer implementation which exchanges catalogs on this control

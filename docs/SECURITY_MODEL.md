@@ -1642,3 +1642,9 @@ ADR 1552 adds a bounded paired-store authenticated catalog snapshot and terminal
 inspection, without creating Routes, grants, leases or media endpoints. Empty
 local publication and exact peer/certificate binding precede a bounded escaped
 projection. Catalog-only hints never imply resource readiness or approval.
+
+
+ADR 1553 adds camera-only manifest preparation from a current authenticated
+catalog, with separate fresh exact selection and output confirmation. Exclusive
+owned-file export never starts media or grants authority; later launch still
+requires current catalog validation and independent finite session consent.

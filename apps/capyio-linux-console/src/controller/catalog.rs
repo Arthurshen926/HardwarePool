@@ -1,9 +1,13 @@
 //! Read-only, finite catalog inspection through the fixed sibling Node.
 //! Authentication and catalog admission remain Node-owned. No resource command,
-//! manifest, grant, lease, media worker or device is created by this controller.
+//! grant, lease, media worker or device is created by this controller. A separate
+//! explicit two-confirmation action may export only a nonsecret camera manifest.
 use super::*;
 use capyio_core::{Availability, CapabilityId, PortDirection, PortId};
-use std::collections::{BTreeMap, BTreeSet};
+use std::{
+    collections::{BTreeMap, BTreeSet},
+    path::Path,
+};
 
 // Includes the capability preflight. Node's existing Drop guard reserves at most
 // another two seconds for cancellation/EOF, followed by killing/reaping its child.
@@ -257,6 +261,47 @@ impl Catalog {
         Ok(())
     }
 
+    fn camera_candidates(&self) -> io::Result<Vec<super::catalog_export::CameraCandidate>> {
+        // No partial or subsequently rejected snapshot may become selectable.
+        self.lines()?;
+        self.ports
+            .iter()
+            .filter_map(|event| match event {
+                Event::CatalogPort(port)
+                    if port.peer_node_id == self.peer
+                        && matches!(port.direction, PortDirection::Source)
+                        && port.profile.name == "capyio.video.frames"
+                        && port.profile.major == 1
+                        && matches!(port.capability_availability, Availability::Available)
+                        && matches!(port.port_availability, Availability::Available)
+                        && matches!(
+                            port.compatibility.status,
+                            CompatibilityStatus::NeedsLocalSelection
+                        )
+                        && matches!(
+                            port.compatibility.reason,
+                            CompatibilityReason::CameraNeedsLocalSelection
+                        )
+                        && port.formats.iter().any(|format| {
+                            format.id == "cavc-avc-access-unit-v1" && format.parameters.is_empty()
+                        }) =>
+                {
+                    Some(
+                        event
+                            .canonical()
+                            .map(|display| super::catalog_export::CameraCandidate {
+                                peer: port.peer_node_id,
+                                capability: port.capability_id,
+                                port: port.port_id,
+                                display,
+                            }),
+                    )
+                }
+                _ => None,
+            })
+            .collect()
+    }
+
     fn lines(&self) -> io::Result<Vec<String>> {
         let complete = self.complete.as_ref().ok_or_else(invalid)?;
         let mut lines = Vec::with_capacity(self.ports.len() + 1);
@@ -358,19 +403,16 @@ fn check_cancellation(tty: &mut Terminal) -> io::Result<()> {
     Ok(())
 }
 
-pub(super) fn run(args: &Args, peer: NodeId, endpoint: SocketAddr) -> io::Result<()> {
-    let deadline = Instant::now() + WORK_LIFETIME;
-    validate_selection(args.pairing_node, peer, endpoint)?;
-    let _signals = Signals::install()?;
-    require_node_capability_for("linux-catalog")?;
-    check(deadline)?;
-    let mut tty = Terminal::open()?;
-    tty.begin_prompt(
-        &format!(
-            "Read-only paired catalog inspection.\r\nRequested peer: {peer}\r\nExplicit endpoint: {endpoint}\r\n{NO_AUTHORITY}Peer text is ASCII-escaped and displayed literally.\r\nType cancel, Ctrl-C or Ctrl-D to stop: "
-        ),
-        deadline.min(Instant::now() + Duration::from_secs(1)),
-    )?;
+// This is the sole actual catalog read path for inspection and preparation.
+// It returns only after successful complete/EOF validation and child reap; all
+// pipes and the Node are dropped before the caller can offer any selection.
+fn read_catalog(
+    args: &Args,
+    peer: NodeId,
+    endpoint: SocketAddr,
+    tty: &mut Terminal,
+    deadline: Instant,
+) -> io::Result<Catalog> {
     let mut node = Node::spawn_for(args, "linux-catalog", Some(peer))?;
     // Any extra input cancels this read-only Node operation. Use the existing
     // cancel/EOF guard rather than sending a media Stop or resource command.
@@ -393,7 +435,7 @@ pub(super) fn run(args: &Args, peer: NodeId, endpoint: SocketAddr) -> io::Result
         if let Some(value) = poll_node(&mut node, &mut total, deadline)? {
             catalog.accept(Event::parse(value)?)?;
         }
-        check_cancellation(&mut tty)?;
+        check_cancellation(tty)?;
         if exit_status.is_none()
             && let Some(status) = node.child.try_wait()?
         {
@@ -410,18 +452,70 @@ pub(super) fn run(args: &Args, peer: NodeId, endpoint: SocketAddr) -> io::Result
                 if !node.frames.bytes.is_empty() {
                     return Err(invalid());
                 }
-                let lines = catalog.lines()?;
-                tty.write("\r\n", deadline)?;
-                for line in lines {
-                    check_cancellation(&mut tty)?;
-                    tty.write(&line, deadline)?;
-                }
-                tty.write(NO_AUTHORITY, deadline)?;
-                return Ok(());
+                catalog.lines()?;
+                drop(node);
+                return Ok(catalog);
             }
         }
         thread::sleep(Duration::from_millis(5));
     }
+}
+
+pub(super) fn run(args: &Args, peer: NodeId, endpoint: SocketAddr) -> io::Result<()> {
+    let deadline = Instant::now() + WORK_LIFETIME;
+    validate_selection(args.pairing_node, peer, endpoint)?;
+    let _signals = Signals::install()?;
+    require_node_capability_for("linux-catalog")?;
+    check(deadline)?;
+    let mut tty = Terminal::open()?;
+    tty.begin_prompt(
+        &format!(
+            "Read-only paired catalog inspection.\r\nRequested peer: {peer}\r\nExplicit endpoint: {endpoint}\r\n{NO_AUTHORITY}Peer text is ASCII-escaped and displayed literally.\r\nType cancel, Ctrl-C or Ctrl-D to stop: "
+        ),
+        deadline.min(Instant::now() + Duration::from_secs(1)),
+    )?;
+    let catalog = read_catalog(args, peer, endpoint, &mut tty, deadline)?;
+    tty.write("\r\n", deadline)?;
+    for line in catalog.lines()? {
+        check_cancellation(&mut tty)?;
+        tty.write(&line, deadline)?;
+    }
+    tty.write(NO_AUTHORITY, deadline)?;
+    Ok(())
+}
+
+pub(super) fn run_prepare_camera(
+    args: &Args,
+    peer: NodeId,
+    endpoint: SocketAddr,
+    output: &Path,
+    listen: SocketAddr,
+    duration_secs: u64,
+) -> io::Result<()> {
+    let deadline = Instant::now() + WORK_LIFETIME;
+    validate_selection(args.pairing_node, peer, endpoint)?;
+    super::catalog_export::validate_options(output, listen, duration_secs)?;
+    let _signals = Signals::install()?;
+    require_node_capability_for("linux-catalog")?;
+    check(deadline)?;
+    let mut tty = Terminal::open()?;
+    tty.begin_prompt(
+        &format!(
+            "Prepare nonsecret camera manifest from one authenticated catalog snapshot.\r\nRequested peer: {peer}\r\nExplicit endpoint: {endpoint}\r\n{NO_AUTHORITY}Peer text is ASCII-escaped and displayed literally.\r\nType cancel, Ctrl-C or Ctrl-D to stop: "
+        ),
+        deadline.min(Instant::now() + Duration::from_secs(1)),
+    )?;
+    let catalog = read_catalog(args, peer, endpoint, &mut tty, deadline)?;
+    let candidates = catalog.camera_candidates()?;
+    super::catalog_export::prepare(
+        &mut tty,
+        args.pairing_node,
+        peer,
+        &candidates,
+        output,
+        listen,
+        duration_secs,
+    )
 }
 
 #[cfg(test)]
@@ -727,5 +821,64 @@ mod tests {
             assert!(validate_selection(local, peer(), endpoint.parse().unwrap()).is_err());
         }
         assert!(validate_selection(local, local, "127.0.0.1:443".parse().unwrap()).is_err());
+    }
+
+    fn camera_port() -> Value {
+        let mut value = port();
+        value["profile"] = json!({"name":"capyio.video.frames","major":1});
+        value["formats"] = json!([{"id":"cavc-avc-access-unit-v1","parameters":{}}]);
+        value["compatibility"]["reason"] = json!("camera_needs_local_selection");
+        value
+    }
+
+    #[test]
+    fn pure_catalog_camera_export_requires_complete_exact_eligible_rows() {
+        let mut catalog = Catalog::new(peer());
+        assert!(catalog.camera_candidates().is_err());
+        accept(&mut catalog, begin(2)).unwrap();
+        accept(&mut catalog, camera_port()).unwrap();
+        assert!(catalog.camera_candidates().is_err());
+        let mut second = camera_port();
+        second["port_id"] = json!("55555555-5555-4555-8555-555555555555");
+        accept(&mut catalog, second).unwrap();
+        accept(&mut catalog, complete(2)).unwrap();
+        let candidates = catalog.camera_candidates().unwrap();
+        assert_eq!(candidates.len(), 2);
+        assert_eq!(candidates[0].peer, peer());
+        assert_eq!(candidates[0].port.to_string(), PORT);
+        assert_ne!(candidates[0].port, candidates[1].port);
+        for (pointer, replacement) in [
+            ("/direction", json!("sink")),
+            ("/direction", json!("control")),
+            ("/profile/name", json!("capyio.audio.frames")),
+            ("/profile/major", json!(2)),
+            ("/capability_availability", json!("busy")),
+            ("/capability_availability", json!("permission_required")),
+            ("/port_availability", json!("offline")),
+            ("/port_availability", json!("busy")),
+            ("/formats/0/id", json!("raw-nv12")),
+            ("/formats/0/parameters", json!({"ignored":"not-empty"})),
+            ("/formats", json!([])),
+            (
+                "/compatibility/reason",
+                json!("audio_playback_needs_local_selection"),
+            ),
+            (
+                "/compatibility",
+                json!({"status":"not_supported","reason":"format_not_supported"}),
+            ),
+        ] {
+            let mut value = camera_port();
+            *value.pointer_mut(pointer).unwrap() = replacement;
+            let mut catalog = Catalog::new(peer());
+            accept(&mut catalog, begin(1)).unwrap();
+            accept(&mut catalog, value).unwrap();
+            accept(&mut catalog, complete(1)).unwrap();
+            assert!(catalog.camera_candidates().unwrap().is_empty(), "{pointer}");
+        }
+        let mut empty = Catalog::new(peer());
+        accept(&mut empty, begin(0)).unwrap();
+        accept(&mut empty, complete(0)).unwrap();
+        assert!(empty.camera_candidates().unwrap().is_empty());
     }
 }

@@ -78,6 +78,11 @@ impl Config {
     }
 }
 
+/// Pure validation shared by explicit manifest export; never launches a Node.
+pub(super) fn validate_export(bytes: &[u8], local: NodeId, peer: NodeId) -> io::Result<()> {
+    Config::parse(bytes, local, peer).map(|_| ())
+}
+
 fn port_shape(value: &Value) -> io::Result<()> {
     exact_keys(value, &["node_id", "capability_id", "port_id"])
 }
