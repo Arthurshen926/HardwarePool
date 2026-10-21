@@ -241,8 +241,9 @@ The console is interactive-only, not an automation endpoint or persistent servic
 
 The paired console additionally supports `playback --config /absolute/session.json
 --peer PEER_UUID` with the same explicit four paired-store selectors. This is the
-only console media path currently implemented: selected playback and its virtual
-microphone projection, not capture/virtual speaker/camera/touchpad.
+playback-direction console path: selected playback and its virtual-microphone
+projection. Reverse audio is described below; camera/touchpad console control
+remains unimplemented.
 
 The bounded nonsecret manifest uses the existing playback schema. Replace every
 ID/address/target with an explicitly chosen value; do not add credential material:
@@ -279,3 +280,44 @@ unauthenticated even though control is pinned TLS. Only then type the exact show
 resource; no approval is inferred from the saved pair. Use `status` or `stop` for
 this one session. Expiry, Stop or interruption performs no automatic renewal or
 restart and does not delete the saved protected identity.
+
+
+## Interactive finite stereo capture (ADR 1549)
+
+Use `capture --config /absolute/session.json --peer PEER_UUID` with the same four
+explicit paired-store selectors. The separate nonsecret manifest selects the
+remote Sink, while the Node activates the local capture resource only after fresh
+authorization:
+
+```json
+{
+  "version": 1,
+  "node_id": "LOCAL_NODE_UUID",
+  "sink": {
+    "node_id": "PEER_NODE_UUID",
+    "capability_id": "REMOTE_CAPABILITY_UUID",
+    "port_id": "REMOTE_SINK_PORT_UUID"
+  },
+  "listen": "192.0.2.10:0",
+  "media": "192.0.2.10:40112",
+  "target": "EXPLICIT_PIPEWIRE_SOURCE",
+  "endpoint_mode": "selected_source",
+  "duration_secs": 30
+}
+```
+
+These IDs and documentation-range addresses are placeholders, not runnable
+values; choose exact existing peer Port IDs and permitted local lab addresses.
+Do not include `source`, `proposal_mode` or credential material. For the existing
+session-owned virtual speaker, select `"endpoint_mode":"virtual_speaker"` and
+omit `target`. The same bounded regular-file ownership rules apply. No device
+discovery, physical microphone access or deployment is performed by these examples.
+
+Review the displayed local Source → remote Sink direction, selected resource or
+owned projection, stereo format and finite duration. The selected-source manifest
+mode is displayed by the Node as `stereo_capture`. The unchanged plaintext,
+unauthenticated UDP warning applies. Only the exact fresh shown start line
+authorizes this one local session; the peer must independently approve its Sink.
+Use `status` or `stop`; cancellation, EOF and expiry never renew or restart it.
+Default packages remain help-only for paired operations, and paired packages
+require the explicitly selected existing unlocked Secret Service collection.

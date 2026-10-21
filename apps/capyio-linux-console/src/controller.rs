@@ -65,7 +65,7 @@ impl Drop for Signals {
 #[derive(Parser)]
 #[command(
     name = "capyio-linux-console",
-    about = "Explicit finite Linux pairing and playback controller (no automatic resource grants)."
+    about = "Explicit finite Linux pairing and audio controller (no automatic resource grants)."
 )]
 struct Args {
     #[arg(long)]
@@ -106,6 +106,13 @@ enum Action {
         #[arg(long)]
         peer: NodeId,
     },
+    /// One finite paired-store stereo capture session; explicit nonsecret manifest.
+    Capture {
+        #[arg(long)]
+        config: PathBuf,
+        #[arg(long)]
+        peer: NodeId,
+    },
     /// Starts no transaction. In any active prompt, use cancel or Ctrl-C.
     Cancel,
 }
@@ -134,7 +141,7 @@ fn validate(args: &Args) -> io::Result<()> {
             }
         }
         Action::Revoke { peer } if peer.as_uuid().is_nil() => return Err(invalid()),
-        Action::Playback { config, peer }
+        Action::Playback { config, peer } | Action::Capture { config, peer }
             if !config.is_absolute() || peer.as_uuid().is_nil() || *peer == args.pairing_node =>
         {
             return Err(invalid());
@@ -256,7 +263,7 @@ fn require_node_capability() -> io::Result<()> {
     require_node_capability_for("linux-pairing")
 }
 fn require_node_capability_for(command: &str) -> io::Result<()> {
-    if !["linux-pairing", "linux-playback"].contains(&command) {
+    if !["linux-pairing", "linux-playback", "linux-capture"].contains(&command) {
         return Err(invalid());
     }
     let mut child = Command::new(sibling()?)
@@ -350,7 +357,7 @@ impl Node {
     fn spawn_for(args: &Args, command: &str, peer: Option<NodeId>) -> io::Result<Self> {
         if !matches!(
             (command, peer),
-            ("linux-pairing", None) | ("linux-playback", Some(_))
+            ("linux-pairing", None) | ("linux-playback" | "linux-capture", Some(_))
         ) {
             return Err(invalid());
         }
@@ -383,7 +390,7 @@ impl Node {
             frames: Frames::default(),
             error_bytes: 0,
             reaped: false,
-            stop_on_drop: command == "linux-playback",
+            stop_on_drop: matches!(command, "linux-playback" | "linux-capture"),
         };
         nonblocking(result.input.as_ref().ok_or_else(invalid)?)?;
         nonblocking(&result.output)?;
@@ -705,8 +712,10 @@ pub fn run() -> io::Result<()> {
         return Err(invalid());
     }
     validate(&args)?;
-    if let Action::Playback { config, peer } = &args.action {
-        return media::run(&args, config, *peer);
+    match &args.action {
+        Action::Playback { config, peer } => return media::run(&args, config, *peer),
+        Action::Capture { config, peer } => return media::run_capture(&args, config, *peer),
+        _ => {}
     }
     let _signals = Signals::install()?;
     let deadline = Instant::now() + LIFETIME;
@@ -745,7 +754,7 @@ pub fn run() -> io::Result<()> {
         Action::List=>node.send(&json!({"version":1,"action":"list"}),deadline)?,
         Action::Recover=>node.send(&json!({"version":1,"action":"recover"}),deadline)?,
         Action::Revoke{peer}=>node.send(&json!({"version":1,"action":"revoke","peer_node_id":peer}),deadline)?,
-        Action::Cancel | Action::Playback { .. } =>unreachable!(),
+        Action::Cancel | Action::Playback { .. } | Action::Capture { .. } =>unreachable!(),
     }
     let mut confirmation: Option<Confirmation> = None;
     let mut challenged = false;
@@ -925,6 +934,41 @@ pub fn run() -> io::Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn audio_commands_require_explicit_absolute_manifest_and_distinct_peer() {
+        let local = NodeId::new();
+        let peer = NodeId::new();
+        for command in ["playback", "capture"] {
+            let arguments = vec![
+                "capyio-linux-console".to_owned(),
+                "--pairing-node".to_owned(),
+                local.to_string(),
+                "--pairing-state".to_owned(),
+                "/synthetic/state".to_owned(),
+                "--pairing-bus-address".to_owned(),
+                "unix:path=/synthetic/bus".to_owned(),
+                "--pairing-collection".to_owned(),
+                "/synthetic/collection".to_owned(),
+                command.to_owned(),
+                "--config".to_owned(),
+                "/synthetic/config.json".to_owned(),
+                "--peer".to_owned(),
+                peer.to_string(),
+            ];
+            let parsed = Args::try_parse_from(&arguments).unwrap();
+            assert!(validate(&parsed).is_ok());
+            assert_eq!(
+                matches!(parsed.action, Action::Capture { .. }),
+                command == "capture"
+            );
+            for (index, value) in [(11, "relative.json".to_owned()), (13, local.to_string())] {
+                let mut invalid_arguments = arguments.clone();
+                invalid_arguments[index] = value;
+                assert!(validate(&Args::try_parse_from(invalid_arguments).unwrap()).is_err());
+            }
+            assert!(Args::try_parse_from(&arguments[..13]).is_err());
+        }
+    }
     #[test]
     fn shutdown_frames_keep_pairing_cancel_separate_from_media_stop() {
         for (media, key, command) in [(false, "action", "cancel"), (true, "command", "stop")] {

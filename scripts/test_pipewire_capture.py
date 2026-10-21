@@ -5,7 +5,7 @@ import json
 import struct
 import unittest
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import patch, Mock, call
 
 from run_pipewire_capture import (
     SOURCE, SCENARIOS, LIMIT, MARKER, CaptureHarness, capture_nodes,
@@ -14,8 +14,10 @@ from run_pipewire_capture import (
     parse_pipewire_version, graph_diagnostic, process_diagnostic,
     VIRTUAL_PREFIX, VIRTUAL_SCENARIOS, POISONED_ENV, PRIVATE_ENV, virtual_expectation,
     virtual_nodes, select_virtual_sink, verify_virtual_removed, read_environment,
-    verify_capture_environment,
+    verify_capture_environment, CONSOLE_SCENARIOS, CONSOLE_TESTS,
 )
+
+from run_pipewire_loopback import CONSOLE_PENDING, console_marker
 
 
 def node(identity, properties):
@@ -466,6 +468,88 @@ class PairedCaptureHarnessTests(unittest.TestCase):
                     self.assertNotIn('DBUS_SESSION_BUS_ADDRESS', paired.env)
                     self.assertEqual(paired.env['CAPYIO_PIPEWIRE_CAPTURE'], scenario)
                     self.assertEqual(paired.env['CAPYIO_PIPEWIRE_ENDPOINT_MODE'], mode)
+
+
+class ConsoleCaptureHarnessTests(unittest.TestCase):
+    def test_exact_all_sixteen_console_profiles_retain_isolated_capture_graph(self):
+        root = Path('/synthetic-not-opened')
+        for endpoint, mode in (('selected_source', 'capture'), ('virtual_speaker', 'virtual_speaker')):
+            for scenario in CONSOLE_SCENARIOS:
+                with self.subTest(endpoint=endpoint, scenario=scenario):
+                    harness = CaptureHarness(root, 'waveform', endpoint, paired_store=True,
+                                             console=True, console_scenario=scenario)
+                    self.assertEqual(harness.console_mode, mode)
+                    self.assertEqual(harness.env['CAPYIO_PIPEWIRE_CAPTURE'], 'waveform')
+                    self.assertEqual(harness.env['CAPYIO_PIPEWIRE_ENDPOINT_MODE'], endpoint)
+                    self.assertEqual(harness.env['CAPYIO_AUDIO_CONSOLE'], '1')
+                    self.assertEqual(harness.env['CAPYIO_AUDIO_CONSOLE_SCENARIO'], scenario)
+                    self.assertEqual(harness.env['CAPYIO_AUDIO_PAIRED_STORE'], '1')
+                    self.assertEqual(harness.pending_console(), scenario in CONSOLE_PENDING)
+                    self.assertNotIn('DBUS_SESSION_BUS_ADDRESS', harness.env)
+                    self.assertFalse(set(POISONED_ENV) & set(harness.env))
+        for scenario, kwargs in (
+                ('waveform', {'console': True, 'console_scenario': 'waveform'}),
+                ('waveform', {'paired_store': True, 'console': True}),
+                ('waveform', {'paired_store': True, 'console_scenario': 'waveform'}),
+                ('waveform', {'paired_store': True, 'console': True, 'console_scenario': 'unknown'}),
+                ('child_exit', {'paired_store': True, 'console': True, 'console_scenario': 'waveform'})):
+            with self.subTest(scenario=scenario, kwargs=kwargs), self.assertRaises(ValueError):
+                CaptureHarness(root, scenario, **kwargs)
+
+    def test_capture_console_evidence_requires_exact_executed_test_and_profile(self):
+        for endpoint, mode in (('selected_source', 'capture'), ('virtual_speaker', 'virtual_speaker')):
+            for scenario in CONSOLE_SCENARIOS:
+                harness = CaptureHarness(Path('/synthetic-not-opened'), 'waveform', endpoint,
+                                         paired_store=True, console=True, console_scenario=scenario)
+                name = CONSOLE_TESTS[mode]
+                evidence = console_marker(mode, scenario) + '\n'
+                passed = f'test {name} ... ok\ntest result: ok. 1 passed; 0 failed; 0 ignored; 20 filtered out;\n'
+                with patch.object(Path, 'read_text', side_effect=[evidence, passed]):
+                    harness.verify_console()
+                for logs in ([evidence + evidence, passed], ['', passed],
+                             [evidence.replace('actual_tty=true', 'actual_tty=false'), passed],
+                             [evidence.replace('mode=' + mode, 'mode=playback'), passed],
+                             [evidence.replace('scenario=' + scenario, 'scenario=unknown'), passed],
+                             [evidence, passed.replace(name, 'hosted_pipewire_linux_capture_android_sink_end_to_end')],
+                             [evidence, passed.replace('1 passed', '0 passed')],
+                             [evidence, passed.replace('0 ignored', '1 ignored')]):
+                    with self.subTest(mode=mode, scenario=scenario), \
+                            patch.object(Path, 'read_text', side_effect=logs), self.assertRaises(ValueError):
+                        harness.verify_console()
+
+    def test_pending_capture_graph_checks_no_helper_unchanged_sentinel_and_node_reaping(self):
+        sentinel = node(1, {'node.name': 'capyio.test.null', 'media.class': 'Audio/Sink',
+                            'object.serial': 101})
+        for endpoint in ('selected_source', 'virtual_speaker'):
+            harness = CaptureHarness(Path('/synthetic-not-opened'), 'waveform', endpoint,
+                                     paired_store=True, console=True, console_scenario='no_approval')
+            producer = Mock()
+            producer.poll.return_value = 0
+            producer.returncode = 0
+            with patch.object(harness, 'dump', return_value=[sentinel]) as dump, \
+                    patch.object(harness, 'wait_checkpoint') as checkpoint, \
+                    patch.object(harness, 'verify_console_reaped') as reaped, \
+                    patch.object(harness, 'check'), \
+                    patch('run_pipewire_capture.publish_marker') as publish, \
+                    patch('run_pipewire_capture.time.sleep'):
+                harness.finish_pending_capture_console(producer)
+                self.assertEqual(dump.call_count, 4)
+                checkpoint.assert_called_once_with(producer, '.capyio-after-stop')
+                reaped.assert_called_once_with()
+                self.assertEqual(publish.call_args_list, [
+                    call(harness.root / '.capyio-consent-checked'),
+                    call(harness.root / '.capyio-stop-checked')])
+            for graph in ([], [sentinel, node(2, {'target.object': SOURCE})],
+                          [sentinel, node(2, {'media.class': 'Audio/Sink', 'node.name': 'unexpected'})],
+                          [node(1, {'node.name': 'capyio.test.null', 'media.class': 'Audio/Sink',
+                                    'object.serial': 999})]):
+                with patch.object(harness, 'dump', side_effect=[[sentinel], graph]), \
+                        patch.object(harness, 'wait_checkpoint'), \
+                        patch.object(harness, 'verify_console_reaped'), \
+                        patch('run_pipewire_capture.publish_marker') as publish, self.assertRaises(ValueError):
+                    harness.finish_pending_capture_console(producer)
+                publish.assert_called_once_with(harness.root / '.capyio-consent-checked')
+
 
 
 if __name__ == '__main__':

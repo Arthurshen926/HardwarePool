@@ -584,6 +584,37 @@ jobs:
           done
           test "$count" -eq 16
 
+      - name: Require sixteen actual-console capture and virtual-speaker graph profiles
+        run: |
+          set -euo pipefail
+          capture="$(python3 - "$RUNNER_TEMP/pipewire-capture-build.jsonl" <<'PYFIXTURE'
+          import json, sys
+          items = [json.loads(line) for line in open(sys.argv[1])]
+          matches = [item['executable'] for item in items if item.get('reason') == 'compiler-artifact' and item.get('target', {}).get('name') == 'linux_capture' and item.get('executable')]
+          assert len(matches) == 1
+          print(matches[0])
+          PYFIXTURE
+          )"
+          "$capture" --list | tee "$RUNNER_TEMP/console-capture-tests.txt"
+          grep -Fx 'hosted_console_capture_end_to_end: test' "$RUNNER_TEMP/console-capture-tests.txt"
+          grep -Fx 'hosted_console_virtual_speaker_end_to_end: test' "$RUNNER_TEMP/console-capture-tests.txt"
+          count=0
+          for mode in capture virtual_speaker; do
+            case "$mode" in
+              capture) endpoint=selected_source ;;
+              virtual_speaker) endpoint=virtual_speaker ;;
+            esac
+            for scenario in waveform no_approval pretyped mismatched_request mismatched_route mismatched_peer expiry remote_eof; do
+              timeout --signal=TERM --kill-after=15s 75s python3 scripts/run_pipewire_capture.py \
+                --hosted-pipewire-capture --fixture "$capture" --endpoint-mode "$endpoint" --scenario waveform \
+                --paired-store --console --console-scenario "$scenario" \
+                | tee "$RUNNER_TEMP/console-$mode-$scenario.txt"
+              grep -Fx "capyio_audio_console_graph=passed mode=$mode scenario=$scenario actual_console=true protected_read=true independent_graph=true cleanup=true" "$RUNNER_TEMP/console-$mode-$scenario.txt"
+              count=$((count + 1))
+            done
+          done
+          test "$count" -eq 16
+
   linux-native-camera:
     # Optional native dependency only in this disposable official Ubuntu runner.
     # No physical camera, portal, user session, V4L2 or kernel module is used.

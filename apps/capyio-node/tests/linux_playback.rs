@@ -342,6 +342,8 @@ impl Fixture {
                         &pairing,
                         &self.config,
                         hosted_console_scenario().as_deref() == Some("pretyped"),
+                        "playback",
+                        &[],
                     );
                     return Process {
                         child,

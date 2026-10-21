@@ -1,4 +1,4 @@
-//! Test-only PTY transport for the existing playback fixture. The only input to
+//! Test-only PTY transport for the existing audio fixtures. The only input to
 //! the real console is terminal text; tests never access its Node control pipes.
 use super::{BOUND, NodeId, Value, drain, nonblocking};
 use std::{
@@ -22,6 +22,8 @@ pub(super) struct Console {
     event_cursor: usize,
     pub(super) node_pid: Option<u32>,
     node_binary: PathBuf,
+    node_command: &'static str,
+    event_prefix: &'static str,
     pub(super) peer: NodeId,
 }
 
@@ -39,7 +41,14 @@ impl Console {
         pairing: &super::paired_store::PersistedPairing,
         config: &Value,
         pretyped: bool,
+        operation: &str,
+        environment: &[(&str, &str)],
     ) -> (Child, Self) {
+        let (node_command, event_prefix) = match operation {
+            "playback" => ("linux-playback", "Playback event: "),
+            "capture" => ("linux-capture", "Capture event: "),
+            _ => panic!("exact supported audio console operation required"),
+        };
         let node = Path::new(env!("CARGO_BIN_EXE_capyio-node"))
             .canonicalize()
             .unwrap();
@@ -48,7 +57,7 @@ impl Console {
             binary.is_file(),
             "hosted console gate must build the actual paired console sibling"
         );
-        let config_path = pairing.service.root.join("playback.json");
+        let config_path = pairing.service.root.join(format!("{operation}.json"));
         let mut file = OpenOptions::new()
             .write(true)
             .create_new(true)
@@ -93,6 +102,8 @@ impl Console {
             event_cursor: 0,
             node_pid: None,
             node_binary: node,
+            node_command,
+            event_prefix,
             peer: pairing.peer,
         };
         if pretyped {
@@ -121,13 +132,14 @@ impl Console {
                 &pairing.service.address,
                 "--pairing-collection",
                 super::paired_store::COLLECTION,
-                "playback",
+                operation,
                 "--config",
                 config_path.to_str().unwrap(),
                 "--peer",
                 &pairing.peer.to_string(),
             ])
             .env_remove("RUST_LOG")
+            .envs(environment.iter().copied())
             .stdin(Stdio::null())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped());
@@ -202,10 +214,11 @@ impl Console {
     pub(super) fn next_event(&mut self) -> Option<Value> {
         let text = std::str::from_utf8(&self.tty).expect("ASCII/UTF-8 public terminal output");
         let rest = &text[self.event_cursor..];
-        let start = rest.find("Playback event: ")? + self.event_cursor;
+        let start = rest.find(self.event_prefix)? + self.event_cursor;
         let line = &text[start..];
         let end = line.find('\n')?;
-        let value = parse_event(&line[..end]).expect("canonical public playback event");
+        let value =
+            parse_event(&line[..end], self.event_prefix).expect("canonical public audio event");
         self.event_cursor = start + end + 1;
         Some(value)
     }
@@ -220,7 +233,7 @@ impl Console {
         let source = approval["source"]["node_id"].as_str().unwrap();
         let sink = approval["sink"]["node_id"].as_str().unwrap();
         let mode = approval["endpoint_mode"].as_str().unwrap();
-        let device = if mode == "virtual_microphone" {
+        let device = if matches!(mode, "virtual_microphone" | "virtual_speaker") {
             approval["node_name"].as_str().unwrap()
         } else {
             approval["target"].as_str().unwrap()
@@ -279,7 +292,7 @@ impl Console {
         let args = fs::read(format!("/proc/{pid}/cmdline")).unwrap();
         assert!(
             args.split(|byte| *byte == 0)
-                .any(|arg| arg == b"linux-playback")
+                .any(|arg| arg == self.node_command.as_bytes())
         );
         self.node_pid = Some(pid);
         pid
@@ -315,10 +328,11 @@ impl Console {
     }
 }
 
-fn parse_event(line: &str) -> Option<Value> {
-    let json = line
-        .strip_prefix("Playback event: ")?
-        .trim_end_matches('\r');
+fn parse_event(line: &str, prefix: &str) -> Option<Value> {
+    if !matches!(prefix, "Playback event: " | "Capture event: ") {
+        return None;
+    }
+    let json = line.strip_prefix(prefix)?.trim_end_matches('\r');
     if json.len() > 4096 {
         return None;
     }
@@ -341,13 +355,34 @@ fn parse_event(line: &str) -> Option<Value> {
 
 #[test]
 fn pure_console_public_event_parser_requires_exact_canonical_schema() {
-    assert!(parse_event("Playback event: {\"version\":1,\"event\":\"status\"}\r").is_some());
+    assert!(
+        parse_event(
+            "Playback event: {\"version\":1,\"event\":\"status\"}\r",
+            "Playback event: "
+        )
+        .is_some()
+    );
     for line in [
         "{\"version\":1,\"event\":\"status\"}",
         "Playback event: {\"version\":2,\"event\":\"status\"}",
         "Playback event: {\"version\":1,\"event\":\"credentials\"}",
         "Playback event: not json",
     ] {
-        assert!(parse_event(line).is_none());
+        assert!(parse_event(line, "Playback event: ").is_none());
     }
+}
+
+#[test]
+fn pure_capture_console_events_cannot_substitute_playback_or_unknown_prefix() {
+    let line = "Capture event: {\"version\":1,\"event\":\"status\"}\r";
+    assert!(parse_event(line, "Capture event: ").is_some());
+    assert!(parse_event(line, "Playback event: ").is_none());
+    assert!(parse_event(line, "Capture ").is_none());
+    assert!(
+        parse_event(
+            "Playback event: {\"version\":1,\"event\":\"status\"}",
+            "Capture event: "
+        )
+        .is_none()
+    );
 }

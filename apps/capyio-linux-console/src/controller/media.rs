@@ -1,4 +1,4 @@
-//! Finite terminal consent for the existing paired-store playback launcher.
+//! Finite terminal consent for the existing paired-store audio launchers.
 //! This module is a client of the sibling Node, never an audio/store backend.
 use super::*;
 use capyio_core::{CapabilityId, PortId, RouteId, RouteState, SessionId};
@@ -9,7 +9,6 @@ const BEFORE_APPROVAL: Duration = Duration::from_secs(55);
 const CONSENT: Duration = Duration::from_secs(30);
 const STOP_GRACE: Duration = Duration::from_secs(3);
 const FRAME_TIMEOUT: Duration = Duration::from_secs(5);
-const FORMAT: &str = "pcm-s16le-48000-mono";
 const SECURITY: &str = "unauthenticated_udp_trusted_lab_only";
 const WARNING: &str =
     "WARNING: plaintext unauthenticated UDP media; trusted isolated lab only.\r\n";
@@ -29,18 +28,57 @@ impl Port {
     }
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum Direction {
+    Playback,
+    Capture,
+}
+impl Direction {
+    fn command(self) -> &'static str {
+        match self {
+            Self::Playback => "linux-playback",
+            Self::Capture => "linux-capture",
+        }
+    }
+
+    fn label(self) -> &'static str {
+        match self {
+            Self::Playback => "Playback",
+            Self::Capture => "Capture",
+        }
+    }
+
+    fn format(self) -> &'static str {
+        match self {
+            Self::Playback => "pcm-s16le-48000-mono",
+            Self::Capture => "pcm-s16le-48000-stereo",
+        }
+    }
+}
+
 #[derive(Clone, Copy, Debug, Default, Deserialize, Serialize, Eq, PartialEq)]
 #[serde(rename_all = "snake_case")]
 enum Mode {
     #[default]
     Playback,
     VirtualMicrophone,
+    StereoCapture,
+    VirtualSpeaker,
 }
 impl Mode {
     fn name(self) -> &'static str {
         match self {
             Self::Playback => "playback",
             Self::VirtualMicrophone => "virtual_microphone",
+            Self::StereoCapture => "stereo_capture",
+            Self::VirtualSpeaker => "virtual_speaker",
+        }
+    }
+
+    fn direction(self) -> Direction {
+        match self {
+            Self::Playback | Self::VirtualMicrophone => Direction::Playback,
+            Self::StereoCapture | Self::VirtualSpeaker => Direction::Capture,
         }
     }
 }
@@ -52,11 +90,19 @@ enum Proposal {
     LinuxLed,
 }
 
-// A deliberately local copy of the nonsecret launcher schema. Importing the
-// platform Host here would give the controller an unnecessary backend boundary.
-#[derive(Debug, Deserialize, Serialize)]
+#[derive(Clone, Copy, Debug, Default, Deserialize, Serialize)]
+#[serde(rename_all = "snake_case")]
+enum CaptureMode {
+    #[default]
+    SelectedSource,
+    VirtualSpeaker,
+}
+
+// Deliberately local copies of the distinct nonsecret launcher schemas. Importing
+// the platform Host here would give the controller an unnecessary backend boundary.
+#[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
-struct Config {
+struct PlaybackConfig {
     version: u32,
     node_id: NodeId,
     source: Port,
@@ -67,15 +113,75 @@ struct Config {
     #[serde(default)]
     endpoint_mode: Mode,
     duration_secs: u64,
+    #[serde(default, rename = "proposal_mode")]
+    _proposal_mode: Proposal,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct CaptureConfig {
+    version: u32,
+    node_id: NodeId,
+    sink: Port,
+    listen: SocketAddrV4,
+    media: SocketAddrV4,
     #[serde(default)]
-    proposal_mode: Proposal,
+    target: Option<String>,
+    #[serde(default)]
+    endpoint_mode: CaptureMode,
+    duration_secs: u64,
+}
+
+#[derive(Debug)]
+struct Config {
+    direction: Direction,
+    version: u32,
+    node_id: NodeId,
+    remote: Port,
+    listen: SocketAddrV4,
+    media: SocketAddrV4,
+    target: Option<String>,
+    endpoint_mode: Mode,
+    duration_secs: u64,
 }
 impl Config {
-    fn parse(bytes: &[u8], local: NodeId, peer: NodeId) -> io::Result<Self> {
+    fn parse(bytes: &[u8], local: NodeId, peer: NodeId, direction: Direction) -> io::Result<Self> {
         if bytes.is_empty() || bytes.len() > MAX_FRAME {
             return Err(invalid());
         }
-        let value: Self = serde_json::from_slice(bytes).map_err(|_| invalid())?;
+        let value = match direction {
+            Direction::Playback => {
+                let value: PlaybackConfig = serde_json::from_slice(bytes).map_err(|_| invalid())?;
+                Self {
+                    direction,
+                    version: value.version,
+                    node_id: value.node_id,
+                    remote: value.source,
+                    listen: value.listen,
+                    media: value.media,
+                    target: value.target,
+                    endpoint_mode: value.endpoint_mode,
+                    duration_secs: value.duration_secs,
+                }
+            }
+            Direction::Capture => {
+                let value: CaptureConfig = serde_json::from_slice(bytes).map_err(|_| invalid())?;
+                Self {
+                    direction,
+                    version: value.version,
+                    node_id: value.node_id,
+                    remote: value.sink,
+                    listen: value.listen,
+                    media: value.media,
+                    target: value.target,
+                    endpoint_mode: match value.endpoint_mode {
+                        CaptureMode::SelectedSource => Mode::StereoCapture,
+                        CaptureMode::VirtualSpeaker => Mode::VirtualSpeaker,
+                    },
+                    duration_secs: value.duration_secs,
+                }
+            }
+        };
         value.validate(local, peer)?;
         Ok(value)
     }
@@ -92,8 +198,9 @@ impl Config {
             || local.as_uuid().is_nil()
             || peer.as_uuid().is_nil()
             || peer == local
-            || self.source.node_id != peer
-            || !self.source.valid()
+            || self.remote.node_id != peer
+            || !self.remote.valid()
+            || self.endpoint_mode.direction() != self.direction
             || self.listen.ip() != self.media.ip()
             || !lab_address(listen)
             || !lab_address(self.media)
@@ -103,10 +210,35 @@ impl Config {
             return Err(invalid());
         }
         match (self.endpoint_mode, self.target.as_deref()) {
-            (Mode::Playback, Some(target)) if explicit_target(target) => Ok(()),
-            (Mode::VirtualMicrophone, None) => Ok(()),
+            (Mode::Playback | Mode::StereoCapture, Some(target)) if explicit_target(target) => {
+                Ok(())
+            }
+            (Mode::VirtualMicrophone | Mode::VirtualSpeaker, None) => Ok(()),
             _ => Err(invalid()),
         }
+    }
+
+    fn wire(&self) -> Value {
+        let mut value = json!({"version":self.version,"node_id":self.node_id,
+            "listen":self.listen,"media":self.media,"target":self.target,
+            "duration_secs":self.duration_secs});
+        match self.direction {
+            Direction::Playback => {
+                value["source"] = json!(self.remote);
+                value["endpoint_mode"] = json!(self.endpoint_mode);
+                value["proposal_mode"] = json!(Proposal::LinuxLed);
+            }
+            Direction::Capture => {
+                value["sink"] = json!(self.remote);
+                // Manifest and event names intentionally differ in the Node API.
+                value["endpoint_mode"] = json!(match self.endpoint_mode {
+                    Mode::StereoCapture => CaptureMode::SelectedSource,
+                    Mode::VirtualSpeaker => CaptureMode::VirtualSpeaker,
+                    _ => unreachable!("validated capture configuration"),
+                });
+            }
+        }
+        value
     }
 }
 
@@ -129,7 +261,12 @@ fn explicit_target(target: &str) -> bool {
             .all(|byte| byte.is_ascii_alphanumeric() || b"_.:-".contains(&byte))
 }
 
-fn read_config(path: &Path, local: NodeId, peer: NodeId) -> io::Result<Config> {
+fn read_config(
+    path: &Path,
+    local: NodeId,
+    peer: NodeId,
+    direction: Direction,
+) -> io::Result<Config> {
     if !path.is_absolute() {
         return Err(invalid());
     }
@@ -162,7 +299,7 @@ fn read_config(path: &Path, local: NodeId, peer: NodeId) -> io::Result<Config> {
     if used != metadata.len() as usize || used > MAX_FRAME {
         return Err(invalid());
     }
-    Config::parse(&bytes[..used], local, peer)
+    Config::parse(&bytes[..used], local, peer, direction)
 }
 
 #[derive(Debug, Deserialize, Serialize)]
@@ -193,22 +330,25 @@ struct Approval {
 }
 impl Approval {
     fn validate(&self, config: &Config) -> io::Result<()> {
+        let (local, remote) = match config.direction {
+            Direction::Playback => (self.sink, self.source),
+            Direction::Capture => (self.source, self.sink),
+        };
         let expected_name = match config.endpoint_mode {
-            Mode::Playback => None,
-            Mode::VirtualMicrophone => {
-                Some(format!("capyio.virtual-microphone.{}", self.sink.port_id))
-            }
+            Mode::Playback | Mode::StereoCapture => None,
+            Mode::VirtualMicrophone => Some(format!("capyio.virtual-microphone.{}", local.port_id)),
+            Mode::VirtualSpeaker => Some(format!("capyio.virtual-speaker.{}", local.port_id)),
         };
         if self.request_id.as_uuid().is_nil()
             || self.route_id.as_uuid().is_nil()
             || self.session_id.as_uuid().is_nil()
-            || self.source != config.source
-            || !self.sink.valid()
-            || self.sink.node_id != config.node_id
+            || remote != config.remote
+            || !local.valid()
+            || local.node_id != config.node_id
             || self.target != config.target
             || self.endpoint_mode != config.endpoint_mode
             || self.node_name != expected_name
-            || self.format != FORMAT
+            || self.format != config.direction.format()
             || self.duration_secs != config.duration_secs
             || self.approval_timeout_secs != CONSENT.as_secs()
             || self.media_security != SECURITY
@@ -219,9 +359,13 @@ impl Approval {
     }
 
     fn expected(&self) -> String {
+        let remote = match self.endpoint_mode.direction() {
+            Direction::Playback => self.source,
+            Direction::Capture => self.sink,
+        };
         format!(
             "start {} {} {}",
-            self.request_id, self.route_id, self.source.node_id
+            self.request_id, self.route_id, remote.node_id
         )
     }
 
@@ -349,7 +493,7 @@ struct Session {
     offered: bool,
     stopping: bool,
     finished: Option<Finished>,
-    packets_written: u64,
+    packets: u64,
 }
 impl Session {
     fn accept(&mut self, event: &Event, config: &Config) -> io::Result<()> {
@@ -394,16 +538,20 @@ impl Session {
                 }
             }
             Event::Route(value) => {
+                let (packets, opposite_packets) = match config.direction {
+                    Direction::Playback => (value.packets_written, value.packets_sent),
+                    Direction::Capture => (value.packets_sent, value.packets_written),
+                };
                 if !self.approved
                     || !self.offered
                     || self.approval.as_ref().map(|a| a.route_id) != Some(value.route_id)
                     || value.state == RouteState::Draft
-                    || value.packets_sent != 0
-                    || value.packets_written < self.packets_written
+                    || opposite_packets != 0
+                    || packets < self.packets
                 {
                     return Err(invalid());
                 }
-                self.packets_written = value.packets_written;
+                self.packets = packets;
             }
             Event::Stopped(_) => {
                 if !self.stopping && !self.approved {
@@ -432,11 +580,18 @@ impl Session {
             .as_ref()
             .and_then(|a| a.node_name.as_deref())
             .or(config.target.as_deref())
-            .unwrap_or("new owned virtual microphone (not created before approval)");
+            .unwrap_or(match config.direction {
+                Direction::Playback => "new owned virtual microphone (not created before approval)",
+                Direction::Capture => "new owned virtual speaker (not created before approval)",
+            });
+        let (source, sink) = match config.direction {
+            Direction::Playback => (config.remote.node_id, config.node_id),
+            Direction::Capture => (config.node_id, config.remote.node_id),
+        };
         let mut result = format!(
             "Source {} -> Sink {}\r\nMode: {}; device: {}; duration: {} seconds\r\n",
-            config.source.node_id,
-            config.node_id,
+            source,
+            sink,
             config.endpoint_mode.name(),
             device,
             config.duration_secs
@@ -478,9 +633,17 @@ fn operation_deadline(deadline: Instant) -> Instant {
 }
 
 pub(super) fn run(args: &Args, path: &Path, peer: NodeId) -> io::Result<()> {
-    let config = read_config(path, args.pairing_node, peer)?;
+    run_direction(args, path, peer, Direction::Playback)
+}
+
+pub(super) fn run_capture(args: &Args, path: &Path, peer: NodeId) -> io::Result<()> {
+    run_direction(args, path, peer, Direction::Capture)
+}
+
+fn run_direction(args: &Args, path: &Path, peer: NodeId, direction: Direction) -> io::Result<()> {
+    let config = read_config(path, args.pairing_node, peer, direction)?;
     let _signals = Signals::install()?;
-    require_node_capability_for("linux-playback")?;
+    require_node_capability_for(direction.command())?;
     let mut tty = Terminal::open()?;
     let started = Instant::now();
     let overall =
@@ -491,11 +654,11 @@ pub(super) fn run(args: &Args, path: &Path, peer: NodeId) -> io::Result<()> {
         &(session.summary(&config) + &session.prompt()),
         operation_deadline(deadline),
     )?;
-    let mut node = Node::spawn_for(args, "linux-playback", Some(peer))?;
+    let mut node = Node::spawn_for(args, direction.command(), Some(peer))?;
     node.set_stop_on_drop();
     node.set_frame_limit(2048)?;
     let bootstrap = (Instant::now() + BOOTSTRAP).min(deadline);
-    node.send(&config, bootstrap)?;
+    node.send(&config.wire(), bootstrap)?;
     node.send(
         &json!({"version":1,"credential_source":"paired-store"}),
         bootstrap,
@@ -528,7 +691,8 @@ pub(super) fn run(args: &Args, path: &Path, peer: NodeId) -> io::Result<()> {
             // stderr, unvalidated JSON, credentials, payload or unknown fields.
             tty.write(
                 &format!(
-                    "\r\nPlayback event: {canonical}\r\n{}",
+                    "\r\n{} event: {canonical}\r\n{}",
+                    direction.label(),
                     session.summary(&config)
                 ),
                 operation_deadline(deadline),
@@ -648,19 +812,44 @@ mod tests {
             &serde_json::to_vec(value).unwrap(),
             serde_json::from_value(value["node_id"].clone()).unwrap(),
             serde_json::from_value(value["source"]["node_id"].clone()).unwrap(),
+            Direction::Playback,
+        )
+    }
+    fn capture_config_json() -> Value {
+        let mut value = config_json();
+        let remote = value.as_object_mut().unwrap().remove("source").unwrap();
+        value["sink"] = remote;
+        value["target"] = json!("capyio.synthetic.source");
+        value
+    }
+    fn parse_capture_config(value: &Value) -> io::Result<Config> {
+        Config::parse(
+            &serde_json::to_vec(value).unwrap(),
+            serde_json::from_value(value["node_id"].clone()).unwrap(),
+            serde_json::from_value(value["sink"]["node_id"].clone()).unwrap(),
+            Direction::Capture,
         )
     }
     fn approval_json(config: &Config) -> Value {
-        let sink = Port {
+        let local = Port {
             node_id: config.node_id,
             capability_id: CapabilityId::new(),
             port_id: PortId::new(),
         };
+        let (source, sink) = match config.direction {
+            Direction::Playback => (config.remote, local),
+            Direction::Capture => (local, config.remote),
+        };
+        let node_name = match config.endpoint_mode {
+            Mode::Playback | Mode::StereoCapture => None,
+            Mode::VirtualMicrophone => Some(format!("capyio.virtual-microphone.{}", local.port_id)),
+            Mode::VirtualSpeaker => Some(format!("capyio.virtual-speaker.{}", local.port_id)),
+        };
         json!({"version":1,"event":"approval_required","request_id":MessageId::new(),
-            "route_id":RouteId::new(),"session_id":SessionId::new(),"source":config.source,
+            "route_id":RouteId::new(),"session_id":SessionId::new(),"source":source,
             "sink":sink,"target":config.target,"endpoint_mode":config.endpoint_mode,
-            "node_name":if config.endpoint_mode==Mode::VirtualMicrophone {Some(format!("capyio.virtual-microphone.{}",sink.port_id))}else{None},
-            "format":FORMAT,"duration_secs":config.duration_secs,"approval_timeout_secs":30,"media_security":SECURITY})
+            "node_name":node_name,
+            "format":config.direction.format(),"duration_secs":config.duration_secs,"approval_timeout_secs":30,"media_security":SECURITY})
     }
     fn approval(config: &Config) -> Approval {
         let Event::Approval(value) = Event::parse(approval_json(config)).unwrap() else {
@@ -676,7 +865,7 @@ mod tests {
         assert_eq!(config.endpoint_mode, Mode::Playback);
         assert!(
             config
-                .validate(NodeId::new(), config.source.node_id)
+                .validate(NodeId::new(), config.remote.node_id)
                 .is_err()
         );
         assert!(config.validate(config.node_id, NodeId::new()).is_err());
@@ -761,30 +950,87 @@ mod tests {
             .mode(0o600)
             .open(&path)
             .unwrap();
-        file.write_all(&serde_json::to_vec(&config).unwrap())
+        file.write_all(&serde_json::to_vec(&config.wire()).unwrap())
             .unwrap();
         drop(file);
-        assert!(read_config(&path, config.node_id, config.source.node_id).is_ok());
-        assert!(read_config(&path, NodeId::new(), config.source.node_id).is_err());
+        assert!(
+            read_config(
+                &path,
+                config.node_id,
+                config.remote.node_id,
+                Direction::Playback
+            )
+            .is_ok()
+        );
+        assert!(
+            read_config(
+                &path,
+                NodeId::new(),
+                config.remote.node_id,
+                Direction::Playback
+            )
+            .is_err()
+        );
         let link = directory.join("link.json");
         std::os::unix::fs::symlink(&path, &link).unwrap();
-        assert!(read_config(&link, config.node_id, config.source.node_id).is_err());
-        assert!(read_config(&directory, config.node_id, config.source.node_id).is_err());
+        assert!(
+            read_config(
+                &link,
+                config.node_id,
+                config.remote.node_id,
+                Direction::Playback
+            )
+            .is_err()
+        );
+        assert!(
+            read_config(
+                &directory,
+                config.node_id,
+                config.remote.node_id,
+                Direction::Playback
+            )
+            .is_err()
+        );
         assert!(
             read_config(
                 Path::new("relative.json"),
                 config.node_id,
-                config.source.node_id
+                config.remote.node_id,
+                Direction::Playback,
             )
             .is_err()
         );
         fs::set_permissions(&path, fs::Permissions::from_mode(0o620)).unwrap();
-        assert!(read_config(&path, config.node_id, config.source.node_id).is_err());
+        assert!(
+            read_config(
+                &path,
+                config.node_id,
+                config.remote.node_id,
+                Direction::Playback
+            )
+            .is_err()
+        );
         fs::set_permissions(&path, fs::Permissions::from_mode(0o600)).unwrap();
         fs::write(&path, [b' '; MAX_FRAME + 1]).unwrap();
-        assert!(read_config(&path, config.node_id, config.source.node_id).is_err());
+        assert!(
+            read_config(
+                &path,
+                config.node_id,
+                config.remote.node_id,
+                Direction::Playback
+            )
+            .is_err()
+        );
         fs::write(&path, []).unwrap();
-        assert!(read_config(&path, config.node_id, config.source.node_id).is_err());
+        assert!(
+            read_config(
+                &path,
+                config.node_id,
+                config.remote.node_id,
+                Direction::Playback
+            )
+            .is_err()
+        );
     }
 
     #[test]
@@ -924,5 +1170,446 @@ mod tests {
         session.stopping = true;
         assert!(input_action(b"status", &session).is_err());
         assert_eq!(input_action(b"stop", &session).unwrap(), Input::Stop);
+    }
+
+    #[test]
+    fn pure_capture_config_matches_distinct_sink_and_selected_source_schema() {
+        let value = capture_config_json();
+        let config = parse_capture_config(&value).unwrap();
+        assert_eq!(config.direction, Direction::Capture);
+        assert_eq!(config.endpoint_mode, Mode::StereoCapture);
+        assert!(
+            config
+                .validate(NodeId::new(), config.remote.node_id)
+                .is_err()
+        );
+        assert!(config.validate(config.node_id, NodeId::new()).is_err());
+        let encoded = config.wire();
+        exact_keys(
+            &encoded,
+            &[
+                "version",
+                "node_id",
+                "sink",
+                "listen",
+                "media",
+                "target",
+                "endpoint_mode",
+                "duration_secs",
+            ],
+        )
+        .unwrap();
+        assert_eq!(encoded["sink"], value["sink"]);
+        assert_eq!(encoded["endpoint_mode"], "selected_source");
+        assert!(parse_capture_config(&encoded).is_ok());
+        assert!(
+            Config::parse(
+                &serde_json::to_vec(&encoded).unwrap(),
+                config.node_id,
+                config.remote.node_id,
+                Direction::Playback
+            )
+            .is_err()
+        );
+        let playback = parse_config(&config_json()).unwrap();
+        assert!(
+            Config::parse(
+                &serde_json::to_vec(&playback.wire()).unwrap(),
+                playback.node_id,
+                playback.remote.node_id,
+                Direction::Capture
+            )
+            .is_err()
+        );
+        for mode in [
+            "playback",
+            "virtual_microphone",
+            "stereo_capture",
+            "capture",
+            "incoming_draft",
+        ] {
+            let mut candidate = value.clone();
+            candidate["endpoint_mode"] = json!(mode);
+            assert!(parse_capture_config(&candidate).is_err(), "mode {mode}");
+        }
+        for (field, replacement) in [
+            ("source", value["sink"].clone()),
+            ("proposal_mode", json!("linux_led")),
+            ("credentials", json!("not permitted")),
+        ] {
+            let mut candidate = value.clone();
+            candidate[field] = replacement;
+            assert!(parse_capture_config(&candidate).is_err(), "field {field}");
+        }
+        let mut candidate = value;
+        candidate["sink"]["unexpected"] = json!(true);
+        assert!(parse_capture_config(&candidate).is_err());
+    }
+
+    #[test]
+    fn pure_capture_config_rejects_implicit_devices_and_invalid_addresses() {
+        let value = capture_config_json();
+        for target in [
+            Value::Null,
+            json!("auto"),
+            json!("AUTO"),
+            json!("default"),
+            json!("Default"),
+            json!("0"),
+            json!("-1"),
+            json!(""),
+            json!("x\n"),
+            json!("a b"),
+            json!("x".repeat(129)),
+        ] {
+            let mut candidate = value.clone();
+            candidate["target"] = target;
+            assert!(parse_capture_config(&candidate).is_err());
+        }
+        for address in [
+            "0.0.0.0:1",
+            "224.0.0.1:1",
+            "8.8.8.8:1",
+            "127.0.0.1:0",
+            "127.0.0.255:1",
+            "[::1]:1",
+            "127.0.0.2:2",
+            "127.0.0.1:1",
+        ] {
+            let mut candidate = value.clone();
+            candidate["media"] = json!(address);
+            assert!(
+                parse_capture_config(&candidate).is_err(),
+                "address {address}"
+            );
+        }
+        for seconds in [0, 301, u64::MAX] {
+            let mut candidate = value.clone();
+            candidate["duration_secs"] = json!(seconds);
+            assert!(parse_capture_config(&candidate).is_err());
+        }
+        for field in ["node_id", "capability_id", "port_id"] {
+            let mut candidate = value.clone();
+            candidate["sink"][field] = json!("00000000-0000-0000-0000-000000000000");
+            assert!(parse_capture_config(&candidate).is_err());
+        }
+        for config in [
+            parse_config(&config_json()).unwrap(),
+            parse_capture_config(&value).unwrap(),
+        ] {
+            for bytes in [
+                Vec::new(),
+                vec![b' '; MAX_FRAME + 1],
+                b"{}".to_vec(),
+                b"{\"version\":1,\"version\":1}".to_vec(),
+            ] {
+                assert!(
+                    Config::parse(
+                        &bytes,
+                        config.node_id,
+                        config.remote.node_id,
+                        config.direction
+                    )
+                    .is_err()
+                );
+            }
+            assert!(
+                Config::parse(
+                    &serde_json::to_vec(&config.wire()).unwrap(),
+                    config.node_id,
+                    config.node_id,
+                    config.direction
+                )
+                .is_err()
+            );
+        }
+    }
+
+    #[test]
+    fn pure_capture_virtual_speaker_requires_exact_owned_source_identity() {
+        let mut value = capture_config_json();
+        value["endpoint_mode"] = json!("virtual_speaker");
+        assert!(parse_capture_config(&value).is_err());
+        value.as_object_mut().unwrap().remove("target");
+        let config = parse_capture_config(&value).unwrap();
+        assert_eq!(config.wire()["endpoint_mode"], "virtual_speaker");
+        assert!(config.wire()["target"].is_null());
+        let mut event = approval(&config);
+        event.validate(&config).unwrap();
+        assert_eq!(
+            event.node_name,
+            Some(format!("capyio.virtual-speaker.{}", event.source.port_id))
+        );
+        for name in [
+            None,
+            Some(format!("capyio.virtual-speaker.{}", event.sink.port_id)),
+            Some(format!(
+                "capyio.virtual-microphone.{}",
+                event.source.port_id
+            )),
+            Some(format!("capyio.virtual-speaker.{}", PortId::new())),
+        ] {
+            event.node_name = name;
+            assert!(event.validate(&config).is_err());
+        }
+        value["target"] = Value::Null;
+        assert!(parse_capture_config(&value).is_ok());
+        for mode in ["stereo_capture", "virtual_speaker", "selected_source"] {
+            let mut playback = config_json();
+            playback["endpoint_mode"] = json!(mode);
+            assert!(parse_config(&playback).is_err());
+        }
+    }
+
+    #[test]
+    fn pure_capture_approval_binds_every_resource_and_security_field() {
+        let config = parse_capture_config(&capture_config_json()).unwrap();
+        let valid = approval_json(&config);
+        approval(&config).validate(&config).unwrap();
+        for (field, replacement) in [
+            ("request_id", json!("00000000-0000-0000-0000-000000000000")),
+            ("route_id", json!("00000000-0000-0000-0000-000000000000")),
+            ("session_id", json!("00000000-0000-0000-0000-000000000000")),
+            ("target", json!("other-device")),
+            ("endpoint_mode", json!("playback")),
+            ("endpoint_mode", json!("virtual_speaker")),
+            ("node_name", json!("unexpected")),
+            ("format", json!("pcm-s16le-48000-mono")),
+            ("duration_secs", json!(21)),
+            ("approval_timeout_secs", json!(31)),
+            ("media_security", json!("secure")),
+        ] {
+            let mut candidate = valid.clone();
+            candidate[field] = replacement;
+            let Event::Approval(value) = Event::parse(candidate).unwrap() else {
+                panic!()
+            };
+            assert!(value.validate(&config).is_err(), "field {field}");
+        }
+        for endpoint in ["source", "sink"] {
+            for field in ["node_id", "capability_id", "port_id"] {
+                let mut candidate = valid.clone();
+                candidate[endpoint][field] = json!("00000000-0000-0000-0000-000000000000");
+                let Event::Approval(value) = Event::parse(candidate).unwrap() else {
+                    panic!()
+                };
+                assert!(value.validate(&config).is_err(), "{endpoint}.{field}");
+            }
+        }
+        for field in ["node_id", "capability_id", "port_id"] {
+            let mut candidate = valid.clone();
+            candidate["sink"][field] = json!(NodeId::new());
+            let Event::Approval(value) = Event::parse(candidate).unwrap() else {
+                panic!()
+            };
+            assert!(value.validate(&config).is_err(), "remote {field}");
+        }
+        let mut candidate = valid.clone();
+        candidate["source"] = valid["sink"].clone();
+        candidate["sink"] = valid["source"].clone();
+        let Event::Approval(value) = Event::parse(candidate).unwrap() else {
+            panic!()
+        };
+        assert!(value.validate(&config).is_err());
+        for field in ["target", "node_name"] {
+            let mut candidate = valid.clone();
+            candidate.as_object_mut().unwrap().remove(field);
+            assert!(Event::parse(candidate).is_err());
+        }
+        for (field, replacement) in [
+            ("unexpected", json!(true)),
+            ("endpoint_mode", json!("selected_source")),
+        ] {
+            let mut candidate = valid.clone();
+            candidate[field] = replacement;
+            assert!(Event::parse(candidate).is_err());
+        }
+    }
+
+    #[test]
+    fn pure_audio_status_counters_bind_direction_and_cannot_regress() {
+        for config in [
+            parse_config(&config_json()).unwrap(),
+            parse_capture_config(&capture_config_json()).unwrap(),
+        ] {
+            let approved = approval(&config);
+            let route = approved.route_id;
+            let mut session = Session::default();
+            let listening = Event::parse(json!({"version":1,"event":"listening",
+                "address":"127.0.0.1:40001"}))
+            .unwrap();
+            session.accept(&listening, &config).unwrap();
+            session
+                .accept(&Event::Approval(Box::new(approval(&config))), &config)
+                .unwrap();
+            session.approval = Some(approved);
+            let offer = Event::parse(json!({"version":1,"event":"awaiting_peer_offer",
+                "route_id":route}))
+            .unwrap();
+            let (counter, opposite) = match config.direction {
+                Direction::Playback => ("packets_written", "packets_sent"),
+                Direction::Capture => ("packets_sent", "packets_written"),
+            };
+            let mut status = json!({"version":1,"event":"status","route_id":route,
+                "state":"active","packets_written":0,"packets_sent":0});
+            assert!(session.accept(&offer, &config).is_err());
+            assert!(
+                session
+                    .accept(&Event::parse(status.clone()).unwrap(), &config)
+                    .is_err()
+            );
+            session.approved = true;
+            assert!(
+                session
+                    .accept(&Event::parse(status.clone()).unwrap(), &config)
+                    .is_err()
+            );
+            session.accept(&offer, &config).unwrap();
+            status[counter] = json!(3);
+            session
+                .accept(&Event::parse(status.clone()).unwrap(), &config)
+                .unwrap();
+            for (field, replacement) in [
+                (counter, json!(2)),
+                (opposite, json!(1)),
+                ("route_id", json!(RouteId::new())),
+                ("state", json!("draft")),
+            ] {
+                let mut candidate = status.clone();
+                candidate[field] = replacement;
+                assert!(
+                    session
+                        .accept(&Event::parse(candidate).unwrap(), &config)
+                        .is_err()
+                );
+                assert_eq!(session.packets, 3);
+            }
+            status[counter] = json!(4);
+            session
+                .accept(&Event::parse(status).unwrap(), &config)
+                .unwrap();
+            assert_eq!(session.packets, 4);
+            let stopped = Event::parse(json!({"version":1,"event":"stopped"})).unwrap();
+            session.accept(&stopped, &config).unwrap();
+            assert!(session.accept(&offer, &config).is_err());
+        }
+    }
+
+    #[test]
+    fn pure_capture_terminal_controls_require_fresh_request_route_and_remote_sink() {
+        for virtual_speaker in [false, true] {
+            let mut value = capture_config_json();
+            if virtual_speaker {
+                value["endpoint_mode"] = json!("virtual_speaker");
+                value["target"] = Value::Null;
+            }
+            let config = parse_capture_config(&value).unwrap();
+            let approved = approval(&config);
+            let expected = approved.expected();
+            assert_eq!(
+                expected,
+                format!(
+                    "start {} {} {}",
+                    approved.request_id, approved.route_id, config.remote.node_id
+                )
+            );
+            let stale = approval(&config).expected();
+            let wrong_local_peer = format!(
+                "start {} {} {}",
+                approved.request_id, approved.route_id, config.node_id
+            );
+            let wrong_request = format!(
+                "start {} {} {}",
+                MessageId::new(),
+                approved.route_id,
+                config.remote.node_id
+            );
+            let wrong_route = format!(
+                "start {} {} {}",
+                approved.request_id,
+                RouteId::new(),
+                config.remote.node_id
+            );
+            let mut session = Session {
+                approval: Some(approved),
+                ..Session::default()
+            };
+            for line in [
+                stale,
+                wrong_local_peer,
+                wrong_request,
+                wrong_route,
+                format!("{expected} "),
+                format!("{expected}\n{expected}"),
+                "yes".into(),
+                "start".into(),
+                "renew".into(),
+            ] {
+                assert!(
+                    input_action(line.as_bytes(), &session).is_err(),
+                    "line {line}"
+                );
+            }
+            assert_eq!(
+                input_action(expected.as_bytes(), &session).unwrap(),
+                Input::Approve
+            );
+            let command = session.approval.as_ref().unwrap().command();
+            exact_keys(&command, &["version", "command", "request_id", "route_id"]).unwrap();
+            assert_eq!(command["command"], "approve");
+            session.approved = true;
+            assert!(input_action(expected.as_bytes(), &session).is_err());
+            assert_eq!(input_action(b"status", &session).unwrap(), Input::Status);
+            assert_eq!(input_action(b"cancel", &session).unwrap(), Input::Stop);
+            session.stopping = true;
+            assert!(input_action(b"status", &session).is_err());
+            assert_eq!(input_action(b"stop", &session).unwrap(), Input::Stop);
+        }
+    }
+
+    #[test]
+    fn pure_audio_summary_preserves_direction_device_and_plaintext_warning() {
+        for direction in [Direction::Playback, Direction::Capture] {
+            for owned in [false, true] {
+                let mut value = match direction {
+                    Direction::Playback => config_json(),
+                    Direction::Capture => capture_config_json(),
+                };
+                if owned {
+                    value["target"] = Value::Null;
+                    value["endpoint_mode"] = json!(match direction {
+                        Direction::Playback => "virtual_microphone",
+                        Direction::Capture => "virtual_speaker",
+                    });
+                }
+                let config = match direction {
+                    Direction::Playback => parse_config(&value),
+                    Direction::Capture => parse_capture_config(&value),
+                }
+                .unwrap();
+                let (source, sink) = match direction {
+                    Direction::Playback => (config.remote.node_id, config.node_id),
+                    Direction::Capture => (config.node_id, config.remote.node_id),
+                };
+                let mut session = Session::default();
+                let before = session.summary(&config);
+                assert!(before.contains(&format!("Source {source} -> Sink {sink}")));
+                assert!(before.contains(&format!("Mode: {}", config.endpoint_mode.name())));
+                assert!(before.contains("duration: 20 seconds"));
+                assert!(before.contains(WARNING));
+                if owned {
+                    assert!(before.contains("not created before approval"));
+                } else {
+                    assert!(before.contains(config.target.as_deref().unwrap()));
+                }
+                session.approval = Some(approval(&config));
+                let after = session.summary(&config);
+                assert!(after.contains(WARNING));
+                if let Some(name) = &session.approval.as_ref().unwrap().node_name {
+                    assert!(after.contains(name));
+                    assert!(!after.contains("not created before approval"));
+                }
+            }
+        }
     }
 }

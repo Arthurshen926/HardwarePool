@@ -1395,5 +1395,13 @@ ADR 1548 adds only interactive finite playback/virtual-microphone control to the
 Linux console, with exact current-session confirmation and unchanged Node and
 counterpart resource authority. Its mandatory isolated PTY/PipeWire profile is
 separate from legacy/paired launcher tests. UDP audio remains unauthenticated
-plaintext trusted-lab media; other console media directions and renewal are not
-implemented.
+plaintext trusted-lab media; reverse audio is added separately by ADR 1549,
+while camera/touchpad console control and renewal remain unimplemented.
+
+
+ADR 1549 adds interactive finite selected-source stereo capture and virtual-speaker
+control through the same console/Node boundary. Exact local Source → remote Sink
+consent, independent counterpart authority and finite lease cleanup remain
+mandatory. Sixteen additional actual-PTY/private-PipeWire profiles reuse the
+independent stereo media oracle; all prior 48 graph profiles remain required.
+No physical-device or secure UDP media claim is made.

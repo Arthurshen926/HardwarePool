@@ -16,7 +16,7 @@ import uuid
 
 from run_pipewire_loopback import (
     CLIENT, DAEMON, LIMIT, Harness, graph_fingerprint, ownership_number,
-    source_process_id, interrupted,
+    source_process_id, interrupted, CONSOLE_SCENARIOS, CONSOLE_TESTS,
 )
 
 SOURCE = 'capyio.test.stereo.source'
@@ -425,8 +425,14 @@ def process_diagnostic(pid):
 
 
 class CaptureHarness(Harness):
-    def __init__(self, root, scenario, endpoint_mode='selected_source', paired_store=False):
-        super().__init__(root, e2e=True, paired_store=paired_store)
+    def __init__(self, root, scenario, endpoint_mode='selected_source', paired_store=False,
+                 console=False, console_scenario=None):
+        super().__init__(root, e2e=True, paired_store=paired_store, console=console,
+                         console_scenario=console_scenario,
+                         console_mode=('virtual_speaker' if endpoint_mode == 'virtual_speaker'
+                                       else 'capture') if console else None)
+        if console and scenario != 'waveform':
+            raise ValueError('console uses its distinct lifecycle scenario; graph profile stays waveform')
         if endpoint_mode not in ('selected_source', 'virtual_speaker'):
             raise ValueError('explicit recognized capture endpoint mode required')
         allowed = VIRTUAL_SCENARIOS if endpoint_mode == 'virtual_speaker' else SCENARIOS
@@ -486,6 +492,26 @@ class CaptureHarness(Harness):
         self.children.append(child)
         return child
 
+    def finish_pending_capture_console(self, producer):
+        before = graph_fingerprint(self.dump())
+        publish_marker(self.root / '.capyio-consent-checked')
+        self.wait_checkpoint(producer, '.capyio-after-stop')
+        self.verify_console_reaped()
+        for _ in range(3):
+            objects = self.dump()
+            if capture_nodes(objects) or virtual_nodes(objects):
+                raise ValueError('unapproved console activated a capture helper')
+            if graph_fingerprint(objects) != before:
+                raise ValueError('unapproved capture console changed the private audio graph')
+            self.check()
+            time.sleep(.1)
+        publish_marker(self.root / '.capyio-stop-checked')
+        while producer.poll() is None:
+            self.check()
+            time.sleep(.02)
+        if producer.returncode:
+            raise ValueError('capture console rejection fixture failed')
+
     def run_capture(self, fixture):
         # Probe only version, never audio or defaults. The known binary must stay
         # unchanged between this bounded read and later process ownership checks.
@@ -497,7 +523,8 @@ class CaptureHarness(Harness):
         daemon = self.prepare_daemon()
         source = self.start_source()
         producer = self.spawn([str(fixture), '--ignored', '--exact',
-                               ('hosted_pipewire_linux_virtual_speaker_android_sink_end_to_end' if self.virtual
+                               (CONSOLE_TESTS[self.console_mode] if self.console else
+                                'hosted_pipewire_linux_virtual_speaker_android_sink_end_to_end' if self.virtual
                                 else 'hosted_pipewire_linux_capture_android_sink_end_to_end'),
                                '--nocapture', '--test-threads=1'], 'producer')
         self.diagnostic_processes = {'daemon': daemon.pid, 'source': source.pid, 'fixture': producer.pid}
@@ -505,15 +532,22 @@ class CaptureHarness(Harness):
                 ('.capyio-before-consent', '.capyio-consent-checked'),
                 ('.capyio-before-android-consent', '.capyio-android-consent-checked')]:
             self.wait_checkpoint(producer, announced)
+            if announced == '.capyio-before-consent':
+                self.inspect_console_owner()
             for _ in range(2):
                 if (virtual_nodes if self.virtual else capture_nodes)(self.dump()):
                     raise ValueError('capture process appeared before both independent consents')
                 time.sleep(.1)
+            if self.pending_console():
+                self.finish_pending_capture_console(producer)
+                return
             publish_marker(self.root / checked)
         self.wait_checkpoint(producer, '.capyio-capture-owner-ready')
         owner = json.loads((self.root / '.capyio-capture-owner.json').read_text())
         if self.virtual:
             virtual_expectation(owner)
+        if self.console and owner['owner_pid'] != self.console_owner['owner_pid']:
+            raise ValueError('capture helper owner differs from actual console Node')
         self.diagnostic_processes['owner'] = owner['owner_pid']
         objects = []
         ready = time.monotonic() + 8
@@ -536,14 +570,15 @@ class CaptureHarness(Harness):
             pid = capture_process_id(objects, capture, owner['owner_pid'],
                                      self.pipewire_version, self.pipewire_identity,
                                      owner if self.virtual else None)
-            if self.virtual:
+            if self.virtual or self.console:
                 app = next(o for o in objects if o.get('type') == 'PipeWire:Interface:Node'
                            and o.get('info', {}).get('props', {}).get('node.name') == SOURCE)
                 if (source_process_id(objects, app, {'node_name': SOURCE}) != source.pid
                         or source.pid in (pid, owner['owner_pid'])):
                     raise ValueError('synthetic application must be an independent owned process')
-                verify_capture_environment(read_environment(owner['owner_pid']),
-                                           read_environment(pid), self.env)
+                if self.virtual:
+                    verify_capture_environment(read_environment(owner['owner_pid']),
+                                               read_environment(pid), self.env)
                 sentinels = [o for o in objects if o.get('type') == 'PipeWire:Interface:Node'
                              and o.get('info', {}).get('props', {}).get('node.name') == 'capyio.test.null']
                 if len(sentinels) != 1:
@@ -580,6 +615,7 @@ class CaptureHarness(Harness):
                 self.stop(daemon)
                 self.children.remove(daemon)
         self.wait_checkpoint(producer, '.capyio-after-stop')
+        self.verify_console_reaped()
         if Path('/proc', str(pid)).exists():
             raise ValueError('production capture child not reaped')
         if self.scenario == 'server_disconnect':
@@ -599,9 +635,9 @@ class CaptureHarness(Harness):
         marker = (('capyio_virtual_speaker_fixture' if self.virtual else 'capyio_capture_fixture')
                   + '=passed scenario=' + self.scenario
                   + ' android_policy=true shared_rust_receiver=true simulated_app=true fresh_post_stop=true')
-        if producer.returncode or marker not in (self.root / 'producer.err').read_text():
+        if producer.returncode or (not self.console and marker not in (self.root / 'producer.err').read_text()):
             raise ValueError('integrated capture/Android lifecycle evidence absent')
-        if self.scenario == 'waveform':
+        if self.scenario == 'waveform' and (not self.console or self.console_scenario == 'waveform'):
             verify_stereo((self.root / 'received-stereo.pcm').read_bytes())
 
 
@@ -613,7 +649,13 @@ def main():
     parser.add_argument('--endpoint-mode', choices=('selected_source', 'virtual_speaker'),
                         default='selected_source')
     parser.add_argument('--paired-store', action='store_true')
+    parser.add_argument('--console', action='store_true')
+    parser.add_argument('--console-scenario', choices=CONSOLE_SCENARIOS)
     args = parser.parse_args()
+    if args.console and (not args.paired_store or args.console_scenario is None or args.scenario != 'waveform'):
+        parser.error('console requires --paired-store, --scenario waveform and explicit --console-scenario')
+    if not args.console and args.console_scenario is not None:
+        parser.error('console scenario requires --console')
     if os.environ.get('GITHUB_ACTIONS') != 'true':
         parser.error('requires explicit disposable hosted CI environment')
     for tool in ('pipewire', 'pw-cat', 'pw-dump', 'pw-link'):
@@ -623,10 +665,12 @@ def main():
     signal.signal(signal.SIGINT, interrupted)
     with tempfile.TemporaryDirectory(prefix='capyio-capture-') as directory:
         harness = CaptureHarness(Path(directory), args.scenario, args.endpoint_mode,
-                                 paired_store=args.paired_store)
+                                 paired_store=args.paired_store, console=args.console,
+                                 console_scenario=args.console_scenario)
         try:
             harness.run_capture(args.fixture.resolve(strict=True))
             harness.verify_pairing()
+            harness.verify_console()
         except Exception:
             for name in ('daemon.err', 'producer.err', 'source.err', 'command.err'):
                 path = Path(directory) / name
@@ -638,6 +682,11 @@ def main():
             signal.signal(signal.SIGTERM, signal.SIG_IGN)
             signal.signal(signal.SIGINT, signal.SIG_IGN)
             harness.close()
+    if args.console:
+        mode = 'virtual_speaker' if args.endpoint_mode == 'virtual_speaker' else 'capture'
+        print(f'capyio_audio_console_graph=passed mode={mode} scenario={args.console_scenario}'
+              ' actual_console=true protected_read=true independent_graph=true cleanup=true')
+        return
     if args.paired_store:
         mode = 'virtual_speaker' if args.endpoint_mode == 'virtual_speaker' else 'capture'
         print(f'capyio_audio_paired_graph=passed mode={mode} scenario={args.scenario} protected_read=true cleanup=true')

@@ -149,10 +149,23 @@ VIRTUAL_SCENARIOS = ('waveform', 'no_consumer', 'child_exit', 'server_disconnect
 CONSOLE_SCENARIOS = ('waveform', 'no_approval', 'pretyped', 'mismatched_request',
                      'mismatched_route', 'mismatched_peer', 'expiry', 'remote_eof')
 CONSOLE_PENDING = frozenset(CONSOLE_SCENARIOS[1:6])
+CONSOLE_TESTS = {
+    'playback': 'hosted_console_playback_end_to_end',
+    'virtual_microphone': 'hosted_console_virtual_microphone_end_to_end',
+    'capture': 'hosted_console_capture_end_to_end',
+    'virtual_speaker': 'hosted_console_virtual_speaker_end_to_end',
+}
+
+
+def console_commands(mode):
+    if mode not in CONSOLE_TESTS:
+        raise ValueError('invalid console mode')
+    return ((b'capture', b'linux-capture') if mode in ('capture', 'virtual_speaker')
+            else (b'playback', b'linux-playback'))
 
 
 def console_marker(mode, scenario):
-    if mode not in ('playback', 'virtual_microphone') or scenario not in CONSOLE_SCENARIOS:
+    if mode not in CONSOLE_TESTS or scenario not in CONSOLE_SCENARIOS:
         raise ValueError('invalid console evidence identity')
     return (f'capyio_audio_console=passed mode={mode} scenario={scenario}'
             ' actual_tty=true actual_node=true fresh_consent=true protected_read=true'
@@ -161,6 +174,9 @@ def console_marker(mode, scenario):
 
 def verify_console_owner(value, mode, scenario):
     """Independently verify the actual console -> actual fixed sibling Node."""
+    commands = console_commands(mode)
+    if scenario not in CONSOLE_SCENARIOS:
+        raise ValueError('invalid console scenario')
     if set(value) != {'console_pid', 'owner_pid', 'scenario', 'mode'}:
         raise ValueError('unexpected console owner evidence')
     if value['mode'] != mode or value['scenario'] != scenario:
@@ -178,10 +194,10 @@ def verify_console_owner(value, mode, scenario):
                   if ':' in line)
     if int(status['PPid']) != pids[0]:
         raise ValueError('Node is not the console direct child')
-    for process, command in ((console, b'playback'), (node, b'linux-playback')):
+    for process, command in zip((console, node), commands):
         args = (process / 'cmdline').read_bytes().split(b'\0')
         if command not in args or b'--pairing-state' not in args:
-            raise ValueError('protected playback invocation required')
+            raise ValueError('protected exact-direction audio invocation required')
     return value
 
 
@@ -367,7 +383,7 @@ def verify_process_owner(objects, source, expected):
 
 class Harness:
     def __init__(self, root, e2e=False, virtual_scenario=None, paired_store=False,
-                 console=False, console_scenario=None):
+                 console=False, console_scenario=None, console_mode=None):
         if paired_store and not e2e:
             raise ValueError('paired store requires an actual executable fixture')
         if console and (not paired_store or not e2e or console_scenario not in CONSOLE_SCENARIOS):
@@ -376,6 +392,9 @@ class Harness:
             raise ValueError('console profiles retain distinct exact lifecycle scenarios')
         if not console and console_scenario is not None:
             raise ValueError('console scenario requires the console profile')
+        if console_mode is not None and (not console or console_mode not in CONSOLE_TESTS):
+            raise ValueError('explicit supported console mode requires console profile')
+        self.console_mode = console_mode or ('virtual_microphone' if virtual_scenario else 'playback')
         self.console = console
         self.console_scenario = console_scenario
         self.console_owner = None
@@ -414,14 +433,13 @@ class Harness:
     def verify_console(self):
         evidence = (self.root / 'producer.err').read_text().splitlines()
         markers = [line for line in evidence if line.startswith('capyio_audio_console')]
-        mode = 'virtual_microphone' if self.virtual_scenario else 'playback'
+        mode = self.console_mode
         expected = [console_marker(mode, self.console_scenario)] if self.console else []
         if markers != expected:
             raise ValueError('console evidence missing, duplicated, malformed or unexpected')
         if self.console:
             result = (self.root / 'producer.out').read_text()
-            test = ('hosted_console_virtual_microphone_end_to_end' if self.virtual_scenario
-                    else 'hosted_console_playback_end_to_end')
+            test = CONSOLE_TESTS[self.console_mode]
             if (f'test {test} ... ok' not in result
                     or 'test result: ok. 1 passed; 0 failed; 0 ignored;' not in result):
                 raise ValueError('exact console test must execute, not skip or substitute a Node fixture')
@@ -430,7 +448,7 @@ class Harness:
         if self.console:
             self.console_owner = verify_console_owner(json.loads(
                 (self.root / '.capyio-console-owner.json').read_text()),
-                'virtual_microphone' if self.virtual_scenario else 'playback', self.console_scenario)
+                self.console_mode, self.console_scenario)
 
     def verify_console_reaped(self):
         if self.console_owner and Path('/proc', str(self.console_owner['owner_pid'])).exists():

@@ -14,7 +14,7 @@ from run_pipewire_loopback import (
     graph_fingerprint, verify_virtual_removed,
     ownership_number, source_process_id, ownership_diagnostic, verify_process_owner,
     CONSOLE_SCENARIOS, CONSOLE_PENDING, console_marker, verify_console_owner,
-    verify_playback_process_owner,
+    verify_playback_process_owner, console_commands, CONSOLE_TESTS,
 )
 
 
@@ -395,6 +395,33 @@ class ConsoleHarnessTests(unittest.TestCase):
                 patch.object(Path, 'read_bytes', side_effect=[args[0], b'node\0linux-playback\0']), \
                 self.assertRaises(ValueError):
             verify_console_owner(value, 'playback', 'waveform')
+
+    def test_capture_console_ownership_rejects_playback_substitution_and_unprotected_node(self):
+        for mode in ('capture', 'virtual_speaker'):
+            self.assertEqual(console_commands(mode), (b'capture', b'linux-capture'))
+            self.assertIn(mode, CONSOLE_TESTS)
+            value = {'console_pid': 123, 'owner_pid': 124, 'mode': mode, 'scenario': 'waveform'}
+            resolves = [Path('/owned/capyio-linux-console'), Path('/owned/capyio-node')]
+            args = [b'console\0--pairing-state\0/private/state\0capture\0',
+                    b'node\0linux-capture\0--pairing-state\0/private/state\0']
+            with patch.object(Path, 'resolve', side_effect=resolves), \
+                    patch.object(Path, 'read_text', return_value='PPid:\t123\n'), \
+                    patch.object(Path, 'read_bytes', side_effect=args):
+                self.assertEqual(verify_console_owner(value, mode, 'waveform'), value)
+            for bad in ([args[0].replace(b'capture', b'playback'), args[1]],
+                        [args[0], args[1].replace(b'linux-capture', b'linux-playback')],
+                        [args[0], b'node\0linux-capture\0']):
+                with patch.object(Path, 'resolve', side_effect=resolves), \
+                        patch.object(Path, 'read_text', return_value='PPid:\t123\n'), \
+                        patch.object(Path, 'read_bytes', side_effect=bad), self.assertRaises(ValueError):
+                    verify_console_owner(value, mode, 'waveform')
+        for mode in ('selected_source', 'stereo_capture', 'automatic', ''):
+            with self.assertRaises(ValueError):
+                console_commands(mode)
+            with self.assertRaises(ValueError):
+                console_marker(mode, 'waveform')
+            with self.assertRaises(ValueError):
+                verify_console_owner({}, mode, 'waveform')
 
     def test_console_cleanup_signals_only_recorded_owned_session_before_fixture(self):
         harness = Harness(Path('/synthetic-not-opened'), e2e=True, paired_store=True,
