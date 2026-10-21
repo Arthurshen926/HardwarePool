@@ -1618,3 +1618,10 @@ local approval, finite grant/lease, then the existing supervisor. No default
 listener or persistent credentials are introduced. Trusted launcher and deployment
 credential/device approval remain separate gates; schema and limitations are in
 the ADR.
+
+ADR 1533 adds an optional finite offline CAVC decoder subprocess in the Linux
+platform boundary. Rust reuses the adapter's record guard, continuously polls
+the existing camera authority and submits returned canonical NV12 only through
+`RuntimeCamera`. No network listener, demuxer, alternate projection or codec in
+Core/Runtime is introduced. Native software acceptance is distinct from Android
+live capture and authenticated camera transport.

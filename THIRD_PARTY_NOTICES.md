@@ -67,3 +67,25 @@ Before merging a new production dependency:
 5. Update this file or the generated SBOM.
 
 SonoBus code is not included. Direct reuse would require separate GPLv3 compatibility analysis. The project may study behavior and architecture without copying implementation code.
+
+## Optional Linux offline AVC software-validation dependency
+
+ADR1533 adds an optional fixed H.264 decoder subprocess linked against externally
+installed official FFmpeg libavcodec/libavutil development packages. Upstream:
+https://ffmpeg.org/ ; actual licenses depend on the linked configuration, see
+https://ffmpeg.org/legal.html . Default builds do not require these dependencies.
+No upstream source, executable, library or decoder release artifact is imported
+or redistributed. No modifications to upstream libraries are made.
+
+Isolated validation uses Debian7.1.5-0+deb13u1 (GPL-enabled, NOT described as
+LGPL-only). Development packages were extracted privately, not system-installed:
+https://deb.debian.org/debian/pool/main/f/ffmpeg/libavcodec-dev_7.1.5-0+deb13u1_amd64.deb
+SHA25636f190f54441bd3bac0eddcfa4713e41c3b41da6476ac9bb868cc3c9f027fe02;
+https://deb.debian.org/debian/pool/main/f/ffmpeg/libavutil-dev_7.1.5-0+deb13u1_amd64.deb
+SHA25671aae526cbdb5fb55cb8269427769eca120308393f70590843ba4d1a1b6befdd.
+They match the installed shared runtime versions61.19.101 and59.39.100.
+Fixture encoder (ffmpeg/libx264) is test-only; full configuration and generated
+media provenance live in `fixtures/linux-avc/provenance.json`. Hosted validation
+must capture its own actual package versions and library configuration/license.
+A separate reviewed dependency/distribution decision is required before shipping
+any decoder binary or library; this source-only slice makes no such approval.

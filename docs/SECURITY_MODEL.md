@@ -1499,3 +1499,10 @@ local approval after real paired TLS/catalog creates finite grant/lease.
 Transient clearing is best effort, not secure erasure of Rustls/process memory.
 Actual credential access, deployment and device setup require separate approval;
 the source milestone does not provide it. UDP remains unauthenticated lab media.
+
+ADR 1533's offline Linux AVC boundary treats compressed data as untrusted:
+bounded CAVC records, cumulative budgets, bounded SPS/PPS/slice inspection,
+actual AVFrame validation, fixed owned subprocess, nonblocking private IPC,
+absolute deadlines and kill/reap. Decode completion grants no authority;
+`RuntimeCamera` rechecks the exact Session/Route/lease/epoch before projection.
+No network socket listener or arbitrary executable/URL/config path is accepted.

@@ -1212,3 +1212,41 @@ All five reverse graph scenarios emitted their required pass markers, and the
 four prior virtual-microphone scenarios also passed. This validates private
 synthetic PipeWire capture through the production Linux sender and Android Rust
 policy/shared receiver with simulated consumption, not physical AudioTrack output.
+
+
+## Linux native camera decoded-frame acceptance (2026-10-21)
+
+Commit `23bcc2f00d21e5016ea221fee7a8c196264765ce` passed all four jobs in
+[run 39563035324](https://github.com/Arthurshen926/HardwarePool/actions/runs/39563035324).
+The `linux-native-camera` job passed six Runtime-owner tests, strict native
+protocol/assembler/terminal-result checks, four pure graph-harness regressions,
+and seven real private-PipeWire scenarios: pixels, no_consumer, expiry,
+child_exit, server_disconnect, malformed and partial. A separate native consumer
+verified 20 full synthetic canonical NV12 frames, including exact byte pattern,
+Y/U/V distinction, stride, negotiated colorimetry and sequence order. The harness
+checks approval before creation, exact Client/PID/PPid ownership, no autolinks,
+and owned cleanup without removing an unrelated sentinel. Server-loss acceptance
+checks a fresh graph for no stale reconnection instead of claiming old-server
+sentinel continuity. Startup fault cases do not claim post-delivery failure tests.
+
+This is synthetic decoded ingress through the production Runtime owner and native
+projection, not Android AVC/network, portal/V4L2, physical camera, or third-party
+application acceptance. Prior mono/virtual-microphone/reverse-stereo gates remain
+separate retained evidence. See ADR 1532 for the optional dependency and lifetime
+boundaries; cloud graph attempts denied EPERM were not treated as test passes.
+
+ADR 1533 adds default `capyio-linux-avc` admission/header tests and opt-in actual
+native decoder tests. `scripts/test_avc_native_helper.py` verifies generated
+pixel hashes, sequence/PTS/EOS, malformed SPS/AU/IPC, actual orientation SEI,
+expiry and cleanup against the built fixed sibling helper. Ignored Rust tests
+must emit both exact `CAPYIO_AVC_*_PASS` markers when explicitly executed.
+
+`Linux AVC validation` separately exercises `scripts/run_pipewire_avc.py` with
+production `RuntimeAvcCamera` -> existing `RuntimeCamera` -> native projection ->
+independent decoder-pixel consumer. It reuses the accepted camera private-graph
+harness and checks both helper PIDs, exact links and unchanged sentinel. Eight
+scenarios are required: pixels, no_consumer, expiry, child_exit, decoder_exit,
+server_disconnect, revoke and malformed_cavc. Compiled fixtures and separate
+component passes are not composed-graph evidence. The existing four Linux IPC
+jobs and seven camera graph scenarios remain unchanged. This adds no real-device,
+network-camera or physical-delivery acceptance claim.

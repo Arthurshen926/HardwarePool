@@ -607,6 +607,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "capyio-linux-avc"
+version = "0.1.0"
+dependencies = [
+ "capyio-core",
+ "capyio-linux-camera",
+ "capyio-runtime",
+ "capyio-testkit",
+ "capyio-vcamdroid-adapter",
+ "capyio-video",
+]
+
+[[package]]
 name = "capyio-linux-camera"
 version = "0.1.0"
 dependencies = [

@@ -1,6 +1,6 @@
 # ADR 1532: finite native Linux PipeWire camera projection
 
-Status: accepted implementation slice; hosted native-graph acceptance required.
+Status: accepted software slice; hosted native-graph acceptance passed 2026-10-21.
 
 ## Decision
 
@@ -75,6 +75,23 @@ verify a fresh graph has no stale reconnection, not old-server continuity.
 
 Local cloud native compilation and callback tests passed. Actual cloud graph
 startup was denied EPERM while loading protocol-native; no graph evidence was
-obtained and no bypass was attempted. Hosted `linux-native-camera` is mandatory
-before claiming native graph success. Android camera decode/network handoff and
-physical/application compatibility remain separate later increments.
+obtained there and no bypass was attempted. Hosted `linux-native-camera` then
+passed at `23bcc2f00d21e5016ea221fee7a8c196264765ce` in
+[run 39563035324](https://github.com/Arthurshen926/HardwarePool/actions/runs/39563035324),
+alongside all four CI jobs and the prior audio gates. All seven actual private
+graph scenarios passed: pixels, no_consumer, expiry, child_exit,
+server_disconnect, malformed and partial. The independent consumer verified
+20 complete NV12 frames byte-for-byte, with sequence/order, stride and exact
+colorimetry; node creation alone was not the acceptance criterion.
+
+The Ubuntu 1.0.5 check required a mutable local SPA format descriptor for its older
+API signature. The camera daemon's test-only RLIMIT_FSIZE is bounded to 16 MiB
+because three NV12 buffers share a memfd larger than the audio harness's 2 MiB
+cap. Ordinary log checks remain 2 MiB; audio/non-daemon limits are unchanged.
+Consumer terminal outcome is stable through its own normal teardown, with a
+native regression retaining early disconnect and pixel-error failures.
+
+This proves the finite decoded-frame projection boundary and its private native
+graph, not an integrated user launcher, Android AVC decode/network handoff,
+portal/V4L2 compatibility, third-party camera application selection, or physical
+camera acceptance. Those remain separate later increments.

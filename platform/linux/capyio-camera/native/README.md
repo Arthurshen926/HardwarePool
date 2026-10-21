@@ -1,4 +1,4 @@
-# Private PipeWire camera helper (unpublished)
+# Private PipeWire camera helper
 
 Original Apache-2.0 implementation. This is a dedicated media subprocess, not the
 Adapter JSON-RPC control channel. It deliberately does not implement network,
@@ -118,9 +118,25 @@ private test directory only. A single daemon attempt with a private socket name,
 private config and no devices failed exit 255: protocol-native module loading
 returned `Operation not permitted`. No socket was created. Testing stopped on
 that denial; no escalation, global install, service change or namespace bypass
-was attempted. Hosted/authorized Linux CI must supply live graph evidence.
+was attempted. Hosted Linux CI subsequently supplied the live graph evidence below.
 
 The native callback test also passes UBSan (`-fsanitize=undefined
 -fno-sanitize-recover=all`). Address/LeakSanitizer execution is not usable in this
 executor: LeakSanitizer reports a fatal ptrace-related environment limitation.
 No leak-clean claim is made. The renamed-main FFI object compiles with `-Werror`.
+
+
+## Hosted acceptance (2026-10-21)
+
+All four jobs passed at `23bcc2f00d21e5016ea221fee7a8c196264765ce` in
+https://github.com/Arthurshen926/HardwarePool/actions/runs/39563035324 . The native
+camera job passed all seven real graph scenarios, including a separate consumer
+verifying 20 complete NV12 frames and the bounded fault/teardown cases described
+above. This is software graph evidence using synthetic decoded input, not Android
+AVC/network, physical camera or third-party application compatibility.
+
+Ubuntu PipeWire 1.0.5 and the newer 1.4.2 headers both compile strictly. The private
+camera test daemon alone gets a finite 16 MiB RLIMIT_FSIZE so the shared memfd can
+hold three NV12 graph buffers; 2 MiB ordinary-output checks and audio limits remain
+unchanged. `test_consumer.c` preserves success through normal cleanup while
+retaining early stream failures and pixel-error failure outcomes.

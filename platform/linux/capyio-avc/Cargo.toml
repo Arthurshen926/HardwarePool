@@ -1,0 +1,33 @@
+[package]
+name = "capyio-linux-avc"
+description = "Finite offline CAVC decoder feeding the authorized Linux camera owner."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish = false
+
+[features]
+default = []
+native-avc = []
+native-pipewire = ["native-avc", "capyio-linux-camera/native-pipewire"]
+
+[dependencies]
+capyio-core = { path = "../../../crates/capyio-core" }
+capyio-runtime = { path = "../../../crates/capyio-runtime" }
+capyio-video = { path = "../../../crates/capyio-video" }
+capyio-vcamdroid-adapter = { path = "../../../adapters/vcamdroid" }
+capyio-linux-camera = { path = "../capyio-camera" }
+
+[[bin]]
+name = "capyio-linux-avc-helper"
+path = "src/helper.rs"
+required-features = ["native-avc"]
+
+[dev-dependencies]
+capyio-testkit = { path = "../../../crates/capyio-testkit" }
+
+[[example]]
+name = "avc_graph_driver"
+path = "examples/avc_graph_driver.rs"
+required-features = ["native-pipewire"]

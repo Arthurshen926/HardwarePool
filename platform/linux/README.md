@@ -208,12 +208,36 @@ Java AudioTrack, physical audibility, user-session automatic routing or encrypte
 media. Existing mono/virtual-source results above remain separate evidence.
 
 
+### Experimental decoded NV12 native camera projection
+
+`capyio-linux-camera` now owns a finite, already-decoded canonical NV12 ingress and
+an optional `native-pipewire` fixed sibling helper. The actual Runtime grant,
+Session/Route/Stream/epoch and local Sink lease are checked before node creation
+and every submit. It exposes only an owned native `Video/Source`; no automatic
+links, portal/V4L2/kernel integration or default-device changes are made.
+
+All seven actual private-graph scenarios passed at `23bcc2f0` in
+[run 39563035324](https://github.com/Arthurshen926/HardwarePool/actions/runs/39563035324),
+with all four CI jobs and existing audio gates green. A separate consumer checked
+20 full 1280x720, 30-fps NV12 BT.709-limited frames byte-for-byte, stride and order.
+The other cases cover no consumer/full-pipe backpressure, expiry, child exit,
+server disconnect and malformed/partial IPC, with owned cleanup and sentinel
+isolation. See [ADR 1532](../../docs/adr/1532-linux-owned-native-camera.md).
+
+This is the production decoded-frame API plus software projection acceptance,
+not Android AVC/network integration or a user-facing camera launcher. Queuing
+alone never marks a Route Active. Physical camera and third-party application
+compatibility remain deferred.
+
+
 ## Next bounded backlog
 
 1. Consolidate deferred physical/AudioTrack acceptance separately; the explicit
    Linux → Android stereo software slice above has passed its hosted gates.
-2. Camera, then touchpad, following the Alpha primary capability scope. Each needs
-   its own platform projection, permission boundary and software acceptance gate.
+2. Connect bounded camera decode/network ingress to the accepted native projection,
+   then implement touchpad's own permission boundary and software acceptance gate.
+   Android AVC reception and physical camera use are not established by the
+   decoded NV12 graph results above.
 3. Gamepad, haptics, display and IMU remain experimental tracks, not mandatory
    full-platform parity for closing this audio milestone.
 

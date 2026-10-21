@@ -1,0 +1,82 @@
+{
+  "synthetic": true,
+  "encoder_command": [
+    "ffmpeg",
+    "-v",
+    "error",
+    "-f",
+    "rawvideo",
+    "-pixel_format",
+    "yuv420p",
+    "-video_size",
+    "1280x720",
+    "-framerate",
+    "30",
+    "-i",
+    "pipe:0",
+    "-frames:v",
+    "3",
+    "-an",
+    "-c:v",
+    "libx264",
+    "-threads",
+    "1",
+    "-preset",
+    "veryslow",
+    "-profile:v",
+    "baseline",
+    "-level:v",
+    "3.1",
+    "-qp",
+    "20",
+    "-x264-params",
+    "keyint=1:min-keyint=1:scenecut=0:bframes=0:ref=1:aud=1:repeat-headers=1:fps=30/1:force-cfr=1:colorprim=bt709:transfer=bt709:colormatrix=bt709:range=tv",
+    "-color_range",
+    "tv",
+    "-colorspace",
+    "bt709",
+    "-color_primaries",
+    "bt709",
+    "-color_trc",
+    "bt709",
+    "-f",
+    "h264",
+    "pipe:1"
+  ],
+  "ffmpeg_version_configuration": "ffmpeg version 7.1.5-0+deb13u1 Copyright (c) 2000-2026 the FFmpeg developers\nbuilt with gcc 14 (Debian 14.2.0-19)\nconfiguration: --prefix=/usr --extra-version=0+deb13u1 --toolchain=hardened --libdir=/usr/lib/x86_64-linux-gnu --incdir=/usr/include/x86_64-linux-gnu --arch=amd64 --enable-gpl --disable-stripping --disable-libmfx --disable-omx --enable-gnutls --enable-libaom --enable-libass --enable-libbs2b --enable-libcdio --enable-libcodec2 --enable-libdav1d --enable-libflite --enable-libfontconfig --enable-libfreetype --enable-libfribidi --enable-libglslang --enable-libgme --enable-libgsm --enable-libharfbuzz --enable-libmp3lame --enable-libmysofa --enable-libopenjpeg --enable-libopenmpt --enable-libopus --enable-librubberband --enable-libshine --enable-libsnappy --enable-libsoxr --enable-libspeex --enable-libtheora --enable-libtwolame --enable-libvidstab --enable-libvorbis --enable-libvpx --enable-libwebp --enable-libx265 --enable-libxml2 --enable-libxvid --enable-libzimg --enable-openal --enable-opencl --enable-opengl --disable-sndio --enable-libvpl --enable-libdc1394 --enable-libdrm --enable-libiec61883 --enable-chromaprint --enable-frei0r --enable-ladspa --enable-libbluray --enable-libcaca --enable-libdvdnav --enable-libdvdread --enable-libjack --enable-libpulse --enable-librabbitmq --enable-librist --enable-libsrt --enable-libssh --enable-libsvtav1 --enable-libx264 --enable-libzmq --enable-libzvbi --enable-lv2 --enable-sdl2 --enable-libplacebo --enable-librav1e --enable-pocketsphinx --enable-librsvg --enable-libjxl --enable-shared\nlibavutil      59. 39.100 / 59. 39.100\nlibavcodec     61. 19.101 / 61. 19.101\nlibavformat    61.  7.103 / 61.  7.103\nlibavdevice    61.  3.100 / 61.  3.100\nlibavfilter    10.  5.100 / 10.  5.100\nlibswscale      8.  3.100 /  8.  3.100\nlibswresample   5.  3.100 /  5.  3.100\nlibpostproc    58.  3.100 / 58.  3.100\n",
+  "input_yuv420p_sha256": "cd6f00d2f95ae1eba104a495f96a7d89b841f6e4c40086b16d6cb12bd79360fb",
+  "cavc_sha256": "921e9ed4a85717cf3e404722700d9d55ecdfa6a77da952164701a68082fbc9d7",
+  "frames": [
+    {
+      "sequence": 1,
+      "pts_us": 0,
+      "yuv": [
+        34,
+        118,
+        154
+      ],
+      "nv12_sha256": "0fe79547e650ee459ec7e1f005f6a19bd62b131150b214d0aa27cafdfed89dfb"
+    },
+    {
+      "sequence": 2,
+      "pts_us": 33333,
+      "yuv": [
+        95,
+        101,
+        138
+      ],
+      "nv12_sha256": "4d0f78df7038c9cf80a5d5817d6262a9e239152f9fd31b42b8e0d15fcaf81046"
+    },
+    {
+      "sequence": 3,
+      "pts_us": 66666,
+      "yuv": [
+        161,
+        118,
+        119
+      ],
+      "nv12_sha256": "83294a0dc24a94b394a031382ef3089ba105990da0ee6570fcfcfaae1bfa3388"
+    }
+  ],
+  "license_note": "This Debian FFmpeg tool is GPL-enabled. No executable/library is redistributed. Fixture contains only generated solid color video."
+}
