@@ -139,7 +139,7 @@ impl SecretServiceBackend {
                             zbus::fdo::RequestNameFlags::DoNotQueue.into(),
                         )
                         .await
-                        .map_err(map_error)?;
+                        .map_err(map_namespace_error)?;
                     if reply != zbus::fdo::RequestNameReply::PrimaryOwner {
                         return Err(BackendError::Conflict);
                     }
@@ -490,5 +490,31 @@ fn map_error(error: zbus::Error) -> BackendError {
             BackendError::Missing
         }
         _ => BackendError::Unavailable,
+    }
+}
+
+// zbus turns RequestNameReply::Exists into NameTaken before returning the reply.
+// Preserve the contention category, without treating transport errors as conflicts.
+fn map_namespace_error(error: zbus::Error) -> BackendError {
+    match error {
+        zbus::Error::NameTaken => BackendError::Conflict,
+        other => map_error(other),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn namespace_name_taken_is_conflict_not_transport_unavailability() {
+        assert_eq!(
+            map_namespace_error(zbus::Error::NameTaken),
+            BackendError::Conflict
+        );
+        assert_eq!(
+            map_namespace_error(zbus::Error::Failure("synthetic transport failure".into())),
+            BackendError::Unavailable
+        );
     }
 }

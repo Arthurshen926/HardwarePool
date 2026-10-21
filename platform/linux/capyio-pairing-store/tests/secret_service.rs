@@ -856,10 +856,10 @@ fn ipc_secret_service_cooperative_namespace_conflict_fails_before_access() {
         fixture.owner.as_uuid().simple()
     ));
     fixture.restart_service();
-    assert!(matches!(
-        fixture.backend_with_timeout(OPERATION_TIMEOUT),
-        Err(BackendError::Conflict)
-    ));
+    assert_eq!(
+        fixture.backend_with_timeout(OPERATION_TIMEOUT).err(),
+        Some(BackendError::Conflict)
+    );
     assert!(matches!(
         backend.load(fixture.owner, &handle),
         Err(BackendError::Conflict)
