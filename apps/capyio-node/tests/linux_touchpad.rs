@@ -57,7 +57,7 @@ struct Process {
     stdout: Vec<u8>,
     stderr: Vec<u8>,
     #[cfg(feature = "touchpad-test-fixture")]
-    helper_pids: BTreeSet<u32>,
+    helper_pids: std::collections::BTreeMap<u32, u64>,
     #[cfg(all(feature = "touchpad-test-fixture", feature = "paired-store"))]
     paired_store: Option<paired_store::PersistedPairing>,
     #[cfg(all(feature = "touchpad-test-fixture", feature = "paired-store"))]
@@ -83,7 +83,7 @@ impl Process {
             stdout: Vec::new(),
             stderr: Vec::new(),
             #[cfg(feature = "touchpad-test-fixture")]
-            helper_pids: BTreeSet::new(),
+            helper_pids: std::collections::BTreeMap::new(),
             #[cfg(all(feature = "touchpad-test-fixture", feature = "paired-store"))]
             paired_store: None,
             #[cfg(all(feature = "touchpad-test-fixture", feature = "paired-store"))]
@@ -224,12 +224,40 @@ impl Process {
             }
         };
         #[cfg(feature = "touchpad-test-fixture")]
-        for pid in owner.into_iter().flat_map(child_pids) {
+        'helpers: for pid in owner.into_iter().flat_map(child_pids) {
+            let Some(identity) = process_identity(pid).expect("owned helper process identity")
+            else {
+                continue;
+            };
+            assert_eq!(
+                identity.parent,
+                owner.unwrap(),
+                "helper still belongs to owned Node"
+            );
+            if let Some(started) = self.helper_pids.get(&pid) {
+                assert_eq!(*started, identity.started, "owned helper PID was reused");
+            }
+            if identity.ended() {
+                continue 'helpers;
+            }
             let executable = match std::fs::read_link(format!("/proc/{pid}/exe")) {
                 Ok(executable) => executable,
-                // An unstarted/failing child can be reaped between the PPid
-                // scan and readlink. Such a PID is not accepted as evidence.
-                Err(error) if error.kind() == io::ErrorKind::NotFound => continue,
+                Err(error)
+                    if matches!(
+                        error.kind(),
+                        io::ErrorKind::NotFound | io::ErrorKind::PermissionDenied
+                    ) =>
+                {
+                    assert!(
+                        same_owned_process_ended(
+                            identity,
+                            process_identity(pid).expect("owned helper exit identity")
+                        ),
+                        "cannot inspect live owned helper executable: {error}"
+                    );
+                    // Disappearance/exit is not successful identity evidence.
+                    continue;
+                }
                 Err(error) => panic!("cannot inspect owned helper executable: {error}"),
             };
             let expected = std::path::Path::new(env!("CARGO_BIN_EXE_capyio-node"))
@@ -247,14 +275,40 @@ impl Process {
                 for name in ["cmdline", "environ"] {
                     match std::fs::read(format!("/proc/{pid}/{name}")) {
                         Ok(bytes) => store.assert_no_leak(&bytes),
-                        Err(error) if error.kind() == io::ErrorKind::NotFound => {}
+                        Err(error)
+                            if matches!(
+                                error.kind(),
+                                io::ErrorKind::NotFound | io::ErrorKind::PermissionDenied
+                            ) =>
+                        {
+                            assert!(
+                                same_owned_process_ended(
+                                    identity,
+                                    process_identity(pid).expect("owned helper exit identity")
+                                ),
+                                "cannot inspect live owned helper public metadata: {error}"
+                            );
+                            // Linux may withdraw /proc metadata during exit.
+                            // Keep prior verified evidence, but never count this
+                            // incomplete scan as identity/redaction success.
+                            continue 'helpers;
+                        }
                         Err(error) => {
                             panic!("cannot inspect owned helper public metadata: {error}")
                         }
                     }
                 }
             }
-            self.helper_pids.insert(pid);
+            let Some(after) = process_identity(pid).expect("owned helper final identity") else {
+                continue;
+            };
+            assert!(
+                identity.same_generation(after),
+                "owned helper PID changed during inspection"
+            );
+            if !after.ended() {
+                self.helper_pids.insert(pid, identity.started);
+            }
         }
         if !self.is_console() {
             drain(self.child.stdout.as_mut().unwrap(), &mut self.stdout);
@@ -436,6 +490,132 @@ fn child_pids(pid: u32) -> Vec<u32> {
     }
     children
 }
+#[cfg(feature = "touchpad-test-fixture")]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct ProcessIdentity {
+    pid: u32,
+    parent: u32,
+    started: u64,
+    state: u8,
+}
+#[cfg(feature = "touchpad-test-fixture")]
+impl ProcessIdentity {
+    fn parse(stat: &str) -> Option<Self> {
+        let (pid, rest) = stat.split_once(" (")?;
+        // The command may itself contain spaces and parentheses. State starts
+        // after the final ') '; field 22 is the immutable process start time.
+        let (_, fields) = rest.rsplit_once(") ")?;
+        let fields: Vec<_> = fields.split_ascii_whitespace().collect();
+        let state = *fields.first()?.as_bytes().first()?;
+        if fields[0].len() != 1 || !b"RSDZTtXKWPI".contains(&state) {
+            return None;
+        }
+        let identity = Self {
+            pid: pid.parse().ok()?,
+            parent: fields.get(1)?.parse().ok()?,
+            started: fields.get(19)?.parse().ok()?,
+            state,
+        };
+        (identity.pid != 0 && identity.started != 0).then_some(identity)
+    }
+    fn same_generation(self, other: Self) -> bool {
+        self.pid == other.pid && self.parent == other.parent && self.started == other.started
+    }
+    fn ended(self) -> bool {
+        matches!(self.state, b'Z' | b'X')
+    }
+}
+#[cfg(feature = "touchpad-test-fixture")]
+fn process_identity(pid: u32) -> io::Result<Option<ProcessIdentity>> {
+    match std::fs::read_to_string(format!("/proc/{pid}/stat")) {
+        Ok(stat) => ProcessIdentity::parse(&stat)
+            .filter(|identity| identity.pid == pid)
+            .map(Some)
+            .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "invalid process identity")),
+        Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(None),
+        Err(error) => Err(error),
+    }
+}
+#[cfg(feature = "touchpad-test-fixture")]
+fn same_owned_process_ended(before: ProcessIdentity, after: Option<ProcessIdentity>) -> bool {
+    after.is_none_or(|after| before.same_generation(after) && after.ended())
+}
+
+#[cfg(feature = "touchpad-test-fixture")]
+#[test]
+fn pure_helper_proc_stat_requires_exact_generation_identity() {
+    let stat = format!(
+        "42 (helper (with) spaces) S 7 {} 12345 0 0",
+        ["0"; 17].join(" ")
+    );
+    let identity = ProcessIdentity::parse(&stat).unwrap();
+    assert_eq!(
+        identity,
+        ProcessIdentity {
+            pid: 42,
+            parent: 7,
+            started: 12345,
+            state: b'S'
+        }
+    );
+    for malformed in [
+        "",
+        "42 helper S 7",
+        "42 (helper) S 7 0",
+        "42 (helper) SS 7 0",
+    ] {
+        assert!(ProcessIdentity::parse(malformed).is_none());
+    }
+    assert!(ProcessIdentity::parse(&stat.replacen(" S ", " ? ", 1)).is_none());
+    assert!(ProcessIdentity::parse(&stat.replacen("12345", "0", 1)).is_none());
+    assert!(ProcessIdentity::parse(&stat.replacen("42 (", "0 (", 1)).is_none());
+}
+
+#[cfg(feature = "touchpad-test-fixture")]
+#[test]
+fn pure_helper_metadata_denial_requires_proven_same_generation_exit() {
+    let before = ProcessIdentity {
+        pid: 42,
+        parent: 7,
+        started: 12345,
+        state: b'S',
+    };
+    assert!(
+        !same_owned_process_ended(before, Some(before)),
+        "live permission denial fails closed"
+    );
+    assert!(
+        same_owned_process_ended(before, None),
+        "missing process is not live"
+    );
+    for state in *b"ZX" {
+        let ended = ProcessIdentity { state, ..before };
+        assert!(same_owned_process_ended(before, Some(ended)));
+        for changed in [
+            ProcessIdentity { pid: 43, ..ended },
+            ProcessIdentity { parent: 8, ..ended },
+            ProcessIdentity {
+                started: 12346,
+                ..ended
+            },
+        ] {
+            assert!(
+                !same_owned_process_ended(before, Some(changed)),
+                "reparented or reused PID is not the verified helper"
+            );
+        }
+    }
+    for state in b"RSDTtKWPI" {
+        assert!(!same_owned_process_ended(
+            before,
+            Some(ProcessIdentity {
+                state: *state,
+                ..before
+            })
+        ));
+    }
+}
+
 fn no_children(process: &Process) {
     assert!(
         child_pids(process.owner_pid()).is_empty(),
@@ -1104,7 +1284,7 @@ mod software_fixture {
             console: Some(console),
             stdout: vec![],
             stderr: vec![],
-            helper_pids: BTreeSet::new(),
+            helper_pids: std::collections::BTreeMap::new(),
             paired_store: Some(store),
         }
     }
@@ -1654,7 +1834,7 @@ mod software_fixture {
             1,
             "observe exactly one owned helper before teardown"
         );
-        for pid in &process.helper_pids {
+        for pid in process.helper_pids.keys() {
             assert!(
                 !std::path::Path::new(&format!("/proc/{pid}")).exists(),
                 "owned helper {pid} must be reaped, not orphaned or zombied"

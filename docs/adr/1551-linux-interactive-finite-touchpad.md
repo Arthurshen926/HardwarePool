@@ -80,7 +80,12 @@ claimed to revoke an already loaded session snapshot.
 
 Exact test discovery, zero skips and one precise console marker per case are
 required, alongside independent process ancestry, full commit-before-ACK,
-contact-release trace and all-process cleanup. Existing touchpad software tests,
+contact-release trace and all-process cleanup. Helper inspection brackets executable
+and public-metadata reads with PID, parent and process-start-time identity. A
+missing or permission-denied procfs read is accepted only after proving that the
+same owned generation exited or disappeared; an incomplete scan never counts as
+successful identity/redaction evidence. Live-process denial and PID reuse remain
+failures. Existing touchpad software tests,
 13 camera console profiles and all 64 audio graph profiles remain mandatory.
 No test opens `/dev/uinput`, changes kernel/input permissions or touches a user's
 keyring, real terminal or physical device. Production transport, cryptography,
