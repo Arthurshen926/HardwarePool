@@ -155,7 +155,6 @@ struct Fixture {
     bundle: ControlCredentialBundle,
     client: ControlTlsClientIdentity,
     runtime: AndroidCatalogRuntimeV1,
-    sink: PortRef,
     nodes: ControlTlsNodeBinding,
 }
 impl Fixture {
@@ -205,7 +204,6 @@ impl Fixture {
             bundle,
             client,
             runtime,
-            sink,
             nodes: ControlTlsNodeBinding::new(local, sink.node_id).unwrap(),
         }
     }
@@ -233,7 +231,9 @@ impl Fixture {
             .admit_dialed_catalog_exchange(
                 client,
                 "Ephemeral capture".into(),
-                &BTreeSet::from([self.sink.capability_id]),
+                // Sink capabilities publish automatically; this opt-in set is
+                // exclusively for Source capabilities. No Android capture requested.
+                &BTreeSet::new(),
             )
             .unwrap();
         AndroidPeer {
