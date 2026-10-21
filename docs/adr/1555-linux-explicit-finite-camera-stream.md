@@ -62,8 +62,11 @@ maximum authority window, not promised continuous delivery or hardware capacity.
 This removes neither queue limits nor backpressure. The receiver retains bounded
 records, decodes one AU at a time, and passes fixed-size NV12 frames through the
 existing one-slot queue, writer-owned frame and fixed native/PipeWire buffers.
-It does not retain the whole stream. Slow consumers may lose frames; actual
-queued/dropped counters are not consumer-delivery or OS-camera-usage evidence.
+It does not retain the whole stream. Native latest-frame publication may lose
+frames. The secure owner remains fail-closed on the first full Rust projection
+queue: DroppedBackpressure terminates the session rather than permitting continued
+secure streaming. Actual queued/dropped counters are not consumer-delivery or
+OS-camera-usage evidence.
 The console retains Starting-only semantics and consumer_delivery_verified=false.
 
 Stop, control EOF, revoke, exact lease expiry, malformed input, excess work/rate
@@ -104,5 +107,10 @@ observed span and a late sequence of at least 240. It does not equate 300 submit
 or queued frames with 300 delivered frames. Bounded supervised draining never
 extends the grant. Separate scenarios cover Stop, revoke, EOF, expiry, paced
 backpressure, malicious arrival rate, oversized input and incompatible peers.
+The backpressure scenario first establishes sustained independent pixel evidence,
+then pauses only its pidfd-pinned owned projection helper. Valid paced frames fill
+the bounded queue; the existing secure-owner rejection must terminate and reap
+both children while the original Source authority is still live. It does not
+expect a dropped-frame event or successful continuation after queue exhaustion.
 All existing legacy camera, audio, touchpad, pairing and platform gates remain.
 No real camera, user keyring or user device is used by these tests.

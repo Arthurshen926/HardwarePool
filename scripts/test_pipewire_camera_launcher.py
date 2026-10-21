@@ -1,5 +1,6 @@
 """Pure launcher assertions, never presented as native graph evidence."""
 from pathlib import Path
+import json
 import tempfile
 from types import SimpleNamespace
 from unittest import TestCase, mock
@@ -301,8 +302,11 @@ class FiniteStreamLauncherTests(TestCase):
         else:
             text += LauncherTests.base.split('LAUNCHER_PID 20\n')[1]
         if scenario in ('sustained', 'backpressure'):
-            text += 'FINITE_SENT frames=300 elapsed_ms=10035 queued=270 dropped=30\n'
+            text += 'FINITE_SENT frames=300 elapsed_ms=10035 queued=300 dropped=0\n'
             text += 'FINITE_MEMORY decoder_vm_hwm_kib=30000 helper_vm_hwm_kib=15000 node_vm_hwm_kib=20000\n'
+        if scenario == 'backpressure':
+            text += 'FINITE_READBACK_REQUIRED submitted=300 authority_live=true\n'
+            text += 'FINITE_PRESSURE extra_aus=3 queued_acks=2 terminal=failed authority_live=true\n'
         if scenario == 'oversize':
             text += 'FINITE_ATTACK byte_burst complete_cavc=true wire_oversize=false\n'
         return (text + f'VERIFIED {scenario}\nCAMERA_STOPPED\n'
@@ -361,14 +365,71 @@ class FiniteStreamLauncherTests(TestCase):
                     verify_completion(extra + self.transcript(scenario), scenario, 0,
                                       paired_store=True, finite_stream=True)
 
-    def test_sustained_submission_is_bounded_and_backpressure_must_be_observed(self):
+    def test_sustained_submission_is_bounded_and_never_continues_after_a_secure_drop(self):
         for before, after in (('frames=300', 'frames=120'), ('elapsed_ms=10035', 'elapsed_ms=9999'),
-                              ('elapsed_ms=10035', 'elapsed_ms=12000'), ('queued=270', 'queued=269'),
+                              ('elapsed_ms=10035', 'elapsed_ms=12000'), ('queued=300', 'queued=299'),
                               ('decoder_vm_hwm_kib=30000', 'decoder_vm_hwm_kib=524288'),
-                              ('queued=270 dropped=30', 'queued=300 dropped=0')):
+                              ('queued=300 dropped=0', 'queued=270 dropped=30')):
             with self.subTest(after=after), self.assertRaises(ValueError):
                 verify_completion(self.transcript('backpressure').replace(before, after),
                                   'backpressure', 0, paired_store=True, finite_stream=True)
+
+    def test_pressure_requires_separate_bounded_terminal_evidence_under_live_authority(self):
+        for before, after in (('extra_aus=3', 'extra_aus=4'), ('queued_acks=2', 'queued_acks=1'),
+                              ('terminal=failed', 'terminal=stopped'),
+                              ('terminal=failed', 'terminal=continued'),
+                              ('authority_live=true', 'authority_live=false')):
+            with self.subTest(after=after), self.assertRaises(ValueError):
+                verify_completion(self.transcript('backpressure').replace(before, after),
+                                  'backpressure', 0, paired_store=True, finite_stream=True)
+        for extra, acknowledged in ((1, 0), (2, 1), (3, 2)):
+            verify_completion(self.transcript('backpressure').replace(
+                'extra_aus=3 queued_acks=2', f'extra_aus={extra} queued_acks={acknowledged}'),
+                'backpressure', 0, paired_store=True, finite_stream=True)
+        pressure = 'FINITE_PRESSURE extra_aus=3 queued_acks=2 terminal=failed authority_live=true\n'
+        with self.assertRaises(ValueError):
+            verify_completion(pressure + self.transcript('sustained'), 'sustained', 0,
+                              paired_store=True, finite_stream=True)
+        with self.assertRaises(ValueError):
+            verify_completion(pressure + self.transcript('backpressure').replace(pressure, ''),
+                              'backpressure', 0, paired_store=True, finite_stream=True)
+
+    def test_pressure_checkpoint_waits_for_independent_consumer_not_queue_acknowledgments(self):
+        h = object.__new__(LauncherHarness)
+        h.root = Path('/unused')
+        owner = SimpleNamespace(poll=lambda: None)
+        result = markers(self.transcript('backpressure').split('FINITE_PRESSURE ')[0])
+        with mock.patch.object(h, 'read_markers', return_value=result):
+            self.assertFalse(h.pressure_checkpoint(owner, SimpleNamespace(poll=lambda: None)))
+            with mock.patch.object(Path, 'read_text', return_value=json.dumps(self.pixels())):
+                self.assertTrue(h.pressure_checkpoint(owner, SimpleNamespace(poll=lambda: 0)))
+            for consumer in (None, SimpleNamespace(poll=lambda: 1)):
+                with self.assertRaises(ValueError):
+                    h.pressure_checkpoint(owner, consumer)
+            with self.assertRaises(ValueError):
+                h.pressure_checkpoint(SimpleNamespace(poll=lambda: 0), SimpleNamespace(poll=lambda: 0))
+            for pixels in (dict(result=0, queued=300, dropped=0),
+                           dict(self.pixels(), verified_frames=120),
+                           dict(self.pixels(), last_sequence=239),
+                           dict(self.pixels(), observed_span_ms=4999)):
+                with mock.patch.object(Path, 'read_text', return_value=json.dumps(pixels)), self.assertRaises(ValueError):
+                    h.pressure_checkpoint(owner, SimpleNamespace(poll=lambda: 0))
+        del result['FINITE_READBACK_REQUIRED']
+        with mock.patch.object(h, 'read_markers', return_value=result):
+            self.assertFalse(h.pressure_checkpoint(owner, SimpleNamespace(poll=lambda: 0)))
+
+    def test_pressure_checkpoint_rejects_old_drop_continuation_or_unpaced_source(self):
+        h = object.__new__(LauncherHarness)
+        h.root = Path('/unused')
+        owner, app = SimpleNamespace(poll=lambda: None), SimpleNamespace(poll=lambda: 0)
+        valid = markers(self.transcript('backpressure').split('FINITE_PRESSURE ')[0])
+        for sent in (None, ('300', '10035', '270', '30'), ('300', '9999', '300', '0'),
+                     ('300', '12000', '300', '0'), ('120', '10035', '120', '0')):
+            result = dict(valid, FINITE_SENT=sent)
+            with mock.patch.object(h, 'read_markers', return_value=result), self.assertRaises(ValueError):
+                h.pressure_checkpoint(owner, app)
+        with mock.patch.object(h, 'read_markers', return_value=markers(self.transcript('backpressure'))), self.assertRaises(ValueError):
+            h.pressure_checkpoint(owner, app)
 
     def pixels(self):
         return dict(result=0, verified_frames=182, first_sequence=2, last_sequence=240,

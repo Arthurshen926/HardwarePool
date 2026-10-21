@@ -883,6 +883,9 @@ fn terminal(process: &mut Process, success: bool) {
         assert_eq!(event["event"], if success { "stopped" } else { "failed" });
         break;
     }
+    finish_terminal(process, success);
+}
+fn finish_terminal(process: &mut Process, success: bool) {
     assert_eq!(process.finish().code(), Some(if success { 0 } else { 1 }));
     if !success {
         let expected = if process.is_console() {
@@ -1276,6 +1279,24 @@ impl PausedProjection {
             0,
             "owned helper exited before pause"
         );
+        // Signal delivery is asynchronous. Observe the verified generation
+        // stopped before counting the one-writer/one-slot pressure bound.
+        let stop_deadline = Instant::now() + Duration::from_millis(100);
+        loop {
+            assert_eq!(identity(), generation, "owned helper changed during pause");
+            let status = std::fs::read_to_string(format!("/proc/{pid}/status")).unwrap();
+            if status.lines().any(|line| {
+                line.strip_prefix("State:")
+                    .is_some_and(|state| state.trim_start().starts_with('T'))
+            }) {
+                break;
+            }
+            assert!(
+                Instant::now() < stop_deadline,
+                "owned helper did not stop promptly"
+            );
+            thread::sleep(Duration::from_millis(1));
+        }
         paused
     }
     fn signal(&self, signal: libc::c_int) -> libc::c_long {
@@ -1498,6 +1519,7 @@ fn hosted_linux_camera_finite_stream_graph() {
         })
         .unwrap()
     };
+    let mut terminal_observed = false;
     if scenario == "oversize" {
         // Complete legal CAVC/TLS framing, deliberately over the finite local
         // byte burst (including its 56-byte header). This is not outer framing.
@@ -1536,16 +1558,9 @@ fn hosted_linux_camera_finite_stream_graph() {
             30
         };
         let start = Instant::now();
-        let mut paused = None;
         let mut queued = 0;
         let mut dropped = 0;
         for sequence in 1..=count {
-            if scenario == "backpressure" && sequence == 30 {
-                paused = Some(PausedProjection::new(helper as u32, &process));
-            }
-            if scenario == "backpressure" && sequence == 60 {
-                drop(paused.take());
-            }
             let sent_at = Instant::now();
             sender.send(&peer.runtime, &encode(sequence)).unwrap();
             let record = process.event("camera_record");
@@ -1553,9 +1568,12 @@ fn hosted_linux_camera_finite_stream_graph() {
             queued = record["queued"].as_u64().unwrap();
             dropped = record["dropped"].as_u64().unwrap();
             assert_eq!(
-                queued + dropped,
-                sequence,
-                "admitted AUs may queue OR drop, never imply delivery"
+                queued, sequence,
+                "successful secure records are queued, not delivered"
+            );
+            assert_eq!(
+                dropped, 0,
+                "secure projection backpressure is terminal, never continued"
             );
             for field in ["helper_pid", "decoder_pid", "node_name"] {
                 assert_eq!(record[field], bound[field]);
@@ -1568,19 +1586,12 @@ fn hosted_linux_camera_finite_stream_graph() {
                 thread::sleep(wait);
             }
         }
-        assert!(paused.is_none());
         if matches!(scenario.as_str(), "sustained" | "backpressure") {
             assert!(start.elapsed() >= Duration::from_secs(10));
             assert!(
                 now_ms() < sender.lease_deadline,
                 "no authority extension for fixture drain"
             );
-            if scenario == "backpressure" {
-                assert!(
-                    dropped > 0,
-                    "actual production backpressure evidence required"
-                );
-            }
             println!(
                 "FINITE_SENT frames={count} elapsed_ms={} queued={queued} dropped={dropped}",
                 start.elapsed().as_millis()
@@ -1605,8 +1616,59 @@ fn hosted_linux_camera_finite_stream_graph() {
             }
         }
         match scenario.as_str() {
-            "sustained" | "backpressure" | "local_stop" => {
-                process.command(json!({"version":1,"command":"stop"}))
+            "sustained" | "local_stop" => process.command(json!({"version":1,"command":"stop"})),
+            "backpressure" => {
+                // First establish real downstream delivery. The Python harness
+                // independently checks its consumer before releasing this gate.
+                sender.check(&peer.runtime).unwrap();
+                println!("FINITE_READBACK_REQUIRED submitted=300 authority_live=true");
+                io::stdout().flush().unwrap();
+                harness_line("induce bounded pressure");
+                sender.check(&peer.runtime).unwrap();
+                let paused = PausedProjection::new(helper as u32, &process);
+                let mut extra_aus = 0;
+                let mut queued_acks = 0;
+                // One blocking writer plus one queued frame bound the expected
+                // failure. Six paced attempts is an outer fixture guard, not a
+                // larger queue or an extension of any production deadline.
+                for sequence in count + 1..=count + 6 {
+                    let sent_at = Instant::now();
+                    sender.send(&peer.runtime, &encode(sequence)).unwrap();
+                    extra_aus += 1;
+                    let event = process.next_event();
+                    if event["event"] == "failed" {
+                        // Timestamp rejection under live authority separately
+                        // from the subsequent bounded process cleanup.
+                        sender.check(&peer.runtime).unwrap();
+                        finish_terminal(&mut process, false);
+                        terminal_observed = true;
+                        break;
+                    }
+                    assert_eq!(event["event"], "camera_record");
+                    assert_camera_not_consumer_proof(&event, id);
+                    queued_acks += 1;
+                    assert_eq!(event["queued"], count + queued_acks);
+                    assert_eq!(
+                        event["dropped"], 0,
+                        "no continuation after a secure projection drop"
+                    );
+                    if let Some(wait) = (sent_at + Duration::from_nanos(33_333_334))
+                        .checked_duration_since(Instant::now())
+                    {
+                        thread::sleep(wait);
+                    }
+                }
+                drop(paused);
+                assert!(
+                    terminal_observed,
+                    "bounded valid paced pressure must terminate secure owner"
+                );
+                assert!(queued_acks <= 2, "one writer and one pending slot only");
+                assert_eq!(extra_aus, queued_acks + 1);
+                sender.check(&peer.runtime).unwrap();
+                println!(
+                    "FINITE_PRESSURE extra_aus={extra_aus} queued_acks={queued_acks} terminal=failed authority_live=true"
+                );
             }
             "control_stop" => peer
                 .link
@@ -1640,13 +1702,12 @@ fn hosted_linux_camera_finite_stream_graph() {
             _ => unreachable!(),
         }
     }
-    terminal(
-        &mut process,
-        matches!(
-            scenario.as_str(),
-            "sustained" | "backpressure" | "local_stop"
-        ),
-    );
+    if !terminal_observed {
+        terminal(
+            &mut process,
+            matches!(scenario.as_str(), "sustained" | "local_stop"),
+        );
+    }
     if matches!(scenario.as_str(), "malicious_rate" | "oversize") {
         assert!(
             now_ms() < sender.lease_deadline,

@@ -44,6 +44,8 @@ PATTERNS = {
     'FINITE_SENT': r'FINITE_SENT frames=([1-9][0-9]*) elapsed_ms=([1-9][0-9]*) queued=([0-9]+) dropped=([0-9]+)',
     'FINITE_MEMORY': r'FINITE_MEMORY decoder_vm_hwm_kib=([1-9][0-9]*) helper_vm_hwm_kib=([1-9][0-9]*) node_vm_hwm_kib=([1-9][0-9]*)',
     'FINITE_ATTACK': r'FINITE_ATTACK byte_burst complete_cavc=true wire_oversize=false',
+    'FINITE_READBACK_REQUIRED': r'FINITE_READBACK_REQUIRED submitted=300 authority_live=true',
+    'FINITE_PRESSURE': r'FINITE_PRESSURE extra_aus=([1-9][0-9]*) queued_acks=([0-9]+) terminal=failed authority_live=true',
 }
 
 
@@ -97,7 +99,8 @@ def verify_completion(text, scenario, code, paired_store=False, console=False, f
             raise ValueError('exact actual-console test must execute successfully, never skip or substitute')
     elif console_keys.intersection(result):
         raise ValueError('unexpected console-mode evidence')
-    finite_keys = {'FINITE_STREAM', 'FINITE_REJECT_PENDING', 'FINITE_SENT', 'FINITE_MEMORY', 'FINITE_ATTACK'}
+    finite_keys = {'FINITE_STREAM', 'FINITE_REJECT_PENDING', 'FINITE_SENT', 'FINITE_MEMORY',
+                   'FINITE_ATTACK', 'FINITE_READBACK_REQUIRED', 'FINITE_PRESSURE'}
     if finite_stream:
         required.add('FINITE_STREAM')
         if (f'test {FINITE_TEST} ... ok' not in text
@@ -115,14 +118,27 @@ def verify_completion(text, scenario, code, paired_store=False, console=False, f
             if sent is None:
                 raise ValueError('finite source counters absent')
             frames, elapsed, queued, dropped = map(int, sent)
-            if (frames != 300 or not 10000 <= elapsed < 12000 or queued + dropped != frames
-                    or (scenario == 'backpressure' and dropped == 0)):
-                raise ValueError('finite source pacing or real backpressure evidence absent')
+            if frames != 300 or not 10000 <= elapsed < 12000 or queued != 300 or dropped != 0:
+                raise ValueError('finite source pacing or successful pre-pressure stream evidence absent')
             memory = result.get('FINITE_MEMORY')
             if memory is None or not 0 < int(memory[0]) < 512 * 1024:
                 raise ValueError('observed bounded decoder high-water RSS absent')
         elif {'FINITE_SENT', 'FINITE_MEMORY'}.intersection(result):
             raise ValueError('unexpected sustained source claim')
+        if scenario == 'backpressure':
+            required.update(('FINITE_READBACK_REQUIRED', 'FINITE_PRESSURE'))
+            pressure = result.get('FINITE_PRESSURE')
+            if pressure is None:
+                raise ValueError('bounded terminal-pressure evidence absent')
+            extra, acknowledged = map(int, pressure)
+            if not 1 <= extra <= 3 or not 0 <= acknowledged <= 2 or extra != acknowledged + 1:
+                raise ValueError('one writer plus one slot terminal-pressure bound violated')
+            if ('FINITE_READBACK_REQUIRED' not in result
+                    or not text.index('FINITE_SENT ') < text.index('FINITE_READBACK_REQUIRED ')
+                    < text.index('FINITE_PRESSURE ') < text.index('VERIFIED ')):
+                raise ValueError('terminal pressure must follow the successful readback checkpoint')
+        elif {'FINITE_READBACK_REQUIRED', 'FINITE_PRESSURE'}.intersection(result):
+            raise ValueError('unexpected terminal-pressure evidence')
         if scenario == 'oversize':
             required.add('FINITE_ATTACK')
         elif 'FINITE_ATTACK' in result:
@@ -162,6 +178,29 @@ def verify_finite_pixels(result, scenario):
 class LauncherHarness(CameraHarness):
     def read_markers(self):
         return markers((self.root / 'owner.out').read_text())
+
+    def pressure_checkpoint(self, owner, app):
+        result = self.read_markers()
+        if owner.poll() is not None:
+            raise ValueError('finite fixture exited before independent readback checkpoint')
+        if 'FINITE_READBACK_REQUIRED' not in result:
+            return False
+        sent = result.get('FINITE_SENT')
+        if sent is None:
+            raise ValueError('successful paced submissions absent before pressure')
+        frames, elapsed, queued, dropped = map(int, sent)
+        if (frames != 300 or not 10000 <= elapsed < 12000 or queued != 300 or dropped != 0
+                or 'FINITE_PRESSURE' in result):
+            raise ValueError('terminal pressure must follow 300 successful paced submissions')
+        if app is None:
+            raise ValueError('independent native consumer required before pressure')
+        code = app.poll()
+        if code is None:
+            return False
+        if code != 0:
+            raise ValueError('independent native consumer failed before pressure')
+        verify_finite_pixels(json.loads((self.root / 'consumer.out').read_text()), 'backpressure')
+        return True
 
     def verify_owner(self, child, result):
         node_pid = int(result['LAUNCHER_PID'][0])
@@ -348,6 +387,10 @@ class LauncherHarness(CameraHarness):
             owned.update(graph_fingerprint(links))
         owner.stdin.write(b'start frames\n')
         owner.stdin.flush()
+        if finite_stream and scenario == 'backpressure':
+            self.wait_for(lambda: self.pressure_checkpoint(owner, app), seconds=12)
+            owner.stdin.write(b'induce bounded pressure\n')
+            owner.stdin.flush()
         code = owner.wait(timeout=15)
         self.check()
         verify_completion((self.root / 'owner.out').read_text(), scenario, code, paired_store=paired_store, console=console, finite_stream=finite_stream)
