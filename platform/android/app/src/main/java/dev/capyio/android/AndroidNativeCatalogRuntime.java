@@ -1,12 +1,12 @@
 package dev.capyio.android;
 
 /** Narrow owner for one native Rust catalog Runtime; updates preserve connections. */
-public final class AndroidNativeCatalogRuntime implements AutoCloseable {
+public final class AndroidNativeCatalogRuntime implements AutoCloseable, io.capyio.camera.contract.SecureCameraTransport {
     static {
         System.loadLibrary("capyio_android_jni");
     }
 
-    private long handle;
+    private volatile long handle;
 
     public AndroidNativeCatalogRuntime(String catalogJson) {
         handle = nativeCreate(catalogJson);
@@ -62,6 +62,33 @@ public final class AndroidNativeCatalogRuntime implements AutoCloseable {
         requireOpen();
         return new String(nativeCameraUse(handle,action,peer),java.nio.charset.StandardCharsets.UTF_8);
     }
+
+    // Native operations use registry-validated handles and never connect, write or join here.
+    @Override public long start(String routeId) {
+        long current = handle;
+        return current == 0 ? 0 : nativeCameraSecureStart(current, routeId);
+    }
+
+    @Override public int state(long generation) {
+        long current = handle;
+        return current == 0 ? STOPPED : nativeCameraSecureState(current, generation);
+    }
+
+    @Override public boolean record(long generation, byte[] record) {
+        long current = handle;
+        return current != 0 && record != null
+                && nativeCameraSecureRecord(current, generation, record);
+    }
+
+    @Override public void stop(long generation) {
+        long current = handle;
+        if (current != 0) nativeCameraSecureStop(current, generation);
+    }
+
+    private static native long nativeCameraSecureStart(long runtime, String routeId);
+    private static native int nativeCameraSecureState(long runtime, long generation);
+    private static native boolean nativeCameraSecureRecord(long runtime, long generation, byte[] record);
+    private static native void nativeCameraSecureStop(long runtime, long generation);
 
     synchronized String displayUse(String action, String argument) {
         requireOpen(); return new String(nativeDisplayUse(handle,action,argument),java.nio.charset.StandardCharsets.UTF_8);

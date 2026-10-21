@@ -43,6 +43,8 @@ use capyio_runtime::{NodeRuntime, RuntimeError, RuntimeSnapshot};
 mod android_ffi;
 mod audio_negotiation;
 mod audio_selection;
+#[cfg(any(target_os = "android", test))]
+mod camera_job;
 pub mod camera_sender;
 mod control_exchange;
 mod display_catalog;
@@ -220,6 +222,10 @@ impl Error for AndroidControlListenerError {
 pub struct AndroidControlListenerV1 {
     server: AuthenticatedControlServer,
     touchpad_identity: ControlTlsServerIdentity,
+    #[cfg_attr(not(target_os = "android"), allow(dead_code))]
+    camera_identity: capyio_control_tls::ControlTlsClientIdentity,
+    #[cfg_attr(not(target_os = "android"), allow(dead_code))]
+    camera_server_name: String,
     paired_display_name: String,
 }
 
@@ -256,9 +262,46 @@ impl AndroidControlListenerV1 {
         .map_err(AndroidControlListenerError::Transport)?;
         Ok(Self {
             server,
+            camera_identity: capyio_control_tls::ControlTlsClientIdentity {
+                expected_peer_certificate: identity.expected_peer_certificate,
+                certificate_chain_der: identity.certificate_chain_der.clone(),
+                private_key_der: identity.private_key_der.clone(),
+                server_ca_der: identity.client_ca_der.clone(),
+            },
+            camera_server_name: peer.server_name.clone(),
             touchpad_identity: identity,
             paired_display_name: peer.display_name.clone(),
         })
+    }
+
+    #[cfg(target_os = "android")]
+    fn camera_identity(&self) -> (capyio_control_tls::ControlTlsClientIdentity, String) {
+        (
+            self.camera_identity.clone(),
+            self.camera_server_name.clone(),
+        )
+    }
+    #[cfg(target_os = "android")]
+    fn refresh_camera_identity(
+        &mut self,
+        local: NodeId,
+        peer_id: NodeId,
+        directory: &[u8],
+        credential: &[u8],
+    ) -> Result<(), String> {
+        let directory =
+            PairedPeerDirectory::decode_json(local, directory).map_err(|e| e.to_string())?;
+        let peer = directory
+            .active_peers()
+            .find(|p| p.node_id == peer_id)
+            .ok_or("camera paired peer absent")?;
+        let bundle = ControlCredentialBundle::decode(credential).map_err(|e| e.to_string())?;
+        self.camera_identity = capyio_control_tls::ControlTlsClientIdentity::from_bundle(
+            peer.peer_certificate_sha256,
+            bundle,
+        );
+        self.camera_server_name = peer.server_name.clone();
+        Ok(())
     }
 
     pub fn local_addr(&self) -> Result<SocketAddr, AndroidControlListenerError> {
@@ -440,6 +483,9 @@ struct AndroidCameraUse {
     offer: Option<(capyio_protocol::CameraDataOffer, String, u64)>,
     // Secure offers must never enter the legacy Java plaintext sender.
     secure_transport: bool,
+    secure_offer: Option<(capyio_protocol::SecureCameraDataOffer, u64)>,
+    secure_binding: Option<capyio_control_tls::camera::CameraTlsBinding>,
+    secure_generation: crate::camera_job::GenerationClaim,
     local_intent: bool,
 }
 

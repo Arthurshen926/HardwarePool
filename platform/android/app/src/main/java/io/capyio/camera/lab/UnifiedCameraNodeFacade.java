@@ -24,10 +24,26 @@ public final class UnifiedCameraNodeFacade {
     private static CameraTransportEndpoint peerEndpoint;
     private static volatile String transportProblemCode;
     private static CameraRouteBinding routeBinding;
+    private static volatile SecureCameraBinding secureBinding;
 
     public static synchronized boolean configureRoute(String host, String stream, long epoch, long expiry) {
         if (isRunning() || !configurePeer(host)) return false;
+        secureBinding = null;
         routeBinding = new CameraRouteBinding(stream,epoch,expiry);
+        return true;
+    }
+
+    /** Select only the in-process native transport; no host/port/credential crosses this seam. */
+    public static synchronized boolean configureSecureRoute(
+            io.capyio.camera.contract.SecureCameraTransport transport, long generation,
+            String stream, long epoch, long expiry) {
+        if (isRunning()) return false;
+        SecureCameraBinding binding = new SecureCameraBinding(transport, generation);
+        CameraRouteBinding route = new CameraRouteBinding(stream, epoch, expiry);
+        if (!binding.ready() || !route.isLive()) return false;
+        peerEndpoint = null;
+        secureBinding = binding;
+        routeBinding = route;
         return true;
     }
 
@@ -69,7 +85,7 @@ public final class UnifiedCameraNodeFacade {
     }
 
     public static synchronized void start(Context context) {
-        if (peerEndpoint == null) {
+        if (peerEndpoint == null && secureBinding == null) {
             transportProblemCode = "CAPY.ANDROID.CAMERA_AUTHENTICATED_PEER_REQUIRED";
             return;
         }
@@ -77,6 +93,11 @@ public final class UnifiedCameraNodeFacade {
         FrameObservation.LensFacing facing = preferredSource == null
                 ? FrameObservation.LensFacing.BACK
                 : mapFacing(preferredSource.facing());
+        if (secureBinding != null) {
+            CameraCaptureService.startSecure(context, facing, preferredSource,
+                    preferredQuality, routeBinding, secureBinding);
+            return;
+        }
         CameraCaptureService.start(
                 context,
                 facing,
@@ -86,6 +107,9 @@ public final class UnifiedCameraNodeFacade {
     }
 
     public static synchronized void stop(Context context) {
+        SecureCameraBinding secure = secureBinding;
+        secureBinding = null;
+        if (secure != null) secure.stop();
         routeBinding = null;
         transportProblemCode = null;
         CameraCaptureService.stop(context);
@@ -97,7 +121,7 @@ public final class UnifiedCameraNodeFacade {
                 transportProblemCode != null ? "failed" : switch (source.phase()) {
                     case STOPPED -> "stopped";
                     case STARTING -> "starting";
-                    case STREAMING -> "active";
+                    case STREAMING -> source.secureTransport() ? "starting" : "active";
                     case ERROR -> "failed";
                 },
                 source.generation(),

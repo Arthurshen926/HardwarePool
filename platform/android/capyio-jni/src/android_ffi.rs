@@ -39,6 +39,7 @@ mod camera_use;
 mod controller_use;
 mod display_use;
 mod enrollment;
+mod secure_camera;
 mod secure_haptics;
 mod secure_touchpad;
 
@@ -683,6 +684,12 @@ pub extern "system" fn Java_dev_capyio_android_AndroidNativeControlListener_nati
                         exchange_dialed_android_catalog(channel, display_name, || {
                             lock_catalog_runtime(runtime_handle)
                         })?;
+                    owner.listener.refresh_camera_identity(
+                        local_id,
+                        link.peer_node_id(),
+                        &directory,
+                        &credential,
+                    )?;
                     owner.link = Some(link);
                     owner.runtime_handle = Some(runtime_handle);
                     owner.published_catalog_revision = revision;
@@ -743,6 +750,7 @@ pub extern "system" fn Java_dev_capyio_android_AndroidNativeControlListener_nati
                 {
                     runtime.runtime.expire_port_leases(now_ms);
                     runtime.expire_touchpad_requests(now_ms);
+                    secure_camera::reconcile(&runtime.runtime);
                 }
                 let settings = catalog_runtimes()
                     .lock()
@@ -953,12 +961,24 @@ pub extern "system" fn Java_dev_capyio_android_AndroidNativeControlListener_nati
                                         &status.route,
                                         status.camera_data,
                                         status.secure_camera_data,
+                                        link.tls_binding(),
                                         owner
                                             .peer_address
                                             .ok_or("authenticated peer absent")?
                                             .to_string(),
                                         now_ms,
                                     )?;
+                                    if let Some(offer) = status.secure_camera_data {
+                                        secure_camera::cache_offer(
+                                            runtime_handle,
+                                            &runtime.runtime,
+                                            link,
+                                            status.route.id,
+                                            offer,
+                                            owner.listener.camera_identity(),
+                                            now_ms,
+                                        )?;
+                                    }
                                     display_use::route_status(runtime, &status.route)?;
                                     if display_use::is_display(&route) {
                                         route = runtime
@@ -1091,12 +1111,33 @@ pub extern "system" fn Java_dev_capyio_android_AndroidNativeControlListener_nati
                                 runtime.answer_audio_port_lease(link, request, now_ms)
                             } else {
                                 runtime.runtime.expire_port_leases(now_ms);
-                                link.answer_port_lease_request(
-                                    &mut runtime.runtime,
-                                    request,
-                                    now_ms,
-                                )
-                                .map_err(|error| error.to_string())
+                                // Expiry/release must close camera media before a
+                                // potentially backpressured control response.
+                                secure_camera::reconcile(&runtime.runtime);
+                                let lease = request.request();
+                                if lease.action == capyio_protocol::PortLeaseAction::Release
+                                    && runtime.runtime.route(lease.route_id).is_ok_and(|route| {
+                                        route.profile == capyio_core::ProfileId::video_frames_v1()
+                                            && route.session_id == lease.session_id
+                                            && route.source == lease.port
+                                            && route.source.node_id
+                                                == runtime.runtime.snapshot().local_node.id
+                                    })
+                                {
+                                    secure_camera::stop_runtime(
+                                        runtime_handle,
+                                        Some(lease.route_id),
+                                    );
+                                }
+                                let response = link
+                                    .answer_port_lease_request(
+                                        &mut runtime.runtime,
+                                        request,
+                                        now_ms,
+                                    )
+                                    .map_err(|error| error.to_string());
+                                secure_camera::reconcile(&runtime.runtime);
+                                response
                             }
                         }
                         Ok(ReceivedControlMessage::RouteCommand(command)) => {
@@ -1178,6 +1219,7 @@ pub extern "system" fn Java_dev_capyio_android_AndroidNativeControlListener_nati
                                     link.apply_route_command(&mut runtime.runtime, &command, now_ms)
                                         .map_err(|error| error.to_string())?
                                 };
+                                secure_camera::reconcile(&runtime.runtime);
                                 (route, touchpad, haptics, gamepad)
                             };
                             if gamepad
@@ -1258,6 +1300,7 @@ pub extern "system" fn Java_dev_capyio_android_AndroidNativeControlListener_nati
                 let failure = service_result.expect_err("checked error above");
                 secure_touchpad::stop_runtime(runtime_handle, None);
                 secure_haptics::stop_runtime(runtime_handle, None);
+                secure_camera::stop_runtime(runtime_handle, None);
                 if let Some(link) = owner.link.as_mut()
                     && let Some(runtime) = catalog_runtimes()
                         .lock()
@@ -1317,6 +1360,7 @@ pub extern "system" fn Java_dev_capyio_android_AndroidNativeControlListener_nati
                 }
                 secure_touchpad::stop_runtime(runtime_handle, None);
                 secure_haptics::stop_runtime(runtime_handle, None);
+                secure_camera::stop_runtime(runtime_handle, None);
                 let link = owner.link.take();
                 owner.runtime_handle = None;
                 owner.published_catalog_revision = 0;
@@ -1366,6 +1410,7 @@ pub extern "system" fn Java_dev_capyio_android_AndroidNativeControlListener_nati
                     .ok_or_else(|| "unknown native control listener handle".to_owned())?;
                 secure_touchpad::stop_runtime(runtime_handle, None);
                 secure_haptics::stop_runtime(runtime_handle, None);
+                secure_camera::stop_runtime(runtime_handle, None);
                 if let Some(link) = owner.link.as_mut() {
                     if let Some(runtime) = catalog_runtimes()
                         .lock()
@@ -1597,6 +1642,9 @@ pub extern "system" fn Java_dev_capyio_android_AndroidNativeCatalogRuntime_nativ
                         .ok_or_else(|| "unknown native catalog Runtime handle".to_owned())?
                         .replace_catalog(&json)
                         .map_err(|error| error.to_string())?;
+                    if let Some(host) = runtimes.get(&handle) {
+                        secure_camera::reconcile(&host.runtime);
+                    }
                 }
                 // The control worker notices the new Runtime revision on its
                 // next heartbeat. UI/lifecycle publication never waits for
@@ -1863,6 +1911,7 @@ pub extern "system" fn Java_dev_capyio_android_AndroidNativeCatalogRuntime_nativ
         .with_env(|env| -> jni::errors::Result<_> {
             let result = catch_unwind(AssertUnwindSafe(|| -> Result<(), String> {
                 let handle = catalog_handle(handle)?;
+                secure_camera::stop_runtime(handle, None);
                 let removed = catalog_runtimes()
                     .lock()
                     .map_err(|_| "native catalog Runtime registry is poisoned".to_owned())?

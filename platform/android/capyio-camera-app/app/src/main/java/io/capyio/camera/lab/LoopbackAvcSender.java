@@ -29,7 +29,7 @@ import java.util.concurrent.atomic.AtomicReference;
  * socket connect/write and CAVC record allocation occur on this object's
  * worker thread.</p>
  */
-final class LoopbackAvcSender implements AutoCloseable {
+final class LoopbackAvcSender implements AvcSender {
     interface Listener {
         void onStatus(String state, long sentAccessUnits, long droppedAccessUnits);
     }
@@ -76,7 +76,7 @@ final class LoopbackAvcSender implements AutoCloseable {
         this.encoderConfig = Objects.requireNonNull(encoderConfig, "encoderConfig");
     }
 
-    void start() {
+    public void start() {
         if (running || worker != null) {
             throw new IllegalStateException("loopback AVC sender is one-shot");
         }
@@ -85,11 +85,11 @@ final class LoopbackAvcSender implements AutoCloseable {
         worker.start();
     }
 
-    void setCodecConfig(AvcCodecConfig config) {
+    public void setCodecConfig(AvcCodecConfig config) {
         codecConfig.compareAndSet(null, Objects.requireNonNull(config, "config"));
     }
 
-    void offer(EncodedAvcAccessUnit unit) {
+    public void offer(EncodedAvcAccessUnit unit) {
         if (!running) {
             droppedAccessUnits.incrementAndGet();
             return;

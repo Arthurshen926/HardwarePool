@@ -296,3 +296,56 @@ JNI and hosted tests use the same `begin_audio_use` coordinator, which records
 local intent and creates only a Pending Draft. Independent Linux approval and
 finite reciprocal grants still precede leases and media. This is software
 negotiation support, not a claim of incoming-mode physical audio acceptance.
+
+## Secure camera bridge (source-only, hardware acceptance pending)
+
+The integrated camera path now has a separate, one-shot secure selection. The
+Node Service uses four typed JNI calls (Start, State, Record, Stop); only a
+Runtime handle, Route ID, generation handle and one bounded complete CAVC record
+cross that boundary. Peer addresses, certificate pins and existing paired
+credentials stay native. An authenticated secure offer never selects the legacy
+`LoopbackAvcSender` or its Java Socket/reconnect behavior.
+
+Start reserves one generation and returns Pending without network I/O. Native
+preparation is cached by the authenticated control owner; current Source consent,
+lease, Session, Route, Stream, epoch and CAVC format are checked again before
+connect and after the exact pinned-mTLS binding acknowledgement. Camera2 may start
+only after Ready and the existing camera permission/foreground checks. Ready is
+not receiver delivery. Secure UI state never derives Active from capture,
+encoding, local enqueue or TLS writes; an authenticated receiver Active status is
+required. The present Linux secure receiver can remain Starting, so completed
+receiver-delivery-to-Active reporting is still an explicit integration gap.
+
+The initial Source lease is an immutable wall-clock and monotonic deadline, not
+silently renewed. It is checked by native State and record reservation even if
+Runtime is contended. Stop, control EOF, grant/lease loss, capability removal,
+queue saturation, malformed records and generation replacement terminate owned
+work. Completed worker reaping does not re-arm the Runtime's consumed Route
+claim. A new explicit Route/consent/generation is required after termination;
+this increment does not claim long-running renewable camera sessions.
+
+The secure Java path reserves before copying codec output and bypasses both
+legacy queues. Its two permits include callback copies, queued and in-flight
+access units. The two native record permits include reservations, JNI copies,
+queued and current worker records, each at most 4 MiB + 56 bytes. Parser copies
+are separately bounded. The conservative application-owned payload live-set
+budget is below 64 MiB for the single secure generation; this is not a total
+process-memory bound and excludes uncollected JVM garbage and platform codec,
+driver and OS buffers. Saturation fails closed rather than dropping config or
+retrying an epoch. Socket work, joins and codec encoding do not run under the
+Node Service/Runtime monitor; finished native workers are reaped outside those
+locks, while snapshots and failure reconciliation use bounded/nonblocking paths.
+
+Hardware-free evidence consists of the shared `SecureCameraCaptureSession`
+fake-capture gate, real `AvcWireSessionEncoder` records sent through the exact
+`SecureCameraTransport` JNI interface seam, native reservation/cancellation/
+one-shot/expiry tests, actual pinned-TLS CameraJob handshake/Ready cancellation
+races, valid CAVC exchange followed by real Source lease revocation, and the
+existing authenticated synthetic graph. Revocation during an actually blocked
+write syscall is not yet deterministically exercised. Run
+`:app:secureCameraContractTest` and `cargo test -p capyio-android-jni`. These do not
+claim physical Camera2 capture or actual JVM-to-Android-library invocation.
+The hosted Android build and ARM64 JNI export check remain required, alongside
+the secure Linux synthetic graph. No permission, foreground-service declaration,
+enrollment, credential creation or actual-device recording is added by this
+source-only increment. The legacy Windows plaintext lab path remains separate.

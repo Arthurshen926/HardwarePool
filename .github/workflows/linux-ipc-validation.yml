@@ -231,6 +231,9 @@ jobs:
           capture_route::tests::ipc_capture_lifetime_elapsed_during_open_cannot_activate
           capture_route::tests::ipc_capture_lifetime_session_or_grant_change_stops_before_read_or_send
           capture_route::tests::ipc_capture_drop_releases_udp_without_claiming_runtime_transition
+          camera_job::lifecycle_tests::stop_during_actual_tls_handshake_never_publishes_ready_and_finishes_bounded
+          camera_job::lifecycle_tests::stop_after_actual_tls_connect_before_ready_installation_cannot_resurrect_job
+          camera_job::lifecycle_tests::actual_source_lease_revoke_after_ready_closes_media_and_rejects_records
           TESTS
           cargo test --locked -p capyio-mock-source -p capyio-mock-sink -p capyio-linux-host -p capyio-node -p capyio-linux-audio -p capyio-native-audio-lan -p capyio-control-tls -p capyio-control-link -p capyio-core -p capyio-runtime -p capyio-android-jni -p capyio-protocol --all-targets -- --list --color never | tee "$RUNNER_TEMP/linux-test-list.txt"
           while IFS= read -r test_name; do
@@ -293,9 +296,18 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p "$RUNNER_TEMP/android-contract-classes" "$RUNNER_TEMP/android-jni-headers"
-          find platform/android/node-contract/src/main/java platform/android/native-lan-contract/src/main/java platform/android/node-contract/src/contractTest/java -name '*.java' -print | sort > "$RUNNER_TEMP/android-java-sources.txt"
+          find platform/android/node-contract/src/main/java platform/android/native-lan-contract/src/main/java platform/android/node-contract/src/contractTest/java platform/android/capyio-camera-app/camera-contract/src/main/java platform/android/capyio-camera-app/camera-contract/src/contractTest/java -name '*.java' -print | sort > "$RUNNER_TEMP/android-java-sources.txt"
           echo 'platform/android/app/src/main/java/dev/capyio/android/AndroidNativeCatalogRuntime.java' >> "$RUNNER_TEMP/android-java-sources.txt"
           timeout --signal=TERM --kill-after=10s 120s javac --release 17 -h "$RUNNER_TEMP/android-jni-headers" -d "$RUNNER_TEMP/android-contract-classes" @"$RUNNER_TEMP/android-java-sources.txt"
+      - name: Compile production Android Java against existing SDK only
+        run: |
+          set -euo pipefail
+          sdk="${ANDROID_HOME:?Runner Android SDK path is missing}"
+          test -s "$sdk/platforms/android-36/android.jar" || { echo 'Preinstalled API 36 is required; no SDK install fallback.' >&2; exit 1; }
+          test -d "$sdk/build-tools/36.0.0" || { echo 'Preinstalled build-tools 36.0.0 are required; no SDK install fallback.' >&2; exit 1; }
+          # Compile source/resources only, not APK assembly/signing or capture.
+          # JNI is cross-compiled above; web assets do not affect Java types.
+          timeout --signal=TERM --kill-after=10s 600s bash platform/android/gradlew -p platform/android --no-daemon -Pandroid.builder.sdkDownload=false :app:compileDebugJavaWithJavac -x syncSharedUi -x buildRustJni
       - name: Check generated Java native names against Android exports
         run: |
           set -euo pipefail
@@ -305,7 +317,7 @@ jobs:
       - name: Run existing Java lifecycle and native LAN contracts
         run: |
           set -euo pipefail
-          for main in dev.capyio.android.contract.AudioNodeContractTest dev.capyio.android.contract.CapabilityCatalogContractTest dev.capyio.android.contract.CapabilityLifecycleContractTest dev.capyio.android.lan.NativeLanContractTest dev.capyio.android.lan.NativeLanEndpointConcurrencyTest; do
+          for main in dev.capyio.android.contract.AudioNodeContractTest dev.capyio.android.contract.CapabilityCatalogContractTest dev.capyio.android.contract.CapabilityLifecycleContractTest dev.capyio.android.lan.NativeLanContractTest dev.capyio.android.lan.NativeLanEndpointConcurrencyTest io.capyio.camera.contract.CaptureStateMachineContractTest io.capyio.camera.contract.SecureAvcSenderContractTest; do
             timeout --signal=TERM --kill-after=10s 60s java -ea -Dcapyio.nativeLanFixture="$GITHUB_WORKSPACE/fixtures/audio/native_lan_v1_opus_single.hex" -cp "$RUNNER_TEMP/android-contract-classes" "$main"
           done
 

@@ -329,3 +329,23 @@ tasks.register('displayPrerequisitesContractTest', JavaExec) {
     mainClass = 'dev.capyio.android.DisplayPrerequisitesContractTest'
     enableAssertions = true
 }
+
+// Secure camera uses the real transport-free CAVC encoder with a fake native boundary.
+def secureCameraContractOutput = layout.buildDirectory.dir('classes/java/secureCameraContractTest')
+tasks.register('compileSecureCameraContractTest', JavaCompile) {
+    group = 'verification'
+    source fileTree('../capyio-camera-app/camera-contract/src/main/java')
+    source fileTree('../capyio-camera-app/camera-contract/src/contractTest/java')
+    classpath = files()
+    destinationDirectory = secureCameraContractOutput
+    options.release = 17
+    options.incremental = false
+}
+tasks.register('secureCameraContractTest', JavaExec) {
+    group = 'verification'
+    dependsOn tasks.named('compileSecureCameraContractTest')
+    classpath = files(secureCameraContractOutput)
+    mainClass = 'io.capyio.camera.contract.SecureAvcSenderContractTest'
+    enableAssertions = true
+}
+tasks.named('check') { dependsOn tasks.named('secureCameraContractTest') }

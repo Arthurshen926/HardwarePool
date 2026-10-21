@@ -32,6 +32,7 @@ public final class CameraCaptureService extends Service {
 
     record Snapshot(
             Phase phase,
+            boolean secureTransport,
             long generation,
             int width,
             int height,
@@ -51,7 +52,7 @@ public final class CameraCaptureService extends Service {
             FrameObservation.LensFacing facing,
             CameraSourceSelection source,
             AvcQualityPreset quality,
-            CameraTransportEndpoint endpoint, CameraRouteBinding route) {}
+            CameraTransportEndpoint endpoint, CameraRouteBinding route, SecureCameraBinding secure) {}
 
     private static final String ACTION_START =
             "io.capyio.camera.lab.action.START_CAPTURE";
@@ -69,6 +70,31 @@ public final class CameraCaptureService extends Service {
     private static final int NOTIFICATION_ID = 38173;
 
     private static volatile Snapshot latest = stoppedSnapshot();
+    private record PendingSecure(long token, Config config) {}
+    private static final java.util.concurrent.atomic.AtomicLong secureTokens =
+            new java.util.concurrent.atomic.AtomicLong();
+    private static final java.util.concurrent.atomic.AtomicReference<PendingSecure> pendingSecure =
+            new java.util.concurrent.atomic.AtomicReference<>();
+
+    static void startSecure(Context context, FrameObservation.LensFacing facing,
+            CameraSourceSelection source, AvcQualityPreset quality,
+            CameraRouteBinding route, SecureCameraBinding secure) {
+        if (!secure.ready() || !route.isLive()) throw new IllegalStateException("secure generation not Ready");
+        long token = secureTokens.incrementAndGet();
+        PendingSecure pending = new PendingSecure(token,
+                new Config(facing, source, quality, null, route, secure));
+        PendingSecure previous = pendingSecure.getAndSet(pending);
+        if (previous != null) previous.config().secure().stop();
+        try {
+            context.startForegroundService(new Intent(context, CameraCaptureService.class)
+                    .setAction(ACTION_START).putExtra("secure_generation_token", token));
+        } catch (RuntimeException failure) {
+            pendingSecure.compareAndSet(pending, null);
+            secure.stop();
+            throw failure;
+        }
+    }
+
 
     private final Object lock = new Object();
     private final Handler mainHandler = new Handler(Looper.getMainLooper());
@@ -132,6 +158,8 @@ public final class CameraCaptureService extends Service {
     }
 
     static void stop(Context context) {
+        PendingSecure pending = pendingSecure.getAndSet(null);
+        if (pending != null) pending.config().secure().stop();
         context.stopService(new Intent(context, CameraCaptureService.class));
     }
 
@@ -153,6 +181,20 @@ public final class CameraCaptureService extends Service {
             stopCapture(false, "");
             return START_NOT_STICKY;
         }
+        Config requested;
+        try {
+            requested = configFrom(intent);
+        } catch (IllegalArgumentException | IllegalStateException rejected) {
+            if (intent.hasExtra("secure_generation_token")) {
+                // A late delivery from an obsolete in-process generation cannot stop a newer one.
+                synchronized (lock) {
+                    if (session == null) stopSelf(startId);
+                }
+                return START_NOT_STICKY;
+            }
+            stopCapture(true, "Invalid capture request: " + rejected.getClass().getSimpleName());
+            return START_NOT_STICKY;
+        }
         try {
             enterForeground(notification(getString(R.string.camera_notification_starting)));
         } catch (SecurityException | IllegalStateException error) {
@@ -160,7 +202,7 @@ public final class CameraCaptureService extends Service {
             return START_NOT_STICKY;
         }
         try {
-            startCapture(configFrom(intent));
+            startCapture(requested);
         } catch (IllegalArgumentException | IllegalStateException error) {
             stopCapture(true, "Invalid capture request: " + error.getClass().getSimpleName());
         }
@@ -212,6 +254,7 @@ public final class CameraCaptureService extends Service {
                 config.endpoint(),
                 listenerFor(currentGeneration));
         created.bindRoute(config.route());
+        created.bindSecure(config.secure());
         synchronized (lock) {
             if (generation != currentGeneration || phase != Phase.STARTING) {
                 created.close();
@@ -264,6 +307,16 @@ public final class CameraCaptureService extends Service {
                             droppedAccessUnits = dropped;
                             publishLocked();
                         }
+                    }
+                }
+            }
+
+            @Override
+            public void onSecureEncoded(long count) {
+                synchronized (lock) {
+                    if (generation == listenerGeneration) {
+                        encodedAccessUnits = count;
+                        publishLocked();
                     }
                 }
             }
@@ -373,6 +426,7 @@ public final class CameraCaptureService extends Service {
                 : activeConfig.quality();
         latest = new Snapshot(
                 phase,
+                activeConfig != null && activeConfig.secure() != null,
                 generation,
                 width,
                 height,
@@ -443,6 +497,16 @@ public final class CameraCaptureService extends Service {
     }
 
     private static Config configFrom(Intent intent) {
+        if (intent.hasExtra("secure_generation_token")) {
+            long token = intent.getLongExtra("secure_generation_token", 0);
+            PendingSecure pending = pendingSecure.get();
+            if (pending == null || pending.token() != token
+                    || !pendingSecure.compareAndSet(pending, null)
+                    || !pending.config().secure().ready() || !pending.config().route().isLive()) {
+                throw new IllegalStateException("stale secure capture request");
+            }
+            return pending.config();
+        }
         FrameObservation.LensFacing facing = FrameObservation.LensFacing.valueOf(
                 requiredExtra(intent, EXTRA_FACING));
         AvcQualityPreset quality = AvcQualityPreset.valueOf(
@@ -461,7 +525,7 @@ public final class CameraCaptureService extends Service {
         }
         CameraRouteBinding route = intent.hasExtra("route_stream") ? new CameraRouteBinding(
                 requiredExtra(intent,"route_stream"),intent.getLongExtra("route_epoch",0),intent.getLongExtra("route_expiry",0)) : null;
-        return new Config(facing, source, quality, endpoint, route);
+        return new Config(facing, source, quality, endpoint, route, null);
     }
 
     private static String requiredExtra(Intent intent, String name) {
@@ -475,6 +539,7 @@ public final class CameraCaptureService extends Service {
     private static Snapshot stoppedSnapshot() {
         return new Snapshot(
                 Phase.STOPPED,
+                false,
                 0,
                 0,
                 0,

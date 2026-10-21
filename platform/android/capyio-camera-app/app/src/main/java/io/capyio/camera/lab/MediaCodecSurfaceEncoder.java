@@ -8,6 +8,7 @@ import android.os.HandlerThread;
 import android.view.Surface;
 import io.capyio.camera.contract.AvcCodecConfig;
 import io.capyio.camera.contract.AvcEncoderConfig;
+import io.capyio.camera.contract.SecureAvcSender;
 import io.capyio.camera.contract.BoundedAvcAccessUnitQueue;
 import io.capyio.camera.contract.EncodedAvcAccessUnit;
 import java.io.IOException;
@@ -40,6 +41,7 @@ final class MediaCodecSurfaceEncoder implements AutoCloseable {
 
     private final Object lifecycleLock = new Object();
     private final AvcEncoderConfig config;
+    private final SecureAvcSender secureSender;
     private final BoundedAvcAccessUnitQueue outputQueue;
     private final AtomicReference<AvcCodecConfig> outputConfig = new AtomicReference<>();
     private final AtomicReference<String> lastError = new AtomicReference<>();
@@ -53,7 +55,10 @@ final class MediaCodecSurfaceEncoder implements AutoCloseable {
     private Surface inputSurface;
     private String codecName = "unavailable";
 
-    MediaCodecSurfaceEncoder(AvcEncoderConfig config) {
+    MediaCodecSurfaceEncoder(AvcEncoderConfig config) { this(config, null); }
+
+    MediaCodecSurfaceEncoder(AvcEncoderConfig config, SecureAvcSender secureSender) {
+        this.secureSender = secureSender;
         this.config = Objects.requireNonNull(config, "config");
         outputQueue = new BoundedAvcAccessUnitQueue(config.queueCapacity());
     }
@@ -134,6 +139,8 @@ final class MediaCodecSurfaceEncoder implements AutoCloseable {
         return Optional.ofNullable(lastError.getAndSet(null));
     }
 
+    long encodedAccessUnits() { return nextSequence.get(); }
+
     long droppedAccessUnits() {
         return droppedAccessUnits.get();
     }
@@ -191,7 +198,9 @@ final class MediaCodecSurfaceEncoder implements AutoCloseable {
                 byte[] csd1 = format.containsKey("csd-1")
                         ? copyFormatBuffer(format, "csd-1")
                         : new byte[0];
-                outputConfig.set(new AvcCodecConfig(csd0, csd1));
+                AvcCodecConfig config = new AvcCodecConfig(csd0, csd1);
+                if (secureSender != null) secureSender.setCodecConfig(config);
+                else outputConfig.set(config);
                 int actual = format.containsKey(MediaFormat.KEY_LATENCY)
                         ? format.getInteger(MediaFormat.KEY_LATENCY)
                         : -1;
@@ -218,30 +227,45 @@ final class MediaCodecSurfaceEncoder implements AutoCloseable {
             throw new IllegalArgumentException("AVC output bounds are invalid");
         }
 
-        byte[] payload = new byte[info.size];
-        if (info.size > 0) {
-            ByteBuffer output = codec.getOutputBuffer(index);
-            if (output == null || info.offset > output.capacity() - info.size) {
-                throw new IllegalArgumentException("AVC output buffer is unavailable or short");
-            }
-            ByteBuffer view = output.duplicate();
-            view.clear();
-            view.position(info.offset);
-            view.limit(info.offset + info.size);
-            view.get(payload);
+        // Reserve before allocating either payload copy. Secure overflow terminates, never drops.
+        if (secureSender != null && !secureSender.reserveOutput(info.size)) {
+            recordError("Secure AVC capacity exhausted or generation stopped");
+            return;
         }
+        boolean submitted = false;
+        try {
+            byte[] payload = new byte[info.size];
+            if (info.size > 0) {
+                ByteBuffer output = codec.getOutputBuffer(index);
+                if (output == null || info.offset > output.capacity() - info.size) {
+                    throw new IllegalArgumentException("AVC output buffer is unavailable or short");
+                }
+                ByteBuffer view = output.duplicate();
+                view.clear();
+                view.position(info.offset);
+                view.limit(info.offset + info.size);
+                view.get(payload);
+            }
 
-        long sequence = nextSequence.incrementAndGet();
-        EncodedAvcAccessUnit unit = new EncodedAvcAccessUnit(
-                sequence,
-                info.presentationTimeUs,
-                (info.flags & MediaCodec.BUFFER_FLAG_CODEC_CONFIG) != 0,
-                (info.flags & MediaCodec.BUFFER_FLAG_KEY_FRAME) != 0,
-                endOfStream,
-                payload);
-        BoundedAvcAccessUnitQueue.OfferResult result = outputQueue.offer(unit);
-        if (!result.accepted() || result.droppedOldest()) {
-            droppedAccessUnits.incrementAndGet();
+            long sequence = nextSequence.incrementAndGet();
+            EncodedAvcAccessUnit unit = new EncodedAvcAccessUnit(
+                    sequence,
+                    info.presentationTimeUs,
+                    (info.flags & MediaCodec.BUFFER_FLAG_CODEC_CONFIG) != 0,
+                    (info.flags & MediaCodec.BUFFER_FLAG_KEY_FRAME) != 0,
+                    endOfStream,
+                    payload);
+            if (secureSender != null) {
+                secureSender.offerReserved(unit);
+                submitted = true;
+                return;
+            }
+            BoundedAvcAccessUnitQueue.OfferResult result = outputQueue.offer(unit);
+            if (!result.accepted() || result.droppedOldest()) {
+                droppedAccessUnits.incrementAndGet();
+            }
+        } finally {
+            if (secureSender != null && !submitted) secureSender.cancelReservation();
         }
     }
 
@@ -284,6 +308,7 @@ final class MediaCodecSurfaceEncoder implements AutoCloseable {
     }
 
     private void recordError(String message) {
+        if (secureSender != null) secureSender.close();
         String bounded = message == null ? "unknown AVC encoder error" : message;
         if (bounded.length() > MAX_ERROR_CHARS) {
             bounded = bounded.substring(0, MAX_ERROR_CHARS);
@@ -293,6 +318,7 @@ final class MediaCodecSurfaceEncoder implements AutoCloseable {
 
     @Override
     public void close() {
+        if (secureSender != null) secureSender.close();
         MediaCodec currentCodec;
         Surface currentSurface;
         HandlerThread currentThread;

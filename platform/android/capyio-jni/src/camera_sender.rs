@@ -93,6 +93,116 @@ pub struct SecureCameraSender {
     lease_deadline: u64,
     last_ms: u64,
 }
+/// Immutable native-only preparation. It owns no socket; prepare under brief
+/// Runtime/control locks and call connect only after releasing those locks.
+#[derive(Clone)]
+pub(crate) struct PreparedCameraSender {
+    address: SocketAddr,
+    identity: ControlTlsClientIdentity,
+    server_name: String,
+    pub(crate) binding: CameraTlsBinding,
+    records: AvcRecordGuard,
+    lease_deadline: u64,
+    now: u64,
+}
+impl PreparedCameraSender {
+    pub(crate) fn new(
+        runtime: &NodeRuntime,
+        link: &CatalogControlLink,
+        route_id: RouteId,
+        offer: SecureCameraDataOffer,
+        identity: ControlTlsClientIdentity,
+        server_name: String,
+        now: u64,
+    ) -> Result<Self, String> {
+        let route = runtime.route(route_id).map_err(|e| e.to_string())?;
+        source_authority(runtime, route, now).ok_or("camera Source authority absent")?;
+        offer.validate(route).map_err(|e| e.to_string())?;
+        if link.peer_node_id() != route.sink.node_id {
+            return Err("camera control peer mismatch".into());
+        }
+        let binding = CameraTlsBinding::from_route(link.tls_binding(), route, offer.stream_id, now)
+            .map_err(|e| e.to_string())?;
+        let address = SocketAddr::new(
+            link.authenticated_peer_addr()
+                .map_err(|e| e.to_string())?
+                .ip(),
+            offer.port,
+        );
+        let records = AvcRecordGuard::new(AvcStreamKey {
+            stream_id: *offer.stream_id.as_uuid().as_bytes(),
+            epoch: route.epoch,
+        })
+        .map_err(|e| e.to_string())?;
+        let lease_deadline = runtime
+            .route_port_lease_claim(route_id, route.source)
+            .ok_or("Source lease absent")?
+            .expires_at_ms;
+        Ok(Self {
+            address,
+            identity,
+            server_name,
+            binding,
+            records,
+            lease_deadline,
+            now,
+        })
+    }
+    #[cfg(any(target_os = "android", test))]
+    pub(crate) fn lease_deadline(&self) -> u64 {
+        self.lease_deadline
+    }
+    #[cfg(any(target_os = "android", test))]
+    pub(crate) fn validate_snapshot(&self, runtime: &NodeRuntime, now: u64) -> Result<(), String> {
+        let route = runtime
+            .route(self.binding.route_id)
+            .map_err(|e| e.to_string())?;
+        source_authority(runtime, route, now).ok_or("Source authority absent")?;
+        if now >= self.lease_deadline
+            || route.selected_format != Some(FormatDescriptor::new("cavc-avc-access-unit-v1"))
+            || CameraTlsBinding::from_route(
+                self.binding.session,
+                route,
+                self.binding.stream_id,
+                now,
+            )
+            .map_err(|e| e.to_string())?
+                != self.binding
+        {
+            return Err("camera preparation stale".into());
+        }
+        Ok(())
+    }
+    pub(crate) fn connect(self) -> Result<SecureCameraSender, String> {
+        let wall_now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_err(|e| e.to_string())?
+            .as_millis() as u64;
+        let remaining = self
+            .lease_deadline
+            .checked_sub(self.now.max(wall_now))
+            .filter(|ms| *ms > 0)
+            .ok_or("Source lease expired before connect")?;
+        let channel = CameraTlsChannel::connect_until(
+            ControlTlsEndpoint {
+                address: self.address,
+                io_timeout: Duration::from_millis(500),
+            },
+            &self.server_name,
+            self.identity,
+            self.binding,
+            Instant::now() + Duration::from_millis(remaining),
+        )
+        .map_err(|e| e.to_string())?;
+        Ok(SecureCameraSender {
+            channel,
+            records: self.records,
+            binding: self.binding,
+            lease_deadline: self.lease_deadline,
+            last_ms: self.now,
+        })
+    }
+}
 impl SecureCameraSender {
     pub fn connect(
         runtime: &NodeRuntime,
@@ -109,8 +219,6 @@ impl SecureCameraSender {
         if link.peer_node_id() != route.sink.node_id {
             return Err("camera control peer differs from Sink".into());
         }
-        let binding = CameraTlsBinding::from_route(link.tls_binding(), route, offer.stream_id, now)
-            .map_err(|e| e.to_string())?;
         let directory = PairedPeerDirectory::decode_json(route.source.node_id, directory_json)
             .map_err(|e| e.to_string())?;
         let peer = directory
@@ -121,48 +229,20 @@ impl SecureCameraSender {
             peer.peer_certificate_sha256,
             ControlCredentialBundle::decode(encoded_credential).map_err(|e| e.to_string())?,
         );
-        let address = SocketAddr::new(
-            link.authenticated_peer_addr()
-                .map_err(|e| e.to_string())?
-                .ip(),
-            offer.port,
-        );
-        let records = AvcRecordGuard::new(AvcStreamKey {
-            stream_id: *offer.stream_id.as_uuid().as_bytes(),
-            epoch: route.epoch,
-        })
-        .map_err(|e| e.to_string())?;
-        let lease_deadline = runtime
-            .route_port_lease_claim(route_id, route.source)
-            .ok_or("camera Source lease absent")?
-            .expires_at_ms;
-        let wall_now = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map_err(|e| e.to_string())?
-            .as_millis() as u64;
-        let remaining = lease_deadline
-            .checked_sub(now.max(wall_now))
-            .filter(|ms| *ms > 0)
-            .ok_or("camera Source lease expired before connect")?;
-        let local_deadline = Instant::now() + Duration::from_millis(remaining);
-        let channel = CameraTlsChannel::connect_until(
-            ControlTlsEndpoint {
-                address,
-                io_timeout: Duration::from_millis(500),
-            },
-            &peer.server_name,
+        PreparedCameraSender::new(
+            runtime,
+            link,
+            route_id,
+            offer,
             identity,
-            binding,
-            local_deadline,
-        )
-        .map_err(|e| e.to_string())?;
-        Ok(Self {
-            channel,
-            records,
-            binding,
-            lease_deadline,
-            last_ms: now,
-        })
+            peer.server_name.clone(),
+            now,
+        )?
+        .connect()
+    }
+    #[cfg(any(target_os = "android", test))]
+    pub(crate) fn ended(&self) -> bool {
+        self.records.ended()
     }
     pub fn binding(&self) -> CameraTlsBinding {
         self.binding
@@ -173,7 +253,7 @@ impl SecureCameraSender {
     pub fn stop(&mut self) {
         self.channel.close();
     }
-    fn check(&mut self, runtime: &NodeRuntime, now: u64) -> Result<(), String> {
+    pub(crate) fn check(&mut self, runtime: &NodeRuntime, now: u64) -> Result<(), String> {
         if now < self.last_ms || now >= self.lease_deadline {
             return Err("camera Source lease expired or clock regressed".into());
         }

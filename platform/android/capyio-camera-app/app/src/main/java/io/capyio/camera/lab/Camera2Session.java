@@ -23,6 +23,7 @@ import android.util.Size;
 import android.view.Surface;
 import android.view.TextureView;
 import io.capyio.camera.contract.AvcEncoderConfig;
+import io.capyio.camera.contract.SecureAvcSender;
 import io.capyio.camera.contract.AvcQualityPreset;
 import io.capyio.camera.contract.CameraFacingPolicy;
 import io.capyio.camera.contract.CameraProgressWatchdog;
@@ -45,6 +46,8 @@ final class Camera2Session implements AutoCloseable {
         void onFrame(FrameObservation observation);
 
         void onEncodedAccessUnit(EncodedAvcAccessUnit unit, long droppedAccessUnits);
+
+        default void onSecureEncoded(long count) {}
 
         void onEncoderStatus(String codecName, int requestedLatencyFrames, int actualLatencyFrames);
 
@@ -72,7 +75,9 @@ final class Camera2Session implements AutoCloseable {
     private CameraDevice cameraDevice;
     private CameraCaptureSession captureSession;
     private MediaCodecSurfaceEncoder encoder;
-    private LoopbackAvcSender sender;
+    private AvcSender sender;
+    private SecureCameraBinding secureBinding;
+    private long lastSecureEncoded;
     private Surface previewSurface;
     private Size captureSize;
     private boolean closed;
@@ -87,6 +92,11 @@ final class Camera2Session implements AutoCloseable {
     private boolean progressFailureReported;
     private final Runnable progressWatchdog = this::checkProgressWatchdog;
     private CameraRouteBinding routeBinding;
+
+    void bindSecure(SecureCameraBinding binding) {
+        if (cameraThread != null) throw new IllegalStateException("camera already started");
+        secureBinding = binding;
+    }
 
     void bindRoute(CameraRouteBinding binding) {
         if (cameraThread != null) throw new IllegalStateException("camera already started");
@@ -106,7 +116,7 @@ final class Camera2Session implements AutoCloseable {
         this.preferredFacing = Objects.requireNonNull(preferredFacing, "preferredFacing");
         this.preferredSource = preferredSource;
         this.qualityPreset = Objects.requireNonNull(qualityPreset, "qualityPreset");
-        this.transportEndpoint = Objects.requireNonNull(transportEndpoint, "transportEndpoint");
+        this.transportEndpoint = transportEndpoint;
         this.listener = Objects.requireNonNull(listener, "listener");
     }
 
@@ -170,13 +180,34 @@ final class Camera2Session implements AutoCloseable {
         captureSize = selection.size();
         AvcEncoderConfig encoderConfig =
                 configForSize(selection.size(), qualityPreset, sensorOrientationDegrees);
-        LoopbackAvcSender createdSender = new LoopbackAvcSender(
-                transportEndpoint,
-                encoderConfig,
-                listener::onTransportStatus, routeBinding);
+        SecureAvcSender secure = null;
+        AvcSender createdSender;
+        if (secureBinding != null) {
+            if (routeBinding == null || !routeBinding.isLive() || !secureBinding.ready()) {
+                throw new IllegalStateException("secure capture requires a live Ready generation");
+            }
+            secure = new SecureAvcSender(secureBinding.transport(), secureBinding.generation(),
+                    routeBinding.streamKey(), encoderConfig, routeBinding.expiresAtMs(),
+                    listener::onTransportStatus);
+            SecureAvcSender selected = secure;
+            createdSender = new AvcSender() {
+                public void start() { selected.start(); }
+                public void setCodecConfig(io.capyio.camera.contract.AvcCodecConfig value) {
+                    selected.setCodecConfig(value);
+                }
+                public void offer(EncodedAvcAccessUnit value) { selected.offer(value); }
+                public void close() { selected.close(); }
+            };
+        } else {
+            createdSender = new LoopbackAvcSender(Objects.requireNonNull(transportEndpoint),
+                    encoderConfig, listener::onTransportStatus, routeBinding);
+        }
         createdSender.start();
-        MediaCodecSurfaceEncoder createdEncoder = new MediaCodecSurfaceEncoder(encoderConfig);
+        MediaCodecSurfaceEncoder createdEncoder = new MediaCodecSurfaceEncoder(encoderConfig, secure);
         try {
+            if (secureBinding != null && !secureBinding.ready()) {
+                throw new IllegalStateException("secure generation cancelled before encoder start");
+            }
             createdEncoder.start();
         } catch (IOException | RuntimeException error) {
             createdSender.close();
@@ -192,12 +223,23 @@ final class Camera2Session implements AutoCloseable {
             sender = createdSender;
         }
 
+        if (secureBinding != null && !secureBinding.ready()) {
+            createdEncoder.close();
+            createdSender.close();
+            fail("Secure generation cancelled before camera open");
+            return;
+        }
         manager.openCamera(selection.cameraId(), executor(), deviceCallback);
     }
 
     private final CameraDevice.StateCallback deviceCallback = new CameraDevice.StateCallback() {
         @Override
         public void onOpened(CameraDevice device) {
+            if (secureBinding != null && !secureBinding.ready()) {
+                device.close();
+                fail("Secure generation cancelled before camera opened");
+                return;
+            }
             synchronized (lock) {
                 if (closed) {
                     device.close();
@@ -276,6 +318,11 @@ final class Camera2Session implements AutoCloseable {
                     }
 
                     try {
+                        if (secureBinding != null && !secureBinding.ready()) {
+                            session.close();
+                            fail("Secure generation cancelled before capture start");
+                            return;
+                        }
                         Surface encoded = currentEncoder.inputSurface();
                         CaptureRequest.Builder request =
                                 device.createCaptureRequest(CameraDevice.TEMPLATE_PREVIEW);
@@ -334,7 +381,7 @@ final class Camera2Session implements AutoCloseable {
 
     private void drainEncoder() {
         MediaCodecSurfaceEncoder current;
-        LoopbackAvcSender currentSender;
+        AvcSender currentSender;
         synchronized (lock) {
             current = encoder;
             currentSender = sender;
@@ -343,6 +390,18 @@ final class Camera2Session implements AutoCloseable {
             return;
         }
         current.takeOutputConfig().ifPresent(currentSender::setCodecConfig);
+        if (secureBinding != null) {
+            long count = current.encodedAccessUnits();
+            if (count != lastSecureEncoded) {
+                lastSecureEncoded = count;
+                synchronized (lock) { lastEncodedProgressMillis = SystemClock.elapsedRealtime(); }
+                listener.onSecureEncoded(count);
+            }
+            if (!secureBinding.ready() || routeBinding == null || !routeBinding.isLive()) {
+                fail("Secure camera generation stopped or expired");
+                return;
+            }
+        }
         MediaCodecSurfaceEncoder.RuntimeInfo runtimeInfo = current.runtimeInfo();
         if (runtimeInfo.actualLatencyFrames() != lastReportedLatencyFrames) {
             lastReportedLatencyFrames = runtimeInfo.actualLatencyFrames();
@@ -584,7 +643,7 @@ final class Camera2Session implements AutoCloseable {
         CameraCaptureSession session;
         CameraDevice device;
         MediaCodecSurfaceEncoder currentEncoder;
-        LoopbackAvcSender currentSender;
+        AvcSender currentSender;
         Surface display;
         HandlerThread thread;
         Handler handler;

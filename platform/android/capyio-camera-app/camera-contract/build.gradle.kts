@@ -29,3 +29,12 @@ tasks.register<JavaExec>("contractTest") {
     classpath = files(contractTestOutput)
     mainClass = "io.capyio.camera.contract.CaptureStateMachineContractTest"
 }
+
+val secureCameraContractTest by tasks.registering(JavaExec::class) {
+    group = "verification"
+    dependsOn(compileContractTest)
+    classpath = files(contractTestOutput)
+    mainClass = "io.capyio.camera.contract.SecureAvcSenderContractTest"
+    enableAssertions = true
+}
+tasks.named("check") { dependsOn("contractTest", secureCameraContractTest) }
