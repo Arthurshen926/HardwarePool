@@ -7,6 +7,9 @@
 #[cfg(feature = "paired-store")]
 #[path = "support/paired_store.rs"]
 mod paired_store;
+#[cfg(feature = "paired-store")]
+#[path = "support/playback_console.rs"]
+mod playback_console;
 
 use capyio_android_jni::AndroidCatalogRuntimeV1;
 use capyio_control_credentials::ControlCredentialBundle;
@@ -55,6 +58,8 @@ fn drain(reader: &mut impl Read, bytes: &mut Vec<u8>) {
 struct Process {
     #[cfg(feature = "paired-store")]
     pairing: Option<paired_store::PersistedPairing>,
+    #[cfg(feature = "paired-store")]
+    console: Option<playback_console::Console>,
     child: Child,
     stdout: Vec<u8>,
     stderr: Vec<u8>,
@@ -76,6 +81,8 @@ impl Process {
             child,
             #[cfg(feature = "paired-store")]
             pairing: None,
+            #[cfg(feature = "paired-store")]
+            console: None,
             stdout: Vec::new(),
             stderr: Vec::new(),
         }
@@ -107,11 +114,40 @@ impl Process {
         frame.fill(0);
     }
     fn command(&mut self, command: Value) {
+        #[cfg(feature = "paired-store")]
+        if self.console.is_some() {
+            match command["command"].as_str().unwrap() {
+                "approve" => {
+                    let request = command["request_id"].as_str().unwrap();
+                    let route = command["route_id"].as_str().unwrap();
+                    self.wait_console_prompt(request, route);
+                    let console = self.console.as_mut().unwrap();
+                    console.send(format!("start {request} {route} {}\n", console.peer).as_bytes());
+                }
+                "status" => self.console.as_mut().unwrap().send(b"status\n"),
+                "stop" => self.console.as_mut().unwrap().send(b"stop\n"),
+                _ => panic!("console adapter accepts only existing public playback operations"),
+            }
+            return;
+        }
         self.frame(&serde_json::to_vec(&command).unwrap());
     }
     fn collect(&mut self) {
-        drain(self.child.stdout.as_mut().unwrap(), &mut self.stdout);
-        drain(self.child.stderr.as_mut().unwrap(), &mut self.stderr);
+        #[cfg(feature = "paired-store")]
+        if let Some(console) = &mut self.console {
+            console.collect(&mut self.child, &mut self.stdout, &mut self.stderr);
+            if let Some(pairing) = &self.pairing {
+                pairing.assert_no_leak(&console.tty);
+            }
+        } else {
+            drain(self.child.stdout.as_mut().unwrap(), &mut self.stdout);
+            drain(self.child.stderr.as_mut().unwrap(), &mut self.stderr);
+        }
+        #[cfg(not(feature = "paired-store"))]
+        {
+            drain(self.child.stdout.as_mut().unwrap(), &mut self.stdout);
+            drain(self.child.stderr.as_mut().unwrap(), &mut self.stderr);
+        }
         #[cfg(feature = "paired-store")]
         if let Some(pairing) = &self.pairing {
             pairing.assert_no_leak(&self.stdout);
@@ -122,6 +158,25 @@ impl Process {
         let deadline = Instant::now() + BOUND;
         loop {
             self.collect();
+            #[cfg(feature = "paired-store")]
+            if let Some(console) = &mut self.console
+                && let Some(value) = console.next_event()
+            {
+                assert_eq!(value["event"], expected);
+                if expected == "listening" {
+                    let node = console.identify_node(&self.child);
+                    if let Some(pairing) = &self.pairing {
+                        for pid in [self.child.id(), node] {
+                            for name in ["cmdline", "environ"] {
+                                pairing.assert_no_leak(
+                                    &std::fs::read(format!("/proc/{pid}/{name}")).unwrap(),
+                                );
+                            }
+                        }
+                    }
+                }
+                return value;
+            }
             if self.stdout.len() >= 4 {
                 let length = u32::from_be_bytes(self.stdout[..4].try_into().unwrap()) as usize;
                 assert!((1..=4096).contains(&length), "bounded local event");
@@ -140,12 +195,43 @@ impl Process {
             thread::sleep(Duration::from_millis(2));
         }
     }
+    #[cfg(feature = "paired-store")]
+    fn wait_console_prompt(&mut self, request: &str, route: &str) {
+        let deadline = Instant::now() + BOUND;
+        loop {
+            self.collect();
+            let console = self.console.as_ref().unwrap();
+            if console.prompt_seen(request, route) {
+                console.assert_hidden();
+                // begin_prompt flushes once more immediately after writing.
+                thread::sleep(Duration::from_millis(25));
+                return;
+            }
+            assert!(
+                self.child.try_wait().unwrap().is_none(),
+                "console exited before exact fresh prompt"
+            );
+            assert!(Instant::now() < deadline, "bounded fresh console prompt");
+            thread::sleep(Duration::from_millis(2));
+        }
+    }
+    fn owner_pid(&mut self) -> u32 {
+        #[cfg(feature = "paired-store")]
+        if let Some(console) = &mut self.console {
+            return console.identify_node(&self.child);
+        }
+        self.child.id()
+    }
     fn finish(&mut self) -> ExitStatus {
         let deadline = Instant::now() + BOUND;
         loop {
             self.collect();
             if let Some(status) = self.child.try_wait().unwrap() {
                 self.collect();
+                #[cfg(feature = "paired-store")]
+                if let Some(console) = &self.console {
+                    console.assert_finished();
+                }
                 #[cfg(feature = "paired-store")]
                 if let Some(pairing) = &self.pairing {
                     let state = pairing.service.state.lock().unwrap();
@@ -168,6 +254,14 @@ impl Process {
 impl Drop for Process {
     fn drop(&mut self) {
         // No blocking reader/writer threads survive assertions or timeout paths.
+        #[cfg(feature = "paired-store")]
+        if self.console.is_some() {
+            // SAFETY: the console owns the new setsid process group, including
+            // its Node and audio child. Never target an existing user group.
+            unsafe {
+                libc::kill(-(self.child.id() as libc::pid_t), libc::SIGKILL);
+            }
+        }
         let _ = self.child.kill();
         let _ = self.child.wait();
     }
@@ -233,12 +327,30 @@ impl Fixture {
         }
     }
     fn launch(&self, paired: bool) -> Process {
+        assert!(
+            hosted_console_scenario().is_none() || paired,
+            "console graph requires protected pairing"
+        );
         if paired {
             #[cfg(feature = "paired-store")]
             {
                 let local = serde_json::from_value(self.config["node_id"].clone()).unwrap();
                 let pairing =
                     paired_store::PersistedPairing::new(local, &self.directory, &self.bundle);
+                if hosted_console_scenario().is_some() {
+                    let (child, console) = playback_console::Console::start(
+                        &pairing,
+                        &self.config,
+                        hosted_console_scenario().as_deref() == Some("pretyped"),
+                    );
+                    return Process {
+                        child,
+                        console: Some(console),
+                        pairing: Some(pairing),
+                        stdout: vec![],
+                        stderr: vec![],
+                    };
+                }
                 let args = pairing.args("linux-playback");
                 let mut process =
                     Process::start(&args.iter().map(String::as_str).collect::<Vec<_>>());
@@ -1255,6 +1367,26 @@ fn hosted_pipewire_virtual_microphone_end_to_end() {
     hosted_pipewire::run_virtual_microphone();
 }
 
+#[test]
+#[ignore = "requires the dedicated hosted private-PipeWire console PTY harness"]
+fn hosted_console_playback_end_to_end() {
+    assert!(
+        hosted_console_scenario().is_some(),
+        "explicit console profile required"
+    );
+    hosted_pipewire::run();
+}
+
+#[test]
+#[ignore = "requires the dedicated hosted private-PipeWire console PTY harness"]
+fn hosted_console_virtual_microphone_end_to_end() {
+    assert!(
+        hosted_console_scenario().is_some(),
+        "explicit console profile required"
+    );
+    hosted_pipewire::run_virtual_microphone();
+}
+
 mod hosted_pipewire {
     use super::*;
     use capyio_audio::{AudioMediaPacket, AudioMediaStreamBinding, AudioStreamSpec};
@@ -1377,6 +1509,8 @@ mod hosted_pipewire {
             ".capyio-virtual-microphone.json",
             ".capyio-after-stop",
             ".capyio-stop-checked",
+            ".capyio-console-start.json",
+            ".capyio-console-owner.json",
         ] {
             assert!(
                 !runtime.join(name).try_exists().unwrap(),
@@ -1485,6 +1619,12 @@ mod hosted_pipewire {
     fn run_scenario(scenario: Scenario) {
         let runtime = private_runtime(); // Fail before any process/socket opens.
         let deadline = Instant::now() + WHOLE_BUDGET;
+        let console_scenario = hosted_console_scenario();
+        let lifetime = if console_scenario.as_deref() == Some("expiry") {
+            Duration::from_secs(4)
+        } else {
+            LIFETIME
+        };
         // Reserve one ephemeral loopback ingress through consent negotiation,
         // then release it immediately before the production owner needs to bind.
         let ingress_reservation = UdpSocket::bind((Ipv4Addr::LOCALHOST, 0)).unwrap();
@@ -1497,10 +1637,20 @@ mod hosted_pipewire {
         } else {
             fixture.config["target"] = json!("capyio.test.null");
         }
-        fixture.config["duration_secs"] = json!(LIFETIME.as_secs());
+        fixture.config["duration_secs"] = json!(lifetime.as_secs());
         let mut process = fixture.launch(hosted_paired_store());
         let mut peer = fixture.connect(&mut process);
         let approval = process.event("approval_required");
+        if let Some(name) = &console_scenario {
+            let owner = process.owner_pid();
+            let evidence = json!({"console_pid": process.child.id(), "owner_pid": owner,
+                "scenario": name, "mode": if scenario.virtual_microphone() {"virtual_microphone"} else {"playback"}});
+            fs::write(
+                runtime.join(".capyio-console-owner.json"),
+                serde_json::to_vec(&evidence).unwrap(),
+            )
+            .unwrap();
+        }
         if scenario.virtual_microphone() {
             assert!(approval["target"].is_null());
             assert_eq!(approval["endpoint_mode"], "virtual_microphone");
@@ -1531,7 +1681,7 @@ mod hosted_pipewire {
                 &json!({
                     "node_name": expected_name,
                     "sink_port_id": sink.port_id,
-                    "owner_pid": process.child.id(),
+                    "owner_pid": process.owner_pid(),
                 }),
             )
             .unwrap();
@@ -1544,7 +1694,7 @@ mod hosted_pipewire {
         } else {
             assert_eq!(approval["target"], "capyio.test.null");
         }
-        assert_eq!(approval["duration_secs"], LIFETIME.as_secs());
+        assert_eq!(approval["duration_secs"], lifetime.as_secs());
         assert_eq!(approval["format"], "pcm-s16le-48000-mono");
         assert_eq!(
             approval["session_id"],
@@ -1565,6 +1715,39 @@ mod hosted_pipewire {
             &mut process,
             deadline,
         );
+        if console_scenario
+            .as_deref()
+            .is_some_and(console_pending_scenario)
+        {
+            finish_console_pending(
+                console_scenario.as_deref().unwrap(),
+                &approval,
+                &mut process,
+                &mut peer,
+                &runtime,
+                deadline,
+                scenario.virtual_microphone(),
+            );
+            drop(ingress_reservation);
+            assert!(
+                UdpSocket::bind(ingress).is_ok(),
+                "pending console never retained media ingress"
+            );
+            return;
+        }
+        #[cfg(feature = "paired-store")]
+        if console_scenario.is_some() {
+            process.wait_console_prompt(
+                approval["request_id"].as_str().unwrap(),
+                approval["route_id"].as_str().unwrap(),
+            );
+            process
+                .console
+                .as_ref()
+                .unwrap()
+                .assert_presentation(&approval);
+        }
+        let consent_started = Instant::now();
         process.command(approve(&approval));
         peer.receive_proposal(id);
         no_peer_media(&mut peer, id);
@@ -1576,7 +1759,7 @@ mod hosted_pipewire {
             deadline,
         );
         peer.consent(id, true);
-        let offered = peer.negotiate_to_offer_with_lifetime(id, LIFETIME);
+        let offered = peer.negotiate_to_offer_with_lifetime(id, lifetime);
         assert_eq!(
             process.event("awaiting_peer_offer")["route_id"],
             approval["route_id"]
@@ -1673,10 +1856,14 @@ mod hosted_pipewire {
         let signal_started = Instant::now();
         // No-consumer mode proves bounded Stop without any graph link. Existing
         // synthetic full-stdin tests remain the explicit backpressure proof.
-        let frames = match scenario {
-            Scenario::NoConsumer => 50,
-            Scenario::ChildExit | Scenario::ServerDisconnect => 1,
-            Scenario::Playback | Scenario::Waveform => FRAMES,
+        let frames = if matches!(console_scenario.as_deref(), Some("expiry" | "remote_eof")) {
+            1
+        } else {
+            match scenario {
+                Scenario::NoConsumer => 50,
+                Scenario::ChildExit | Scenario::ServerDisconnect => 1,
+                Scenario::Playback | Scenario::Waveform => FRAMES,
+            }
         };
         for sequence in 0..frames {
             let when = signal_started + Duration::from_millis(sequence * 10);
@@ -1716,7 +1903,29 @@ mod hosted_pipewire {
             }
             thread::sleep(Duration::from_millis(5));
         }
-        if scenario.injected_failure() {
+        if matches!(console_scenario.as_deref(), Some("expiry" | "remote_eof")) {
+            if console_scenario.as_deref() == Some("remote_eof") {
+                // Close the actual authenticated control channel, not the
+                // PipeWire server and not a simulated local status.
+                peer.link.close();
+            }
+            process.event("failed");
+            if console_scenario.as_deref() == Some("expiry") {
+                assert!(
+                    consent_started.elapsed()
+                        >= lifetime.saturating_sub(Duration::from_millis(250)),
+                    "a premature unrelated failure is not finite-expiry evidence"
+                );
+                assert!(
+                    consent_started.elapsed() <= lifetime + Duration::from_secs(2),
+                    "finite authority cannot be silently renewed"
+                );
+            }
+            assert!(
+                !process.finish().success(),
+                "finite expiry/control EOF must terminate without renewal"
+            );
+        } else if scenario.injected_failure() {
             // The harness may inject failure only after a real bound packet
             // passed the actual production UDP owner into its pw-cat child.
             publish_marker(&runtime, ".capyio-fault-ready");
@@ -1725,10 +1934,12 @@ mod hosted_pipewire {
                 !process.finish().success(),
                 "lost child/server cannot masquerade as successful playback"
             );
-            assert!(
-                String::from_utf8_lossy(&process.stderr)
-                    .contains("Linux lab playback launch failed")
-            );
+            if console_scenario.is_none() {
+                assert!(
+                    String::from_utf8_lossy(&process.stderr)
+                        .contains("Linux lab playback launch failed")
+                );
+            }
         } else {
             // Let the real graph consume its final queued quantum before closing.
             thread::sleep(Duration::from_millis(150));
@@ -1740,7 +1951,7 @@ mod hosted_pipewire {
             );
             assert!(process.stderr.is_empty());
         }
-        if scenario.virtual_microphone() {
+        if scenario.virtual_microphone() || console_scenario.is_some() {
             // Deliberately bypass the now-stopped Android lifecycle in this
             // adversarial fixture: correctly bound, fresh UDP after Stop still
             // cannot recreate a Source, port, link, child or ingress listener.
@@ -1791,13 +2002,142 @@ mod hosted_pipewire {
         );
         assert!(UdpSocket::bind(source).is_ok(), "synthetic Source released");
         assert!(Instant::now() < deadline);
-        if scenario.virtual_microphone() {
+        if let Some(name) = &console_scenario {
+            console_marker(name, scenario.virtual_microphone());
+        } else if scenario.virtual_microphone() {
             eprintln!(
                 "capyio_pipewire_virtual_microphone=passed scenario={} authorized_udp=true stop=true fresh_post_stop=true child_reaped=true",
                 scenario.name()
             );
         } else {
             eprintln!("capyio_pipewire_e2e=passed authorized_udp=true stop=true child_reaped=true");
+        }
+    }
+
+    fn console_pending_scenario(name: &str) -> bool {
+        matches!(
+            name,
+            "no_approval"
+                | "pretyped"
+                | "mismatched_request"
+                | "mismatched_route"
+                | "mismatched_peer"
+        )
+    }
+
+    fn console_marker(name: &str, virtual_microphone: bool) {
+        eprintln!(
+            "capyio_audio_console=passed mode={} scenario={} actual_tty=true actual_node=true fresh_consent=true protected_read=true secret_redacted=true node_reaped=true",
+            if virtual_microphone {
+                "virtual_microphone"
+            } else {
+                "playback"
+            },
+            name
+        );
+    }
+
+    fn finish_console_pending(
+        name: &str,
+        approval: &Value,
+        process: &mut Process,
+        peer: &mut AndroidPeer,
+        runtime: &Path,
+        deadline: Instant,
+        virtual_microphone: bool,
+    ) {
+        #[cfg(feature = "paired-store")]
+        {
+            let request = approval["request_id"].as_str().unwrap();
+            let route = approval["route_id"].as_str().unwrap();
+            process.wait_console_prompt(request, route);
+            process
+                .console
+                .as_ref()
+                .unwrap()
+                .assert_presentation(approval);
+            assert!(peer.runtime.snapshot().routes.is_empty());
+            assert!(peer.runtime.snapshot().port_leases.is_empty());
+            let children = fs::read_to_string(format!(
+                "/proc/{}/task/{}/children",
+                process.owner_pid(),
+                process.owner_pid()
+            ))
+            .unwrap();
+            assert!(
+                children.trim().is_empty(),
+                "no helper before exact console consent"
+            );
+            if name.starts_with("mismatched_") {
+                let console = process.console.as_mut().unwrap();
+                let bad_request = MessageId::new().to_string();
+                let bad_route = RouteId::new().to_string();
+                let bad_peer = NodeId::new().to_string();
+                console.send(
+                    format!(
+                        "start {} {} {}\n",
+                        if name == "mismatched_request" {
+                            &bad_request
+                        } else {
+                            request
+                        },
+                        if name == "mismatched_route" {
+                            &bad_route
+                        } else {
+                            route
+                        },
+                        if name == "mismatched_peer" {
+                            bad_peer
+                        } else {
+                            console.peer.to_string()
+                        }
+                    )
+                    .as_bytes(),
+                );
+                assert!(
+                    !process.finish().success(),
+                    "mismatched exact confirmation rejected"
+                );
+            } else {
+                // Pretyped input is observed still pending, then canceled. This
+                // is not a full timeout and cannot be mistaken for approval.
+                no_peer_media(
+                    peer,
+                    serde_json::from_value(approval["route_id"].clone()).unwrap(),
+                );
+                process.command(json!({"version":1,"command":"stop"}));
+                process.event("stopped");
+                assert!(process.finish().success());
+            }
+            assert!(
+                peer.receive_control_message_until(Instant::now() + BOUND)
+                    .is_err(),
+                "rejected/unapproved console must close without a Route proposal"
+            );
+            assert!(peer.runtime.snapshot().routes.is_empty());
+            assert!(peer.runtime.snapshot().port_leases.is_empty());
+            publish_marker(runtime, ".capyio-after-stop");
+            while !exact_marker(&runtime.join(".capyio-stop-checked")) {
+                assert!(
+                    Instant::now() < deadline,
+                    "bounded negative graph observation"
+                );
+                thread::sleep(Duration::from_millis(5));
+            }
+            console_marker(name, virtual_microphone);
+        }
+        #[cfg(not(feature = "paired-store"))]
+        {
+            let _ = (
+                name,
+                approval,
+                process,
+                peer,
+                runtime,
+                deadline,
+                virtual_microphone,
+            );
+            panic!("console graph requires paired-store build");
         }
     }
 
@@ -1911,5 +2251,31 @@ fn hosted_paired_store() -> bool {
         None => false,
         Some(value) if value == "1" => true,
         Some(_) => panic!("exact paired-store hosted opt-in required"),
+    }
+}
+
+fn hosted_console_scenario() -> Option<String> {
+    match (
+        std::env::var_os("CAPYIO_AUDIO_CONSOLE"),
+        std::env::var("CAPYIO_AUDIO_CONSOLE_SCENARIO"),
+    ) {
+        (None, Err(std::env::VarError::NotPresent)) => None,
+        (Some(enabled), Ok(scenario))
+            if enabled == "1"
+                && matches!(
+                    scenario.as_str(),
+                    "waveform"
+                        | "no_approval"
+                        | "pretyped"
+                        | "mismatched_request"
+                        | "mismatched_route"
+                        | "mismatched_peer"
+                        | "expiry"
+                        | "remote_eof"
+                ) =>
+        {
+            Some(scenario)
+        }
+        _ => panic!("exact console hosted opt-in and scenario required"),
     }
 }

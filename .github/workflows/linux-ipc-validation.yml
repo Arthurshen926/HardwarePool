@@ -412,6 +412,7 @@ jobs:
       - name: Build integrated Android-policy command fixture without executing IPC
         run: |
           set -euo pipefail
+          cargo build --locked -p capyio-node -p capyio-linux-console --features capyio-node/paired-store,capyio-linux-console/paired-store
           cargo test --locked -p capyio-node --features paired-store --test linux_playback --no-run \
             --message-format=json > "$RUNNER_TEMP/pipewire-e2e-build.jsonl"
       - name: Require one integrated pinned-control UDP PipeWire and Stop run
@@ -548,6 +549,36 @@ jobs:
               esac
               timeout --signal=TERM --kill-after=15s 75s python3 "${args[@]}" --paired-store | tee "$RUNNER_TEMP/audio-paired-$mode-$scenario.txt"
               grep -Fx "capyio_audio_paired_graph=passed mode=$mode scenario=$scenario protected_read=true cleanup=true" "$RUNNER_TEMP/audio-paired-$mode-$scenario.txt"
+              count=$((count + 1))
+            done
+          done
+          test "$count" -eq 16
+
+      - name: Require sixteen actual-console playback and virtual-microphone graph profiles
+        run: |
+          set -euo pipefail
+          playback="$(python3 - "$RUNNER_TEMP/pipewire-e2e-build.jsonl" <<'PYFIXTURE'
+          import json, sys
+          items = [json.loads(line) for line in open(sys.argv[1])]
+          matches = [item['executable'] for item in items if item.get('reason') == 'compiler-artifact' and item.get('target', {}).get('name') == 'linux_playback' and item.get('executable')]
+          assert len(matches) == 1
+          print(matches[0])
+          PYFIXTURE
+          )"
+          "$playback" --list | tee "$RUNNER_TEMP/console-playback-tests.txt"
+          grep -Fx 'hosted_console_playback_end_to_end: test' "$RUNNER_TEMP/console-playback-tests.txt"
+          grep -Fx 'hosted_console_virtual_microphone_end_to_end: test' "$RUNNER_TEMP/console-playback-tests.txt"
+          count=0
+          for mode in playback virtual_microphone; do
+            for scenario in waveform no_approval pretyped mismatched_request mismatched_route mismatched_peer expiry remote_eof; do
+              case "$mode" in
+                playback) args=(--e2e-fixture "$playback") ;;
+                virtual_microphone) args=(--virtual-microphone-fixture "$playback" --virtual-microphone-scenario waveform) ;;
+              esac
+              timeout --signal=TERM --kill-after=15s 75s python3 scripts/run_pipewire_loopback.py \
+                --hosted-pipewire-loopback "${args[@]}" --paired-store --console --console-scenario "$scenario" \
+                | tee "$RUNNER_TEMP/console-$mode-$scenario.txt"
+              grep -Fx "capyio_audio_console_graph=passed mode=$mode scenario=$scenario actual_console=true protected_read=true independent_graph=true cleanup=true" "$RUNNER_TEMP/console-$mode-$scenario.txt"
               count=$((count + 1))
             done
           done

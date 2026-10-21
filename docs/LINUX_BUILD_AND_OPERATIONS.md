@@ -231,7 +231,51 @@ stop. EOF/interruption does not undo a trust record already durably accepted.
 With the same four selectors, `list` reads metadata, `revoke --peer PEER_UUID`
 requires exact fresh confirmation and retains protected credentials, and `recover`
 requires exact peer/request/digest confirmation for local pending-journal repair.
-Recovery does not prove remote handshake completion. No command grants media/input
+Recovery does not prove remote handshake completion. Pairing-management commands grant no media/input
 resources. Default non-paired packages offer console help but reject actual
 operations; a paired console also checks its actual sibling Node before PIN input.
 The console is interactive-only, not an automation endpoint or persistent service.
+
+
+## Interactive finite playback (ADR 1548)
+
+The paired console additionally supports `playback --config /absolute/session.json
+--peer PEER_UUID` with the same explicit four paired-store selectors. This is the
+only console media path currently implemented: selected playback and its virtual
+microphone projection, not capture/virtual speaker/camera/touchpad.
+
+The bounded nonsecret manifest uses the existing playback schema. Replace every
+ID/address/target with an explicitly chosen value; do not add credential material:
+
+```json
+{
+  "version": 1,
+  "node_id": "LOCAL_NODE_UUID",
+  "source": {
+    "node_id": "PEER_NODE_UUID",
+    "capability_id": "REMOTE_CAPABILITY_UUID",
+    "port_id": "REMOTE_SOURCE_PORT_UUID"
+  },
+  "listen": "192.0.2.10:0",
+  "media": "192.0.2.10:40111",
+  "target": "EXPLICIT_PIPEWIRE_TARGET",
+  "endpoint_mode": "playback",
+  "duration_secs": 30,
+  "proposal_mode": "linux_led"
+}
+```
+
+The documentation-range addresses above are placeholders, not accepted lab
+addresses: choose a concrete permitted local loopback/private/overlay IPv4 address.
+For a virtual microphone use `"endpoint_mode":"virtual_microphone"` and omit
+`target`; the existing Node creates only a session-owned virtual endpoint. The
+file must be a regular owner/root-owned file without group/other write access.
+The console does not discover devices or change that file's permissions.
+
+At the authenticated current-session prompt, review the exact peer, Source-to-Sink
+direction, target/mode, format and duration. Audio UDP remains plaintext and
+unauthenticated even though control is pinned TLS. Only then type the exact shown
+`start REQUEST ROUTE PEER` line. The counterpart must independently approve its
+resource; no approval is inferred from the saved pair. Use `status` or `stop` for
+this one session. Expiry, Stop or interruption performs no automatic renewal or
+restart and does not delete the saved protected identity.

@@ -44,6 +44,7 @@ capyio-linux-touchpad = { path = "../../platform/linux/capyio-touchpad" }
 capyio-remote-touchpad-adapter = { path = "../../adapters/remote-touchpad", features = ["tls"] }
 
 [target.'cfg(target_os = "linux")'.dev-dependencies]
+libc = "=0.2.189"
 capyio-linux-pairing-store = { path = "../../platform/linux/capyio-pairing-store" }
 zbus = { version = "=5.19.0", default-features = false, features = ["tokio"] }
 tokio = { version = "=1.53.1", default-features = false, features = ["rt", "net", "time", "sync", "macros"] }

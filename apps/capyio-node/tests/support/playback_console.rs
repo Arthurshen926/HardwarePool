@@ -1,0 +1,353 @@
+//! Test-only PTY transport for the existing playback fixture. The only input to
+//! the real console is terminal text; tests never access its Node control pipes.
+use super::{BOUND, NodeId, Value, drain, nonblocking};
+use std::{
+    fs::{self, File, OpenOptions},
+    io::{self, Read, Write},
+    os::{
+        fd::{AsRawFd, FromRawFd},
+        unix::{fs::OpenOptionsExt, process::CommandExt},
+    },
+    path::{Path, PathBuf},
+    process::{Child, Command, Stdio},
+    thread,
+    time::{Duration, Instant},
+};
+
+pub(super) struct Console {
+    master: File,
+    slave: File,
+    original: libc::termios,
+    pub(super) tty: Vec<u8>,
+    event_cursor: usize,
+    pub(super) node_pid: Option<u32>,
+    node_binary: PathBuf,
+    pub(super) peer: NodeId,
+}
+
+fn attributes(file: &File) -> libc::termios {
+    // SAFETY: tcgetattr initializes the object on success and borrows a live FD.
+    unsafe {
+        let mut value = std::mem::zeroed();
+        assert_eq!(libc::tcgetattr(file.as_raw_fd(), &mut value), 0);
+        value
+    }
+}
+
+impl Console {
+    pub(super) fn start(
+        pairing: &super::paired_store::PersistedPairing,
+        config: &Value,
+        pretyped: bool,
+    ) -> (Child, Self) {
+        let node = Path::new(env!("CARGO_BIN_EXE_capyio-node"))
+            .canonicalize()
+            .unwrap();
+        let binary = node.parent().unwrap().join("capyio-linux-console");
+        assert!(
+            binary.is_file(),
+            "hosted console gate must build the actual paired console sibling"
+        );
+        let config_path = pairing.service.root.join("playback.json");
+        let mut file = OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .mode(0o600)
+            .open(&config_path)
+            .unwrap();
+        serde_json::to_writer(&mut file, config).unwrap();
+        drop(file);
+        pairing.assert_no_leak(&fs::read(&config_path).unwrap());
+        let mut master = -1;
+        let mut slave = -1;
+        // SAFETY: openpty allocates two new descriptors, never a user terminal.
+        assert_eq!(
+            unsafe {
+                libc::openpty(
+                    &mut master,
+                    &mut slave,
+                    std::ptr::null_mut(),
+                    std::ptr::null(),
+                    std::ptr::null(),
+                )
+            },
+            0
+        );
+        // SAFETY: each successful descriptor is transferred exactly once.
+        let (master, slave) = unsafe { (File::from_raw_fd(master), File::from_raw_fd(slave)) };
+        for fd in [&master, &slave] {
+            // SAFETY: fcntl only changes flags on the borrowed owned descriptor.
+            assert_eq!(
+                unsafe { libc::fcntl(fd.as_raw_fd(), libc::F_SETFD, libc::FD_CLOEXEC) },
+                0
+            );
+        }
+        nonblocking(&master);
+        let original = attributes(&slave);
+        assert_ne!(original.c_lflag & libc::ECHO, 0);
+        let mut console = Self {
+            master,
+            slave,
+            original,
+            tty: vec![],
+            event_cursor: 0,
+            node_pid: None,
+            node_binary: node,
+            peer: pairing.peer,
+        };
+        if pretyped {
+            // This stale start is queued before the controller even opens its
+            // terminal. It must be flushed, not consumed as a later approval.
+            console.send(
+                format!(
+                    "start {} {} {}\n",
+                    super::MessageId::new(),
+                    super::RouteId::new(),
+                    pairing.peer
+                )
+                .as_bytes(),
+            );
+        }
+        let slave_fd = console.slave.as_raw_fd();
+        let fixture_pid = std::process::id() as libc::pid_t;
+        let mut command = Command::new(binary);
+        command
+            .args([
+                "--pairing-node",
+                &pairing.owner.to_string(),
+                "--pairing-state",
+                pairing.state_path.to_str().unwrap(),
+                "--pairing-bus-address",
+                &pairing.service.address,
+                "--pairing-collection",
+                super::paired_store::COLLECTION,
+                "playback",
+                "--config",
+                config_path.to_str().unwrap(),
+                "--peer",
+                &pairing.peer.to_string(),
+            ])
+            .env_remove("RUST_LOG")
+            .stdin(Stdio::null())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped());
+        // SAFETY: only async-signal-safe calls run after fork. The fresh slave
+        // is attached to this owned session and stays live through spawn.
+        unsafe {
+            command.pre_exec(move || {
+                // If the outer hosted fixture is interrupted, the controller
+                // still gets a graceful Stop/cleanup signal despite its new
+                // PTY session. Reject the fork/parent-death race explicitly.
+                if libc::prctl(libc::PR_SET_PDEATHSIG, libc::SIGTERM) < 0
+                    || libc::getppid() != fixture_pid
+                    || libc::setsid() < 0
+                    || libc::ioctl(slave_fd, libc::TIOCSCTTY, 0) < 0
+                {
+                    return Err(io::Error::last_os_error());
+                }
+                Ok(())
+            });
+        }
+        let child = command.spawn().unwrap();
+        // Public owned-process identity only, written immediately so the outer
+        // graph harness can clean up even before TLS reaches its checkpoint.
+        let runtime = PathBuf::from(std::env::var_os("XDG_RUNTIME_DIR").unwrap());
+        let start = runtime.join(".capyio-console-start.json");
+        let mut evidence = OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .mode(0o600)
+            .open(start)
+            .unwrap();
+        serde_json::to_writer(
+            &mut evidence,
+            &serde_json::json!({"console_pid": child.id()}),
+        )
+        .unwrap();
+        nonblocking(child.stdout.as_ref().unwrap());
+        nonblocking(child.stderr.as_ref().unwrap());
+        (child, console)
+    }
+
+    pub(super) fn collect(
+        &mut self,
+        child: &mut Child,
+        stdout: &mut Vec<u8>,
+        stderr: &mut Vec<u8>,
+    ) {
+        let mut buffer = [0; 4096];
+        loop {
+            match self.master.read(&mut buffer) {
+                Ok(0) => break,
+                Ok(n) => self.tty.extend_from_slice(&buffer[..n]),
+                Err(e)
+                    if e.kind() == io::ErrorKind::WouldBlock
+                        || e.raw_os_error() == Some(libc::EIO) =>
+                {
+                    break;
+                }
+                Err(e) if e.kind() == io::ErrorKind::Interrupted => continue,
+                Err(e) => panic!("private terminal read failed: {e}"),
+            }
+            assert!(self.tty.len() <= 1_048_576, "bounded console transcript");
+        }
+        drain(child.stdout.as_mut().unwrap(), stdout);
+        drain(child.stderr.as_mut().unwrap(), stderr);
+        assert!(
+            stdout.is_empty(),
+            "console presentation must stay on its private terminal"
+        );
+    }
+
+    pub(super) fn next_event(&mut self) -> Option<Value> {
+        let text = std::str::from_utf8(&self.tty).expect("ASCII/UTF-8 public terminal output");
+        let rest = &text[self.event_cursor..];
+        let start = rest.find("Playback event: ")? + self.event_cursor;
+        let line = &text[start..];
+        let end = line.find('\n')?;
+        let value = parse_event(&line[..end]).expect("canonical public playback event");
+        self.event_cursor = start + end + 1;
+        Some(value)
+    }
+
+    pub(super) fn prompt_seen(&self, request: &str, route: &str) -> bool {
+        let prompt = format!("Type start {request} {route} {} or stop: ", self.peer);
+        String::from_utf8_lossy(&self.tty[self.event_cursor..]).contains(&prompt)
+    }
+
+    pub(super) fn assert_presentation(&self, approval: &Value) {
+        let text = String::from_utf8_lossy(&self.tty).replace('\r', "");
+        let source = approval["source"]["node_id"].as_str().unwrap();
+        let sink = approval["sink"]["node_id"].as_str().unwrap();
+        let mode = approval["endpoint_mode"].as_str().unwrap();
+        let device = if mode == "virtual_microphone" {
+            approval["node_name"].as_str().unwrap()
+        } else {
+            approval["target"].as_str().unwrap()
+        };
+        let seconds = approval["duration_secs"].as_u64().unwrap();
+        assert!(text.contains(&format!("Source {source} -> Sink {sink}\n")));
+        assert!(text.contains(&format!(
+            "Mode: {mode}; device: {device}; duration: {seconds} seconds\n"
+        )));
+        assert!(text.contains(
+            "WARNING: plaintext unauthenticated UDP media; trusted isolated lab only.\n"
+        ));
+    }
+
+    pub(super) fn send(&mut self, bytes: &[u8]) {
+        let deadline = Instant::now() + BOUND;
+        let mut offset = 0;
+        while offset < bytes.len() {
+            assert!(Instant::now() < deadline, "bounded private terminal input");
+            match self.master.write(&bytes[offset..]) {
+                Ok(0) => panic!("closed private terminal"),
+                Ok(n) => offset += n,
+                Err(e)
+                    if matches!(
+                        e.kind(),
+                        io::ErrorKind::WouldBlock | io::ErrorKind::Interrupted
+                    ) =>
+                {
+                    thread::sleep(Duration::from_millis(2))
+                }
+                Err(e) => panic!("private terminal write failed: {e}"),
+            }
+        }
+    }
+
+    pub(super) fn identify_node(&mut self, child: &Child) -> u32 {
+        if let Some(pid) = self.node_pid {
+            return pid;
+        }
+        let path = format!("/proc/{}/task/{}/children", child.id(), child.id());
+        let ids: Vec<u32> = fs::read_to_string(path)
+            .unwrap()
+            .split_whitespace()
+            .map(|id| id.parse().unwrap())
+            .collect();
+        assert_eq!(
+            ids.len(),
+            1,
+            "actual console must own exactly one actual Node"
+        );
+        let pid = ids[0];
+        assert_eq!(
+            fs::read_link(format!("/proc/{pid}/exe")).unwrap(),
+            self.node_binary
+        );
+        let args = fs::read(format!("/proc/{pid}/cmdline")).unwrap();
+        assert!(
+            args.split(|byte| *byte == 0)
+                .any(|arg| arg == b"linux-playback")
+        );
+        self.node_pid = Some(pid);
+        pid
+    }
+
+    pub(super) fn assert_hidden(&self) {
+        assert_eq!(
+            attributes(&self.slave).c_lflag & (libc::ECHO | libc::ECHONL),
+            0
+        );
+    }
+
+    pub(super) fn assert_finished(&self) {
+        let after = attributes(&self.slave);
+        assert_eq!(
+            after.c_lflag, self.original.c_lflag,
+            "TTY local flags restored"
+        );
+        assert_eq!(
+            after.c_iflag, self.original.c_iflag,
+            "TTY input flags restored"
+        );
+        assert_eq!(
+            after.c_oflag, self.original.c_oflag,
+            "TTY output flags restored"
+        );
+        assert_eq!(after.c_cc, self.original.c_cc, "TTY controls restored");
+        let pid = self.node_pid.expect("actual Node ownership was observed");
+        assert!(
+            !Path::new(&format!("/proc/{pid}")).exists(),
+            "actual Node reaped before console exit"
+        );
+    }
+}
+
+fn parse_event(line: &str) -> Option<Value> {
+    let json = line
+        .strip_prefix("Playback event: ")?
+        .trim_end_matches('\r');
+    if json.len() > 4096 {
+        return None;
+    }
+    let value: Value = serde_json::from_str(json).ok()?;
+    if value["version"] != 1
+        || !matches!(
+            value["event"].as_str()?,
+            "listening"
+                | "approval_required"
+                | "awaiting_peer_offer"
+                | "status"
+                | "stopped"
+                | "failed"
+        )
+    {
+        return None;
+    }
+    Some(value)
+}
+
+#[test]
+fn pure_console_public_event_parser_requires_exact_canonical_schema() {
+    assert!(parse_event("Playback event: {\"version\":1,\"event\":\"status\"}\r").is_some());
+    for line in [
+        "{\"version\":1,\"event\":\"status\"}",
+        "Playback event: {\"version\":2,\"event\":\"status\"}",
+        "Playback event: {\"version\":1,\"event\":\"credentials\"}",
+        "Playback event: not json",
+    ] {
+        assert!(parse_event(line).is_none());
+    }
+}

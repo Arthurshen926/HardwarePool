@@ -1,3 +1,5 @@
+mod media;
+
 use crate::{invitation::InvitationFifo, terminal::Terminal};
 use capyio_core::{MessageId, NodeId};
 use clap::{Parser, Subcommand};
@@ -63,7 +65,7 @@ impl Drop for Signals {
 #[derive(Parser)]
 #[command(
     name = "capyio-linux-console",
-    about = "Explicit finite Linux pairing terminal controller (no resource grants)."
+    about = "Explicit finite Linux pairing and playback controller (no automatic resource grants)."
 )]
 struct Args {
     #[arg(long)]
@@ -97,6 +99,13 @@ enum Action {
         #[arg(long)]
         peer: NodeId,
     },
+    /// One finite paired-store playback session; nonsecret explicit manifest only.
+    Playback {
+        #[arg(long)]
+        config: PathBuf,
+        #[arg(long)]
+        peer: NodeId,
+    },
     /// Starts no transaction. In any active prompt, use cancel or Ctrl-C.
     Cancel,
 }
@@ -125,6 +134,11 @@ fn validate(args: &Args) -> io::Result<()> {
             }
         }
         Action::Revoke { peer } if peer.as_uuid().is_nil() => return Err(invalid()),
+        Action::Playback { config, peer }
+            if !config.is_absolute() || peer.as_uuid().is_nil() || *peer == args.pairing_node =>
+        {
+            return Err(invalid());
+        }
         _ => {}
     }
     Ok(())
@@ -144,11 +158,21 @@ impl Drop for Secret {
         self.0.fill(0);
     }
 }
-#[derive(Default)]
 struct Frames {
     bytes: Vec<u8>,
     count: usize,
+    limit: usize,
     eof: bool,
+}
+impl Default for Frames {
+    fn default() -> Self {
+        Self {
+            bytes: Vec::new(),
+            count: 0,
+            limit: 64,
+            eof: false,
+        }
+    }
 }
 impl Frames {
     fn poll(&mut self, input: &mut impl Read) -> io::Result<Option<Value>> {
@@ -174,7 +198,7 @@ impl Frames {
             let length = self.length()?;
             if self.bytes.len() >= 4 + length {
                 self.count += 1;
-                if self.count > 64 {
+                if self.count > self.limit {
                     return Err(invalid());
                 }
                 let result =
@@ -229,8 +253,14 @@ fn sibling() -> io::Result<PathBuf> {
 }
 
 fn require_node_capability() -> io::Result<()> {
+    require_node_capability_for("linux-pairing")
+}
+fn require_node_capability_for(command: &str) -> io::Result<()> {
+    if !["linux-pairing", "linux-playback"].contains(&command) {
+        return Err(invalid());
+    }
     let mut child = Command::new(sibling()?)
-        .args(["linux-pairing", "--help"])
+        .args([command, "--help"])
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
@@ -286,7 +316,7 @@ fn require_node_capability() -> io::Result<()> {
                     return Err(invalid());
                 }
                 let help = std::str::from_utf8(&bytes).map_err(|_| invalid())?;
-                if !help.contains("Usage: capyio-node linux-pairing ")
+                if !help.contains(&format!("Usage: capyio-node {command} "))
                     || !help.contains("--pairing-collection")
                 {
                     return Err(invalid());
@@ -311,12 +341,23 @@ struct Node {
     frames: Frames,
     error_bytes: usize,
     reaped: bool,
+    stop_on_drop: bool,
 }
 impl Node {
     fn spawn(args: &Args) -> io::Result<Self> {
+        Self::spawn_for(args, "linux-pairing", None)
+    }
+    fn spawn_for(args: &Args, command: &str, peer: Option<NodeId>) -> io::Result<Self> {
+        if !matches!(
+            (command, peer),
+            ("linux-pairing", None) | ("linux-playback", Some(_))
+        ) {
+            return Err(invalid());
+        }
         let path = sibling()?;
-        let mut child = Command::new(path)
-            .args(["linux-pairing", "--trusted-lab", "--pairing-node"])
+        let mut process = Command::new(path);
+        process
+            .args([command, "--trusted-lab", "--pairing-node"])
             .arg(args.pairing_node.to_string())
             .arg("--pairing-state")
             .arg(&args.pairing_state)
@@ -326,8 +367,11 @@ impl Node {
             .arg(&args.pairing_collection)
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
-            .spawn()?;
+            .stderr(Stdio::piped());
+        if let Some(peer) = peer {
+            process.arg("--pairing-peer").arg(peer.to_string());
+        }
+        let mut child = process.spawn()?;
         let input = child.stdin.take().ok_or_else(invalid)?;
         let output = child.stdout.take().ok_or_else(invalid)?;
         let error = child.stderr.take().ok_or_else(invalid)?;
@@ -339,11 +383,22 @@ impl Node {
             frames: Frames::default(),
             error_bytes: 0,
             reaped: false,
+            stop_on_drop: command == "linux-playback",
         };
         nonblocking(result.input.as_ref().ok_or_else(invalid)?)?;
         nonblocking(&result.output)?;
         nonblocking(&result.error)?;
         Ok(result)
+    }
+    fn set_stop_on_drop(&mut self) {
+        self.stop_on_drop = true;
+    }
+    fn set_frame_limit(&mut self, limit: usize) -> io::Result<()> {
+        if !(64..=2048).contains(&limit) || self.frames.count != 0 {
+            return Err(invalid());
+        }
+        self.frames.limit = limit;
+        Ok(())
     }
     fn send(&mut self, value: &impl Serialize, deadline: Instant) -> io::Result<()> {
         let mut payload = Secret(serde_json::to_vec(value).map_err(|_| invalid())?);
@@ -399,6 +454,13 @@ impl Node {
         self.frames.poll(&mut self.output)
     }
 }
+fn shutdown_frame(media: bool) -> &'static [u8] {
+    if media {
+        b"\0\0\0\x1e{\"version\":1,\"command\":\"stop\"}"
+    } else {
+        b"\0\0\0\x1f{\"version\":1,\"action\":\"cancel\"}"
+    }
+}
 impl Drop for Node {
     fn drop(&mut self) {
         if self.reaped {
@@ -406,7 +468,8 @@ impl Drop for Node {
         }
         // Best effort cancel, then EOF. Always reap, escalating only this child.
         if let Some(input) = &mut self.input {
-            let _ = input.write_all(b"\0\0\0\x1f{\"version\":1,\"action\":\"cancel\"}");
+            let frame = shutdown_frame(self.stop_on_drop);
+            let _ = input.write_all(frame);
         }
         self.input.take();
         let deadline = Instant::now() + Duration::from_secs(2);
@@ -642,6 +705,9 @@ pub fn run() -> io::Result<()> {
         return Err(invalid());
     }
     validate(&args)?;
+    if let Action::Playback { config, peer } = &args.action {
+        return media::run(&args, config, *peer);
+    }
     let _signals = Signals::install()?;
     let deadline = Instant::now() + LIFETIME;
     require_node_capability()?;
@@ -679,7 +745,7 @@ pub fn run() -> io::Result<()> {
         Action::List=>node.send(&json!({"version":1,"action":"list"}),deadline)?,
         Action::Recover=>node.send(&json!({"version":1,"action":"recover"}),deadline)?,
         Action::Revoke{peer}=>node.send(&json!({"version":1,"action":"revoke","peer_node_id":peer}),deadline)?,
-        Action::Cancel=>unreachable!(),
+        Action::Cancel | Action::Playback { .. } =>unreachable!(),
     }
     let mut confirmation: Option<Confirmation> = None;
     let mut challenged = false;
@@ -859,6 +925,16 @@ pub fn run() -> io::Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn shutdown_frames_keep_pairing_cancel_separate_from_media_stop() {
+        for (media, key, command) in [(false, "action", "cancel"), (true, "command", "stop")] {
+            let frame = shutdown_frame(media);
+            let length = u32::from_be_bytes(frame[..4].try_into().unwrap()) as usize;
+            assert_eq!(length, frame.len() - 4);
+            let value: Value = serde_json::from_slice(&frame[4..]).unwrap();
+            assert_eq!(value, json!({"version":1,key:command}));
+        }
+    }
     #[test]
     fn frame_bounds_and_partial_eof_fail_closed() {
         for bytes in [

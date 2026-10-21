@@ -13,6 +13,8 @@ from run_pipewire_loopback import (
     virtual_expectation, virtual_nodes, select_virtual_source, recorder_port,
     graph_fingerprint, verify_virtual_removed,
     ownership_number, source_process_id, ownership_diagnostic, verify_process_owner,
+    CONSOLE_SCENARIOS, CONSOLE_PENDING, console_marker, verify_console_owner,
+    verify_playback_process_owner,
 )
 
 
@@ -316,6 +318,133 @@ class PairedStoreHarnessTests(unittest.TestCase):
             with patch.object(Path, 'read_text', return_value=unexpected):
                 with self.assertRaises(ValueError):
                     legacy.verify_pairing()
+
+
+class ConsoleHarnessTests(unittest.TestCase):
+    def test_console_profile_requires_explicit_protected_executable_and_scenario(self):
+        root = Path('/synthetic-not-opened')
+        self.assertEqual(len(CONSOLE_SCENARIOS), 8)
+        self.assertEqual(len(CONSOLE_PENDING), 5)
+        for kwargs in ({'console': True},
+                       {'console': True, 'e2e': True, 'console_scenario': 'waveform'},
+                       {'console': True, 'e2e': True, 'paired_store': True},
+                       {'console_scenario': 'waveform'},
+                       {'console': True, 'e2e': True, 'paired_store': True,
+                        'console_scenario': 'waveform', 'virtual_scenario': 'child_exit'}):
+            with self.subTest(kwargs=kwargs), self.assertRaises(ValueError):
+                Harness(root, **kwargs)
+        for scenario in CONSOLE_SCENARIOS:
+            for virtual in (None, 'waveform'):
+                harness = Harness(root, e2e=True, paired_store=True, console=True,
+                                  console_scenario=scenario, virtual_scenario=virtual)
+                self.assertEqual(harness.env['CAPYIO_AUDIO_CONSOLE'], '1')
+                self.assertEqual(harness.env['CAPYIO_AUDIO_CONSOLE_SCENARIO'], scenario)
+                self.assertEqual(harness.env['CAPYIO_AUDIO_PAIRED_STORE'], '1')
+                self.assertNotIn('DBUS_SESSION_BUS_ADDRESS', harness.env)
+                self.assertEqual(harness.pending_console(), scenario in CONSOLE_PENDING)
+
+    def test_exact_console_marker_requires_exact_test_not_legacy_paired_substitution(self):
+        for mode, virtual, name in (
+                ('playback', None, 'hosted_console_playback_end_to_end'),
+                ('virtual_microphone', 'waveform', 'hosted_console_virtual_microphone_end_to_end')):
+            for scenario in CONSOLE_SCENARIOS:
+                harness = Harness(Path('/synthetic-not-opened'), e2e=True, paired_store=True,
+                                  console=True, console_scenario=scenario, virtual_scenario=virtual)
+                evidence = console_marker(mode, scenario) + '\n'
+                passed = f'test {name} ... ok\ntest result: ok. 1 passed; 0 failed; 0 ignored; 20 filtered out;\n'
+                with patch.object(Path, 'read_text', side_effect=[evidence, passed]):
+                    harness.verify_console()
+                for logs in ([evidence + evidence, passed], ['', passed],
+                             [evidence.replace('actual_tty=true', 'actual_tty=false'), passed],
+                             [evidence.replace('scenario=' + scenario, 'scenario=unknown'), passed],
+                             [evidence, passed.replace(name, 'hosted_pipewire_android_source_end_to_end')],
+                             [evidence, passed.replace('1 passed', '0 passed')],
+                             [evidence, passed.replace('0 ignored', '1 ignored')]):
+                    with self.subTest(mode=mode, scenario=scenario, logs=logs), \
+                            patch.object(Path, 'read_text', side_effect=logs), self.assertRaises(ValueError):
+                        harness.verify_console()
+        legacy = Harness(Path('/synthetic-not-opened'), e2e=True)
+        with patch.object(Path, 'read_text', return_value='unrelated\n'):
+            legacy.verify_console()
+        with patch.object(Path, 'read_text', return_value=console_marker('playback', 'waveform')), \
+                self.assertRaises(ValueError):
+            legacy.verify_console()
+
+    def test_console_ownership_requires_actual_fixed_siblings_and_direct_parent(self):
+        value = {'console_pid': 123, 'owner_pid': 124, 'mode': 'playback', 'scenario': 'waveform'}
+        resolves = [Path('/owned/capyio-linux-console'), Path('/owned/capyio-node')]
+        args = [b'console\0--pairing-state\0/private/state\0playback\0',
+                b'node\0linux-playback\0--pairing-state\0/private/state\0']
+        with patch.object(Path, 'resolve', side_effect=resolves), \
+                patch.object(Path, 'read_text', return_value='PPid:\t123\n'), \
+                patch.object(Path, 'read_bytes', side_effect=args):
+            self.assertEqual(verify_console_owner(value, 'playback', 'waveform'), value)
+        for changes in ({'console_pid': True}, {'owner_pid': 123}, {'owner_pid': 1},
+                        {'mode': 'virtual_microphone'}, {'scenario': 'expiry'}, {'extra': 1}):
+            with self.subTest(changes=changes), self.assertRaises(ValueError):
+                verify_console_owner(value | changes, 'playback', 'waveform')
+        for binaries in ([Path('/owned/fake-console'), resolves[1]],
+                         [resolves[0], Path('/other/capyio-node')]):
+            with patch.object(Path, 'resolve', side_effect=binaries), self.assertRaises(ValueError):
+                verify_console_owner(value, 'playback', 'waveform')
+        with patch.object(Path, 'resolve', side_effect=resolves), \
+                patch.object(Path, 'read_text', return_value='PPid:\t999\n'), self.assertRaises(ValueError):
+            verify_console_owner(value, 'playback', 'waveform')
+        with patch.object(Path, 'resolve', side_effect=resolves), \
+                patch.object(Path, 'read_text', return_value='PPid:\t123\n'), \
+                patch.object(Path, 'read_bytes', side_effect=[args[0], b'node\0linux-playback\0']), \
+                self.assertRaises(ValueError):
+            verify_console_owner(value, 'playback', 'waveform')
+
+    def test_console_cleanup_signals_only_recorded_owned_session_before_fixture(self):
+        harness = Harness(Path('/synthetic-not-opened'), e2e=True, paired_store=True,
+                          console=True, console_scenario='waveform')
+        child = Mock()
+        harness.children = [child]
+        with patch.object(Path, 'is_file', return_value=True), \
+                patch.object(Path, 'read_text', return_value='{"console_pid":123}'), \
+                patch.object(Path, 'exists', side_effect=[True, False, False]), \
+                patch.object(Path, 'resolve', return_value=Path('/owned/capyio-linux-console')), \
+                patch('run_pipewire_loopback.os.getpgid', return_value=123), \
+                patch('run_pipewire_loopback.os.killpg') as kill, \
+                patch.object(harness, 'stop') as stop:
+            harness.close()
+        kill.assert_called_once_with(123, signal.SIGTERM)
+        stop.assert_called_once_with(child)
+
+    def test_console_cleanup_refuses_changed_binary_or_process_group(self):
+        for binary, group in ((Path('/owned/unrelated'), 123),
+                              (Path('/owned/capyio-linux-console'), 999)):
+            harness = Harness(Path('/synthetic-not-opened'), e2e=True, paired_store=True,
+                              console=True, console_scenario='waveform')
+            with patch.object(Path, 'is_file', return_value=True), \
+                    patch.object(Path, 'read_text', return_value='{"console_pid":123}'), \
+                    patch.object(Path, 'exists', return_value=True), \
+                    patch.object(Path, 'resolve', return_value=binary), \
+                    patch('run_pipewire_loopback.os.getpgid', return_value=group), \
+                    patch('run_pipewire_loopback.os.killpg') as kill, self.assertRaises(RuntimeError):
+                harness.close()
+            kill.assert_not_called()
+
+    def test_playback_helper_ownership_cannot_use_name_only_or_wrong_target(self):
+        player = dict(id=50, type='PipeWire:Interface:Node', info={'props': {
+            'node.name': 'synthetic.player', 'target.object': 'capyio.test.null', 'client.id': 40}})
+        client = dict(id=40, type='PipeWire:Interface:Client', info={'props': {
+            'application.process.id': 125, 'pipewire.sec.pid': 125}})
+        port = dict(id=51, type='PipeWire:Interface:Port', info={'props': {'node.id': 50}})
+        graph = [player, client, port]
+        with patch.object(Path, 'read_text', return_value='PPid:\t124\n'), \
+                patch.object(Path, 'read_bytes', return_value=b'/usr/bin/pw-cat\0--playback\0--target=capyio.test.null\0-'), \
+                patch.object(Path, 'resolve', return_value=Path('/usr/bin/pw-cat')):
+            self.assertEqual(verify_playback_process_owner(graph, 124), (125, {50, 51}))
+            with self.assertRaises(ValueError):
+                verify_playback_process_owner(graph, 999)
+            with patch.object(Path, 'read_bytes', return_value=b'pw-cat\0--playback\0--target=0\0-'), \
+                    self.assertRaises(ValueError):
+                verify_playback_process_owner(graph, 124)
+            for bad in ([], [player, port], graph + [player]):
+                with self.assertRaises(ValueError):
+                    verify_playback_process_owner(bad, 124)
 
 
 if __name__ == '__main__':

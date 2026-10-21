@@ -1389,3 +1389,11 @@ owned invitation FIFO cleanup and mandatory isolated two-controller PTY acceptan
 The five-binary staging inventory includes the console; only the paired profile
 enables both console and Node pairing operations. No resource grants or renewal
 are introduced.
+
+
+ADR 1548 adds only interactive finite playback/virtual-microphone control to the
+Linux console, with exact current-session confirmation and unchanged Node and
+counterpart resource authority. Its mandatory isolated PTY/PipeWire profile is
+separate from legacy/paired launcher tests. UDP audio remains unauthenticated
+plaintext trusted-lab media; other console media directions and renewal are not
+implemented.

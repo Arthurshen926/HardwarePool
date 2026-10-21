@@ -13,7 +13,7 @@ fn main() {
     let result: std::io::Result<()> = Err(std::io::Error::other("unsupported platform"));
     if result.is_err() {
         eprintln!(
-            "Linux pairing console failed; no automatic retry. Check explicit selectors, paired-store build and interactive terminal. Local persistence may require inspection."
+            "Linux console operation failed; no automatic retry. Check explicit selectors, paired-store build and interactive terminal. Pairing persistence may require inspection."
         );
         std::process::exit(1);
     }

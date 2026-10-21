@@ -820,6 +820,7 @@ dependencies = [
  "capyio-testkit",
  "capyio-vcamdroid-adapter",
  "clap",
+ "libc",
  "rcgen",
  "rustix",
  "serde_json",
