@@ -64,7 +64,7 @@ jobs:
         run: |
           set -euo pipefail
           cargo test --locked -p capyio-linux-host --features paired-store --lib invitation_pipe::tests
-          cargo test --locked -p capyio-enrollment --lib welcome_announcement_policy_preserves_default_and_disables_manual
+          timeout --signal=TERM --kill-after=10s 90s cargo test --locked -p capyio-enrollment --lib -- --test-threads=1
           cargo test --locked -p capyio-node --features paired-store --test linux_pairing_welcome -- --list | tee "$RUNNER_TEMP/pairing-welcome-tests.txt"
           for test in ipc_welcome_two_nodes_bilateral_approval_preserves_separate_protected_identities ipc_welcome_waiting_cancel_and_eof_close_without_persistence ipc_welcome_two_nodes_require_both_approvals_and_cancel_or_eof_never_persist ipc_welcome_rejects_wrong_peer_stale_nonce_and_pipelined_preapproval ipc_welcome_invalid_secret_channels_and_bind_fail_without_invitation ipc_welcome_locked_backend_fails_before_binding_or_secret_output ipc_welcome_wrong_pin_consumes_window_without_replacement_or_restart ipc_welcome_second_joiner_cannot_replace_selected_peer_or_reuse_window ipc_welcome_fixed_three_minute_expiry_closes_without_approval_or_persistence ipc_welcome_rejects_same_fifo_as_ordinary_stdout_by_inode; do
             grep -Fx "$test: test" "$RUNNER_TEMP/pairing-welcome-tests.txt"

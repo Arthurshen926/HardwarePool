@@ -9,6 +9,7 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::{
     collections::BTreeSet,
+    io::{self, Read, Write},
     net::{IpAddr, Shutdown, SocketAddr, TcpListener, TcpStream},
     sync::{Arc, Mutex},
     thread,
@@ -44,6 +45,74 @@ pub struct EnrollmentStatus {
 mod tests {
     use super::*;
     use capyio_control_credentials::ControlCredentialBundle;
+
+    #[test]
+    fn approval_exchange_observes_close_without_local_consent() {
+        for peer in [b"".as_slice(), b"\0\0\0\x09approve/1".as_slice()] {
+            let mut channel = ApprovalFixture::new(peer);
+            assert!(exchange_approvals(&mut channel, || Ok(false)).is_err());
+            assert!(channel.sent.is_empty());
+        }
+    }
+
+    #[test]
+    fn approval_exchange_preserves_partial_frame_and_requires_local_consent() {
+        let mut channel = ApprovalFixture::new(b"\0\0\0\x09approve/1");
+        channel.timeout_between_bytes = true;
+        let mut polls = 0;
+        exchange_approvals(&mut channel, || {
+            polls += 1;
+            Ok(polls >= 26)
+        })
+        .unwrap();
+        assert_eq!(channel.sent, b"\0\0\0\x09approve/1");
+        assert!(polls >= 26);
+    }
+
+    #[test]
+    fn approval_exchange_rejects_invalid_frame_and_local_cancellation() {
+        let mut channel = ApprovalFixture::new(b"\0\0\0\x09reject!/1");
+        assert!(exchange_approvals(&mut channel, || Ok(true)).is_err());
+        let mut channel = ApprovalFixture::new(b"\0\0\0\x09approve/1");
+        assert!(exchange_approvals(&mut channel, || Err("cancelled".into())).is_err());
+        assert!(channel.sent.is_empty());
+    }
+
+    struct ApprovalFixture<'a> {
+        peer: &'a [u8],
+        sent: Vec<u8>,
+        timeout_between_bytes: bool,
+        timeout_next: bool,
+    }
+    impl<'a> ApprovalFixture<'a> {
+        fn new(peer: &'a [u8]) -> Self {
+            Self {
+                peer,
+                sent: Vec::new(),
+                timeout_between_bytes: false,
+                timeout_next: false,
+            }
+        }
+    }
+    impl Read for ApprovalFixture<'_> {
+        fn read(&mut self, bytes: &mut [u8]) -> io::Result<usize> {
+            if self.timeout_next {
+                self.timeout_next = false;
+                return Err(io::ErrorKind::TimedOut.into());
+            }
+            self.timeout_next = self.timeout_between_bytes;
+            self.peer.read(bytes)
+        }
+    }
+    impl Write for ApprovalFixture<'_> {
+        fn write(&mut self, bytes: &[u8]) -> io::Result<usize> {
+            self.sent.extend_from_slice(bytes);
+            Ok(bytes.len())
+        }
+        fn flush(&mut self) -> io::Result<()> {
+            Ok(())
+        }
+    }
 
     #[test]
     fn welcome_announcement_policy_preserves_default_and_disables_manual() {
@@ -680,6 +749,40 @@ fn wait(
         thread::sleep(Duration::from_millis(100));
     }
 }
+// Fixed-size incremental framing preserves bytes across socket timeouts. The
+// peer may approve first, but we keep observing closure until local consent.
+fn exchange_approvals(
+    channel: &mut (impl Read + Write),
+    mut locally_approved: impl FnMut() -> Result<bool, String>,
+) -> Result<(), String> {
+    const APPROVAL: &[u8] = b"\0\0\0\x09approve/1";
+    let mut received = 0;
+    let mut sent = false;
+    loop {
+        if locally_approved()? && !sent {
+            send(channel, b"approve/1")?;
+            sent = true;
+        }
+        if sent && received == APPROVAL.len() {
+            return Ok(());
+        }
+        let mut byte = [0];
+        match channel.read(&mut byte) {
+            Ok(0) => return Err("peer closed during pairing approval".into()),
+            Ok(_) if APPROVAL.get(received) == Some(&byte[0]) => received += 1,
+            Ok(_) => return Err("invalid peer pairing approval".into()),
+            Err(e)
+                if matches!(
+                    e.kind(),
+                    io::ErrorKind::WouldBlock
+                        | io::ErrorKind::TimedOut
+                        | io::ErrorKind::Interrupted
+                ) => {}
+            Err(_) => return Err("peer transport failed during pairing approval".into()),
+        }
+    }
+}
+
 fn finish(inner: &Arc<Mutex<Inner>>, result: Result<(), String>) {
     let mut state = inner.lock().unwrap();
     state.status.pin = None;
@@ -769,18 +872,18 @@ fn run(
         state.status.peer_node_id = Some(peer.node_id.to_string());
         state.status.peer_name = Some(peer.name.clone());
     }
-    wait(&inner, deadline, |s| s.approved)?;
-    // Confirmed TLS channel is the sole carrier for user decisions and receipts.
+    // Read even before local approval so peer cancellation cannot leave a stale
+    // confirmation window alive. Receiving approval never implies local consent.
+    channel.set_read_timeout(Duration::from_millis(100))?;
+    exchange_approvals(&mut channel, || {
+        check(&inner, deadline)?;
+        Ok(inner.lock().unwrap().approved)
+    })?;
+    // Subsequent receipts retain the existing finite overall deadline.
     let timeout = deadline
         .saturating_duration_since(Instant::now())
         .max(Duration::from_millis(1));
-    // Change the actual TLS transport, not the duplicated cancellation handle.
     channel.set_read_timeout(timeout)?;
-    send(&mut channel, b"approve/1")?;
-    if receive(&mut channel).map_err(|e| format!("waiting for peer approval: {e}"))? != b"approve/1"
-    {
-        return Err("对端未确认配对".into());
-    }
     let mut bundle = local
         .credential_for(&peer)?
         .encode()

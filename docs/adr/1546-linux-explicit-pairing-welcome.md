@@ -95,6 +95,15 @@ grants no source/sink resource and renews no lease. Enrollment completion is
 not global readiness or physical-device acceptance. Later finite connections
 still require the existing exact pins and independent local/remote approvals.
 
+The authenticated approval phase reads incrementally while awaiting local
+consent, using short socket read timeouts within the unchanged overall window.
+Peer EOF/cancellation therefore closes a pending confirmation instead of leaving
+it alive until expiry. A received approval is not local consent: both the exact
+existing peer approval frame and explicit local approval remain prerequisites
+for preparation/persistence. Partial frames survive read timeouts; unexpected
+bytes fail closed. This is unchanged wire framing, not a new cancellation
+message or permission to persist after only one approval.
+
 ## Verification
 
 Mandatory hosted tests run two actual Node processes, each with temporary
