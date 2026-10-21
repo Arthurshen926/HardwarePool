@@ -1686,3 +1686,8 @@ production mTLS, local/Source approval, lease or Active semantics.
 ADR 1543 adds the same explicit paired-store identity source to finite playback,
 virtual microphone, capture and virtual speaker launchers. Existing source/sink
 binding, incoming-draft playback negotiation, approvals and leases are unchanged.
+
+ADR 1544 adds explicit finite `linux-pairing` join/list/revoke management over
+private pipes. It reuses EnrollmentManager and protected store receipts, requires
+fresh exact-peer confirmation and starts no control/resource service. Invitation
+hosting, interactive recovery and resource approval remain separate.

@@ -1579,3 +1579,9 @@ these tests do not turn per-launch metadata loading into a live revocation watch
 ADR 1543 applies this exact-peer snapshot to audio playback and capture, including
 existing virtual endpoints. Audio UDP remains plaintext and trusted-lab only;
 pinned control identity does not encrypt media or authorize a local resource.
+
+ADR 1544 treats each join/revoke as a fresh explicit trust decision. PINs enter
+only through private FIFO input; no manager error/PIN/credential status is echoed.
+Existing and revoked peers cannot be replaced by first enrollment. Local saved
+state is distinguished from bilateral completion, without automatic retry or
+rollback claims; pairing never grants a resource or renews a lease.

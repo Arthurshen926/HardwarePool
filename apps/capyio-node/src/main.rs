@@ -36,6 +36,20 @@ enum Command {
         #[arg(long, requires = "mock_routes", conflicts_with = "mock_payload")]
         mock_batch: bool,
     },
+    /// Explicit finite pairing management over exclusive inherited FIFO pipes.
+    #[cfg(feature = "paired-store")]
+    LinuxPairing {
+        #[arg(long, required = true)]
+        trusted_lab: bool,
+        #[arg(long)]
+        pairing_state: std::path::PathBuf,
+        #[arg(long)]
+        pairing_node: capyio_core::NodeId,
+        #[arg(long)]
+        pairing_bus_address: String,
+        #[arg(long)]
+        pairing_collection: String,
+    },
     /// Explicit one-shot trusted-lab playback. Private inherited FIFO bootstrap;
     /// no credentials in arguments, no enrollment, no listener without this command.
     LinuxPlayback {
@@ -158,6 +172,38 @@ fn main() -> anyhow::Result<()> {
             }
             host.serve(std::io::stdin().lock(), std::io::stdout().lock())?;
             Ok(())
+        }
+        #[cfg(feature = "paired-store")]
+        Command::LinuxPairing {
+            trusted_lab,
+            pairing_state,
+            pairing_node,
+            pairing_bus_address,
+            pairing_collection,
+        } => {
+            anyhow::ensure!(trusted_lab, "explicit trusted-lab opt-in required");
+            #[cfg(target_os = "linux")]
+            {
+                capyio_linux_host::run_pairing_management_stdio(
+                    capyio_linux_host::PairingManagementSelection {
+                        local_node: pairing_node,
+                        state_path: pairing_state,
+                        bus_address: pairing_bus_address,
+                        collection: pairing_collection,
+                    },
+                )
+                .map_err(|_| anyhow::anyhow!("Linux pairing management failed"))
+            }
+            #[cfg(not(target_os = "linux"))]
+            {
+                let _ = (
+                    pairing_state,
+                    pairing_node,
+                    pairing_bus_address,
+                    pairing_collection,
+                );
+                anyhow::bail!("Linux pairing management requires Linux")
+            }
         }
         Command::LinuxPlayback {
             trusted_lab,
@@ -510,6 +556,35 @@ impl PairedStoreArgs {
 #[cfg(all(test, feature = "paired-store"))]
 mod paired_store_cli_tests {
     use super::*;
+    #[test]
+    fn pairing_management_requires_explicit_public_selectors_only() {
+        let args = [
+            "node",
+            "linux-pairing",
+            "--trusted-lab",
+            "--pairing-state",
+            "/synthetic",
+            "--pairing-node",
+            "00000000-0000-0000-0000-000000000001",
+            "--pairing-bus-address",
+            "unix:path=/synthetic",
+            "--pairing-collection",
+            "/org/freedesktop/secrets/collection/test",
+        ];
+        assert!(Cli::try_parse_from(args).is_ok());
+        for index in [2, 3, 5, 7, 9] {
+            let count = if index == 2 { 1 } else { 2 };
+            let mut missing = args.to_vec();
+            missing.drain(index..index + count);
+            assert!(Cli::try_parse_from(missing).is_err());
+        }
+        for secret_flag in ["--pin", "--credentials", "--private-key", "--pairing-peer"] {
+            let mut extra = args.to_vec();
+            extra.extend([secret_flag, "synthetic"]);
+            assert!(Cli::try_parse_from(extra).is_err());
+        }
+    }
+
     #[test]
     fn paired_store_selector_group_is_all_or_none() {
         for command in [

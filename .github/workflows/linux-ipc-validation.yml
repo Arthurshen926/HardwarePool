@@ -50,6 +50,16 @@ jobs:
           timeout --signal=TERM --kill-after=10s 600s cargo test --locked -p capyio-node --features paired-store --test linux_paired_store --test linux_camera --test linux_touchpad -- --test-threads=1
           cargo test --locked -p capyio-node --features paired-store --bin capyio-node paired_store_cli_tests
           cargo clippy --locked -p capyio-node -p capyio-linux-host --features paired-store --all-targets -- -D warnings
+      - name: Require explicit finite enrollment management against isolated peers
+        run: |
+          set -euo pipefail
+          cargo test --locked -p capyio-linux-host --features paired-store --lib pairing_management::tests
+          cargo test --locked -p capyio-node --features paired-store --test linux_pairing_management -- --list | tee "$RUNNER_TEMP/pairing-management-tests.txt"
+          for test in ipc_pairing_bilateral_enrollment_lists_bootstraps_and_explicitly_revokes ipc_pairing_rejects_preapproval_wrong_peer_stale_request_and_replay ipc_pairing_requires_peer_approval_and_cancel_or_eof_never_persists ipc_pairing_locked_or_missing_backend_fails_before_networking ipc_pairing_revoke_rejects_stale_wrong_peer_replay_cancel_and_eof ipc_pairing_pending_or_corrupt_journal_blocks_before_networking ipc_pairing_existing_and_revoked_peer_cannot_replace_identity ipc_pairing_uncertain_create_retains_item_without_claiming_saved_or_retrying; do
+            grep -Fx "$test: test" "$RUNNER_TEMP/pairing-management-tests.txt"
+          done
+          timeout --signal=TERM --kill-after=10s 240s cargo test --locked -p capyio-node --features paired-store --test linux_pairing_management -- --test-threads=1 --nocapture 2>&1 | tee "$RUNNER_TEMP/pairing-management-results.txt"
+          grep -F 'test result: ok. 8 passed; 0 failed; 0 ignored;' "$RUNNER_TEMP/pairing-management-results.txt"
       - name: Build repository mock adapters
         run: cargo build --locked -p capyio-mock-source -p capyio-mock-sink
       - name: Require finite IPC regression tests

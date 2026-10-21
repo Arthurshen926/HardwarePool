@@ -210,6 +210,11 @@ impl<B: CredentialBackend> LinuxPairingStore<B> {
             .map(|v| v.0)
             .unwrap_or(PairedPeerDirectory::new(self.owner)?))
     }
+    /// Inspect only the bounded, validated nonsecret recovery journal.
+    /// Presence is not proof of remote completion and never initiates recovery.
+    pub fn has_pending_enrollment(&self) -> Result<bool, StoreError> {
+        Ok(self.read(JOURNAL, true)?.is_some())
+    }
     /// Only invoke via EnrollmentManager::stage_with after bilateral approval.
     pub fn stage_enrollment(&mut self, bytes: &[u8]) -> Result<(), StoreError> {
         self.files.check_owner()?;

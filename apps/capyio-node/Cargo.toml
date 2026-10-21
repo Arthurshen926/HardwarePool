@@ -28,6 +28,7 @@ tracing-subscriber.workspace = true
 capyio-linux-host = { path = "../../platform/linux/capyio-host" }
 
 [dev-dependencies]
+capyio-enrollment = { path = "../../crates/capyio-enrollment" }
 capyio-android-jni = { path = "../../platform/android/capyio-jni" }
 capyio-control-credentials = { path = "../../crates/capyio-control-credentials" }
 capyio-control-link = { path = "../../crates/capyio-control-link" }

@@ -6,6 +6,10 @@
 //! The explicit mock option creates only
 //! labeled synthetic peer/session context and mock-only authorization.
 
+#[cfg(all(target_os = "linux", feature = "paired-store"))]
+mod pairing_management;
+#[cfg(all(target_os = "linux", feature = "paired-store"))]
+pub use pairing_management::{PairingManagementSelection, run_pairing_management_stdio};
 #[cfg(target_os = "linux")]
 mod launch;
 #[cfg(target_os = "linux")]

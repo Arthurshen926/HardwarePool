@@ -108,7 +108,9 @@ fn stage_restart_recovery_reuses_exact_key_and_bootstrap_selects_one_peer() {
     let b = Fake::default();
     let bytes = fixture(owner, peer, 1);
     let mut s = store(&t, owner, b.clone());
+    assert!(!s.has_pending_enrollment().unwrap());
     s.stage_enrollment(&bytes).unwrap();
+    assert!(s.has_pending_enrollment().unwrap());
     assert!(s.bootstrap(peer).is_err());
     assert_eq!(s.load_directory().unwrap().peers().len(), 0);
     let original = b.entries.lock().unwrap().clone();
@@ -118,6 +120,7 @@ fn stage_restart_recovery_reuses_exact_key_and_bootstrap_selects_one_peer() {
     assert!(s.recover(&manager).unwrap());
     assert_eq!(manager.status().phase, "recovered");
     assert!(!s.recover(&manager).unwrap());
+    assert!(!s.has_pending_enrollment().unwrap());
     let material = s.bootstrap(peer).unwrap();
     assert_eq!(
         PairedPeerDirectory::decode_json(owner, &material.directory_json().unwrap())
@@ -230,6 +233,7 @@ fn corrupt_oversize_journal_and_symlinks_fail_closed() {
     for bytes in [b"{}".to_vec(), vec![b' '; MAX_DOCUMENT + 1]] {
         fs::write(t.0.join(JOURNAL), bytes).unwrap();
         fs::set_permissions(t.0.join(JOURNAL), fs::Permissions::from_mode(0o600)).unwrap();
+        assert!(s.has_pending_enrollment().is_err());
         assert!(s.commit_pending_enrollment().is_err());
         assert!(s.bootstrap(NodeId::new()).is_err());
     }

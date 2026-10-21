@@ -1365,3 +1365,8 @@ graph gates to paired playback, virtual microphone, capture and virtual speaker,
 retaining legacy runs and independent waveform/tone and cleanup checks. Incoming
 draft control acceptance is distinct from graph coverage. No real keyring or
 physical audio device is used.
+
+ADR 1544 adds actual `linux-pairing` subprocess tests with a bilateral synthetic
+EnrollmentManager peer and private create-capable fake Secret Service. Mandatory
+hosted tests exercise fresh confirmation, protected persistence, list/revoke and
+rejection/cancellation boundaries. No real keyring, identity or device is used.
