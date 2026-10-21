@@ -5,6 +5,14 @@ use capyio_video::VideoFrameFlags;
 use std::sync::{Arc, Mutex};
 
 fn fixture() -> (NodeRuntime, CameraBinding) {
+    fixture_format(false)
+}
+fn fixture_format(encoded_avc: bool) -> (NodeRuntime, CameraBinding) {
+    let format = if encoded_avc {
+        capyio_core::FormatDescriptor::new("cavc-avc-access-unit-v1")
+    } else {
+        VideoStreamSpec::camera_720p30_nv12().format_descriptor()
+    };
     let lab = capyio_testkit::DemoLab::new().unwrap();
     let original = lab
         .runtime
@@ -27,7 +35,7 @@ fn fixture() -> (NodeRuntime, CameraBinding) {
                 port.availability = capyio_core::Availability::Available;
                 port.interoperability_mode = InteroperabilityMode::AdapterManaged;
                 if port.profile == capyio_video::video_frames_profile() {
-                    port.formats = vec![VideoStreamSpec::camera_720p30_nv12().format_descriptor()];
+                    port.formats = vec![format.clone()];
                     port.qos_modes.insert(QosMode::Interactive);
                 }
             }
@@ -53,12 +61,7 @@ fn fixture() -> (NodeRuntime, CameraBinding) {
         .acquire_route_port_lease(route_id, original.sink, 5_000, 1_000)
         .unwrap();
     runtime
-        .prepare_route(
-            route_id,
-            Some(VideoStreamSpec::camera_720p30_nv12().format_descriptor()),
-            QosMode::Interactive,
-            1_000,
-        )
+        .prepare_route(route_id, Some(format), QosMode::Interactive, 1_000)
         .unwrap();
     runtime.begin_route_start(route_id, 1_000).unwrap();
     (
@@ -321,4 +324,77 @@ fn changed_grant_is_not_silent_extension_and_expiry_during_open_closes() {
         .is_err()
     );
     assert!(state.lock().unwrap().stop > 0);
+}
+
+#[test]
+fn encoded_projection_requires_explicit_boundary_and_preserves_route_format() {
+    let (runtime, binding) = fixture_format(true);
+    let state = Arc::new(Mutex::new(State::default()));
+    assert!(
+        RuntimeCamera::open(
+            runtime,
+            binding,
+            Duration::from_secs(1),
+            1000,
+            |_, _| panic!("must not open CAVC via NV12 entry")
+        )
+        .is_err()
+    );
+    let (runtime, binding) = fixture_format(true);
+    assert!(validate_decoded_avc_authority(&runtime, binding.clone(), 1000).is_ok());
+    let handle = state.clone();
+    let mut owner = RuntimeCamera::open_format(
+        runtime,
+        binding.clone(),
+        Duration::from_secs(1),
+        1000,
+        true,
+        |_, _| Ok(Box::new(Fake(handle))),
+    )
+    .unwrap();
+    assert_eq!(
+        owner
+            .runtime()
+            .route(binding.route_id)
+            .unwrap()
+            .selected_format,
+        Some(capyio_core::FormatDescriptor::new(
+            "cavc-avc-access-unit-v1"
+        ))
+    );
+    assert_eq!(
+        owner
+            .submit_at(descriptor(&binding, 1), vec![0; FRAME_BYTES], 1000)
+            .unwrap(),
+        SubmitOutcome::Queued
+    );
+    let (runtime, binding) = fixture();
+    assert!(validate_decoded_avc_authority(&runtime, binding, 1000).is_err());
+}
+
+#[test]
+fn encoded_owned_source_may_publish_busy_but_not_unavailable() {
+    let (mut runtime, binding) = fixture_format(true);
+    let source = runtime.route(binding.route_id).unwrap().source;
+    let mut peer = runtime
+        .snapshot()
+        .peers
+        .into_iter()
+        .find(|n| n.id == source.node_id)
+        .unwrap();
+    let cap = peer.capabilities.get_mut(&source.capability_id).unwrap();
+    cap.availability = capyio_core::Availability::Busy;
+    cap.ports.get_mut(&source.port_id).unwrap().availability = capyio_core::Availability::Busy;
+    runtime
+        .accept_peer_catalog(binding.session_id, peer.clone())
+        .unwrap();
+    assert!(validate_decoded_avc_authority(&runtime, binding.clone(), 1000).is_ok());
+    peer.capabilities
+        .get_mut(&source.capability_id)
+        .unwrap()
+        .availability = capyio_core::Availability::Offline;
+    runtime
+        .accept_peer_catalog(binding.session_id, peer)
+        .unwrap();
+    assert!(validate_decoded_avc_authority(&runtime, binding, 1000).is_err());
 }

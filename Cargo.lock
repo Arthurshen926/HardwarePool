@@ -356,6 +356,7 @@ dependencies = [
  "capyio-remote-touchpad-adapter",
  "capyio-runtime",
  "capyio-testkit",
+ "capyio-vcamdroid-adapter",
  "jni 0.22.4",
  "rcgen",
  "serde",
@@ -610,12 +611,19 @@ dependencies = [
 name = "capyio-linux-avc"
 version = "0.1.0"
 dependencies = [
+ "capyio-android-jni",
+ "capyio-control-credentials",
+ "capyio-control-link",
+ "capyio-control-tls",
  "capyio-core",
  "capyio-linux-camera",
+ "capyio-pairing",
+ "capyio-protocol",
  "capyio-runtime",
  "capyio-testkit",
  "capyio-vcamdroid-adapter",
  "capyio-video",
+ "rcgen",
 ]
 
 [[package]]

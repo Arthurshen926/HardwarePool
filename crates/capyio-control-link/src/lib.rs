@@ -121,6 +121,13 @@ impl CatalogControlLink {
     pub const fn peer_node_id(&self) -> NodeId {
         self.peer_node_id
     }
+    /// Socket address of the authenticated peer, independent of who dialed.
+    pub fn authenticated_peer_addr(&self) -> Result<std::net::SocketAddr, CatalogLinkError> {
+        match self.channel.as_ref().ok_or(CatalogLinkError::Closed)? {
+            Channel::Accepted(channel) => channel.peer_addr().map_err(Into::into),
+            Channel::Dialed(channel) => channel.peer_addr().map_err(Into::into),
+        }
+    }
     /// Address of the authenticated accepted peer. Dialed links deliberately do
     /// not satisfy the server-side Linux playback owner contract.
     pub fn accepted_peer_addr(&self) -> Result<std::net::SocketAddr, CatalogLinkError> {
@@ -504,7 +511,7 @@ impl CatalogControlLink {
                         return Err(CatalogLinkError::InvalidPeerRoute);
                     }
                 }
-                if status.camera_data.is_some()
+                if (status.camera_data.is_some() || status.secure_camera_data.is_some())
                     && (status.route.sink.node_id != self.peer_node_id
                         || status.route.source.node_id != self.local_node_id)
                 {
@@ -699,6 +706,32 @@ impl CatalogControlLink {
             route,
             offer,
         )?)
+    }
+
+    /// Send the local Sink's versioned secure camera listener on this exact Session.
+    /// No host is accepted: the recipient derives the IP from its authenticated socket.
+    pub fn send_secure_camera_data_offer_until(
+        &mut self,
+        route: &Route,
+        offer: capyio_protocol::SecureCameraDataOffer,
+        now_ms: u64,
+        deadline: Instant,
+    ) -> Result<(), CatalogLinkError> {
+        if route.session_id != self.binding.session_id
+            || route.sink.node_id != self.local_node_id
+            || route.source.node_id != self.peer_node_id
+            || !matches!(route.authorization, AuthorizationState::Authorized { expires_at_ms: Some(expiry) } if expiry > now_ms)
+        {
+            return Err(CatalogLinkError::InvalidPeerRoute);
+        }
+        self.send_bytes_until(
+            &capyio_protocol::encode_route_status_with_secure_camera_data(
+                self.binding.session_id,
+                route,
+                offer,
+            )?,
+            deadline,
+        )
     }
 
     pub fn send_route_command(

@@ -74,6 +74,7 @@ mod tests {
             haptics_data: None,
             native_audio_data: None,
             camera_data: None,
+            secure_camera_data: None,
         };
         let inbox = RouteStatusInbox::new();
         let first_session = status.session_id;

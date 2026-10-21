@@ -11,10 +11,16 @@ pub(crate) struct Guard {
     pub binding: CameraBinding,
     pub deadline_ms: u64,
     grant_ms: u64,
+    encoded_avc: bool,
     last_ms: u64,
 }
 impl Guard {
-    pub fn new(runtime: &NodeRuntime, binding: CameraBinding, now: u64) -> io::Result<Self> {
+    pub fn new_format(
+        runtime: &NodeRuntime,
+        binding: CameraBinding,
+        now: u64,
+        encoded_avc: bool,
+    ) -> io::Result<Self> {
         let route = runtime.route(binding.route_id).map_err(error)?;
         if route.state != RouteState::Starting {
             return Err(error("camera requires an explicitly Starting Route"));
@@ -32,12 +38,18 @@ impl Guard {
             binding,
             deadline_ms: grant_ms.min(lease.expires_at_ms),
             grant_ms,
+            encoded_avc,
             last_ms: now,
         };
         guard.check(runtime, now)?;
         Ok(guard)
     }
     pub fn check(&mut self, runtime: &NodeRuntime, now: u64) -> io::Result<()> {
+        let format = if self.encoded_avc {
+            capyio_core::FormatDescriptor::new("cavc-avc-access-unit-v1")
+        } else {
+            VideoStreamSpec::camera_720p30_nv12().format_descriptor()
+        };
         let b = &self.binding;
         if now < self.last_ms
             || now >= self.deadline_ms
@@ -63,8 +75,7 @@ impl Guard {
             || route.source.node_id != session.remote_node_id
             || route.profile != video_frames_profile()
             || route.backend != RouteBackend::AdapterManaged
-            || route.selected_format
-                != Some(VideoStreamSpec::camera_720p30_nv12().format_descriptor())
+            || route.selected_format != Some(format.clone())
             || route.selected_qos_mode != Some(capyio_core::QosMode::Interactive)
             || !matches!(route.state, RouteState::Starting | RouteState::Active)
             || route.authorization
@@ -89,9 +100,7 @@ impl Guard {
             || cap.availability != Availability::Available
             || port.availability != Availability::Available
             || port.profile != video_frames_profile()
-            || !port
-                .formats
-                .contains(&VideoStreamSpec::camera_720p30_nv12().format_descriptor())
+            || !port.formats.contains(&format)
         {
             return Err(error("camera destination is not a local Sink"));
         }
@@ -108,13 +117,17 @@ impl Guard {
             .ports
             .get(&route.source.port_id)
             .ok_or_else(|| error("camera Source port missing"))?;
+        // Android marks its exact running camera Source Busy. The explicit
+        // CAVC boundary retains that owned Route; this never authorizes new use.
+        let source_available = |availability| {
+            availability == Availability::Available
+                || (self.encoded_avc && availability == Availability::Busy)
+        };
         if source.direction != PortDirection::Source
-            || source_cap.availability != Availability::Available
-            || source.availability != Availability::Available
+            || !source_available(source_cap.availability)
+            || !source_available(source.availability)
             || source.profile != video_frames_profile()
-            || !source
-                .formats
-                .contains(&VideoStreamSpec::camera_720p30_nv12().format_descriptor())
+            || !source.formats.contains(&format)
         {
             return Err(error(
                 "camera Source no longer matches available negotiated catalog",

@@ -66,12 +66,25 @@ message RouteStatus {
   optional NativeAudioDataOffer native_audio_data = 3;
   optional HapticsDataOffer haptics_data = 4;
   optional CameraDataOffer camera_data = 5;
+  optional SecureCameraDataOffer secure_camera_data = 6;
 }
 
 // Explicit controlled-lab CAVC receiver; Route carries epoch and finite grant.
 message CameraDataOffer {
   uint32 port = 1;
   string stream_id = 2;
+}
+
+// Separate from legacy plain CAVC. Address comes only from the authenticated
+// control socket; this offer carries no caller-supplied host or media payload.
+enum SecureCameraTransport {
+  SECURE_CAMERA_TRANSPORT_UNSPECIFIED = 0;
+  SECURE_CAMERA_TRANSPORT_TLS13_MTLS_V1 = 1;
+}
+message SecureCameraDataOffer {
+  uint32 port = 1;
+  string stream_id = 2;
+  SecureCameraTransport transport = 3;
 }
 
 // Display negotiation contract (ADR 1505). No video payload.

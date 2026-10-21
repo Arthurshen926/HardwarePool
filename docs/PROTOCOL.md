@@ -520,3 +520,17 @@ default Linux-led mode omits the key. Exact Pending Draft admission precedes
 independent local approval; finite Linux grant then bounded Android grant precede
 all leases and media. No protobuf field, authentication policy or UDP protection
 is added.
+
+## Finite secure camera transport (ADR 1534)
+
+`RouteStatus.secure_camera_data` is a separate additive field 6. Its offer carries
+nonzero actual port, Stream UUID and explicit TLS13 mTLS v1 transport; no host
+field is accepted. The destination IP comes from the authenticated control
+channel. Reject unknown versions and multiple data offers. Legacy field 5 remains
+plain controlled-lab CAVC on fixed port 38173, never a fallback for secure data.
+Camera TLS uses ALPN `capyio-camera/1`, binding magic `CPYCAM01`, and the existing
+208-byte complete Route binding/ACK. Each complete CAVC record is prefixed by a
+u32 big-endian length bounded to 4 MiB + 56 bytes before allocation. Existing
+profile u16/176-byte transport records remain unchanged. The one-shot camera
+listener closes after successful binding ACK. See ADR 1534 for finite authority,
+Source/Sink leases, cancellation and explicit Android synthetic-proof scope.

@@ -10,6 +10,8 @@ license.workspace = true
 crate-type = ["cdylib", "rlib"]
 
 [dependencies]
+# Reuse the reviewed, transport-free bounded CAVC parser; no new third-party dependency.
+capyio-vcamdroid-adapter = { path = "../../../adapters/vcamdroid" }
 capyio-protocol = { path = "../../../crates/capyio-protocol" }
 capyio-android-host = { path = "../capyio-host" }
 capyio-core = { path = "../../../crates/capyio-core" }

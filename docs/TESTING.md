@@ -1250,3 +1250,21 @@ server_disconnect, revoke and malformed_cavc. Compiled fixtures and separate
 component passes are not composed-graph evidence. The existing four Linux IPC
 jobs and seven camera graph scenarios remain unchanged. This adds no real-device,
 network-camera or physical-delivery acceptance claim.
+
+ADR 1534 secure-camera software tests exercise distinct secure-offer validation,
+legacy-wire compatibility, exact pinned TLS bindings and pre-allocation limits,
+plaintext/wrong-ALPN/wrong-pin rejection, handshake/partial-record cancellation,
+and actual shared Android Source consent/lease policy. The secure graph driver
+must separately pass actual pinned control/data into the CAVC decoder and an
+independent private PipeWire pixel consumer, including terminal cleanup scenarios.
+Until that exact hosted candidate succeeds, compilation and isolated TLS tests
+must not be reported as composed graph evidence. Camera2, physical devices and
+general desktop/portal availability remain outside this acceptance.
+
+Offline AVC implementation `30d0a590` passed all eight composed graph scenarios
+in [run 39564578158](https://github.com/Arthurshen926/HardwarePool/actions/runs/39564578158),
+including 20 exact decoded frames and both owned helpers' cleanup. Both actual
+Rust IPC markers and ten native tests passed; the existing four jobs remained
+green in [run 39564578050](https://github.com/Arthurshen926/HardwarePool/actions/runs/39564578050).
+This is bounded synthetic offline camera evidence, not authenticated live Android
+video or physical-device acceptance.

@@ -3,6 +3,7 @@
 //! Mutually authenticated TLS 1.3 framing for CapyIO control Envelopes.
 //! Credential enrollment and persistence are deliberately caller-owned.
 
+pub mod camera;
 pub mod display;
 pub mod haptics;
 mod route_tls;
@@ -362,6 +363,11 @@ impl AuthenticatedControlServer {
 }
 
 impl AuthenticatedControlClientChannel {
+    /// Socket address of the already authenticated paired peer.
+    pub fn peer_addr(&self) -> Result<SocketAddr, ControlTlsError> {
+        self.stream.io.sock.peer_addr().map_err(ControlTlsError::Io)
+    }
+
     pub fn connect_fresh_session(
         endpoint: ControlTlsEndpoint,
         server_name: &str,

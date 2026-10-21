@@ -1506,3 +1506,12 @@ actual AVFrame validation, fixed owned subprocess, nonblocking private IPC,
 absolute deadlines and kill/reap. Decode completion grants no authority;
 `RuntimeCamera` rechecks the exact Session/Route/lease/epoch before projection.
 No network socket listener or arbitrary executable/URL/config path is accepted.
+
+ADR 1534 adds a distinct finite camera data TLS channel, never an upgrade-in-place
+of legacy plain CAVC. Existing exact peer pins, TLS 1.3, separate ALPN and full
+Session/Route/ports/Stream/epoch/expiry ACK precede helper launch. Dynamic endpoint
+host is derived only from authenticated control, not payload metadata. Separate
+resource consent and Source/Sink leases remain mandatory. Control disconnect,
+Stop/revoke/expiry, malformed input and bounded-queue failure close the dedicated
+session and reap decoder/projection. New source code does not authorize use or
+creation of real persistent credentials; software tests use ephemeral identities.

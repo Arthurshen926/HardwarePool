@@ -1,0 +1,87 @@
+name: Linux secure camera validation
+
+# Source-only, hardware-free experiment. No release/package artifacts.
+on:
+  push:
+    branches: [codex/linux-ipc-validation-20261019]
+permissions:
+  contents: read
+concurrency:
+  group: linux-secure-camera-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  secure-camera:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: 1.97.1
+          components: rustfmt, clippy
+      - name: Install official validation dependencies in disposable runner only
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install --yes --no-install-recommends libavcodec-dev libavutil-dev libpipewire-0.3-dev libspa-0.2-dev pipewire-bin
+          dpkg-query -W libavcodec-dev libavutil-dev libpipewire-0.3-dev | tee "$RUNNER_TEMP/avc-dependencies.txt"
+          cat > "$RUNNER_TEMP/avc-license.c" <<'C'
+          #include <stdio.h>
+          #include <libavcodec/avcodec.h>
+          #include <libavutil/avutil.h>
+          int main(void) {
+            printf("avcodec_version=%u\navcodec_license=%s\navcodec_configuration=%s\n", avcodec_version(), avcodec_license(), avcodec_configuration());
+            printf("avutil_version=%u\navutil_license=%s\navutil_configuration=%s\n", avutil_version(), avutil_license(), avutil_configuration());
+            return 0;
+          }
+          C
+          cc "$RUNNER_TEMP/avc-license.c" $(pkg-config --cflags --libs libavcodec libavutil) -o "$RUNNER_TEMP/avc-license"
+          "$RUNNER_TEMP/avc-license" | tee -a "$RUNNER_TEMP/avc-dependencies.txt"
+      - name: Require default and native checks
+        run: |
+          set -euo pipefail
+          cargo fmt --all -- --check
+          cargo test --locked -p capyio-linux-avc -p capyio-protocol -p capyio-control-link -p capyio-control-tls -p capyio-android-jni
+          python3 -m unittest discover -s scripts -p test_pipewire_secure_camera.py -v
+          cargo test --locked -p capyio-linux-avc --example secure_camera_graph_driver --features native-pipewire
+          cargo clippy --locked -p capyio-linux-avc --all-targets --features native-pipewire -- -D warnings
+          cargo build --locked -p capyio-linux-avc --features native-pipewire --bin capyio-linux-avc-helper --example secure_camera_graph_driver
+          cargo build --locked -p capyio-linux-camera --features native-pipewire --bin capyio-linux-camera-helper
+          cp target/debug/capyio-linux-avc-helper target/debug/deps/capyio-linux-avc-helper
+          cp target/debug/capyio-linux-avc-helper target/debug/examples/capyio-linux-avc-helper
+          cp target/debug/capyio-linux-camera-helper target/debug/examples/capyio-linux-camera-helper
+      - name: Require actual decoder IPC pixels and negative tests
+        run: |
+          set -euo pipefail
+          CAPYIO_AVC_HOSTED_GATE=1 cargo test --locked -p capyio-linux-avc --features native-avc hosted_decoder -- --ignored --nocapture | tee "$RUNNER_TEMP/avc-decoder.txt"
+          grep -Fx CAPYIO_AVC_PIXELS_ORDER_PTS_CLEANUP_PASS "$RUNNER_TEMP/avc-decoder.txt"
+          grep -Fx CAPYIO_AVC_NEGATIVE_REVOKE_CLEANUP_PASS "$RUNNER_TEMP/avc-decoder.txt"
+          python3 scripts/test_avc_native_helper.py "$PWD/target/debug/capyio-linux-avc-helper"
+      - name: Require same-owner private PipeWire readback and cleanup
+        run: |
+          set -euo pipefail
+          cc -std=gnu11 -O2 -Wall -Wextra -Werror platform/linux/capyio-avc/native/test_decoder_consumer.c $(pkg-config --cflags --libs libpipewire-0.3) -o "$RUNNER_TEMP/avc-consumer"
+          for scenario in pixels no_consumer expiry control_stop control_eof partial_cavc source_revoke sink_revoke child_exit decoder_exit server_disconnect; do
+            timeout --signal=TERM --kill-after=5s 35s python3 scripts/run_pipewire_secure_camera.py \
+              --hosted-private-secure-camera --driver target/debug/examples/secure_camera_graph_driver \
+              --helper target/debug/examples/capyio-linux-camera-helper \
+              --decoder target/debug/examples/capyio-linux-avc-helper \
+              --consumer "$RUNNER_TEMP/avc-consumer" --scenario "$scenario" \
+              | tee "$RUNNER_TEMP/avc-graph-$scenario.txt"
+            grep -Fx "capyio_pipewire_secure_camera=passed scenario=$scenario real_graph=true owned_cleanup=true" "$RUNNER_TEMP/avc-graph-$scenario.txt"
+          done
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: linux-secure-camera-text-evidence
+          path: |
+            ${{ runner.temp }}/avc-dependencies.txt
+            ${{ runner.temp }}/avc-decoder.txt
+            ${{ runner.temp }}/avc-graph-*.txt
+          if-no-files-found: ignore

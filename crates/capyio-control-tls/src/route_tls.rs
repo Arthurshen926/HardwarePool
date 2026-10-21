@@ -3,7 +3,15 @@
 macro_rules! route_tls {
     ($binding:ident, $listener:ident, $channel:ident, $stop:ident,
      $alpn_name:ident, $max_name:ident, $alpn:expr, $magic:expr, $profile:expr) => {
-        // Separate private touchpad data stream, never a control Envelope carrier.
+        route_tls!(
+            $binding, $listener, $channel, $stop, $alpn_name, $max_name, $alpn, $magic, $profile,
+            24, 176, u16, false
+        );
+    };
+    ($binding:ident, $listener:ident, $channel:ident, $stop:ident,
+     $alpn_name:ident, $max_name:ident, $alpn:expr, $magic:expr, $profile:expr,
+     $min:expr, $max:expr, $length:ty, $one_shot:expr) => {
+        // Separate private Route data stream, never a control Envelope carrier.
         // A binding is lifecycle metadata, not authority: hosts must derive it from
         // current Runtime state and enforce local leases before opening any Sink.
 
@@ -19,7 +27,7 @@ macro_rules! route_tls {
         use super::*;
 
         pub const $alpn_name: &[u8] = $alpn;
-        pub const $max_name: usize = 176;
+        pub const $max_name: usize = $max;
         const BIND_BYTES: usize = 208;
 
         #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -123,6 +131,16 @@ macro_rules! route_tls {
                 .map_err(|_| ControlTlsError::UnauthorizedBinding)
         }
 
+        fn grant_deadline(expires_at_ms: u64) -> Result<Instant, ControlTlsError> {
+            let remaining = expires_at_ms
+                .checked_sub(now_ms()?)
+                .filter(|remaining| *remaining > 0)
+                .ok_or(ControlTlsError::UnauthorizedBinding)?;
+            Instant::now()
+                .checked_add(Duration::from_millis(remaining))
+                .ok_or(ControlTlsError::UnauthorizedBinding)
+        }
+
         fn require_protocol(
             version: Option<rustls::ProtocolVersion>,
             alpn: Option<&[u8]>,
@@ -137,11 +155,14 @@ macro_rules! route_tls {
         /// A single Route listener. The platform polls accept and drops it on Stop,
         /// revocation, control disconnect or lease loss; no accept thread is hidden here.
         pub struct $listener {
-            listener: TcpListener,
+            listener: Mutex<Option<TcpListener>>,
+            address: SocketAddr,
+            stopped: Arc<AtomicBool>,
             config: Arc<ServerConfig>,
             pin: CertificateFingerprint,
             binding: $binding,
             timeout: Duration,
+            local_deadline: Instant,
         }
 
         impl $listener {
@@ -151,35 +172,82 @@ macro_rules! route_tls {
                 binding: $binding,
                 timeout: Duration,
             ) -> Result<Self, ControlTlsError> {
+                Self::from_listener_until(
+                    listener,
+                    identity,
+                    binding,
+                    timeout,
+                    grant_deadline(binding.expires_at_ms)?,
+                )
+            }
+
+            /// Cap all local transport work without changing the peer-visible grant.
+            pub fn from_listener_until(
+                listener: TcpListener,
+                identity: ControlTlsServerIdentity,
+                binding: $binding,
+                timeout: Duration,
+                local_deadline: Instant,
+            ) -> Result<Self, ControlTlsError> {
                 validate_timeout(timeout)?;
                 binding.validate(now_ms()?)?;
+                if local_deadline <= Instant::now() {
+                    return Err(ControlTlsError::UnauthorizedBinding);
+                }
                 let pin = identity.expected_peer_certificate;
                 let mut config = build_server_config(identity)?;
                 Arc::make_mut(&mut config).alpn_protocols = vec![$alpn_name.to_vec()];
                 listener.set_nonblocking(true)?;
+                let address = listener.local_addr()?;
                 Ok(Self {
-                    listener,
+                    listener: Mutex::new(Some(listener)),
+                    address,
+                    stopped: Arc::new(AtomicBool::new(false)),
                     config,
                     pin,
                     binding,
                     timeout,
+                    local_deadline,
                 })
             }
 
             pub fn local_addr(&self) -> Result<SocketAddr, ControlTlsError> {
-                Ok(self.listener.local_addr()?)
+                Ok(self.address)
+            }
+
+            /// Obtain cancellation authority before an accepted TLS handshake starts.
+            pub fn stop_handle(&self) -> Result<$stop, ControlTlsError> {
+                Ok($stop {
+                    socket: None,
+                    stopped: self.stopped.clone(),
+                })
             }
 
             pub fn try_accept(&self) -> Result<Option<$channel>, ControlTlsError> {
                 self.binding.validate(now_ms()?)?;
-                let (socket, _) = match self.listener.accept() {
+                if self.stopped.load(Ordering::Acquire) || Instant::now() >= self.local_deadline {
+                    return Err(ControlTlsError::ChannelFailed);
+                }
+                let mut listener = self
+                    .listener
+                    .lock()
+                    .map_err(|_| ControlTlsError::ChannelFailed)?;
+                let Some(active) = listener.as_ref() else {
+                    return Err(ControlTlsError::ChannelFailed);
+                };
+                let (socket, _) = match active.accept() {
                     Ok(accepted) => accepted,
                     Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
                         return Ok(None);
                     }
                     Err(error) => return Err(error.into()),
                 };
-                let socket = BoundedSocket::new(socket, self.timeout)?;
+                let socket = BoundedSocket::new(
+                    socket,
+                    self.timeout,
+                    grant_deadline(self.binding.expires_at_ms)?.min(self.local_deadline),
+                    self.stopped.clone(),
+                )?;
                 let connection = ServerConnection::new(self.config.clone())?;
                 let mut stream = StreamOwned::new(connection, socket);
                 while stream.conn.is_handshaking() {
@@ -195,6 +263,12 @@ macro_rules! route_tls {
                 self.binding.validate(now_ms()?)?;
                 stream.write_all(&self.binding.encode(true))?;
                 stream.flush()?;
+                stream.sock.check()?;
+                self.binding.validate(now_ms()?)?;
+                // Camera admits exactly one connection; legacy listeners remain reusable.
+                if $one_shot {
+                    drop(listener.take());
+                }
                 Ok(Some($channel {
                     io: DataIo::Accepted(stream),
                     binding: self.binding,
@@ -220,7 +294,7 @@ macro_rules! route_tls {
                     Self::Accepted(stream) => &mut stream.sock,
                     Self::Dialed(stream) => &mut stream.sock,
                 };
-                socket.deadline = Instant::now() + socket.timeout;
+                socket.deadline = (Instant::now() + socket.timeout).min(socket.grant_deadline);
             }
         }
         impl Read for DataIo {
@@ -252,22 +326,33 @@ macro_rules! route_tls {
         struct BoundedSocket {
             socket: TcpStream,
             stopped: Arc<AtomicBool>,
+            listener_stopped: Arc<AtomicBool>,
             timeout: Duration,
             deadline: Instant,
+            grant_deadline: Instant,
         }
         impl BoundedSocket {
-            fn new(socket: TcpStream, timeout: Duration) -> std::io::Result<Self> {
+            fn new(
+                socket: TcpStream,
+                timeout: Duration,
+                grant_deadline: Instant,
+                stopped: Arc<AtomicBool>,
+            ) -> std::io::Result<Self> {
                 socket.set_nodelay(true)?;
                 socket.set_nonblocking(true)?;
                 Ok(Self {
                     socket,
                     stopped: Arc::new(AtomicBool::new(false)),
+                    listener_stopped: stopped,
                     timeout,
-                    deadline: Instant::now() + timeout,
+                    deadline: (Instant::now() + timeout).min(grant_deadline),
+                    grant_deadline,
                 })
             }
             fn check(&self) -> std::io::Result<()> {
-                if self.stopped.load(Ordering::Acquire) {
+                if self.stopped.load(Ordering::Acquire)
+                    || self.listener_stopped.load(Ordering::Acquire)
+                {
                     return Err(std::io::Error::new(
                         std::io::ErrorKind::ConnectionAborted,
                         "Route data stopped",
@@ -318,13 +403,15 @@ macro_rules! route_tls {
 
         /// Only shutdown authority crosses to the lifecycle owner, never plaintext I/O.
         pub struct $stop {
-            socket: TcpStream,
+            socket: Option<TcpStream>,
             stopped: Arc<AtomicBool>,
         }
         impl $stop {
             pub fn stop(&self) {
                 self.stopped.store(true, Ordering::Release);
-                let _ = self.socket.shutdown(Shutdown::Both);
+                if let Some(socket) = &self.socket {
+                    let _ = socket.shutdown(Shutdown::Both);
+                }
             }
         }
 
@@ -341,6 +428,23 @@ macro_rules! route_tls {
                 identity: ControlTlsClientIdentity,
                 binding: $binding,
             ) -> Result<Self, ControlTlsError> {
+                Self::connect_until(
+                    endpoint,
+                    server_name,
+                    identity,
+                    binding,
+                    grant_deadline(binding.expires_at_ms)?,
+                )
+            }
+
+            /// A local Source lease/lifetime can be shorter than the immutable grant.
+            pub fn connect_until(
+                endpoint: ControlTlsEndpoint,
+                server_name: &str,
+                identity: ControlTlsClientIdentity,
+                binding: $binding,
+                local_deadline: Instant,
+            ) -> Result<Self, ControlTlsError> {
                 endpoint.validate()?;
                 binding.validate(now_ms()?)?;
                 if server_name.is_empty() || server_name.len() > 253 {
@@ -351,8 +455,21 @@ macro_rules! route_tls {
                 let pin = identity.expected_peer_certificate;
                 let mut config = build_client_config(identity)?;
                 Arc::make_mut(&mut config).alpn_protocols = vec![$alpn_name.to_vec()];
-                let socket = TcpStream::connect_timeout(&endpoint.address, endpoint.io_timeout)?;
-                let socket = BoundedSocket::new(socket, endpoint.io_timeout)?;
+                let grant_deadline = grant_deadline(binding.expires_at_ms)?.min(local_deadline);
+                let remaining = grant_deadline.saturating_duration_since(Instant::now());
+                if remaining.is_zero() {
+                    return Err(ControlTlsError::UnauthorizedBinding);
+                }
+                let socket = TcpStream::connect_timeout(
+                    &endpoint.address,
+                    endpoint.io_timeout.min(remaining),
+                )?;
+                let socket = BoundedSocket::new(
+                    socket,
+                    endpoint.io_timeout,
+                    grant_deadline,
+                    Arc::new(AtomicBool::new(false)),
+                )?;
                 let mut stream = StreamOwned::new(ClientConnection::new(config, name)?, socket);
                 while stream.conn.is_handshaking() {
                     stream.conn.complete_io(&mut stream.sock)?;
@@ -367,11 +484,25 @@ macro_rules! route_tls {
                     return Err(ControlTlsError::UnauthorizedBinding);
                 }
                 binding.validate(now_ms()?)?;
+                stream.sock.check()?;
                 Ok(Self {
                     io: DataIo::Dialed(stream),
                     binding,
                     failed: false,
                 })
+            }
+
+            /// Monotonically shorten local authority; never renew a connection.
+            pub fn restrict_deadline(&mut self, deadline: Instant) {
+                let socket = match &mut self.io {
+                    DataIo::Accepted(stream) => &mut stream.sock,
+                    DataIo::Dialed(stream) => &mut stream.sock,
+                };
+                socket.grant_deadline = socket.grant_deadline.min(deadline);
+                socket.deadline = socket.deadline.min(socket.grant_deadline);
+                if Instant::now() >= socket.grant_deadline {
+                    self.close();
+                }
             }
 
             pub const fn binding(&self) -> $binding {
@@ -380,14 +511,21 @@ macro_rules! route_tls {
 
             pub fn stop_handle(&self) -> Result<$stop, ControlTlsError> {
                 Ok($stop {
-                    socket: self.io.socket().socket.try_clone()?,
+                    socket: Some(self.io.socket().socket.try_clone()?),
                     stopped: self.io.socket().stopped.clone(),
                 })
             }
 
             fn preflight(&mut self) -> Result<(), ControlTlsError> {
-                if self.failed || self.io.socket().stopped.load(Ordering::Acquire) {
+                if self.failed
+                    || self.io.socket().stopped.load(Ordering::Acquire)
+                    || self.io.socket().listener_stopped.load(Ordering::Acquire)
+                {
                     return Err(ControlTlsError::ChannelFailed);
+                }
+                if Instant::now() >= self.io.socket().grant_deadline {
+                    self.close();
+                    return Err(ControlTlsError::UnauthorizedBinding);
                 }
                 if let Err(error) = now_ms().and_then(|now| self.binding.validate(now)) {
                     self.close();
@@ -398,12 +536,12 @@ macro_rules! route_tls {
 
             pub fn send_record(&mut self, bytes: &[u8]) -> Result<(), ControlTlsError> {
                 self.preflight()?;
-                if !(24..=$max_name).contains(&bytes.len()) {
+                if !($min..=$max_name).contains(&bytes.len()) {
                     return Err(ControlTlsError::RecordTooLarge);
                 }
                 self.io.begin_record();
                 let result = (|| {
-                    self.io.write_all(&(bytes.len() as u16).to_be_bytes())?;
+                    self.io.write_all(&(bytes.len() as $length).to_be_bytes())?;
                     self.io.write_all(bytes)?;
                     self.io.flush()
                 })();
@@ -439,10 +577,10 @@ macro_rules! route_tls {
         }
 
         fn read_record(io: &mut impl Read) -> Result<Vec<u8>, ControlTlsError> {
-            let mut length = [0; 2];
+            let mut length = [0; std::mem::size_of::<$length>()];
             io.read_exact(&mut length)?;
-            let length = usize::from(u16::from_be_bytes(length));
-            if !(24..=$max_name).contains(&length) {
+            let length = <$length>::from_be_bytes(length) as usize;
+            if !($min..=$max_name).contains(&length) {
                 return Err(ControlTlsError::RecordTooLarge);
             }
             let mut bytes = vec![0; length];
@@ -523,8 +661,8 @@ macro_rules! route_tls {
                 let address = server.local_addr().unwrap();
                 let worker = thread::spawn(move || {
                     let mut channel = accept(server).unwrap();
-                    assert_eq!(channel.receive_record().unwrap(), vec![7; 176]);
-                    channel.send_record(&[8; 24]).unwrap();
+                    assert_eq!(channel.receive_record().unwrap(), vec![7; $max_name]);
+                    channel.send_record(&[8; $min]).unwrap();
                     let stop = channel.stop_handle().unwrap();
                     let stopper = thread::spawn(move || {
                         thread::sleep(Duration::from_millis(50));
@@ -540,9 +678,9 @@ macro_rules! route_tls {
                     stopper.join().unwrap();
                 });
                 let mut channel = connect(address, client, binding).unwrap();
-                assert!(channel.send_record(&[0; 177]).is_err()); // No wire mutation.
-                channel.send_record(&[7; 176]).unwrap();
-                assert_eq!(channel.receive_record().unwrap(), vec![8; 24]);
+                assert!(channel.send_record(&vec![0; $max_name + 1]).is_err()); // No wire mutation.
+                channel.send_record(&vec![7; $max_name]).unwrap();
+                assert_eq!(channel.receive_record().unwrap(), vec![8; $min]);
                 worker.join().unwrap();
             }
 
@@ -569,6 +707,28 @@ macro_rules! route_tls {
                 alternatives.push(value);
                 let mut value = original;
                 value.session.session_id = SessionId::new();
+                alternatives.push(value);
+                for source in [true, false] {
+                    for field in 0..3 {
+                        let mut value = original;
+                        let port = if source {
+                            &mut value.source
+                        } else {
+                            &mut value.sink
+                        };
+                        match field {
+                            0 => port.node_id = NodeId::new(),
+                            1 => port.capability_id = CapabilityId::new(),
+                            _ => port.port_id = PortId::new(),
+                        }
+                        alternatives.push(value);
+                    }
+                }
+                let mut value = original;
+                value.session.server_node_id = NodeId::new();
+                alternatives.push(value);
+                let mut value = original;
+                value.session.client_node_id = NodeId::new();
                 alternatives.push(value);
                 for value in alternatives {
                     assert_ne!(original.encode(false), value.encode(false));
@@ -634,7 +794,7 @@ macro_rules! route_tls {
             }
 
             #[test]
-            fn control_and_touchpad_alpn_cannot_be_confused() {
+            fn control_and_route_alpn_cannot_be_confused() {
                 let expected = binding();
                 let (identity, client) = crate::tests::test_identities();
                 let server = server(identity, expected);
@@ -657,15 +817,245 @@ macro_rules! route_tls {
 
             #[test]
             fn malformed_lengths_and_partial_records_are_rejected() {
-                for size in [0_u16, 23, 177, u16::MAX] {
+                for size in [
+                    0 as $length,
+                    ($min - 1) as $length,
+                    ($max_name + 1) as $length,
+                    <$length>::MAX,
+                ] {
                     assert!(matches!(
                         read_record(&mut Cursor::new(size.to_be_bytes())),
                         Err(ControlTlsError::RecordTooLarge)
                     ));
                 }
-                let mut partial = vec![0, 24];
-                partial.extend_from_slice(&[0; 23]);
+                let mut partial = ($min as $length).to_be_bytes().to_vec();
+                partial.extend_from_slice(&[0; $min - 1]);
                 assert!(read_record(&mut Cursor::new(partial)).is_err());
+            }
+
+            #[test]
+            fn protocol_requires_exact_alpn_and_tls13() {
+                assert!(
+                    require_protocol(Some(rustls::ProtocolVersion::TLSv1_3), Some($alpn_name))
+                        .is_ok()
+                );
+                assert!(
+                    require_protocol(Some(rustls::ProtocolVersion::TLSv1_2), Some($alpn_name))
+                        .is_err()
+                );
+                assert!(
+                    require_protocol(Some(rustls::ProtocolVersion::TLSv1_3), Some(b"plaintext"))
+                        .is_err()
+                );
+                assert!(require_protocol(None, None).is_err());
+            }
+
+            #[test]
+            fn oversized_prefix_is_rejected_without_reading_payload() {
+                struct PrefixOnly {
+                    prefix: Cursor<Vec<u8>>,
+                }
+                impl Read for PrefixOnly {
+                    fn read(&mut self, bytes: &mut [u8]) -> std::io::Result<usize> {
+                        assert!(
+                            (self.prefix.position() as usize) < self.prefix.get_ref().len(),
+                            "invalid length must not request a payload"
+                        );
+                        self.prefix.read(bytes)
+                    }
+                }
+                let mut reader = PrefixOnly {
+                    prefix: Cursor::new((($max_name + 1) as $length).to_be_bytes().to_vec()),
+                };
+                assert!(matches!(
+                    read_record(&mut reader),
+                    Err(ControlTlsError::RecordTooLarge)
+                ));
+            }
+
+            #[test]
+            fn grant_deadline_is_finite_and_excludes_expired_grants() {
+                assert!(grant_deadline(0).is_err());
+                let before = Instant::now();
+                let deadline = grant_deadline(now_ms().unwrap() + 100).unwrap();
+                assert!(deadline > before);
+                assert!(deadline <= Instant::now() + Duration::from_millis(100));
+            }
+
+            #[test]
+            fn listener_cancellation_precedes_and_interrupts_handshake() {
+                let expected = binding();
+                let (identity, _) = crate::tests::test_identities();
+                let server = server(identity, expected);
+                let stop = server.stop_handle().unwrap();
+                stop.stop();
+                assert!(matches!(
+                    server.try_accept(),
+                    Err(ControlTlsError::ChannelFailed)
+                ));
+
+                let (identity, _) = crate::tests::test_identities();
+                let server = self::server(identity, expected);
+                let address = server.local_addr().unwrap();
+                let stop = server.stop_handle().unwrap();
+                let mut raw = TcpStream::connect(address).unwrap();
+                // Incomplete TLS header must not monopolize the lifecycle owner.
+                raw.write_all(&[0x16]).unwrap();
+                let worker = thread::spawn(move || accept(server));
+                thread::sleep(Duration::from_millis(30));
+                let before = Instant::now();
+                stop.stop();
+                assert!(worker.join().unwrap().is_err());
+                assert!(before.elapsed() < Duration::from_secs(1));
+            }
+
+            #[test]
+            fn slow_partial_handshake_cannot_outlive_grant() {
+                let mut expected = binding();
+                expected.expires_at_ms = now_ms().unwrap() + 200;
+                let (identity, _) = crate::tests::test_identities();
+                let server = server(identity, expected);
+                let mut raw = TcpStream::connect(server.local_addr().unwrap()).unwrap();
+                raw.write_all(&[0x16]).unwrap();
+                let before = Instant::now();
+                assert!(accept(server).is_err());
+                assert!(before.elapsed() < Duration::from_secs(1));
+            }
+
+            #[test]
+            fn local_deadline_caps_handshake_without_changing_wire_grant() {
+                let expected = binding();
+                let (identity, _) = crate::tests::test_identities();
+                let server = $listener::from_listener_until(
+                    TcpListener::bind("127.0.0.1:0").unwrap(),
+                    identity,
+                    expected,
+                    Duration::from_secs(2),
+                    Instant::now() + Duration::from_millis(150),
+                )
+                .unwrap();
+                let mut raw = TcpStream::connect(server.local_addr().unwrap()).unwrap();
+                raw.write_all(&[0x16]).unwrap();
+                let before = Instant::now();
+                assert!(accept(server).is_err());
+                assert!(before.elapsed() < Duration::from_secs(1));
+            }
+
+            #[test]
+            fn local_record_deadline_can_only_shorten() {
+                let expected = binding();
+                let (identity, client) = crate::tests::test_identities();
+                let server = server(identity, expected);
+                let address = server.local_addr().unwrap();
+                let worker = thread::spawn(move || {
+                    let mut channel = accept(server).unwrap();
+                    let short = Instant::now() + Duration::from_millis(150);
+                    channel.restrict_deadline(short);
+                    channel.restrict_deadline(short + Duration::from_secs(10));
+                    assert_eq!(channel.io.socket().grant_deadline, short);
+                    assert_eq!(channel.binding(), expected);
+                    let before = Instant::now();
+                    assert!(channel.receive_record().is_err());
+                    assert!(before.elapsed() < Duration::from_secs(1));
+                });
+                let _channel = $channel::connect_until(
+                    ControlTlsEndpoint {
+                        address,
+                        io_timeout: Duration::from_secs(2),
+                    },
+                    "localhost",
+                    client,
+                    expected,
+                    Instant::now() + Duration::from_secs(1),
+                )
+                .unwrap();
+                worker.join().unwrap();
+            }
+
+            #[test]
+            fn plaintext_peer_is_rejected() {
+                let expected = binding();
+                let (identity, _) = crate::tests::test_identities();
+                let server = server(identity, expected);
+                let address = server.local_addr().unwrap();
+                let worker = thread::spawn(move || accept(server));
+                let mut raw = TcpStream::connect(address).unwrap();
+                raw.write_all(b"CAVC plaintext camera records are forbidden")
+                    .unwrap();
+                raw.shutdown(Shutdown::Both).unwrap();
+                assert!(worker.join().unwrap().is_err());
+            }
+
+            #[test]
+            fn accepted_binding_closes_listener_and_partial_record_expires_at_grant() {
+                let mut expected = binding();
+                expected.expires_at_ms = now_ms().unwrap() + 800;
+                let (identity, client) = crate::tests::test_identities();
+                let server = server(identity, expected);
+                let address = server.local_addr().unwrap();
+                let worker = thread::spawn(move || {
+                    let mut channel = loop {
+                        if let Some(channel) = server.try_accept().unwrap() {
+                            break channel;
+                        }
+                        thread::sleep(Duration::from_millis(2));
+                    };
+                    if $one_shot {
+                        assert!(matches!(
+                            server.try_accept(),
+                            Err(ControlTlsError::ChannelFailed)
+                        ));
+                        assert!(
+                            TcpStream::connect_timeout(&address, Duration::from_millis(100))
+                                .is_err()
+                        );
+                    } else {
+                        assert!(server.try_accept().unwrap().is_none());
+                    }
+                    let before = Instant::now();
+                    assert!(channel.receive_record().is_err());
+                    assert!(before.elapsed() < Duration::from_millis(1200));
+                    assert!(matches!(
+                        channel.receive_record(),
+                        Err(ControlTlsError::ChannelFailed)
+                    ));
+                });
+                let mut channel = connect(address, client, expected).unwrap();
+                channel
+                    .io
+                    .write_all(&($min as $length).to_be_bytes())
+                    .unwrap();
+                channel.io.write_all(&[0]).unwrap();
+                channel.io.flush().unwrap();
+                worker.join().unwrap();
+            }
+
+            #[test]
+            fn legacy_listener_can_accept_after_first_channel_closes() {
+                if $one_shot {
+                    return;
+                }
+                let expected = binding();
+                let (identity, client) = crate::tests::test_identities();
+                let server = server(identity, expected);
+                let address = server.local_addr().unwrap();
+                let worker = thread::spawn(move || {
+                    for _ in 0..2 {
+                        let mut channel = loop {
+                            if let Some(channel) = server.try_accept().unwrap() {
+                                break channel;
+                            }
+                            thread::sleep(Duration::from_millis(2));
+                        };
+                        channel.send_record(&[1; $min]).unwrap();
+                        channel.close();
+                    }
+                });
+                for _ in 0..2 {
+                    let mut channel = connect(address, client.clone(), expected).unwrap();
+                    assert_eq!(channel.receive_record().unwrap(), vec![1; $min]);
+                }
+                worker.join().unwrap();
             }
 
             #[test]
@@ -678,7 +1068,7 @@ macro_rules! route_tls {
                     let mut channel = accept(server).unwrap();
                     channel.binding.expires_at_ms = 1;
                     assert!(matches!(
-                        channel.send_record(&[0; 24]),
+                        channel.send_record(&[0; $min]),
                         Err(ControlTlsError::UnauthorizedBinding)
                     ));
                     assert!(matches!(

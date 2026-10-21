@@ -43,6 +43,7 @@ use capyio_runtime::{NodeRuntime, RuntimeError, RuntimeSnapshot};
 mod android_ffi;
 mod audio_negotiation;
 mod audio_selection;
+pub mod camera_sender;
 mod control_exchange;
 mod display_catalog;
 mod touchpad_consent;
@@ -437,6 +438,8 @@ struct AndroidAudioUse {
 struct AndroidCameraUse {
     route_id: capyio_core::RouteId,
     offer: Option<(capyio_protocol::CameraDataOffer, String, u64)>,
+    // Secure offers must never enter the legacy Java plaintext sender.
+    secure_transport: bool,
     local_intent: bool,
 }
 

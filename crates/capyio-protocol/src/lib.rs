@@ -5,8 +5,10 @@
 mod audio_offer;
 mod camera_offer;
 mod display_settings;
-pub use camera_offer::CameraDataOffer;
-pub use codec::encode_route_status_with_camera_data;
+pub use camera_offer::{CameraDataOffer, SecureCameraDataOffer, SecureCameraTransport};
+pub use codec::{
+    encode_route_status_with_camera_data, encode_route_status_with_secure_camera_data,
+};
 pub use display_settings::negotiate_display_settings;
 pub use display_settings::validate_display_session_control;
 mod codec;

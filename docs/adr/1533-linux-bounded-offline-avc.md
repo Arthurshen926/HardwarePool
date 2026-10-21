@@ -1,6 +1,6 @@
 # ADR 1533: Bounded offline AVC into the existing Linux camera owner
 
-- Status: implementation under software validation; no physical or network claim
+- Status: accepted offline software slice; no physical or network claim
 - Date: 2026-10-21
 
 ## Decision and boundary
@@ -100,5 +100,6 @@ success and ignored listings are not native execution evidence. The separate Lin
 PipeWire graph scenarios through this same `RuntimeAvcCamera`; its pixels
 scenario verifies 20 actual frames with an independent native consumer. The
 existing camera owner graph is accepted on commit 23bcc2f0. The AVC-composed
-graph remains pending its own hosted result. Decoder-only evidence is
+graph passed its own hosted result at commit `30d0a59058b5e2426652fa5f3e16ee1c9ffb0457`,
+[run 39564578158](https://github.com/Arthurshen926/HardwarePool/actions/runs/39564578158). Decoder-only evidence is
 not system-camera delivery or Android physical-device evidence.

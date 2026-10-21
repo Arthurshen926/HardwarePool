@@ -952,6 +952,7 @@ pub extern "system" fn Java_dev_capyio_android_AndroidNativeControlListener_nati
                                         runtime,
                                         &status.route,
                                         status.camera_data,
+                                        status.secure_camera_data,
                                         owner
                                             .peer_address
                                             .ok_or("authenticated peer absent")?

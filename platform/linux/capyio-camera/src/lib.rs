@@ -33,6 +33,15 @@ fn wall_ms() -> io::Result<u64> {
     .map_err(error)
 }
 
+/// Read-only CAVC admission before any listener, decoder or projection opens.
+pub fn validate_decoded_avc_authority(
+    runtime: &NodeRuntime,
+    binding: CameraBinding,
+    now_ms: u64,
+) -> io::Result<u64> {
+    Ok(guard::Guard::new_format(runtime, binding, now_ms, true)?.deadline_ms)
+}
+
 /// Trusted control-to-decoded-media handoff, never authority by itself.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct CameraBinding {
@@ -99,22 +108,47 @@ impl RuntimeCamera {
         binding: CameraBinding,
         lifetime: Duration,
     ) -> io::Result<Self> {
-        let now = wall_ms()?;
-        Self::open(runtime, binding, lifetime, now, |lifetime, deadline| {
-            #[cfg(all(target_os = "linux", feature = "native-pipewire"))]
-            {
-                Ok(
-                    Box::new(native::NativeProjection::spawn(lifetime, deadline)?)
-                        as Box<dyn Projection>,
-                )
-            }
-            #[cfg(not(all(target_os = "linux", feature = "native-pipewire")))]
-            {
-                let _ = (lifetime, deadline);
-                Err(error("native-pipewire feature is not enabled on Linux"))
-            }
-        })
+        Self::start_format(runtime, binding, lifetime, false)
     }
+    /// Explicit decoder boundary: authority stays bound to negotiated CAVC,
+    /// while this projection accepts only validated canonical decoded NV12.
+    pub fn start_decoded_avc(
+        runtime: NodeRuntime,
+        binding: CameraBinding,
+        lifetime: Duration,
+    ) -> io::Result<Self> {
+        Self::start_format(runtime, binding, lifetime, true)
+    }
+    fn start_format(
+        runtime: NodeRuntime,
+        binding: CameraBinding,
+        lifetime: Duration,
+        encoded_avc: bool,
+    ) -> io::Result<Self> {
+        let now = wall_ms()?;
+        Self::open_format(
+            runtime,
+            binding,
+            lifetime,
+            now,
+            encoded_avc,
+            |lifetime, deadline| {
+                #[cfg(all(target_os = "linux", feature = "native-pipewire"))]
+                {
+                    Ok(
+                        Box::new(native::NativeProjection::spawn(lifetime, deadline)?)
+                            as Box<dyn Projection>,
+                    )
+                }
+                #[cfg(not(all(target_os = "linux", feature = "native-pipewire")))]
+                {
+                    let _ = (lifetime, deadline);
+                    Err(error("native-pipewire feature is not enabled on Linux"))
+                }
+            },
+        )
+    }
+    #[cfg(test)]
     fn open(
         runtime: NodeRuntime,
         binding: CameraBinding,
@@ -122,10 +156,20 @@ impl RuntimeCamera {
         now: u64,
         open: impl FnOnce(Duration, u64) -> io::Result<Box<dyn Projection>>,
     ) -> io::Result<Self> {
+        Self::open_format(runtime, binding, lifetime, now, false, open)
+    }
+    fn open_format(
+        runtime: NodeRuntime,
+        binding: CameraBinding,
+        lifetime: Duration,
+        now: u64,
+        encoded_avc: bool,
+        open: impl FnOnce(Duration, u64) -> io::Result<Box<dyn Projection>>,
+    ) -> io::Result<Self> {
         if lifetime.is_zero() || lifetime > MAX_LIFETIME {
             return Err(error("camera lifetime outside 1ms..=300s"));
         }
-        let guard = guard::Guard::new(&runtime, binding, now)?;
+        let guard = guard::Guard::new_format(&runtime, binding, now, encoded_avc)?;
         let lifetime = lifetime.min(Duration::from_millis(guard.deadline_ms - now));
         if lifetime.as_millis() == 0 {
             return Err(error("camera lifetime is less than 1ms"));

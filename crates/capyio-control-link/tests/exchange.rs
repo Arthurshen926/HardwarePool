@@ -1003,3 +1003,94 @@ fn identities() -> (ControlTlsServerIdentity, ControlTlsClientIdentity) {
         },
     )
 }
+
+#[test]
+fn secure_camera_offer_requires_exact_session_receiver_and_live_grant() {
+    use capyio_core::{AuthorizationState, FormatDescriptor, ProfileId, StreamId};
+    use capyio_protocol::{SecureCameraDataOffer, SecureCameraTransport};
+    use std::time::Instant;
+    let (mut sink, mut source, _, _) = connected_pair();
+    let lab = capyio_testkit::DemoLab::new().unwrap();
+    let mut route = lab
+        .runtime
+        .route(lab.routes.phone_microphone_to_windows)
+        .unwrap()
+        .clone();
+    route.session_id = sink.session_id();
+    route.source.node_id = sink.peer_node_id();
+    route.sink.node_id = source.peer_node_id();
+    route.profile = ProfileId::video_frames_v1();
+    route.backend = RouteBackend::AdapterManaged;
+    route.selected_format = Some(FormatDescriptor::new("cavc-avc-access-unit-v1"));
+    route.compatible_formats = vec![route.selected_format.clone().unwrap()];
+    route.state = RouteState::Starting;
+    route.epoch = 3;
+    route.authorization = AuthorizationState::Authorized {
+        expires_at_ms: Some(5000),
+    };
+    let offer = SecureCameraDataOffer {
+        port: 40211,
+        stream_id: StreamId::new(),
+        transport: SecureCameraTransport::Tls13MtlsV1,
+    };
+    let deadline = || Instant::now() + Duration::from_secs(2);
+    for case in 0..5 {
+        let mut bad = route.clone();
+        match case {
+            0 => bad.session_id = SessionId::new(),
+            1 => bad.sink.node_id = capyio_core::NodeId::new(),
+            2 => bad.source.node_id = capyio_core::NodeId::new(),
+            3 => {
+                bad.authorization = AuthorizationState::Authorized {
+                    expires_at_ms: Some(1),
+                }
+            }
+            4 => {
+                bad.authorization = AuthorizationState::Authorized {
+                    expires_at_ms: None,
+                }
+            }
+            _ => unreachable!(),
+        }
+        assert!(
+            sink.send_secure_camera_data_offer_until(&bad, offer, 1, deadline())
+                .is_err(),
+            "case {case}"
+        );
+    }
+    assert!(
+        source
+            .send_secure_camera_data_offer_until(&route, offer, 1, deadline())
+            .is_err()
+    );
+    sink.send_secure_camera_data_offer_until(&route, offer, 1, deadline())
+        .unwrap();
+    let ReceivedControlMessage::RouteStatus(received) =
+        source.receive_control_message_until(deadline()).unwrap()
+    else {
+        panic!("expected secure camera offer")
+    };
+    assert_eq!(received.secure_camera_data, Some(offer));
+    assert!(received.camera_data.is_none());
+}
+
+#[test]
+fn authenticated_address_supports_both_roles_without_weakening_accepted_contract() {
+    let (accepted, dialed, _, _) = connected_pair();
+    assert!(
+        accepted
+            .authenticated_peer_addr()
+            .unwrap()
+            .ip()
+            .is_loopback()
+    );
+    assert!(dialed.authenticated_peer_addr().unwrap().ip().is_loopback());
+    assert_eq!(
+        accepted.authenticated_peer_addr().unwrap(),
+        accepted.accepted_peer_addr().unwrap()
+    );
+    assert!(matches!(
+        dialed.accepted_peer_addr(),
+        Err(CatalogLinkError::BindingMismatch)
+    ));
+}

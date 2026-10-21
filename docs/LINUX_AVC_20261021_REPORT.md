@@ -32,7 +32,7 @@ packages and linked to matching existing shared runtime libraries. Actual
 versions are in `fixtures/linux-avc/validation-dependency.json`; notices contain
 package URLs and hashes. No system installation or library redistribution.
 
-## Required pending acceptance
+## Hosted acceptance
 
 The new independent `Linux AVC validation` workflow executes eight actual private
 PipeWire scenarios through production `RuntimeAvcCamera`, not independent demos:
@@ -41,7 +41,14 @@ malformed_cavc. The pixels case requires 20 exact decoded NV12 frames and PTS;
 all scenarios verify both owned helper processes are reaped and preserve the
 unrelated graph sentinel (server-disconnect uses a fresh-daemon check instead).
 
-These composed graph scenarios have not yet run for this source candidate.
-Component tests and compilation are NOT composed-graph acceptance. Existing
-camera acceptance at base 23bcc2f0 remains independently valid; its four jobs and
-seven camera scenarios must remain passing alongside this new workflow.
+All eight composed graph scenarios passed at commit
+`30d0a59058b5e2426652fa5f3e16ee1c9ffb0457` in
+[Linux AVC run 39564578158](https://github.com/Arthurshen926/HardwarePool/actions/runs/39564578158),
+job 119103671817. Both actual Rust decoder PASS markers and ten native tests also
+passed. The existing four Linux IPC jobs, including all seven camera graph
+scenarios, remained green in
+[run 39564578050](https://github.com/Arthurshen926/HardwarePool/actions/runs/39564578050).
+
+This proves the bounded synthetic offline CAVC path through the actual production
+Runtime owner and private PipeWire graph. It does not prove Android physical
+capture, authenticated live camera transport or a user application session.

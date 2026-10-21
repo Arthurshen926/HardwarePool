@@ -1625,3 +1625,11 @@ the existing camera authority and submits returned canonical NV12 only through
 `RuntimeCamera`. No network listener, demuxer, alternate projection or codec in
 Core/Runtime is introduced. Native software acceptance is distinct from Android
 live capture and authenticated camera transport.
+
+ADR 1534 adds a finite Linux-led paired camera owner above the existing offline
+AVC decoder. Separate pinned mTLS carries complete CAVC records only after exact
+Session/Route binding and both finite endpoint leases. Control polling continues
+during transport and decoder waits. An explicit decoded-CAVC projection entry
+preserves the negotiated Route rather than relabeling it NV12. Android's new
+Rust sender uses existing paired credentials and actual Source authority; no
+Camera2/JNI media capture, default listener or new enrollment is claimed.
