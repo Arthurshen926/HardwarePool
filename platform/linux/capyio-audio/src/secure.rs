@@ -1433,6 +1433,30 @@ mod terminal_cause_tests {
     }
 
     #[test]
+    fn abrupt_tls_close_without_wrapper_prefix_retains_exact_io_cause() {
+        let display = "peer closed connection without sending TLS close_notify";
+        for kind in [
+            io::ErrorKind::UnexpectedEof,
+            io::ErrorKind::TimedOut,
+            io::ErrorKind::WouldBlock,
+            io::ErrorKind::Other,
+        ] {
+            let mapped = media_error(ControlTlsError::Io(io::Error::new(kind, display)));
+            assert_eq!(mapped.to_string(), display);
+            assert_eq!(mapped.kind(), kind);
+            assert_eq!(
+                media_cause(&mapped) == TerminalCause::MediaClosed,
+                kind == io::ErrorKind::UnexpectedEof
+            );
+            let control = CatalogLinkError::Transport(ControlTlsError::Io(mapped));
+            assert_eq!(
+                control_cause(&control) == TerminalCause::ControlClosed,
+                kind == io::ErrorKind::UnexpectedEof
+            );
+        }
+    }
+
+    #[test]
     fn control_terminal_classification_never_confuses_timeout_with_close() {
         assert_eq!(
             control_cause(&CatalogLinkError::Closed),

@@ -500,14 +500,18 @@ fn receiver(
                     scenario.as_str(),
                     "source_revoke" | "control_eof" | "media_eof"
                 ) {
-                    let reason = error.to_string();
-                    assert!(
-                        reason.starts_with("control TLS I/O failed:"),
-                        "expected actual EOF, not unrelated failure: {reason}"
-                    );
-                    assert!(
-                        !reason.contains("deadline") && !reason.contains("timed out"),
-                        "timeout is not EOF: {reason}"
+                    let expected = if scenario == "control_eof" {
+                        "control_closed"
+                    } else {
+                        "media_closed"
+                    };
+                    // The owner classifies the preserved I/O kind, not rustls's
+                    // display text or a wrapper prefix. Timeouts and unrelated
+                    // failures must never satisfy these injected-close cases.
+                    assert_eq!(
+                        owner.terminal_cause(),
+                        Some(expected),
+                        "expected typed authenticated transport closure: {error}"
                     );
                 }
                 break observed;
