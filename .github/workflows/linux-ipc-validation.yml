@@ -143,6 +143,7 @@ jobs:
           runtime_registry::tests::registry_guard_reconciles_before_normal_error_release
           runtime_registry::tests::registry_guard_reconciles_during_unwind_preserving_poison
           runtime_registry::tests::registry_guard_try_lock_preserves_contention_and_poison
+          stereo_negotiation::tests::pure::deferred_initial_source_acquire_preserves_both_claim_orders_and_exact_sink_reply
           stereo_negotiation::tests::pure::consent_stamp_captures_original_deadline_and_rejects_changed_or_broad_grants
           stereo_negotiation::tests::pure::snapshot_freezes_exact_generation_route_and_original_deadlines
           stereo_negotiation::tests::pure::snapshot_rejects_revoked_replaced_and_expired_original_sink_lease

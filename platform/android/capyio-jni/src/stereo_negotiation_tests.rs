@@ -10,6 +10,7 @@ use std::sync::{Arc, Mutex};
 pub(crate) mod fixture {
     use super::*;
     use capyio_control_credentials::ControlCredentialBundle;
+    use capyio_control_link::ReceivedPortLeaseRequest;
     use capyio_control_tls::{
         AuthenticatedControlClientChannel, AuthenticatedControlServer, ControlTlsClientIdentity,
         ControlTlsEndpoint, ControlTlsServerIdentity,
@@ -215,6 +216,15 @@ pub(crate) mod fixture {
         let linux_client = client(&linux);
         (android, android_client, linux, linux_client)
     }
+    // The initial request may be received before either crossed claim is
+    // answered. Preserve the authenticated object itself, not reconstructed
+    // bytes or metadata, and consume it once when Source response is due.
+    pub(crate) fn take_source_acquire<T>(
+        deferred: &mut Option<T>,
+        receive: impl FnOnce() -> T,
+    ) -> T {
+        deferred.take().unwrap_or_else(receive)
+    }
     pub(crate) struct Fixture {
         pub(crate) runtime: Arc<Mutex<NodeRuntime>>,
         pub(crate) source_runtime: NodeRuntime,
@@ -222,6 +232,7 @@ pub(crate) mod fixture {
         pub(crate) source: CatalogControlLink,
         pub(crate) negotiation: StereoSinkNegotiation,
         pub(crate) pending_request: Option<PreparedPortLeaseRequest>,
+        deferred_source_request: Option<ReceivedPortLeaseRequest>,
         pub(crate) identity: ControlTlsServerIdentity,
         pub(crate) source_identity: ControlTlsClientIdentity,
         pub(crate) original_end: Instant,
@@ -349,6 +360,7 @@ pub(crate) mod fixture {
                 source,
                 negotiation,
                 pending_request: Some(request),
+                deferred_source_request: None,
                 identity: android_identity,
                 source_identity: linux_client,
                 original_end,
@@ -373,17 +385,50 @@ pub(crate) mod fixture {
             if commit {
                 self.negotiation.commit_source_request(sent).unwrap();
             }
-            sent
-        }
-        pub(crate) fn source_response(&mut self) {
+            // This only receives the request. In the Sink-first ordering it
+            // must stay unanswered until the crossed Sink response commits.
+            // Otherwise commit_response would read this earlier FIFO frame
+            // instead of the response it is checking.
+            assert!(self.deferred_source_request.is_none());
             self.assert_unlocked();
             let ReceivedControlMessage::PortLeaseRequest(request) = self
                 .source
                 .receive_control_message_until(self.negotiation.operation_deadline())
                 .unwrap()
             else {
-                panic!("missing exact Source Acquire")
+                panic!("missing exact initial Source Acquire")
             };
+            let initial = request.request();
+            assert_eq!(initial.message_id, sent);
+            assert_eq!(initial.session_id, self.negotiation.route().session_id);
+            assert_eq!(initial.route_id, self.route_id);
+            assert_eq!(initial.action, PortLeaseAction::Acquire);
+            assert_eq!(initial.port, self.negotiation.route().source);
+            assert!(
+                self.source_runtime
+                    .route_port_lease_claim(self.route_id, initial.port)
+                    .is_none()
+            );
+            self.deferred_source_request = Some(request);
+            sent
+        }
+        pub(crate) fn source_response(&mut self) {
+            self.assert_unlocked();
+            let request = take_source_acquire(&mut self.deferred_source_request, || {
+                let ReceivedControlMessage::PortLeaseRequest(request) = self
+                    .source
+                    .receive_control_message_until(self.negotiation.operation_deadline())
+                    .unwrap()
+                else {
+                    panic!("missing exact Source Acquire")
+                };
+                request
+            });
+            assert_eq!(
+                request.request().session_id,
+                self.negotiation.route().session_id
+            );
+            assert_eq!(request.request().route_id, self.route_id);
             assert_eq!(request.request().action, PortLeaseAction::Acquire);
             assert_eq!(request.request().port, self.negotiation.route().source);
             let response = self
@@ -474,6 +519,8 @@ pub(crate) mod fixture {
                     self.receive_accept().unwrap(),
                     StereoNegotiationAction::None
                 ));
+                assert!(self.negotiation.source_claim.is_some());
+                assert!(self.negotiation.sink_claim.is_none());
                 let request = self.sink_request(PortLeaseAction::Acquire);
                 let action = self.receive_accept().unwrap();
                 self.commit_response(action, request);
@@ -481,6 +528,13 @@ pub(crate) mod fixture {
                 let request = self.sink_request(PortLeaseAction::Acquire);
                 let action = self.receive_accept().unwrap();
                 self.commit_response(action, request);
+                assert!(self.negotiation.sink_claim.is_some());
+                assert!(self.negotiation.source_claim.is_none());
+                assert!(
+                    self.source_runtime
+                        .route_port_lease_claim(self.route_id, self.negotiation.route().source)
+                        .is_none()
+                );
                 self.source_response();
                 assert!(matches!(
                     self.receive_accept().unwrap(),
@@ -520,6 +574,94 @@ pub(crate) mod fixture {
 mod pure {
     use super::*;
     use fixture::*;
+    #[test]
+    fn deferred_initial_source_acquire_preserves_both_claim_orders_and_exact_sink_reply() {
+        use capyio_protocol::{
+            decode_port_lease_request, decode_port_lease_response, encode_port_lease_request,
+            encode_port_lease_response,
+        };
+        use std::collections::VecDeque;
+
+        let (runtime, route_id) = pure_prepared(1_000);
+        let route = runtime.route(route_id).unwrap();
+        for source_response_first in [false, true] {
+            let source_wire = encode_port_lease_request(
+                route.session_id,
+                route_id,
+                route.source,
+                PortLeaseAction::Acquire,
+                5_000,
+            )
+            .unwrap();
+            let expected_source = decode_port_lease_request(&source_wire).unwrap();
+            let sink_request = MessageId::new();
+            let sink_wire = encode_port_lease_response(
+                route.session_id,
+                sink_request,
+                route_id,
+                route.sink,
+                PortLeaseOutcome::Acquired,
+                Some(6_000),
+            )
+            .unwrap();
+            // Existing protocol frames in their actual Source-side FIFO order.
+            // Receiving the first request must not answer it or consume the
+            // response that commit_response expects next.
+            let mut inbound = VecDeque::from([source_wire, sink_wire]);
+            let mut deferred =
+                Some(decode_port_lease_request(&inbound.pop_front().unwrap()).unwrap());
+            let mut completed = Vec::new();
+            if source_response_first {
+                let source =
+                    take_source_acquire(&mut deferred, || panic!("deferred Acquire was lost"));
+                assert_eq!(source, expected_source);
+                completed.push("Source");
+            }
+            let sink = decode_port_lease_response(&inbound.pop_front().unwrap()).unwrap();
+            assert_eq!(sink.request_message_id, sink_request);
+            assert_eq!(sink.session_id, route.session_id);
+            assert_eq!(sink.route_id, route_id);
+            assert_eq!(sink.port, route.sink);
+            assert_eq!(sink.outcome, PortLeaseOutcome::Acquired);
+            assert_eq!(sink.expires_at_ms, Some(6_000));
+            completed.push("Sink");
+            if !source_response_first {
+                let source =
+                    take_source_acquire(&mut deferred, || panic!("deferred Acquire was lost"));
+                assert_eq!(source, expected_source);
+                completed.push("Source");
+            }
+            assert_eq!(
+                completed,
+                if source_response_first {
+                    ["Source", "Sink"]
+                } else {
+                    ["Sink", "Source"]
+                }
+            );
+            assert!(deferred.is_none());
+            assert!(inbound.is_empty());
+            // The retained request is consume-once. A later intentional foreign
+            // request must perform a fresh read, not replay the retained object.
+            let next_wire = encode_port_lease_request(
+                route.session_id,
+                route_id,
+                route.source,
+                PortLeaseAction::Acquire,
+                1_000,
+            )
+            .unwrap();
+            let next = decode_port_lease_request(&next_wire).unwrap();
+            let mut reads = 0;
+            let received = take_source_acquire(&mut deferred, || {
+                reads += 1;
+                next
+            });
+            assert_eq!(reads, 1);
+            assert_eq!(received, next);
+            assert_ne!(received.message_id, expected_source.message_id);
+        }
+    }
     #[test]
     fn consent_stamp_captures_original_deadline_and_rejects_changed_or_broad_grants() {
         let (runtime, route) = pure_prepared(1_000);
