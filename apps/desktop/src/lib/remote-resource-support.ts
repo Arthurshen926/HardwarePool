@@ -63,6 +63,11 @@ export function remoteResourceUseHint(capability: UiCapability): { label: string
       // A catalog format is a requirement, not evidence of an active TLS session.
       detail: `此目录声明实验性单声道配置，${secureMaximum}，要求独立的固定 TLS 1.3 通道。须从支持同一精确配置的 Linux 有限会话入口申请，原始授权或租约可能更短；不支持 Windows 一键使用，不会退回 UDP。目录不表示已经授权、加密传输或播放；合成验证不保证真机兼容。`,
     };
+    if (capability.capabilityClass === 'speaker' && format === 'pcm-s16le-48000-stereo-tls13-v1'
+      && ports.every(port => port.direction === 'sink' && port.formats?.length === 1 && port.formats[0] === format)) return {
+      label: capability.availability === 'offline' ? '安全扬声器当前离线' : '安全扬声器需匹配 Source API',
+      detail: '此目录声明实验性双声道固定 TLS 1.3 配置，最多 60 秒，需要兼容的 Source API 和独立逐次授权。Linux 捕获启动器／终端仍是 Legacy；不支持 Windows 一键使用，不会退回 UDP。目录、Starting 或 PCM 被接受均不证明可听见，尚非完整手机／终端流程。',
+    };
     return { label: '音频配置不受支持', detail: '此音频目录缺少当前入口支持的精确配置，或混用了不同配置；不能推断时长、安全传输或自动退回 Legacy。' };
   }
   if (hasIntegratedRemoteDataBinding(capability)) {

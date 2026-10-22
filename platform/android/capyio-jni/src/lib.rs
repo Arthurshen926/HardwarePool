@@ -54,6 +54,7 @@ mod display_catalog;
 #[cfg(any(target_os = "android", test))]
 mod runtime_registry;
 mod secure_audio_negotiation;
+mod secure_speaker_policy;
 pub mod secure_stereo_receiver;
 mod stereo_admission;
 pub mod stereo_job;
@@ -702,6 +703,25 @@ impl AndroidCatalogRuntimeV1 {
                     now_ms,
                     original_instant,
                 )?;
+                // Only the live explicitly selected speaker publishes a Prepared
+                // launch. Foundation-only consumers retain their own preparation.
+                if secure_speaker_policy::selection(
+                    &self.runtime,
+                    self.runtime.route(route_id).map_err(|e| e.to_string())?,
+                )
+                .is_ok()
+                {
+                    self.runtime
+                        .prepare_route(
+                            route_id,
+                            Some(capyio_core::FormatDescriptor::new(
+                                capyio_protocol::SECURE_AUDIO_STEREO_FORMAT,
+                            )),
+                            capyio_core::QosMode::Interactive,
+                            now_ms,
+                        )
+                        .map_err(|e| e.to_string())?;
+                }
                 self.stereo_consents.insert(route_id, stamp);
                 self.stereo_generations.entry(route_id).or_default();
             }
@@ -796,6 +816,61 @@ impl AndroidCatalogRuntimeV1 {
             return Err(AndroidCatalogRuntimeError::NodeIdentityChanged);
         }
         let revision = self.next_publication_revision()?;
+        // Capability metadata carries the explicit speaker setting revision.
+        // Core format reconciliation alone intentionally does not track it.
+        // Retire both pending consent and running Routes before publication of
+        // a changed selection, even if its PCM format happens to be identical.
+        let before = self.runtime.snapshot();
+        for route in &before.routes {
+            if route.sink.node_id != before.local_node.id
+                || !before
+                    .local_node
+                    .capabilities
+                    .get(&route.sink.capability_id)
+                    .is_some_and(|cap| cap.class == capyio_core::CapabilityClass::Speaker)
+                || !secure_speaker_policy::selection_changed(
+                    before
+                        .local_node
+                        .capabilities
+                        .get(&route.sink.capability_id),
+                    node.capabilities.get(&route.sink.capability_id),
+                )
+                || matches!(
+                    route.state,
+                    capyio_core::RouteState::Stopped
+                        | capyio_core::RouteState::Failed
+                        | capyio_core::RouteState::Offline
+                )
+            {
+                continue;
+            }
+            if route.state == capyio_core::RouteState::Draft
+                && route.authorization == capyio_core::AuthorizationState::Pending
+            {
+                self.runtime.deny_pending_route(route.id)?;
+            } else {
+                self.runtime.report_route_offline(
+                    route.id,
+                    capyio_core::Problem {
+                        id: capyio_core::ProblemId::new(),
+                        code: "CAPY.ANDROID.SPEAKER_SELECTION_CHANGED".into(),
+                        category: capyio_core::ProblemCategory::Adapter,
+                        severity: capyio_core::ProblemSeverity::Error,
+                        retryable: true,
+                        related_node: None,
+                        related_adapter: None,
+                        related_route: Some(route.id),
+                        human_message: "扬声器设置已变化；原会话已停止，需要重新请求并确认".into(),
+                        technical_detail: None,
+                    },
+                )?;
+            }
+            #[cfg(any(target_os = "android", test))]
+            self.stereo_consents.remove(&route.id);
+            self.audio_status_pending.insert(route.id);
+        }
+        #[cfg(target_os = "android")]
+        android_ffi::reconcile_secure_speaker(&self.runtime);
         self.runtime.replace_local_catalog(node)?;
         self.publication_revision = revision;
         Ok(())

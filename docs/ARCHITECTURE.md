@@ -1831,3 +1831,11 @@ and mono secure profiles remain separate. Android Java/JNI speaker publication
 and Node/console stereo secure launch modes are not enabled by this API slice;
 future integration must retain bounded PCM ownership and exact current-session
 consent, profile, generation and both original leases.
+
+## Android secure stereo playback integration
+
+ADR 1567 adds the separate Android secure stereo AudioTrack owner and incoming-only
+speaker opt-in on the ADR 1566 receiver. Legacy defaults and microphone choices
+remain independent. Current visible consent, immutable selection revision and
+native authority gate every generation; no secure request enters the UDP owner.
+The reverse Linux Node/console launch integration is still separate.

@@ -625,4 +625,14 @@ are consume-once and bound to the exact authenticated connection; one correlated
 Source response and original Sink claim remain pinned. A PCM copy is not sink
 acceptance: each aligned actual write needs its exact generation/permit ACK,
 under the original nonrefreshing record and consent deadlines. AudioTrack and
-user-facing secure speaker selection remain a separate integration step.
+user-facing secure speaker selection were deliberately excluded from that
+foundation; the separate ADR 1567 integration is described below.
+
+## Android secure stereo playback integration
+
+ADR 1567 connects that receiver to Android through a closed schema-3
+`speaker-secure` DTO with exact profile/revision and fixed record dimensions,
+without Java-chosen endpoints or leases. Read packs remaining PCM at array index
+zero; ACK retains the original logical record offset and actual aligned write
+count. Busy ACK retries never repeat a platform write. There is no new wire
+format, lease renewal or UDP fallback.

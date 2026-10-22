@@ -15,8 +15,8 @@ pub use catalog_projection::{
     ANDROID_CATALOG_SCHEMA_VERSION, AndroidAdapterRouteModeV1, AndroidCapabilityAvailabilityV1,
     AndroidCapabilityClassV1, AndroidCapabilityDtoV1, AndroidCatalogDtoV1,
     AndroidCatalogProjectionError, AndroidInteroperabilityModeV1, AndroidPermissionRequirementV1,
-    AndroidPortDirectionV1, AndroidPortDtoV1, AndroidQosModeV1, MAX_ANDROID_CATALOG_JSON_BYTES,
-    decode_android_catalog_json, project_android_catalog,
+    AndroidPortDirectionV1, AndroidPortDtoV1, AndroidQosModeV1, AndroidSpeakerSelectionV1,
+    MAX_ANDROID_CATALOG_JSON_BYTES, decode_android_catalog_json, project_android_catalog,
 };
 pub use touchpad::{
     AndroidMotionAction, AndroidMotionSample, AndroidPointerSample, AndroidToolType,

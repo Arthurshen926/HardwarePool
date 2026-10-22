@@ -105,7 +105,7 @@ public final class AudioNodeService extends Service {
     private AndroidHapticsSinkAdapter hapticsAdapter;
     private HapticsDataWorker hapticsDataWorker;
     private AndroidNativeCatalogRuntime catalogRuntime;
-    private final AndroidResourceConsentModule resourceConsent = new AndroidResourceConsentModule(this);
+    private final AndroidResourceConsentModule resourceConsent = new AndroidResourceConsentModule(this, () -> this.speakerSettings.secure());
     private long nextRememberedConsentCheck;
     // The remote settings acknowledgement must follow durable storage; rollback
     // also uses commit so a failed revision is not acknowledged as persisted.
@@ -177,6 +177,10 @@ public final class AudioNodeService extends Service {
     private final AndroidMicrophoneSettings microphoneSettings = new AndroidMicrophoneSettings();
     private final java.util.concurrent.atomic.AtomicBoolean secureMicrophonePermitted = new java.util.concurrent.atomic.AtomicBoolean();
     private final java.util.concurrent.atomic.AtomicBoolean secureMicrophoneUiVisible = new java.util.concurrent.atomic.AtomicBoolean();
+    private final AndroidSpeakerSettings speakerSettings = new AndroidSpeakerSettings();
+    private final java.util.concurrent.atomic.AtomicBoolean secureSpeakerPermitted = new java.util.concurrent.atomic.AtomicBoolean();
+    private final java.util.concurrent.atomic.AtomicBoolean secureSpeakerUiVisible = new java.util.concurrent.atomic.AtomicBoolean();
+    private boolean speakerHardwarePresent;
     private boolean microphoneHardwarePresent;
     private final AndroidCameraUseModule cameraUse = new AndroidCameraUseModule(this);
     private long cameraSettingsRevision;
@@ -191,6 +195,8 @@ public final class AudioNodeService extends Service {
                 if (!microphoneSettings.secure() || !foreground || !secureMicrophoneUiVisible.get()
                         || !snapshot().microphone().state().ownsForegroundLifecycle()
                         || !microphonePermissionsReady()) secureMicrophonePermitted.set(false);
+                if (!speakerSettings.secure() || !foreground || !secureSpeakerUiVisible.get()
+                        || !speakerPermissionsReady()) secureSpeakerPermitted.set(false);
                 audioUse.synchronize(catalogRuntime);
                 cameraUse.synchronize(catalogRuntime);
                 displayUse.synchronize(catalogRuntime);
@@ -381,6 +387,9 @@ public final class AudioNodeService extends Service {
         byte[] pendingControlCredential = control.loadCredentials();
         AndroidHardwareInventory inventory = AndroidHardwareInventory.probe(this);
         touchSurfacePresence = inventory.touchSurfacePresence();
+        speakerHardwarePresent = inventory.speakerPresence() == HardwarePresence.PRESENT;
+        speakerSettings.restore(getSharedPreferences(NODE_PREFERENCES, MODE_PRIVATE)
+                .getString("speaker-playback-profile", "legacy"));
         microphoneHardwarePresent = inventory.microphonePresence() == HardwarePresence.PRESENT;
         microphoneSettings.restore(getSharedPreferences(NODE_PREFERENCES, MODE_PRIVATE)
                 .getString("microphone-capture-profile", "legacy"));
@@ -399,7 +408,7 @@ public final class AudioNodeService extends Service {
                 () -> checkSelfPermission(Manifest.permission.CAMERA)
                         == PackageManager.PERMISSION_GRANTED,
                 UnifiedCameraNodeFacade::advertisedFormats,
-                microphoneSettings::advertisedFormats,
+                microphoneSettings::advertisedFormats, speakerSettings::advertisedFormats,
                 true,
                 true,
                 inventory.microphonePresence(),
@@ -487,7 +496,8 @@ public final class AudioNodeService extends Service {
                 this::snapshot, this::startCapability, this::stopCapability,
                 controller, () -> secureMicrophoneUiVisible.get() && microphonePermissionsReady() && refreshForegroundSafely(),
                 secureMicrophonePermitted, secureMicrophoneUiVisible::get,
-                microphoneSettings, this::postStateChanged);
+                microphoneSettings, this::postStateChanged, speakerSettings, secureSpeakerPermitted,
+                secureSpeakerUiVisible::get, () -> secureSpeakerUiVisible.get() && speakerPermissionsReady() && refreshForegroundSafely());
         catalogModule = new AndroidCatalogModule(getSharedPreferences(NODE_PREFERENCES, MODE_PRIVATE));
         catalogModule.restore(capabilityCatalogSnapshot());
         publicationForeground = !catalogModule.selectedIds().isEmpty();
@@ -592,6 +602,7 @@ public final class AudioNodeService extends Service {
     @Override
     public synchronized void onDestroy() {
         destroying = true;
+        secureSpeakerPermitted.set(false);
         secureMicrophonePermitted.set(false);
         if (filelessPairing != null) filelessPairing.close();
         displayUse.close();
@@ -638,11 +649,19 @@ public final class AudioNodeService extends Service {
                     || checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) == PackageManager.PERMISSION_GRANTED);
     }
 
+    private boolean speakerPermissionsReady() {
+        return Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU
+                || checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) == PackageManager.PERMISSION_GRANTED;
+    }
+
     private synchronized void startCapability(AudioCapabilityKind kind) {
         // Ordinary local Start never downgrades an explicitly selected secure Source to UDP.
         if (kind == AudioCapabilityKind.MICROPHONE_SOURCE
                 && (microphoneSettings.secure() || AndroidSecureMicrophoneCapture.hasUnreleasedCapture()
                 || (audioUse != null && audioUse.ownsSecureMicrophone()))) return;
+        if (kind == AudioCapabilityKind.SPEAKER_SINK
+                && (speakerSettings.secure() || AndroidSecureStereoPlayback.hasUnreleasedPlayback()
+                || (audioUse != null && audioUse.ownsSecureSpeaker()))) return;
         TransitionToken transition = controller.beginStart(kind);
         if (!transition.accepted()) {
             notifyStateListener();
@@ -661,6 +680,11 @@ public final class AudioNodeService extends Service {
     }
 
     private synchronized void stopCapability(AudioCapabilityKind kind) {
+        if (kind == AudioCapabilityKind.SPEAKER_SINK && audioUse != null && (speakerSettings.secure() || audioUse.ownsSecureSpeaker())) {
+            audioUse.invalidateSpeaker(catalogRuntime);
+            refreshForegroundSafely();
+            return;
+        }
         if (kind == AudioCapabilityKind.MICROPHONE_SOURCE && audioUse != null && audioUse.ownsSecureMicrophone()) {
             audioUse.invalidateMicrophone(catalogRuntime);
             refreshForegroundSafely();
@@ -916,6 +940,8 @@ public final class AudioNodeService extends Service {
     }
 
     private void failForegroundOwnedCapabilities() {
+        secureSpeakerPermitted.set(false);
+        if (audioUse != null && audioUse.ownsSecureSpeaker()) audioUse.invalidateSpeaker(catalogRuntime);
         secureMicrophonePermitted.set(false);
         if (audioUse != null && audioUse.ownsSecureMicrophone()) audioUse.invalidateMicrophone(catalogRuntime);
         publicationForeground = false;
@@ -953,8 +979,9 @@ public final class AudioNodeService extends Service {
     private void failForegroundCapability(AudioCapabilitySnapshot capability) {
         if (capability.state().ownsForegroundLifecycle()) {
             controller.fail(capability.kind(), capability.generation(), PROBLEM_FOREGROUND);
-            if (capability.kind() != AudioCapabilityKind.MICROPHONE_SOURCE
-                    || audioUse == null || !audioUse.ownsSecureMicrophone()) {
+            boolean secureOwned = audioUse != null && (capability.kind() == AudioCapabilityKind.MICROPHONE_SOURCE
+                    ? audioUse.ownsSecureMicrophone() : audioUse.ownsSecureSpeaker());
+            if (!secureOwned) {
                 adapter(capability.kind()).stop(capability.generation());
             }
         }
@@ -1017,7 +1044,8 @@ public final class AudioNodeService extends Service {
     }
 
     private synchronized String publicationCatalogJson() {
-        return catalogModule.publicationJson(capabilityCatalogSnapshot());
+        return AndroidCoreCatalogJson.encode(catalogModule.publication(capabilityCatalogSnapshot()),
+                Build.VERSION.RELEASE, BuildConfig.VERSION_NAME, speakerSettings.selection());
     }
 
     private void refreshNativeCatalog(CapabilityCatalogSnapshot catalog) {
@@ -1025,7 +1053,7 @@ public final class AudioNodeService extends Service {
     }
 
     private synchronized void replaceNativePublication(CapabilityCatalogSnapshot publication) {
-        String candidate = AndroidCatalogModule.encode(publication);
+        String candidate = AndroidCoreCatalogJson.encode(publication, Build.VERSION.RELEASE, BuildConfig.VERSION_NAME, speakerSettings.selection());
         if (candidate.equals(nativeCatalogJson)) {
             return;
         }
@@ -1236,10 +1264,47 @@ public final class AudioNodeService extends Service {
             }
         }
 
+        public String getSpeakerSettingsJson() {
+            synchronized (AudioNodeService.this) { return speakerSettings.json(speakerPermissionsReady(), speakerHardwarePresent); }
+        }
+
+        public void setSpeakerUiVisible(boolean visible) {
+            secureSpeakerUiVisible.set(visible);
+            if (!visible) {
+                secureSpeakerPermitted.set(false);
+                synchronized (AudioNodeService.this) {
+                    if (audioUse != null && catalogRuntime != null) audioUse.invalidateSecureSpeaker(catalogRuntime);
+                }
+            }
+        }
+
+        public boolean selectSpeakerProfile(String value, String expectedRevision) {
+            synchronized (AudioNodeService.this) {
+                try {
+                    AndroidSpeakerSettings.Profile selected = AndroidSpeakerSettings.parse(value);
+                    if (!Long.toString(speakerSettings.revision()).equals(expectedRevision)) return false;
+                    secureSpeakerPermitted.set(false);
+                    audioUse.invalidateSpeaker(catalogRuntime);
+                    stopCapability(AudioCapabilityKind.SPEAKER_SINK);
+                    String id = nodeId + ":android.speaker";
+                    if (catalogModule.selectedIds().contains(id) && !catalogModule.select(capabilityCatalogSnapshot(), id, false,
+                            AudioNodeService.this::replaceNativePublication)) return false;
+                    speakerSettings.select(selected);
+                    getSharedPreferences(NODE_PREFERENCES, MODE_PRIVATE).edit()
+                            .putString("speaker-playback-profile", selected.id).apply();
+                    refreshNativeCatalog(capabilityCatalogSnapshot());
+                    notifyPresentationListener();
+                    return true;
+                } catch (RuntimeException | LinkageError invalid) { return false; }
+            }
+        }
+
         public boolean startAudioUse(String peer, String direction) {
             synchronized (AudioNodeService.this) {
                 try {
-                    if (!microphoneSettings.acceptsDirection(direction)) return false;
+                    if ("speaker-secure".equals(direction)) return false; // Inbound-only; approve one fresh request.
+                    if ("speaker".equals(direction) ? !speakerSettings.acceptsDirection(direction)
+                            : !microphoneSettings.acceptsDirection(direction)) return false;
                     if ("microphone-secure".equals(direction)
                             && (!secureMicrophoneUiVisible.get() || !microphoneHardwarePresent
                             || !microphonePermissionsReady())) return false;
@@ -1324,7 +1389,10 @@ public final class AudioNodeService extends Service {
                     if (microphoneSettings.secure() || AndroidSecureMicrophoneCapture.hasUnreleasedCapture()) return false;
                     state = audio.microphone().state();
                 }
-                else if ("speaker".equals(direction)) state = audio.speaker().state();
+                else if ("speaker".equals(direction)) {
+                    if (speakerSettings.secure() || AndroidSecureStereoPlayback.hasUnreleasedPlayback()) return false;
+                    state = audio.speaker().state();
+                }
                 else return false;
                 if (state != AudioCapabilityState.STOPPED && state != AudioCapabilityState.FAILED) return false;
                 try {
@@ -1457,6 +1525,11 @@ public final class AudioNodeService extends Service {
 
         public boolean setLocalCapabilityShared(String capabilityId, boolean selected) {
             synchronized (AudioNodeService.this) {
+                if (!selected && (nodeId + ":android.speaker").equals(capabilityId)) {
+                    secureSpeakerPermitted.set(false);
+                    audioUse.invalidateSpeaker(catalogRuntime);
+                    stopCapability(AudioCapabilityKind.SPEAKER_SINK);
+                }
                 if (!selected && (nodeId + ":android.microphone").equals(capabilityId)) {
                     secureMicrophonePermitted.set(false);
                     audioUse.invalidateMicrophone(catalogRuntime);
@@ -1571,12 +1644,34 @@ public final class AudioNodeService extends Service {
             return catalogRuntime == null ? "[]" : catalogRuntime.touchpadRequestsJson();
         }
 
+        private boolean prepareSpeakerConsent(String routeId, boolean allow) {
+            if (!allow && audioUse != null) audioUse.revokeSecureSpeakerRoute(routeId);
+            if (!speakerSettings.secure() || !allow) return true;
+            try {
+                org.json.JSONArray requests = new org.json.JSONArray(catalogRuntime.touchpadRequestsJson());
+                for (int i = 0; i < requests.length(); i++) {
+                    org.json.JSONObject request = requests.getJSONObject(i);
+                    if (routeId.equals(request.getString("routeId")) && "speaker".equals(request.optString("resourceKind"))) {
+                        if (!AndroidSecureSpeakerConsent.mayApprove(speakerSettings.selection(), request.optString("profileId"),
+                                request.optString("selectionRevision"), secureSpeakerUiVisible.get(),
+                                speakerPermissionsReady(), speakerHardwarePresent)) return false;
+                        audioUse.approveSecureSpeaker(routeId);
+                    }
+                }
+                return true;
+            } catch (RuntimeException | org.json.JSONException invalid) { return false; }
+        }
+
         public boolean resolveTouchpadRequest(String routeId, boolean allow) {
-            return catalogRuntime != null && catalogRuntime.resolveTouchpadRequest(routeId, allow);
+            synchronized (AudioNodeService.this) {
+                if (!prepareSpeakerConsent(routeId, allow)) return false;
+                return catalogRuntime != null && catalogRuntime.resolveTouchpadRequest(routeId, allow);
+            }
         }
 
         public boolean resolveTouchpadRequestRemembered(String routeId, boolean allow, boolean remember) {
             synchronized (AudioNodeService.this) {
+                if (!prepareSpeakerConsent(routeId, allow)) return false;
                 return resourceConsent.resolve(catalogRuntime, control.state(),
                         control.directory(), routeId, allow, remember);
             }

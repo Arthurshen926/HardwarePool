@@ -24,6 +24,14 @@ final class AndroidAudioUseModule {
     private final Consumer<AudioCapabilityKind> startCapability;
     private final Consumer<AudioCapabilityKind> stopCapability;
     private final java.util.Map<String, AudioRouteJob> jobs = new java.util.HashMap<>();
+    private final AndroidSpeakerSettings speakerSettings;
+    private final AtomicBoolean speakerPermitted;
+    private final BooleanSupplier speakerVisible;
+    private final BooleanSupplier speakerForeground;
+    private final java.util.Set<String> approvedSpeakerRoutes = new java.util.HashSet<>();
+    private final java.util.Set<String> consumedSpeakerRoutes = new java.util.HashSet<>();
+    private final java.util.Map<String, StereoJob> stereoJobs = new java.util.HashMap<>();
+    private final java.util.List<StereoJob> retiringStereo = new java.util.ArrayList<>();
     private String usesJson = "[]";
     private final AudioNodeController controller;
     private final BooleanSupplier foregroundReady;
@@ -38,7 +46,11 @@ final class AndroidAudioUseModule {
             SpeakerSinkAdapter speakerAdapter, Supplier<AudioNodeSnapshot> snapshot,
             Consumer<AudioCapabilityKind> startCapability, Consumer<AudioCapabilityKind> stopCapability,
             AudioNodeController controller, BooleanSupplier foregroundReady, AtomicBoolean securePermitted,
-            BooleanSupplier secureUiVisible, AndroidMicrophoneSettings settings, Runnable stateChanged) {
+            BooleanSupplier secureUiVisible, AndroidMicrophoneSettings settings, Runnable stateChanged,
+            AndroidSpeakerSettings speakerSettings, AtomicBoolean speakerPermitted,
+            BooleanSupplier speakerVisible, BooleanSupplier speakerForeground) {
+        this.speakerSettings = speakerSettings; this.speakerPermitted = speakerPermitted;
+        this.speakerVisible = speakerVisible; this.speakerForeground = speakerForeground;
         this.context = context;
         this.microphoneAdapter = microphoneAdapter;
         this.speakerAdapter = speakerAdapter;
@@ -54,11 +66,12 @@ final class AndroidAudioUseModule {
     }
 
     void start(AndroidNativeCatalogRuntime runtime, String peer, String direction) {
-        if (!settings.acceptsDirection(direction)) throw new IllegalArgumentException("Audio profile mismatch");
+        if (!("speaker".equals(direction) ? speakerSettings.acceptsDirection(direction) : settings.acceptsDirection(direction))) throw new IllegalArgumentException("Audio profile mismatch");
         usesJson = runtime.audioUse("start", "", peer, direction, 0);
     }
 
     void stop(AndroidNativeCatalogRuntime runtime, String direction) {
+        if ("speaker-secure".equals(direction)) { invalidateSecureSpeaker(runtime); return; }
         usesJson = runtime.audioUse("stop", "", "", direction, 0);
         synchronize(runtime);
     }
@@ -66,6 +79,7 @@ final class AndroidAudioUseModule {
     // The Service stops hardware controllers after releasing Route resources.
     void close() {
         securePermitted.set(false);
+        invalidateStereoLocal();
         for (SecureAudioJob job : new java.util.ArrayList<>(secureJobs.values())) retire(job);
         secureJobs.clear();
         for (AudioRouteJob job : jobs.values()) {
@@ -84,6 +98,15 @@ final class AndroidAudioUseModule {
                 if ("microphone-secure".equals(item.optString("direction")) && "active".equals(item.optString("status"))) {
                     item.put("message", "安全音频已通过认证通道发送；不代表接收端已播放或听见");
                 }
+                if ("speaker-secure".equals(item.optString("direction"))) {
+                    StereoJob job = stereoJobs.get(item.optString("routeId"));
+                    if (job != null) {
+                        var playback = job.playback.snapshot();
+                        item.put("acceptedBytes", job.progress.acceptedBytes());
+                        item.put("acceptedRecords", job.progress.acceptedRecords());
+                        item.put("message", "实验性安全立体声：AudioTrack 写入确认 " + job.progress.acceptedBytes() + " 字节；不代表实际听见，Route 保持准备中");
+                    }
+                }
                 String direction=item.getString("direction");
                 org.json.JSONObject old=current.get(direction);
                 boolean live=!"idle".equals(item.optString("status"))&&!"failed".equals(item.optString("status"));
@@ -97,10 +120,14 @@ final class AndroidAudioUseModule {
     void synchronize(AndroidNativeCatalogRuntime runtime) {
         try {
             reapRetiring();
+            reapStereo();
             usesJson = runtime.audioUse("poll", "", "", "", 0);
             org.json.JSONArray uses = new org.json.JSONArray(usesJson);
             java.util.Set<String> live = new java.util.HashSet<>();
             for (int i=0;i<uses.length();i++) if (uses.getJSONObject(i).optBoolean("shouldPrepare")) live.add(uses.getJSONObject(i).getString("routeId"));
+            for (String id : new java.util.ArrayList<>(stereoJobs.keySet())) {
+                if (!live.contains(id)) retireStereo(stereoJobs.remove(id));
+            }
             for (String id : new java.util.ArrayList<>(secureJobs.keySet())) {
                 if (!live.contains(id)) retire(secureJobs.remove(id));
             }
@@ -118,6 +145,12 @@ final class AndroidAudioUseModule {
                 org.json.JSONObject config=use.getJSONObject("config");
                 // Dispatch BEFORE looking up any existing legacy job or opening any socket.
                 // A secure direction with a missing/wrong transport must never fall through.
+                if (AndroidSecureSpeakerLaunch.TRANSPORT.equals(config.optString("transport"))
+                        || AndroidSecureSpeakerLaunch.DIRECTION.equals(use.optString("direction"))) {
+                    synchronizeStereo(runtime, use, config);
+                    continue;
+                }
+                if (stereoJobs.containsKey(id)) throw new IllegalArgumentException("Stereo transport changed");
                 if (AndroidSecureAudioLaunch.TRANSPORT.equals(config.optString("transport"))
                         || AndroidSecureAudioLaunch.DIRECTION.equals(use.optString("direction"))) {
                     synchronizeSecure(runtime, use, config);
@@ -126,7 +159,7 @@ final class AndroidAudioUseModule {
                 if (secureJobs.containsKey(id)) throw new IllegalArgumentException("Secure transport changed");
                 AndroidAudioRouteTransport.requireLegacy(config.getInt("schemaVersion"),
                         config.getString("transport"), config.getString("format"), use.getString("direction"));
-                if (!settings.acceptsDirection(use.getString("direction"))) {
+                if (!("speaker".equals(use.getString("direction")) ? speakerSettings.acceptsDirection("speaker") : settings.acceptsDirection(use.getString("direction")))) {
                     throw new IllegalArgumentException("Audio profile changed");
                 }
                 boolean microphone="microphone".equals(use.getString("direction"));
@@ -136,6 +169,9 @@ final class AndroidAudioUseModule {
                     throw new IllegalArgumentException("Legacy audio binding changed");
                 }
                 if (job==null) {
+                    if (!microphone && (ownsSecureSpeaker() || AndroidSecureStereoPlayback.hasUnreleasedPlayback())) {
+                        runtime.audioUse("busy", id,"","",0); continue;
+                    }
                     if (microphone && (!secureJobs.isEmpty() || !retiring.isEmpty()
                             || AndroidSecureMicrophoneCapture.hasUnreleasedCapture())) {
                         runtime.audioUse("busy", id,"","",0); continue;
@@ -174,6 +210,7 @@ final class AndroidAudioUseModule {
                     runtime.audioUse("failed",id,"","",0);
                 }
                 } catch (RuntimeException | LinkageError | org.json.JSONException | java.io.IOException failed) {
+                    retireStereo(stereoJobs.remove(id));
                     SecureAudioJob secureJob = secureJobs.remove(id);
                     if (secureJob != null) retire(secureJob);
                     AudioRouteJob failedJob=jobs.remove(id);
@@ -181,7 +218,8 @@ final class AndroidAudioUseModule {
                     runtime.audioUse("failed",id,"","",0);
                 }
             }
-        } catch (RuntimeException | org.json.JSONException failed) {
+        } catch (RuntimeException | LinkageError | org.json.JSONException failed) {
+            invalidateStereoLocal();
             securePermitted.set(false);
             for (SecureAudioJob job : new java.util.ArrayList<>(secureJobs.values())) retire(job);
             secureJobs.clear();
@@ -330,6 +368,147 @@ final class AndroidAudioUseModule {
             retiring.remove(job);
             controller.completeStop(AudioCapabilityKind.MICROPHONE_SOURCE, job.stopGeneration);
             stateChanged.run();
+        }
+    }
+
+    void approveSecureSpeaker(String routeId) {
+        if (!speakerSettings.secure() || !speakerVisible.getAsBoolean()) throw new IllegalStateException("Visible speaker opt-in required");
+        approvedSpeakerRoutes.add(routeId);
+    }
+
+    void revokeSecureSpeakerRoute(String routeId) {
+        approvedSpeakerRoutes.remove(routeId);
+        retireStereo(stereoJobs.remove(routeId));
+    }
+
+    boolean ownsSecureSpeaker() { return !stereoJobs.isEmpty() || !retiringStereo.isEmpty(); }
+
+    void invalidateSecureSpeaker(AndroidNativeCatalogRuntime runtime) {
+        invalidateStereoLocal();
+        usesJson = runtime.audioUse("stop", "", "", "speaker-secure", 0);
+    }
+
+    void invalidateSpeaker(AndroidNativeCatalogRuntime runtime) {
+        try { invalidateSecureSpeaker(runtime); }
+        finally {
+            try { runtime.audioUse("stop", "", "", "speaker", 0); }
+            finally {
+                for (String id : new java.util.ArrayList<>(jobs.keySet())) {
+                    AudioRouteJob job = jobs.get(id);
+                    if (job.kind == AudioCapabilityKind.SPEAKER_SINK) {
+                        jobs.remove(id); job.close(); stopCapability.accept(job.kind);
+                    }
+                }
+            }
+        }
+    }
+
+    private void invalidateStereoLocal() {
+        speakerPermitted.set(false);
+        approvedSpeakerRoutes.clear();
+        for (StereoJob job : new java.util.ArrayList<>(stereoJobs.values())) retireStereo(job);
+        stereoJobs.clear();
+    }
+
+    private void synchronizeStereo(AndroidNativeCatalogRuntime runtime, org.json.JSONObject use,
+            org.json.JSONObject config) throws org.json.JSONException {
+        java.util.Map<String, Object> fields = new java.util.HashMap<>();
+        java.util.Iterator<String> names = config.keys();
+        while (names.hasNext()) { String key = names.next(); fields.put(key, config.get(key)); }
+        AndroidSecureSpeakerLaunch launch = AndroidSecureSpeakerLaunch.admit(fields, use.getString("routeId"),
+                use.getString("sessionId"), use.getString("peerNodeId"), use.getString("direction"),
+                strictLong(use, "expiresAtMs"), speakerSettings.selection(), System.currentTimeMillis());
+        String id = launch.routeId();
+        if (!launch.matches(speakerSettings) || jobs.containsKey(id) || !speakerVisible.getAsBoolean()
+                || !(use.get("shouldRun") instanceof Boolean) || use.getBoolean("shouldRun")) {
+            throw new IllegalArgumentException("Invalid secure speaker binding or visibility");
+        }
+        StereoJob job = stereoJobs.get(id);
+        if (job != null && !job.launch.equals(launch)) throw new IllegalArgumentException("Stereo binding changed");
+        if (job == null) {
+            if (!approvedSpeakerRoutes.remove(id) || consumedSpeakerRoutes.contains(id)) throw new IllegalStateException("Fresh visible consent required");
+            consumedSpeakerRoutes.add(id);
+            if (ownsSecureSpeaker() || AndroidSecureStereoPlayback.hasUnreleasedPlayback()) throw new IllegalStateException("Speaker cleanup pending");
+            TransitionToken transition = controller.beginStart(AudioCapabilityKind.SPEAKER_SINK);
+            if (!transition.accepted()) throw new IllegalStateException("Speaker busy");
+            job = AndroidSecureAudioStartup.start(speakerPermitted, new AndroidSecureAudioStartup.Steps<StereoJob>() {
+                public boolean foregroundReady() { return speakerVisible.getAsBoolean() && speakerForeground.getAsBoolean(); }
+                public long startNative() { return runtime.stereoSecureStart(id); }
+                public StereoJob createCapture(long generation) {
+                    dev.capyio.android.contract.SecureStereoPlaybackSession.NativeReceiver receiver = new dev.capyio.android.contract.SecureStereoPlaybackSession.NativeReceiver() {
+                        public int state(long g, long[] counters) { return runtime.stereoSecureState(g, counters); }
+                        public boolean enable(long g) { return runtime.stereoSecureEnable(g); }
+                        public int read(long g, byte[] pcm, long[] metadata) { return runtime.stereoSecureRead(g, pcm, metadata); }
+                        public int ack(long g, long token, int offset, int bytes) { return runtime.stereoSecureAck(g, token, offset, bytes); }
+                        public void stop(long g) { runtime.stereoSecureStop(g); }
+                    };
+                    AndroidSecureStereoPlayback playback = new AndroidSecureStereoPlayback(
+                            () -> speakerPermitted.get() && speakerVisible.getAsBoolean() && launch.matches(speakerSettings), generation, receiver);
+                    StereoJob created = new StereoJob(launch, transition.generation(), generation, runtime, playback);
+                    stereoJobs.put(id, created);
+                    return created;
+                }
+                public boolean startCapture(StereoJob created) { return created.playback.start(); }
+                public void stopNative(long generation) { runtime.stereoSecureStop(generation); }
+                public void stopCapture(StereoJob created) { created.playback.stop(); }
+                public void failed() { controller.fail(AudioCapabilityKind.SPEAKER_SINK, transition.generation(), "CAPY.ANDROID.SECURE_SPEAKER_START_FAILED"); }
+                public void changed() { stateChanged.run(); }
+            });
+        }
+        var playback = job.playback.snapshot();
+        if (playback.state() == dev.capyio.android.contract.SecureStereoPlaybackSession.State.FAILED
+                || playback.state() == dev.capyio.android.contract.SecureStereoPlaybackSession.State.STOPPED) {
+            throw new IllegalStateException("Secure speaker ended");
+        }
+        // Intentionally no audioUse(active), completeStart or audible claim. Only exact ACKed write counters.
+        long[] counters = new long[3];
+        int nativeState = runtime.stereoSecureState(job.generation, counters);
+        job.progress.observe(nativeState, counters, playback.acceptedBytes(), playback.acceptedRecords());
+        long frames = job.progress.acceptedBytes() / 4;
+        if (frames > job.reportedFrames) {
+            job.reportedFrames = frames;
+            stateChanged.run();
+        }
+    }
+
+    private void retireStereo(StereoJob job) {
+        if (job == null) return;
+        speakerPermitted.set(false);
+        try { job.runtime.stereoSecureStop(job.generation); } catch (RuntimeException | LinkageError ignored) { }
+        try { job.playback.stop(); } catch (RuntimeException | LinkageError ignored) { }
+        finally {
+            TransitionToken stop = controller.beginStop(AudioCapabilityKind.SPEAKER_SINK);
+            job.stopGeneration = stop.generation();
+            if (!retiringStereo.contains(job)) retiringStereo.add(job);
+            stateChanged.run();
+        }
+    }
+
+    private void reapStereo() {
+        for (StereoJob job : new java.util.ArrayList<>(retiringStereo)) {
+            var playback = job.playback.snapshot();
+            if (!playback.cleanupComplete()) continue;
+            if (playback.cleanupFailed()) {
+                controller.failStop(AudioCapabilityKind.SPEAKER_SINK, job.stopGeneration, "CAPY.ANDROID.SECURE_SPEAKER_CLEANUP_FAILED");
+                continue;
+            }
+            retiringStereo.remove(job);
+            controller.completeStop(AudioCapabilityKind.SPEAKER_SINK, job.stopGeneration);
+            stateChanged.run();
+        }
+    }
+
+    private static final class StereoJob {
+        final AndroidSecureSpeakerLaunch launch;
+        final long lifecycleGeneration, generation;
+        final AndroidNativeCatalogRuntime runtime;
+        final AndroidSecureStereoPlayback playback;
+        final AndroidSecureSpeakerProgress progress = new AndroidSecureSpeakerProgress();
+        long reportedFrames, stopGeneration;
+        StereoJob(AndroidSecureSpeakerLaunch launch, long lifecycleGeneration, long generation,
+                AndroidNativeCatalogRuntime runtime, AndroidSecureStereoPlayback playback) {
+            this.launch = launch; this.lifecycleGeneration = lifecycleGeneration; this.generation = generation;
+            this.runtime = runtime; this.playback = playback;
         }
     }
 

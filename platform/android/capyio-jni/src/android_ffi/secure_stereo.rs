@@ -1,4 +1,4 @@
-//! JNI foundation only: no Java speaker selection, publication, or AudioTrack.
+//! Exact selected secure speaker JNI owner; AudioTrack remains a separate platform owner.
 //! Runtime/control preparation and fresh commits are separate from network I/O.
 use super::*;
 use crate::{
@@ -320,6 +320,21 @@ fn lookup(runtime: jlong, generation: jlong) -> Result<Arc<StereoEntry>, &'stati
         .cloned()
         .ok_or("stale")
 }
+pub(super) fn owns_live_route(runtime: u64, route: RouteId) -> bool {
+    entry_snapshot()
+        .is_some_and(|entry| entry.runtime == runtime && entry.route == route && entry.live())
+}
+
+pub(super) fn launch_ready(host: &AndroidCatalogRuntimeV1, route: &Route, now: u64) -> bool {
+    route.state == RouteState::Prepared
+        && crate::secure_speaker_policy::selection(&host.runtime, route).is_ok()
+        && host
+            .stereo_consents
+            .get(&route.id)
+            .is_some_and(|stamp| std::time::Instant::now() < stamp.monotonic_deadline())
+        && crate::stereo_admission::expiry(route).is_ok_and(|end| now < end)
+}
+
 fn start(runtime: u64, route: RouteId) -> Result<u64, String> {
     reap_finished(None);
     let session = {
@@ -328,7 +343,7 @@ fn start(runtime: u64, route: RouteId) -> Result<u64, String> {
             .map_err(|_| "Runtime registry poisoned")?;
         let host = registry.get(&runtime).ok_or("Runtime absent")?;
         let route = host.runtime.route(route).map_err(|e| e.to_string())?;
-        if route.state != RouteState::Prepared {
+        if !launch_ready(host, route, now_ms()?) {
             return Err("stereo Start requires already Prepared local consent".into());
         }
         route.session_id
@@ -391,6 +406,13 @@ fn start(runtime: u64, route: RouteId) -> Result<u64, String> {
             let mut slot = jobs().lock().map_err(|_| "stereo registry poisoned")?;
             if slot.is_some() {
                 return Err("previous stereo generation has not exited".into());
+            }
+            if !launch_ready(
+                host,
+                host.runtime.route(route).map_err(|e| e.to_string())?,
+                now,
+            ) {
+                return Err("secure speaker selection or original consent changed".into());
             }
             let stamp = host
                 .stereo_consents

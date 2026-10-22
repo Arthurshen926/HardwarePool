@@ -1,3 +1,4 @@
+import { parseAndroidSpeakerSettings } from "./android-speaker-settings";
 import { parseAndroidMicrophoneSettings } from "./android-microphone-settings";
 import { parseAndroidCameraSettings } from "./android-camera-settings";
 import { invoke } from "@tauri-apps/api/core";
@@ -34,6 +35,8 @@ declare global {
       getControllerPeersJson?(): string;
       getAudioPeersJson?(): string;
       getAudioUsesJson?(): string;
+      getSpeakerSettingsJson?(): string;
+      selectSpeakerProfile?(profile: string, expectedRevision: string): boolean;
       getMicrophoneSettingsJson?(): string;
       selectMicrophoneProfile?(profile: string, expectedRevision: number): boolean;
       getCameraPeersJson?(): string;
@@ -107,7 +110,20 @@ class AndroidNodeCapyIOApi implements CapyIOApi {
     if (!settings) throw new Error('麦克风设置暂不可用。');
     return settings;
   }
+  async getAndroidSpeakerSettings(): ReturnType<CapyIOApi['getAndroidSpeakerSettings']> {
+    const value = JSON.parse(window.CapyIOAndroid?.getSpeakerSettingsJson?.() ?? 'null');
+    return value === null ? null : parseAndroidSpeakerSettings(value);
+  }
+  async selectAndroidSpeakerProfile(profile: import('./types').UiAndroidSpeakerSettings['playbackProfile'], expectedRevision: string) {
+    if (window.CapyIOAndroid?.selectSpeakerProfile?.(profile, expectedRevision) !== true) {
+      throw new Error('扬声器设置未被接受，请重新读取状态。切换不会授权播放或退回 UDP。');
+    }
+    const settings = await this.getAndroidSpeakerSettings();
+    if (!settings) throw new Error('扬声器设置暂不可用。');
+    return settings;
+  }
   async startAudioUse(peerNodeId: string, direction: import('./types').AudioUseDirection): Promise<void> {
+    if (direction === 'speaker-secure') throw new Error('安全扬声器仅接受兼容 Source API 发起的入站申请。');
     if (window.CapyIOAndroid?.startAudioUse?.(peerNodeId, direction) !== true) throw new Error('音频申请未被接受，请检查节点连接、资源发布和应用版本。');
   }
   async stopAudioUse(direction: import('./types').AudioUseDirection): Promise<void> {
@@ -518,6 +534,8 @@ class TauriCapyIOApi implements CapyIOApi {
   async stopCameraUse(): Promise<void> { throw new Error('Windows 请在远程资源中停止具体相机。'); }
   async getAudioPeers(): ReturnType<CapyIOApi['getAudioPeers']> { return []; }
   async getAudioUses(): ReturnType<CapyIOApi['getAudioUses']> { return []; }
+  async getAndroidSpeakerSettings() { return null; }
+  async selectAndroidSpeakerProfile(): Promise<import('./types').UiAndroidSpeakerSettings> { throw new Error('当前平台不配置 Android 扬声器。'); }
   async getAndroidMicrophoneSettings() { return null; }
   async selectAndroidMicrophoneProfile(): Promise<import('./types').UiAndroidMicrophoneSettings> { throw new Error('当前平台不配置 Android 麦克风。'); }
   async startAudioUse(): Promise<void> { throw new Error('Windows 请在远程资源中选择具体麦克风或扬声器。'); }

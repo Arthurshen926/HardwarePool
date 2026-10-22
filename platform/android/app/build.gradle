@@ -251,6 +251,10 @@ tasks.register('compileCapabilityCompositionTest', JavaCompile) {
     source file('src/main/java/dev/capyio/android/AndroidAudioPeer.java')
     source file('src/main/java/dev/capyio/android/AndroidAudioRouteTransport.java')
     source file('src/main/java/dev/capyio/android/AndroidMicrophoneSettings.java')
+    source file('src/main/java/dev/capyio/android/AndroidSpeakerSettings.java')
+    source file('src/main/java/dev/capyio/android/AndroidSecureSpeakerLaunch.java')
+    source file('src/main/java/dev/capyio/android/AndroidSecureSpeakerProgress.java')
+    source file('src/main/java/dev/capyio/android/AndroidSecureSpeakerConsent.java')
     source file('src/main/java/dev/capyio/android/AndroidSecureAudioLaunch.java')
     source file('src/main/java/dev/capyio/android/AndroidSecureAudioStartup.java')
     source file('../capyio-display-android/display-app/src/main/java/dev/capyio/display/app/DisplayPrerequisites.java')
@@ -307,6 +311,15 @@ tasks.register('secureAudioContractTest', JavaExec) {
     dependsOn tasks.named('compileCapabilityCompositionTest')
     classpath = files(capabilityCompositionOutput)
     mainClass = 'dev.capyio.android.AndroidSecureAudioContractTest'
+    enableAssertions = true
+}
+
+tasks.register('secureSpeakerContractTest', JavaExec) {
+    group = 'verification'
+    workingDir repositoryRoot
+    dependsOn tasks.named('compileCapabilityCompositionTest')
+    classpath = files(capabilityCompositionOutput)
+    mainClass = 'dev.capyio.android.AndroidSecureSpeakerContractTest'
     enableAssertions = true
 }
 

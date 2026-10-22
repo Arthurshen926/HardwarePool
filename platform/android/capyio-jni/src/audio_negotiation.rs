@@ -507,7 +507,10 @@ impl AndroidCatalogRuntimeV1 {
     /// Local UI Stop cancels pending and authorized preparation as well as
     /// running audio. In particular, Draft is not a reason to ignore Stop.
     pub fn stop_audio_direction(&mut self, direction: &str) -> Result<(), String> {
-        if !matches!(direction, "microphone" | "microphone-secure" | "speaker") {
+        if !matches!(
+            direction,
+            "microphone" | "microphone-secure" | "speaker" | "speaker-secure"
+        ) {
             return Err("unknown audio direction".into());
         }
         let ids: Vec<_> = self

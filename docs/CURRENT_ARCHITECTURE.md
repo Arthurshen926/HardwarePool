@@ -99,7 +99,15 @@ Windows background_host 只管理 UI 单实例与窗口聚焦，不拥有 Runtim
 Android secure-stereo foundation (ADR 1566) now separates shared Runtime lease
 preparation from consume-once control sends and runs a bounded native receive
 job with one exact write-ACK permit. Runtime/control generation and both original
-claims remain authoritative; copying PCM is not playback progress. The Java
-facade exposes native foundation methods only. Secure speaker selection,
-AudioTrack ownership and a reverse-audio Node/console flow are still deferred;
-existing speaker publication and legacy defaults are unchanged.
+claims remain authoritative; copying PCM is not playback progress. That foundation exposed native Java methods without a live AudioTrack owner.
+ADR 1567 below adds explicit secure speaker selection and ownership; a reverse
+audio Node/console flow remains deferred, and legacy defaults stay unchanged.
+
+## Android secure stereo playback integration
+
+ADR 1567 adds the separate Android AudioTrack owner and explicit incoming-only
+secure stereo speaker setting. The default remains legacy; microphone settings
+and permission are independent. Secure use remains Starting with native-confirmed
+write counters, not an audible/Active claim. AudioTrack hardware compatibility
+requires device acceptance. Reverse secure Linux capture/virtual-speaker
+Node/console launch integration is not included.

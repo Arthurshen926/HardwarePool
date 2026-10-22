@@ -157,3 +157,11 @@ does not imply synchronized sampling.
 Unknown optional metadata may be preserved as opaque data. Unknown direction,
 required Profile major, enum or required format semantics cause explicit
 rejection.
+
+## Android secure stereo playback integration
+
+The ADR 1567 Android speaker opt-in publishes only the exact ADR 1565 secure
+stereo Sink descriptor, with an immutable selection revision. This is eligibility,
+not verified device playback. It requires fresh per-use local consent and a
+compatible secure Source; it is not a generic Windows legacy audio action.
+Mono/300-second formats and unknown/mixed descriptors cannot substitute for it.

@@ -1568,3 +1568,14 @@ native symbol inventory are necessary but do not prove Android AudioTrack or a
 physical device. Retain the separate ADR 1565 reusable stereo and existing mono,
 legacy and long-session graph suites; a new synthetic acknowledged sink is not
 a substitute for future actual platform playback acceptance.
+
+## Android secure stereo playback integration
+
+ADR 1567 additionally requires deterministic production-owner tests with fake
+AudioTrack/native boundaries: remaining-buffer versus logical-ACK offsets,
+partial/zero/malformed writes, busy ACK without duplicate write, lifecycle
+cancellation, stale generations, actual-format rejection and cleanup quarantine.
+Closed selection/DTO/progress contracts and frontend dispatch tests supplement
+actual SDK compilation and ARM64/JNI symbol checks. Retained real TLS/PipeWire
+receiver-job tests remain synthetic-sink evidence, not an Android device or
+complete reverse Linux launcher proof.

@@ -123,6 +123,7 @@ fn capability(
     port_name: &str,
 ) -> AndroidCapabilityDtoV1 {
     AndroidCapabilityDtoV1 {
+        speaker_selection: None,
         key: key.to_owned(),
         display_name: display_name.to_owned(),
         class,
@@ -142,5 +143,56 @@ fn capability(
             clock_domain: Some("android.audio.frame-position".to_owned()),
             interoperability: AndroidInteroperabilityModeV1::StandardPort,
         }],
+    }
+}
+
+#[test]
+fn secure_speaker_publication_requires_exact_explicit_selection() {
+    use capyio_android_host::AndroidSpeakerSelectionV1;
+    let mut dto = catalog();
+    let speaker = dto
+        .capabilities
+        .iter_mut()
+        .find(|cap| cap.class == AndroidCapabilityClassV1::Speaker)
+        .unwrap();
+    speaker.supported_route_modes = BTreeSet::from([AndroidAdapterRouteModeV1::AdapterManaged]);
+    speaker.ports[0].interoperability = AndroidInteroperabilityModeV1::AdapterManaged;
+    speaker.ports[0].formats = vec!["pcm-s16le-48000-stereo-tls13-v1".into()];
+    speaker.speaker_selection = Some(AndroidSpeakerSelectionV1 {
+        profile: "secure_stereo_tls13_v1".into(),
+        revision: 1,
+    });
+    let node = project_android_catalog(dto.clone()).unwrap();
+    let speaker = node
+        .capabilities
+        .values()
+        .find(|cap| cap.class == capyio_core::CapabilityClass::Speaker)
+        .unwrap();
+    assert_eq!(
+        speaker.metadata["speaker.profile"],
+        "secure_stereo_tls13_v1"
+    );
+    assert_eq!(speaker.metadata["speaker.selectionRevision"], "1");
+    for mutate in [
+        (|cap: &mut AndroidCapabilityDtoV1| cap.speaker_selection = None)
+            as fn(&mut AndroidCapabilityDtoV1),
+        |cap| cap.speaker_selection.as_mut().unwrap().revision = 0,
+        |cap| cap.speaker_selection.as_mut().unwrap().profile = "legacy".into(),
+        |cap| {
+            cap.speaker_selection.as_mut().unwrap().profile = "secure_stereo_tls13_300s_v1".into()
+        },
+        |cap| cap.ports[0].formats.push("pcm-s16le-48000-stereo".into()),
+        |cap| cap.ports[0].direction = AndroidPortDirectionV1::Source,
+        |cap| cap.ports[0].qos_modes.push(AndroidQosModeV1::Basic),
+    ] {
+        let mut invalid = dto.clone();
+        mutate(
+            invalid
+                .capabilities
+                .iter_mut()
+                .find(|cap| cap.class == AndroidCapabilityClassV1::Speaker)
+                .unwrap(),
+        );
+        assert!(project_android_catalog(invalid).is_err());
     }
 }

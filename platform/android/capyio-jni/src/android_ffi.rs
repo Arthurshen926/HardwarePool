@@ -2581,3 +2581,8 @@ pub extern "system" fn Java_dev_capyio_touchpad_NativeTouchpadRecordBridge_nativ
         })
         .resolve::<ThrowRuntimeExAndDefault>()
 }
+
+// Atomics-only retirement before a changed local speaker selection is published.
+pub(super) fn reconcile_secure_speaker(runtime: &capyio_runtime::NodeRuntime) {
+    secure_stereo::reconcile(runtime);
+}

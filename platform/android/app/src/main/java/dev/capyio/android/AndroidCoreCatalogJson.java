@@ -18,6 +18,11 @@ public final class AndroidCoreCatalogJson {
             CapabilityCatalogSnapshot catalog,
             String platformVersion,
             String runtimeVersion) {
+        return encode(catalog, platformVersion, runtimeVersion, null);
+    }
+
+    static String encode(CapabilityCatalogSnapshot catalog, String platformVersion,
+            String runtimeVersion, AndroidSpeakerSettings.Selection speakerSelection) {
         if (catalog == null || platformVersion == null || runtimeVersion == null) {
             throw new IllegalArgumentException("catalog and version fields are required");
         }
@@ -33,12 +38,12 @@ public final class AndroidCoreCatalogJson {
             if (index > 0) {
                 json.append(',');
             }
-            appendCapability(json, catalog.capabilities().get(index));
+            appendCapability(json, catalog.capabilities().get(index), speakerSelection);
         }
         return json.append("]}").toString();
     }
 
-    private static void appendCapability(StringBuilder json, CapabilitySnapshot capability) {
+    private static void appendCapability(StringBuilder json, CapabilitySnapshot capability, AndroidSpeakerSettings.Selection speakerSelection) {
         CatalogPolicy policy = policyFor(capability.capabilityKey());
         json.append('{');
         appendStringField(json, "key", capability.capabilityKey());
@@ -47,6 +52,11 @@ public final class AndroidCoreCatalogJson {
         appendStringField(json, "availability", lower(capability.availability()));
         appendStringField(
                 json, "permission_requirement", lower(capability.permissionRequirement()));
+        if ("android.speaker".equals(capability.capabilityKey()) && speakerSelection != null) {
+            json.append(",\"speaker_selection\":{\"profile\":");
+            appendQuoted(json, speakerSelection.profile().id);
+            json.append(",\"revision\":").append(speakerSelection.revision()).append('}');
+        }
         json.append(",\"adapter_attached\":").append(capability.adapterAttached());
         appendStringField(json, "adapter_type", policy.adapterType());
         appendStringField(json, "adapter_version", ADAPTER_VERSION);

@@ -53,7 +53,7 @@ pub(crate) fn live_profile(route: &Route) -> Result<SecureAudioSessionProfile, S
 
 #[cfg(any(target_os = "android", test))]
 pub(crate) fn require_live_profile(route: &Route) -> Result<(), String> {
-    if proposed(route) {
+    if proposed(route) && !crate::secure_speaker_policy::exact_profile(route) {
         live_profile(route)?;
     }
     Ok(())
@@ -61,6 +61,8 @@ pub(crate) fn require_live_profile(route: &Route) -> Result<(), String> {
 pub(crate) fn direction<'a>(route: &Route, legacy: &'a str) -> &'a str {
     if legacy == "microphone" && proposed(route) {
         "microphone-secure"
+    } else if legacy == "speaker" && proposed(route) {
+        "speaker-secure"
     } else {
         legacy
     }
@@ -206,7 +208,7 @@ mod tests {
         }
     }
     #[test]
-    fn stereo_reusable_api_is_not_an_android_live_or_legacy_handoff() {
+    fn exact_stereo_live_profile_is_not_a_mono_or_legacy_handoff() {
         let (host, id) = fixture();
         let mut route = host.runtime.route(id).unwrap().clone();
         route.compatible_formats = vec![FormatDescriptor::new(SECURE_AUDIO_STEREO_FORMAT)];
@@ -217,9 +219,13 @@ mod tests {
         );
         assert!(!selected(&route), "mono live profile must not widen");
         assert!(live_profile(&route).is_err());
-        assert!(require_live_profile(&route).is_err());
+        assert!(require_live_profile(&route).is_ok());
         assert!(config(&route).is_err());
-        assert_eq!(direction(&route, "speaker"), "speaker");
+        assert!(
+            crate::secure_speaker_policy::config(&host.runtime, &route).is_err(),
+            "no selected local Speaker"
+        );
+        assert_eq!(direction(&route, "speaker"), "speaker-secure");
     }
 
     #[test]

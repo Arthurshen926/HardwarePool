@@ -139,12 +139,41 @@ final class AndroidCapabilityModules {
             HardwarePresence imuPresence,
             HardwarePresence touchSurfacePresence,
             HardwarePresence vibratorPresence) {
+        return createRegistry(audioController, imuController, gamepadController, touchpadController,
+                hapticsController, microphonePermissionReady, notificationPermissionReady,
+                cameraLifecycle, cameraPermissionReady, cameraFormats, microphoneFormats,
+                () -> List.of("pcm-s16le-48000-stereo"), cameraAdapterAttached, hapticsAdapterAttached,
+                microphonePresence, speakerPresence, cameraPresence, imuPresence,
+                touchSurfacePresence, vibratorPresence);
+    }
+
+    static CapabilityModuleRegistry createRegistry(
+            AudioNodeController audioController,
+            CapabilityLifecycleController imuController,
+            GamepadNodeController gamepadController,
+            TouchpadNodeController touchpadController,
+            CapabilityLifecycleController hapticsController,
+            BooleanSupplier microphonePermissionReady,
+            BooleanSupplier notificationPermissionReady,
+            Supplier<CapabilityLifecycleSnapshot> cameraLifecycle,
+            BooleanSupplier cameraPermissionReady,
+            Supplier<List<String>> cameraFormats,
+            Supplier<List<String>> microphoneFormats,
+            Supplier<List<String>> speakerFormats,
+            boolean cameraAdapterAttached,
+            boolean hapticsAdapterAttached,
+            HardwarePresence microphonePresence,
+            HardwarePresence speakerPresence,
+            HardwarePresence cameraPresence,
+            HardwarePresence imuPresence,
+            HardwarePresence touchSurfacePresence,
+            HardwarePresence vibratorPresence) {
         CapabilityModuleRegistry registry = new CapabilityModuleRegistry();
         registry.register(new AudioModule(
                 audioController,
                 microphonePermissionReady,
                 notificationPermissionReady,
-                microphoneFormats,
+                microphoneFormats, speakerFormats,
                 microphonePresence,
                 speakerPresence));
         registry.register(new CapabilityModule() {
@@ -459,6 +488,7 @@ final class AndroidCapabilityModules {
         private final BooleanSupplier microphonePermissionReady;
         private final BooleanSupplier notificationPermissionReady;
         private final Supplier<List<String>> microphoneFormats;
+        private final Supplier<List<String>> speakerFormats;
         private final HardwarePresence microphonePresence;
         private final HardwarePresence speakerPresence;
 
@@ -467,12 +497,14 @@ final class AndroidCapabilityModules {
                 BooleanSupplier microphonePermissionReady,
                 BooleanSupplier notificationPermissionReady,
                 Supplier<List<String>> microphoneFormats,
+                Supplier<List<String>> speakerFormats,
                 HardwarePresence microphonePresence,
                 HardwarePresence speakerPresence) {
             this.controller = controller;
             this.microphonePermissionReady = microphonePermissionReady;
             this.notificationPermissionReady = notificationPermissionReady;
             this.microphoneFormats = microphoneFormats;
+            this.speakerFormats = speakerFormats;
             this.microphonePresence = microphonePresence;
             this.speakerPresence = speakerPresence;
         }
@@ -494,10 +526,15 @@ final class AndroidCapabilityModules {
                     && !formats.equals(List.of("pcm-s16le-48000-mono-tls13-300s-v1"))) {
                 throw new IllegalArgumentException("Microphone requires one exact explicitly selected format");
             }
+            List<String> speaker = speakerFormats.get();
+            if (!speaker.equals(List.of(AndroidSpeakerSettings.LEGACY_FORMAT))
+                    && !speaker.equals(List.of(AndroidSpeakerSettings.SECURE_FORMAT))) {
+                throw new IllegalArgumentException("Speaker requires one exact explicitly selected format");
+            }
             return List.of(
                     audioCapability(snapshot.microphone(), microphoneReady, microphonePresence, formats),
                     audioCapability(snapshot.speaker(), notificationReady, speakerPresence,
-                            List.of("pcm-s16le-48000-stereo")));
+                            speaker));
         }
 
         private static CapabilitySnapshot audioCapability(

@@ -416,6 +416,10 @@ pub(crate) struct ConsentRequest {
     capability_id: String,
     resource_kind: &'static str,
     expires_at_ms: u64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    profile_id: Option<&'static str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    selection_revision: Option<String>,
 }
 
 pub(crate) fn is_local_touchpad(runtime: &NodeRuntime, route: &Route) -> bool {
@@ -586,6 +590,12 @@ impl TouchpadConsentGate {
                         "touchpad"
                     },
                     expires_at_ms: *expires,
+                    profile_id: crate::secure_speaker_policy::selection(runtime, route)
+                        .ok()
+                        .map(|_| crate::secure_speaker_policy::PROFILE),
+                    selection_revision: crate::secure_speaker_policy::selection(runtime, route)
+                        .ok()
+                        .map(|revision| revision.to_string()),
                 })
             })
             .collect()

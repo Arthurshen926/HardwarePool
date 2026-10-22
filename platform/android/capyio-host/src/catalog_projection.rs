@@ -93,9 +93,19 @@ pub struct AndroidPortDtoV1 {
     pub interoperability: AndroidInteroperabilityModeV1,
 }
 
+/// Explicit speaker setting; absence retains the historical legacy catalog.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct AndroidSpeakerSelectionV1 {
+    pub profile: String,
+    pub revision: u64,
+}
+
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct AndroidCapabilityDtoV1 {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub speaker_selection: Option<AndroidSpeakerSelectionV1>,
     pub key: String,
     pub display_name: String,
     pub class: AndroidCapabilityClassV1,
@@ -253,6 +263,45 @@ fn add_capability(
             "capability routes or ports",
         ));
     }
+    const SECURE_STEREO: &str = "pcm-s16le-48000-stereo-tls13-v1";
+    let advertises_secure = dto
+        .ports
+        .iter()
+        .any(|port| port.formats.iter().any(|f| f == SECURE_STEREO));
+    if let Some(selection) = &dto.speaker_selection {
+        if dto.class != AndroidCapabilityClassV1::Speaker
+            || selection.revision == 0
+            || selection.revision > 9_007_199_254_740_991
+            || !matches!(
+                selection.profile.as_str(),
+                "legacy" | "secure_stereo_tls13_v1"
+            )
+            || (selection.profile == "secure_stereo_tls13_v1") != advertises_secure
+        {
+            return Err(AndroidCatalogProjectionError::InvalidField(
+                "speaker_selection",
+            ));
+        }
+    } else if advertises_secure {
+        return Err(AndroidCatalogProjectionError::InvalidField(
+            "speaker_selection required for secure stereo",
+        ));
+    }
+    if advertises_secure
+        && (dto.ports.len() != 1
+            || dto.ports[0].formats != [SECURE_STEREO]
+            || dto.ports[0].direction != AndroidPortDirectionV1::Sink
+            || dto.ports[0].profile != "capyio.audio.frames/1"
+            || dto.ports[0].qos_modes != [AndroidQosModeV1::Interactive]
+            || dto.ports[0].interoperability != AndroidInteroperabilityModeV1::AdapterManaged
+            || !dto
+                .supported_route_modes
+                .contains(&AndroidAdapterRouteModeV1::AdapterManaged))
+    {
+        return Err(AndroidCatalogProjectionError::InvalidField(
+            "exact secure speaker port",
+        ));
+    }
     let availability = availability(dto.availability);
     if !dto.adapter_attached && availability != Availability::Offline {
         return Err(AndroidCatalogProjectionError::InvalidField(
@@ -335,6 +384,13 @@ fn add_capability(
         }
     }
     let mut metadata = std::collections::BTreeMap::new();
+    if let Some(selection) = dto.speaker_selection {
+        metadata.insert("speaker.profile".into(), selection.profile);
+        metadata.insert(
+            "speaker.selectionRevision".into(),
+            selection.revision.to_string(),
+        );
+    }
     metadata.insert("android.platform_key".to_owned(), dto.key);
     metadata.insert(
         "android.adapter_attached".to_owned(),

@@ -6,8 +6,10 @@ import android.content.Context;
 final class AndroidResourceConsentModule {
     private static final String TOUCHPAD_TRUST_PREFERENCES = "capyio_touchpad_trust_v1";
     private final Context context;
+    private final java.util.function.BooleanSupplier secureSpeaker;
 
-    AndroidResourceConsentModule(Context context) {
+    AndroidResourceConsentModule(Context context, java.util.function.BooleanSupplier secureSpeaker) {
+        this.secureSpeaker = secureSpeaker;
         this.context = context;
     }
 
@@ -19,6 +21,7 @@ final class AndroidResourceConsentModule {
             for (int index = 0; index < requests.length(); index++) {
                 org.json.JSONObject request = requests.getJSONObject(index);
                 if (!routeId.equals(request.getString("routeId"))) continue;
+                if (AndroidSecureSpeakerConsent.requiresFresh(request.optString("resourceKind"), request.optString("profileId"), secureSpeaker.getAsBoolean())) remember = false;
                 String peer = request.getString("peerNodeId");
                 long generation = activePairingGeneration(peer, pairingStoreState, pairedDirectoryJson);
                 if (remember && generation < 0) return false;
@@ -65,6 +68,7 @@ final class AndroidResourceConsentModule {
                     TOUCHPAD_TRUST_PREFERENCES, Context.MODE_PRIVATE);
             for (int index = 0; index < requests.length(); index++) {
                 org.json.JSONObject request = requests.getJSONObject(index);
+                if (AndroidSecureSpeakerConsent.requiresFresh(request.optString("resourceKind"), request.optString("profileId"), secureSpeaker.getAsBoolean())) continue;
                 String peer = request.getString("peerNodeId");
                 long generation = activePairingGeneration(peer, pairingStoreState, pairedDirectoryJson);
                 String key = resourceTrustKey(request);

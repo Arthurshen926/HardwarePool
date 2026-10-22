@@ -200,6 +200,8 @@ export class BrowserMockCapyIOApi implements CapyIOApi {
   async stopCameraUse(): Promise<void> { throw new Error('模拟页面没有真实相机会话'); }
   async getAudioPeers() { return []; }
   async getAudioUses() { return []; }
+  async getAndroidSpeakerSettings() { return null; }
+  async selectAndroidSpeakerProfile(): Promise<import('./types').UiAndroidSpeakerSettings> { throw new Error('模拟页面不配置真实扬声器'); }
   async getAndroidMicrophoneSettings() { return null; }
   async selectAndroidMicrophoneProfile(): Promise<import('./types').UiAndroidMicrophoneSettings> { throw new Error('模拟页面不配置真实麦克风'); }
   async startAudioUse(): Promise<void> { throw new Error('模拟页面不启动真实音频'); }

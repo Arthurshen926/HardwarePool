@@ -1753,5 +1753,15 @@ paired identity, both original claims and the monotonic consent cap are pinned.
 The one-record JNI-compatible bridge does not count PCM exposure as acceptance:
 exact single-use write acknowledgements and synchronous generation invalidation
 bound subsequent delivery. This does not authenticate physical rendering or
-retract data already accepted by an eventual platform sink. Java speaker
-publication/defaults remain unchanged pending the separate AudioTrack lifecycle.
+retract data already accepted by an eventual platform sink. That foundation left Java speaker
+publication/defaults unchanged; ADR 1567 below adds an explicit separate
+AudioTrack lifecycle without changing legacy defaults.
+
+## Android secure stereo playback integration
+
+ADR 1567 adds a separate opt-in AudioTrack owner with a visible-playback gate,
+not microphone permission. Fresh per-use consent cannot be replaced by a
+remembered legacy speaker approval. Stop revokes admission before cleanup;
+failed or uncertain release quarantines the process reservation. Native
+worker-confirmed ACK counters do not authenticate audibility or retract PCM
+already accepted by the platform. Legacy defaults remain unchanged.

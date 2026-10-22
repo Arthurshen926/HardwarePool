@@ -68,6 +68,7 @@ public final class MainActivity extends Activity {
         public void onServiceConnected(ComponentName name, IBinder service) {
             binder = (AudioNodeService.NodeBinder) service;
             binder.setMicrophoneUiVisible(uiInputActive);
+            binder.setSpeakerUiVisible(uiInputActive);
             binder.setStateListener(MainActivity.this::scheduleRefresh);
             scheduleRefresh(0);
         }
@@ -268,7 +269,7 @@ public final class MainActivity extends Activity {
         super.onResume();
         uiInputActive = true;
         AudioNodeService.NodeBinder current = binder;
-        if (current != null) current.setMicrophoneUiVisible(true);
+        if (current != null) { current.setMicrophoneUiVisible(true); current.setSpeakerUiVisible(true); }
     }
 
     @Override
@@ -277,6 +278,7 @@ public final class MainActivity extends Activity {
         AudioNodeService.NodeBinder current = binder;
         if (current != null) {
             current.setMicrophoneUiVisible(false);
+            current.setSpeakerUiVisible(false);
             current.releaseUiInputs();
         }
         super.onPause();
@@ -873,6 +875,15 @@ public final class MainActivity extends Activity {
         public boolean selectMicrophoneProfile(String profile, long expectedRevision) {
             AudioNodeService.NodeBinder current = binder;
             boolean accepted = current != null && current.selectMicrophoneProfile(profile, expectedRevision);
+            if (accepted) dispatchSharedUiState();
+            return accepted;
+        }
+        @JavascriptInterface
+        public String getSpeakerSettingsJson() { AudioNodeService.NodeBinder current=binder;return current==null?"null":current.getSpeakerSettingsJson(); }
+        @JavascriptInterface
+        public boolean selectSpeakerProfile(String profile, String expectedRevision) {
+            AudioNodeService.NodeBinder current = binder;
+            boolean accepted = current != null && current.selectSpeakerProfile(profile, expectedRevision);
             if (accepted) dispatchSharedUiState();
             return accepted;
         }
