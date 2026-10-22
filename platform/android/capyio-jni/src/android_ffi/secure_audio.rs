@@ -155,6 +155,9 @@ pub(super) fn streaming_for_route(runtime: u64, route: RouteId) -> bool {
 }
 /// Runtime caller already holds its brief guard. No nested Runtime lock or I/O.
 pub(super) fn reconcile(runtime: &capyio_runtime::NodeRuntime) {
+    // Shared authoritative Runtime invalidation boundary. Stereo closes only
+    // atomics here; it never joins or performs socket I/O under this guard.
+    super::secure_stereo::reconcile(runtime);
     let owner = runtime.snapshot().local_node.id;
     let invalid = offers().lock().ok().and_then(|cached| {
         cached.as_ref().and_then(|(id, p)| {

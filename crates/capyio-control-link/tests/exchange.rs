@@ -565,9 +565,19 @@ fn connected_raw_pair() -> (
     NodeRuntime,
     NodeRuntime,
 ) {
+    connected_raw_pair_with_session(SessionId::new())
+}
+
+fn connected_raw_pair_with_session(
+    session: SessionId,
+) -> (
+    CatalogControlLink,
+    AuthenticatedControlClientChannel,
+    NodeRuntime,
+    NodeRuntime,
+) {
     let windows = windows_node();
     let android = android_node();
-    let session = SessionId::new();
     let binding = ControlTlsBinding::new(session, windows.id, android.id).unwrap();
     let (server_identity, client_identity) = identities();
     let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).unwrap();
@@ -1529,4 +1539,383 @@ fn ipc_bounded_lease_reply_excludes_expired_dispatch_and_preserves_correlation()
     assert_eq!(response.request_message_id, request_id);
     assert_eq!(response.outcome, PortLeaseOutcome::Acquired);
     assert!(android.route_port_lease_claim(route_id, source).is_some());
+}
+
+fn prepared_lease_fixture() -> (
+    CatalogControlLink,
+    CatalogControlLink,
+    NodeRuntime,
+    NodeRuntime,
+    capyio_core::RouteId,
+    PortRef,
+) {
+    let (windows_link, android_link, mut windows, mut android) = connected_pair();
+    let lab = capyio_testkit::DemoLab::new().unwrap();
+    let route = lab
+        .runtime
+        .route(lab.routes.phone_microphone_to_windows)
+        .unwrap();
+    let route_id = windows
+        .create_route(
+            windows_link.session_id(),
+            route.source,
+            route.sink,
+            route.backend,
+        )
+        .unwrap();
+    android
+        .create_route_with_id(
+            route_id,
+            windows_link.session_id(),
+            route.source,
+            route.sink,
+            route.backend,
+        )
+        .unwrap();
+    windows.authorize_route(route_id, Some(5000)).unwrap();
+    android.authorize_route(route_id, Some(5000)).unwrap();
+    android
+        .set_local_port_lease_policy(route.source, capyio_runtime::PortLeasePolicy::Exclusive)
+        .unwrap();
+    (
+        windows_link,
+        android_link,
+        windows,
+        android,
+        route_id,
+        route.source,
+    )
+}
+
+#[test]
+fn ipc_prepared_lease_exchange_releases_runtime_guards_and_preserves_correlation() {
+    use std::{sync::Mutex, time::Instant};
+
+    for bounded in [false, true] {
+        let (mut windows_link, mut android_link, windows, android, route_id, source) =
+            prepared_lease_fixture();
+        let windows_address = windows_link.authenticated_local_addr().unwrap();
+        let android_address = android_link.authenticated_local_addr().unwrap();
+        assert!(windows_address.ip().is_loopback() && windows_address.port() != 0);
+        assert!(android_address.ip().is_loopback() && android_address.port() != 0);
+        assert_eq!(
+            windows_address,
+            android_link.authenticated_peer_addr().unwrap()
+        );
+        assert_eq!(
+            android_address,
+            windows_link.authenticated_peer_addr().unwrap()
+        );
+        let windows = Mutex::new(windows);
+        let android = Mutex::new(android);
+        let deadline = Instant::now() + Duration::from_secs(2);
+        let prepared_request = {
+            let runtime = windows.lock().unwrap();
+            assert_eq!(runtime.route(route_id).unwrap().source, source);
+            windows_link
+                .prepare_port_lease_request(
+                    route_id,
+                    source,
+                    PortLeaseAction::Acquire,
+                    MIN_PORT_LEASE_TTL_MS,
+                )
+                .unwrap()
+        };
+        let request_id = prepared_request.message_id();
+        assert!(windows.try_lock().is_ok());
+        // Preparation is a pure encoding step, not a hidden network write.
+        assert!(
+            android_link
+                .poll_control_message_until(deadline)
+                .unwrap()
+                .is_none()
+        );
+        let sent_id = if bounded {
+            windows_link.send_prepared_port_lease_request_until(prepared_request, deadline)
+        } else {
+            windows_link.send_prepared_port_lease_request(prepared_request)
+        }
+        .unwrap();
+        assert_eq!(sent_id, request_id);
+        let ReceivedControlMessage::PortLeaseRequest(received) = android_link
+            .receive_control_message_until(deadline)
+            .unwrap()
+        else {
+            panic!("expected prepared lease request");
+        };
+        assert_eq!(received.request().message_id, request_id);
+        let prepared_response = {
+            let mut runtime = android.lock().unwrap();
+            assert!(runtime.route_port_lease_claim(route_id, source).is_none());
+            let response = android_link
+                .prepare_port_lease_response(&mut runtime, received, 1000)
+                .unwrap();
+            let claim = runtime.route_port_lease_claim(route_id, source).unwrap();
+            assert_eq!(claim.session_id, android_link.session_id());
+            assert_eq!(claim.expires_at_ms, 1000 + MIN_PORT_LEASE_TTL_MS);
+            response
+        };
+        assert!(android.try_lock().is_ok());
+        // Owner mutation is already committed, but no response has been sent.
+        assert!(
+            windows_link
+                .poll_control_message_until(deadline)
+                .unwrap()
+                .is_none()
+        );
+        if bounded {
+            android_link.send_prepared_port_lease_response_until(prepared_response, deadline)
+        } else {
+            android_link.send_prepared_port_lease_response(prepared_response)
+        }
+        .unwrap();
+        let ReceivedControlMessage::PortLeaseResponse(response) = windows_link
+            .receive_control_message_until(deadline)
+            .unwrap()
+        else {
+            panic!("expected prepared lease response");
+        };
+        assert_eq!(response.request_message_id, request_id);
+        assert_eq!(response.session_id, android_link.session_id());
+        assert_eq!(response.route_id, route_id);
+        assert_eq!(response.port, source);
+        assert_eq!(response.outcome, PortLeaseOutcome::Acquired);
+        assert_eq!(response.expires_at_ms, Some(1000 + MIN_PORT_LEASE_TTL_MS));
+    }
+}
+
+#[test]
+fn ipc_prepared_lease_actions_reject_replacement_link_with_identical_tls_binding() {
+    use std::time::Instant;
+
+    let (mut original, mut owner, _, mut runtime, route_id, source) = prepared_lease_fixture();
+    let (mut replacement, replacement_owner, _, _) =
+        connected_raw_pair_with_session(original.session_id());
+    let mut replacement_owner = CatalogControlLink::from_dialed(replacement_owner);
+    assert_eq!(original.tls_binding(), replacement.tls_binding());
+    assert_eq!(owner.tls_binding(), replacement_owner.tls_binding());
+    let deadline = Instant::now() + Duration::from_secs(2);
+
+    for bounded in [false, true] {
+        let prepared = original
+            .prepare_port_lease_request(
+                route_id,
+                source,
+                PortLeaseAction::Acquire,
+                MIN_PORT_LEASE_TTL_MS,
+            )
+            .unwrap();
+        let result = if bounded {
+            replacement.send_prepared_port_lease_request_until(prepared, deadline)
+        } else {
+            replacement.send_prepared_port_lease_request(prepared)
+        };
+        assert!(matches!(result, Err(CatalogLinkError::BindingMismatch)));
+        assert!(
+            replacement_owner
+                .poll_control_message_until(deadline)
+                .unwrap()
+                .is_none()
+        );
+    }
+
+    // Authenticated receipt provenance is checked before any owner mutation.
+    original
+        .send_port_lease_request_until(
+            route_id,
+            source,
+            PortLeaseAction::Acquire,
+            MIN_PORT_LEASE_TTL_MS,
+            deadline,
+        )
+        .unwrap();
+    let ReceivedControlMessage::PortLeaseRequest(received) =
+        owner.receive_control_message_until(deadline).unwrap()
+    else {
+        panic!("expected lease request");
+    };
+    assert!(matches!(
+        replacement_owner.prepare_port_lease_response(&mut runtime, received, 1000),
+        Err(CatalogLinkError::BindingMismatch)
+    ));
+    assert!(runtime.route_port_lease_claim(route_id, source).is_none());
+
+    for bounded in [false, true] {
+        original
+            .send_port_lease_request_until(
+                route_id,
+                source,
+                PortLeaseAction::Acquire,
+                MIN_PORT_LEASE_TTL_MS,
+                deadline,
+            )
+            .unwrap();
+        let ReceivedControlMessage::PortLeaseRequest(received) =
+            owner.receive_control_message_until(deadline).unwrap()
+        else {
+            panic!("expected lease request");
+        };
+        let prepared = owner
+            .prepare_port_lease_response(&mut runtime, received, 1000)
+            .unwrap();
+        let result = if bounded {
+            replacement_owner.send_prepared_port_lease_response_until(prepared, deadline)
+        } else {
+            replacement_owner.send_prepared_port_lease_response(prepared)
+        };
+        assert!(matches!(result, Err(CatalogLinkError::BindingMismatch)));
+        assert!(
+            replacement
+                .poll_control_message_until(deadline)
+                .unwrap()
+                .is_none()
+        );
+        assert!(runtime.route_port_lease_claim(route_id, source).is_some());
+        // Explicit cleanup, not an automatic rollback or implicit lease refresh.
+        runtime
+            .release_route_port_lease(route_id, source, owner.session_id())
+            .unwrap();
+    }
+    assert!(!replacement.is_closed());
+    assert!(!replacement_owner.is_closed());
+}
+
+#[test]
+fn ipc_prepared_lease_send_after_close_rejects_and_requires_explicit_claim_cleanup() {
+    use std::time::Instant;
+
+    for bounded in [false, true] {
+        let (mut requester, mut owner, _, mut runtime, route_id, source) = prepared_lease_fixture();
+        let deadline = Instant::now() + Duration::from_secs(2);
+        let pending_request = requester
+            .prepare_port_lease_request(
+                route_id,
+                source,
+                PortLeaseAction::Acquire,
+                MIN_PORT_LEASE_TTL_MS,
+            )
+            .unwrap();
+        requester
+            .send_port_lease_request_until(
+                route_id,
+                source,
+                PortLeaseAction::Acquire,
+                MIN_PORT_LEASE_TTL_MS,
+                deadline,
+            )
+            .unwrap();
+        let ReceivedControlMessage::PortLeaseRequest(received) =
+            owner.receive_control_message_until(deadline).unwrap()
+        else {
+            panic!("expected lease request");
+        };
+        let pending_response = owner
+            .prepare_port_lease_response(&mut runtime, received, 1000)
+            .unwrap();
+        let claim = runtime.route_port_lease_claim(route_id, source).unwrap();
+        owner.close();
+        let result = if bounded {
+            owner.send_prepared_port_lease_response_until(pending_response, deadline)
+        } else {
+            owner.send_prepared_port_lease_response(pending_response)
+        };
+        assert!(matches!(result, Err(CatalogLinkError::Closed)));
+        assert_eq!(
+            runtime.route_port_lease_claim(route_id, source),
+            Some(claim)
+        );
+        owner.close_and_reconcile(&mut runtime).unwrap();
+        assert!(runtime.route_port_lease_claim(route_id, source).is_none());
+        requester.close();
+        let result = if bounded {
+            requester.send_prepared_port_lease_request_until(pending_request, deadline)
+        } else {
+            requester.send_prepared_port_lease_request(pending_request)
+        };
+        assert!(matches!(result, Err(CatalogLinkError::Closed)));
+    }
+}
+
+#[test]
+fn ipc_prepared_lease_expired_send_does_not_rollback_or_reacquire_owner_claim() {
+    use std::time::Instant;
+
+    let (mut requester, mut owner, _, mut runtime, route_id, source) = prepared_lease_fixture();
+    let deadline = Instant::now() + Duration::from_secs(2);
+    requester
+        .send_port_lease_request_until(
+            route_id,
+            source,
+            PortLeaseAction::Acquire,
+            MIN_PORT_LEASE_TTL_MS,
+            deadline,
+        )
+        .unwrap();
+    let ReceivedControlMessage::PortLeaseRequest(received) =
+        owner.receive_control_message_until(deadline).unwrap()
+    else {
+        panic!("expected lease request");
+    };
+    let prepared = owner
+        .prepare_port_lease_response(&mut runtime, received, 1000)
+        .unwrap();
+    let claim = runtime.route_port_lease_claim(route_id, source).unwrap();
+    assert!(
+        owner
+            .send_prepared_port_lease_response_until(prepared, Instant::now())
+            .is_err()
+    );
+    assert!(owner.is_closed());
+    assert_eq!(
+        runtime.route_port_lease_claim(route_id, source),
+        Some(claim)
+    );
+    assert!(requester.receive_control_message_until(deadline).is_err());
+    owner.close_and_reconcile(&mut runtime).unwrap();
+    assert!(runtime.route_port_lease_claim(route_id, source).is_none());
+}
+
+#[test]
+fn ipc_prepared_lease_response_rechecks_runtime_before_mutation() {
+    use std::time::Instant;
+
+    for wrong_runtime in [false, true] {
+        let (mut requester, mut owner, mut peer_runtime, mut runtime, route_id, source) =
+            prepared_lease_fixture();
+        let deadline = Instant::now() + Duration::from_secs(2);
+        requester
+            .send_port_lease_request_until(
+                route_id,
+                source,
+                PortLeaseAction::Acquire,
+                MIN_PORT_LEASE_TTL_MS,
+                deadline,
+            )
+            .unwrap();
+        let ReceivedControlMessage::PortLeaseRequest(received) =
+            owner.receive_control_message_until(deadline).unwrap()
+        else {
+            panic!("expected lease request");
+        };
+        if wrong_runtime {
+            assert!(matches!(
+                owner.prepare_port_lease_response(&mut peer_runtime, received, 1000),
+                Err(CatalogLinkError::BindingMismatch)
+            ));
+        } else {
+            runtime.close_session(owner.session_id()).unwrap();
+            assert!(matches!(
+                owner.prepare_port_lease_response(&mut runtime, received, 1000),
+                Err(CatalogLinkError::SessionNotReady)
+            ));
+        }
+        assert!(runtime.route_port_lease_claim(route_id, source).is_none());
+        assert!(peer_runtime.snapshot().port_leases.is_empty());
+        assert!(
+            requester
+                .poll_control_message_until(deadline)
+                .unwrap()
+                .is_none()
+        );
+    }
 }

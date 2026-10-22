@@ -51,8 +51,13 @@ mod camera_job;
 pub mod camera_sender;
 mod control_exchange;
 mod display_catalog;
+#[cfg(any(target_os = "android", test))]
+mod runtime_registry;
 mod secure_audio_negotiation;
 pub mod secure_stereo_receiver;
+mod stereo_admission;
+pub mod stereo_job;
+pub mod stereo_negotiation;
 mod touchpad_consent;
 pub use control_exchange::{
     authenticate_android_control_dial, exchange_accepted_android_catalog,
@@ -293,7 +298,7 @@ impl AndroidControlListenerV1 {
         peer_id: NodeId,
         directory: &[u8],
         credential: &[u8],
-    ) -> Result<(), String> {
+    ) -> Result<ControlTlsServerIdentity, String> {
         let directory =
             PairedPeerDirectory::decode_json(local, directory).map_err(|e| e.to_string())?;
         let peer = directory
@@ -301,12 +306,18 @@ impl AndroidControlListenerV1 {
             .find(|p| p.node_id == peer_id)
             .ok_or("camera paired peer absent")?;
         let bundle = ControlCredentialBundle::decode(credential).map_err(|e| e.to_string())?;
-        self.camera_identity = capyio_control_tls::ControlTlsClientIdentity::from_bundle(
-            peer.peer_certificate_sha256,
-            bundle,
-        );
+        // This server material is derived from the very same current dial bundle.
+        // Do not reuse the listener's legacy touchpad/server cache after a dial.
+        let media_identity =
+            ControlTlsServerIdentity::from_bundle(peer.peer_certificate_sha256, bundle);
+        self.camera_identity = capyio_control_tls::ControlTlsClientIdentity {
+            expected_peer_certificate: media_identity.expected_peer_certificate,
+            certificate_chain_der: media_identity.certificate_chain_der.clone(),
+            private_key_der: media_identity.private_key_der.clone(),
+            server_ca_der: media_identity.client_ca_der.clone(),
+        };
         self.camera_server_name = peer.server_name.clone();
-        Ok(())
+        Ok(media_identity)
     }
 
     pub fn local_addr(&self) -> Result<SocketAddr, AndroidControlListenerError> {
@@ -501,6 +512,10 @@ pub struct AndroidCatalogRuntimeV1 {
     audio_uses: BTreeMap<capyio_core::RouteId, AndroidAudioUse>,
     #[cfg(any(target_os = "android", test))]
     secure_audio_uses: BTreeMap<RouteId, secure_audio_negotiation::SecureAudioUse>,
+    #[cfg(any(target_os = "android", test))]
+    stereo_consents: BTreeMap<RouteId, stereo_negotiation::StereoConsentStamp>,
+    #[cfg(any(target_os = "android", test))]
+    stereo_generations: BTreeMap<RouteId, stereo_job::StereoGenerationClaim>,
     #[cfg(target_os = "android")]
     camera_use: Option<AndroidCameraUse>,
     audio_local_intent: BTreeSet<capyio_core::RouteId>,
@@ -665,6 +680,34 @@ impl AndroidCatalogRuntimeV1 {
         allow: bool,
         now_ms: u64,
     ) -> Result<(), String> {
+        #[cfg(any(target_os = "android", test))]
+        if stereo_negotiation::StereoConsentStamp::is_exact_stereo_sink(&self.runtime, route_id) {
+            let original_instant = std::time::Instant::now();
+            self.touchpad_consent.resolve_bounded(
+                &mut self.runtime,
+                route_id,
+                allow,
+                now_ms,
+                Some(
+                    now_ms
+                        .checked_add(60_000)
+                        .ok_or("stereo consent deadline overflow")?,
+                ),
+            )?;
+            self.stereo_consents.remove(&route_id);
+            if allow {
+                let stamp = stereo_negotiation::StereoConsentStamp::capture(
+                    &self.runtime,
+                    route_id,
+                    now_ms,
+                    original_instant,
+                )?;
+                self.stereo_consents.insert(route_id, stamp);
+                self.stereo_generations.entry(route_id).or_default();
+            }
+            self.audio_status_pending.insert(route_id);
+            return Ok(());
+        }
         if self.display_use.route == route_id.to_string() {
             self.touchpad_consent.resolve_bounded(
                 &mut self.runtime,
@@ -696,6 +739,10 @@ impl AndroidCatalogRuntimeV1 {
             audio_uses: BTreeMap::new(),
             #[cfg(any(target_os = "android", test))]
             secure_audio_uses: BTreeMap::new(),
+            #[cfg(any(target_os = "android", test))]
+            stereo_consents: BTreeMap::new(),
+            #[cfg(any(target_os = "android", test))]
+            stereo_generations: BTreeMap::new(),
             #[cfg(target_os = "android")]
             camera_use: None,
             audio_local_intent: BTreeSet::new(),

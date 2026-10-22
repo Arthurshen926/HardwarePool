@@ -5,6 +5,13 @@
 use capyio_android_jni::secure_stereo_receiver::{
     PcmSink, SecureStereoSinkAdmission, SecureStereoSinkEvent, SecureStereoSinkOwner,
 };
+use capyio_android_jni::{
+    stereo_job::{
+        BOUND as JOB_BOUND, ENABLED as JOB_ENABLED, PENDING as JOB_PENDING, STOPPED as JOB_STOPPED,
+        StereoAdmissionGate, StereoAuthority, StereoReceiveJob,
+    },
+    stereo_negotiation::{StereoNegotiationAction, StereoSinkNegotiation},
+};
 use capyio_control_credentials::ControlCredentialBundle;
 use capyio_control_link::{CatalogControlLink, ReceivedControlMessage};
 use capyio_control_tls::{
@@ -901,4 +908,588 @@ fn hosted_secure_stereo_linux_capture_android_sink() {
         .as_object().unwrap().clone());
     publish(&root, &scenario, "stopped", result);
     wait_marker(&root, "stop_checked");
+}
+
+// Separate shared-Runtime/ACK bridge proof. The reusable-owner fixture above is
+// intentionally unchanged; neither marker nor scenario can select this test.
+const JOB_PREFIX: &str = ".capyio-secure-stereo-job-";
+const JOB_SCENARIOS: [&str; 2] = ["waveform", "partial_ack"];
+const CONTROL_GENERATION: u64 = 17;
+const JOB_GENERATION: u64 = 23;
+
+fn job_marker(root: &Path, name: &str) -> PathBuf {
+    root.join(format!("{JOB_PREFIX}{name}"))
+}
+fn publish_job(root: &Path, scenario: &str, stage: &str, extra: Value) {
+    let mut value = json!({"version":1,"scenario":scenario,"stage":stage,
+        "format":SECURE_AUDIO_STEREO_FORMAT,"surface":"shared_runtime_receive_job",
+        "owner_pid":std::process::id()});
+    value
+        .as_object_mut()
+        .unwrap()
+        .extend(extra.as_object().unwrap().clone());
+    let destination = job_marker(root, &format!("{stage}.json"));
+    let temporary = destination.with_extension("tmp");
+    fs::write(&temporary, serde_json::to_vec(&value).unwrap()).unwrap();
+    fs::rename(temporary, destination).unwrap();
+}
+fn wait_job_marker(root: &Path, name: &str) {
+    let end = Instant::now() + BOUND;
+    while !job_marker(root, name).is_file() {
+        assert!(
+            Instant::now() < end,
+            "hosted receive-job observation {name} missing"
+        );
+        thread::sleep(TICK);
+    }
+}
+fn job_pending(root: &Path, scenario: &str, stage: &str, source: &NodeRuntime, sink: &NodeRuntime) {
+    no_children();
+    assert!(source.snapshot().port_leases.is_empty() && sink.snapshot().port_leases.is_empty());
+    publish_job(
+        root,
+        scenario,
+        stage,
+        json!({"helper_absent":true,"lease_count":0,"pcm_bytes_accepted":0}),
+    );
+}
+
+#[test]
+#[ignore = "requires explicit hosted-private-secure-stereo-job harness and real private PipeWire graph"]
+fn hosted_secure_stereo_linux_capture_android_receive_job() {
+    assert_eq!(
+        std::env::var("CAPYIO_SECURE_STEREO_JOB_HOSTED").as_deref(),
+        Ok("1")
+    );
+    assert_eq!(std::env::var("CAPYIO_PIPEWIRE_TEST").as_deref(), Ok("1"));
+    assert_eq!(
+        std::env::var("PIPEWIRE_REMOTE").as_deref(),
+        Ok("capyio-test")
+    );
+    let root = PathBuf::from(std::env::var_os("XDG_RUNTIME_DIR").unwrap());
+    assert_eq!(
+        fs::read_to_string(root.join(".capyio-pipewire-capture")).unwrap(),
+        "capyio-hosted-pipewire-capture-v1\n"
+    );
+    assert_eq!(
+        fs::read_to_string(root.join(".capyio-secure-stereo-job")).unwrap(),
+        "capyio-hosted-secure-stereo-job-v1\n"
+    );
+    let scenario = std::env::var("CAPYIO_SECURE_STEREO_JOB_SCENARIO").unwrap();
+    assert!(JOB_SCENARIOS.contains(&scenario.as_str()));
+    let (mut source_runtime, source) = runtime(Platform::Linux, PortDirection::Source);
+    let (mut sink_runtime, sink) = runtime(Platform::Android, PortDirection::Sink);
+    let (control_server, media_client, control_client, media_server) = identities();
+    let binding = ControlTlsNodeBinding::new(source.node_id, sink.node_id).unwrap();
+    let server = AuthenticatedControlServer::from_listener_fresh_session(
+        TcpListener::bind("127.0.0.1:0").unwrap(),
+        control_server,
+        binding,
+        Duration::from_secs(2),
+    )
+    .unwrap();
+    let control_address = server.local_addr().unwrap();
+    let accept = thread::spawn(move || {
+        let end = Instant::now() + BOUND;
+        let channel = loop {
+            assert!(Instant::now() < end, "bounded real control acceptance");
+            if let Some(channel) = server.try_accept_until(end).unwrap() {
+                break channel;
+            }
+            thread::sleep(TICK);
+        };
+        let mut link = CatalogControlLink::admit_accepted_new_peer(
+            &mut source_runtime,
+            channel,
+            "Synthetic Android".into(),
+        )
+        .unwrap();
+        let catalog = link.receive_catalog().unwrap();
+        link.apply_catalog(&mut source_runtime, catalog).unwrap();
+        let catalog = link
+            .prepare_catalog(&source_runtime, &BTreeSet::from([source.capability_id]))
+            .unwrap();
+        link.send_catalog(catalog).unwrap();
+        (source_runtime, link)
+    });
+    let channel = AuthenticatedControlClientChannel::connect_fresh_session(
+        ControlTlsEndpoint {
+            address: control_address,
+            io_timeout: Duration::from_secs(2),
+        },
+        "localhost",
+        control_client,
+        binding,
+    )
+    .unwrap();
+    let mut sink_link = CatalogControlLink::admit_dialed_new_peer(
+        &mut sink_runtime,
+        channel,
+        "Synthetic Linux".into(),
+    )
+    .unwrap();
+    // This argument selects Source publication, not every local endpoint.
+    // Sink-only capabilities remain visible without any Source selection.
+    let catalog = sink_link
+        .prepare_catalog(&sink_runtime, &BTreeSet::new())
+        .unwrap();
+    sink_link.send_catalog(catalog).unwrap();
+    let catalog = sink_link.receive_catalog().unwrap();
+    sink_link.apply_catalog(&mut sink_runtime, catalog).unwrap();
+    let (mut source_runtime, mut source_link) = accept.join().unwrap();
+    let session = source_link.session_id();
+    assert_eq!(session, sink_link.session_id());
+    let route = source_runtime
+        .create_route(session, source, sink, RouteBackend::AdapterManaged)
+        .unwrap();
+    source_link
+        .send_route_status(source_runtime.route(route).unwrap())
+        .unwrap();
+    let ReceivedControlMessage::RouteStatus(status) = sink_link
+        .receive_control_message_until(Instant::now() + BOUND)
+        .unwrap()
+    else {
+        panic!("authenticated pending stereo Draft required");
+    };
+    sink_link
+        .apply_route_status(&mut sink_runtime, &status, false)
+        .unwrap();
+    job_pending(
+        &root,
+        &scenario,
+        "before_source",
+        &source_runtime,
+        &sink_runtime,
+    );
+    wait_job_marker(&root, "source_checked");
+    let consent = Duration::from_secs(12);
+    let source_original_end = Instant::now() + consent;
+    let source_consent_ms = now_ms() + consent.as_millis() as u64;
+    let grant_expiry = now_ms() + 20_000;
+    source_runtime
+        .authorize_route(route, Some(grant_expiry))
+        .unwrap();
+    assert_eq!(
+        sink_runtime.route(route).unwrap().authorization,
+        AuthorizationState::Pending
+    );
+    job_pending(
+        &root,
+        &scenario,
+        "before_sink",
+        &source_runtime,
+        &sink_runtime,
+    );
+    wait_job_marker(&root, "sink_checked");
+    let sink_original_end = Instant::now() + consent;
+    let sink_consent_ms = now_ms() + consent.as_millis() as u64;
+    sink_runtime
+        .authorize_route(route, Some(grant_expiry))
+        .unwrap();
+    for runtime in [&mut source_runtime, &mut sink_runtime] {
+        runtime
+            .prepare_route(
+                route,
+                Some(FormatDescriptor::new(SECURE_AUDIO_STEREO_FORMAT)),
+                QosMode::Interactive,
+                now_ms(),
+            )
+            .unwrap();
+        assert!(
+            runtime.snapshot().port_leases.is_empty(),
+            "owners must acquire fresh one-shot claims"
+        );
+    }
+    assert_eq!(
+        source_runtime.route(route).unwrap(),
+        sink_runtime.route(route).unwrap()
+    );
+    sink_runtime
+        .set_local_port_lease_policy(sink, PortLeasePolicy::Exclusive)
+        .unwrap();
+
+    let stream = StreamId::new();
+    // The media identity is the counterpart of the exact credentials used for
+    // this admitted control connection, never a cached role-specific identity.
+    assert_eq!(
+        media_server.expected_peer_certificate,
+        sink_link.authenticated_peer_certificate().unwrap()
+    );
+    let control_binding = sink_link.tls_binding();
+    let runtime = Arc::new(Mutex::new(sink_runtime));
+    let control_live = Arc::new(AtomicBool::new(true));
+    let gate = StereoAdmissionGate::new();
+    let mut source_owner = SecureStereoSourceOwner::new_until(
+        source_runtime,
+        source_link,
+        media_client,
+        "localhost".into(),
+        SecureStereoSourceAdmission {
+            expected: control_binding,
+            route_id: route,
+            stream_id: stream,
+            lifetime: Duration::from_secs(20),
+            pipewire_target: "capyio.test.stereo.source".into(),
+        },
+        source_original_end,
+    )
+    .unwrap();
+    let (mut negotiation, request) = {
+        let guard = runtime.lock().unwrap();
+        StereoSinkNegotiation::prepare(
+            &guard,
+            &sink_link,
+            SecureStereoSinkAdmission {
+                expected: control_binding,
+                route_id: route,
+                stream_id: stream,
+                local_address: "127.0.0.1".parse().unwrap(),
+                lifetime: Duration::from_secs(20),
+            },
+            sink_original_end.min(source_original_end),
+            CONTROL_GENERATION,
+            now_ms(),
+            Instant::now(),
+        )
+        .unwrap()
+    };
+    // Prepared control action is consume-once; no Runtime guard crosses send.
+    assert!(runtime.try_lock().is_ok());
+    let sent = sink_link
+        .send_prepared_port_lease_request_until(request, negotiation.operation_deadline())
+        .unwrap();
+    {
+        let guard = runtime.lock().unwrap();
+        negotiation
+            .validate(
+                &guard,
+                &sink_link,
+                CONTROL_GENERATION,
+                now_ms(),
+                Instant::now(),
+            )
+            .unwrap();
+        negotiation.commit_source_request(sent).unwrap();
+    }
+    let mut job: Option<Arc<StereoReceiveJob>> = None;
+    let mut identity = Some(media_server);
+    let mut bound = None;
+    let mut enabled = false;
+    let state = Rc::new(RefCell::new(SinkState {
+        bytes: Vec::with_capacity(PCM_LIMIT),
+        ..Default::default()
+    }));
+    let mut output = TestSink {
+        state: state.clone(),
+        partial: scenario == "partial_ack",
+    };
+    let mut buffer = [0; 1920];
+    let mut pending_ack = None;
+    let mut awaiting_confirmation = false;
+    let mut read_permits = 0_u64;
+    let mut copied_bytes = 0_u64;
+    let mut acknowledgements = 0_u64;
+    let mut busy_ack_retries = 0_u64;
+    let mut partial_writes = 0_u64;
+    let run_end = Instant::now() + Duration::from_secs(14);
+    loop {
+        assert!(
+            Instant::now() < run_end,
+            "bounded actual receive-job capture proof"
+        );
+        match source_owner
+            .poll()
+            .expect("real Source must remain authorized until explicit Stop")
+        {
+            Some(SecureStereoSourceEvent::Bound) => {
+                assert!(bound.is_none());
+                let evidence = json!({"helper_pid":source_owner.helper_pid().unwrap(),
+                    "source_lease_expires_at_ms":source_owner.source_lease_expires_at_ms().unwrap(),
+                    "sink_lease_expires_at_ms":source_owner.sink_lease_expires_at_ms().unwrap(),
+                    "source_consent_end_ms":source_consent_ms,"sink_consent_end_ms":sink_consent_ms,
+                    "grant_expires_at_ms":grant_expiry,"control_generation":CONTROL_GENERATION,
+                    "job_generation":JOB_GENERATION,"route_state":"Starting"});
+                publish_job(&root, &scenario, "bound", evidence.clone());
+                bound = Some(evidence);
+            }
+            Some(SecureStereoSourceEvent::Stopped) => panic!("unexpected Source Stop"),
+            _ => {}
+        }
+        // Network/control polling never borrows the authoritative Runtime.
+        let deadline = job.as_ref().map_or_else(
+            || negotiation.operation_deadline(),
+            |job| {
+                job.snapshot()
+                    .monotonic_deadline()
+                    .min(Instant::now() + Duration::from_millis(250))
+            },
+        );
+        let message = match sink_link.poll_control_message_until(deadline) {
+            Ok(message) => message,
+            Err(error) => {
+                gate.invalidate();
+                control_live.store(false, Ordering::Release);
+                if let Some(job) = &job {
+                    job.fail();
+                }
+                panic!("unexpected current control failure: {error}");
+            }
+        };
+        if let Some(message) = message {
+            assert!(
+                job.is_none(),
+                "unexpected control mutation after exact job admission"
+            );
+            let action = {
+                let mut guard = runtime.lock().unwrap();
+                negotiation
+                    .accept_control(
+                        &mut guard,
+                        &mut sink_link,
+                        message,
+                        CONTROL_GENERATION,
+                        now_ms(),
+                        Instant::now(),
+                    )
+                    .unwrap()
+            };
+            match action {
+                StereoNegotiationAction::SendLeaseResponse(response) => {
+                    assert!(runtime.try_lock().is_ok());
+                    sink_link
+                        .send_prepared_port_lease_response_until(
+                            response,
+                            negotiation.operation_deadline(),
+                        )
+                        .unwrap();
+                    let guard = runtime.lock().unwrap();
+                    negotiation
+                        .validate(
+                            &guard,
+                            &sink_link,
+                            CONTROL_GENERATION,
+                            now_ms(),
+                            Instant::now(),
+                        )
+                        .unwrap();
+                    negotiation.commit_sink_response().unwrap();
+                }
+                StereoNegotiationAction::None => {}
+                StereoNegotiationAction::PeerStop => panic!("unexpected negotiation Stop"),
+            }
+        }
+        if job.is_none() && negotiation.ready() {
+            let snapshot = {
+                let mut guard = runtime.lock().unwrap();
+                negotiation
+                    .finish(
+                        &mut guard,
+                        &sink_link,
+                        CONTROL_GENERATION,
+                        now_ms(),
+                        Instant::now(),
+                    )
+                    .unwrap()
+            };
+            let shared = Arc::clone(&runtime);
+            let live = Arc::clone(&control_live);
+            let authority: StereoAuthority = Arc::new(move |snapshot| {
+                let guard = shared.lock().unwrap();
+                if !live.load(Ordering::Acquire) {
+                    return Err("original control generation closed".into());
+                }
+                snapshot.validate(&guard, CONTROL_GENERATION, now_ms(), Instant::now())
+            });
+            let shared = Arc::clone(&runtime);
+            let live = Arc::clone(&control_live);
+            let failure = Arc::new(move || {
+                live.store(false, Ordering::Release);
+                shared.lock().unwrap().close_session(session).unwrap();
+            });
+            assert!(runtime.try_lock().is_ok());
+            let current = StereoReceiveJob::start(
+                7,
+                JOB_GENERATION,
+                snapshot,
+                identity.take().unwrap(),
+                CONTROL_GENERATION,
+                gate.clone(),
+                authority,
+                failure,
+            )
+            .unwrap();
+            assert_eq!(current.state(), JOB_PENDING);
+            sink_link
+                .send_secure_stereo_audio_data_offer_until(
+                    current.snapshot().route(),
+                    current.offer(),
+                    now_ms(),
+                    current.operation_deadline(),
+                )
+                .unwrap();
+            // This callback performs the fresh shared-Runtime validation only
+            // after successful publication and outside every Runtime guard.
+            current.offer_committed().unwrap();
+            job = Some(current);
+        }
+        if let Some(current) = &job {
+            assert!(matches!(
+                current.state(),
+                JOB_PENDING | JOB_BOUND | JOB_ENABLED
+            ));
+            let guard = runtime.lock().unwrap();
+            current
+                .reconcile(&guard, CONTROL_GENERATION, now_ms())
+                .unwrap();
+            assert_eq!(guard.route(route).unwrap().state, RouteState::Starting);
+            assert_eq!(
+                guard.route(route).unwrap(),
+                source_owner.runtime().route(route).unwrap()
+            );
+            let sink_claim = guard.route_port_lease_claim(route, sink).unwrap();
+            assert_eq!(
+                Some(sink_claim.expires_at_ms),
+                source_owner.sink_lease_expires_at_ms()
+            );
+            drop(guard);
+            if !enabled
+                && current.state() == JOB_BOUND
+                && bound.is_some()
+                && job_marker(&root, "sink_ready").is_file()
+            {
+                assert_eq!(current.metrics().records_admitted, 0);
+                assert_eq!(current.metrics().pcm_bytes_accepted, 0);
+                assert!(state.borrow().bytes.is_empty());
+                current.enable().unwrap();
+                enabled = true;
+                publish_job(
+                    &root,
+                    &scenario,
+                    "pcm_enabled",
+                    json!({
+                    "helper_pid":source_owner.helper_pid().unwrap(),"records_admitted":0,
+                    "pcm_bytes_accepted":0,"job_generation":JOB_GENERATION}),
+                );
+            }
+            if enabled {
+                if awaiting_confirmation {
+                    let actual = state.borrow().bytes.len() as u64;
+                    assert!(current.accepted_bytes() <= actual);
+                    if current.accepted_bytes() == actual {
+                        awaiting_confirmation = false;
+                    }
+                }
+                if !awaiting_confirmation && pending_ack.is_none() {
+                    let accepted = current.accepted_bytes();
+                    if current.metrics().records_accepted >= 600
+                        && job_marker(&root, "links_ready").is_file()
+                    {
+                        assert_eq!(accepted, state.borrow().bytes.len() as u64);
+                        break;
+                    }
+                    if let Some(permit) = current.try_read(JOB_GENERATION, &mut buffer).unwrap() {
+                        assert_eq!(permit.generation, JOB_GENERATION);
+                        assert!(permit.token > 0 && permit.length > 0);
+                        assert_eq!(permit.offset + permit.length, 1920);
+                        assert_eq!(permit.offset % 4, 0);
+                        // Exposure alone is neither a write nor an acceptance.
+                        assert_eq!(current.accepted_bytes(), accepted);
+                        assert_eq!(state.borrow().bytes.len() as u64, accepted);
+                        read_permits += 1;
+                        copied_bytes += permit.length as u64;
+                        let written = output.try_write_pcm(&buffer[..permit.length]).unwrap();
+                        assert!(written > 0 && written <= permit.length && written % 4 == 0);
+                        partial_writes += u64::from(written < permit.length);
+                        pending_ack = Some((permit, written));
+                    }
+                }
+                if let Some((permit, written)) = pending_ack {
+                    // A busy ACK retries this exact token/count, not the write.
+                    if current
+                        .acknowledge(permit.generation, permit.token, permit.offset, written)
+                        .unwrap()
+                    {
+                        pending_ack = None;
+                        acknowledgements += 1;
+                        awaiting_confirmation = true;
+                    } else {
+                        busy_ack_retries += 1;
+                    }
+                }
+            }
+        }
+        thread::sleep(TICK);
+    }
+    let job = job.unwrap();
+    assert!(enabled && pending_ack.is_none() && !awaiting_confirmation);
+    assert_eq!(job.accepted_bytes(), state.borrow().bytes.len() as u64);
+    assert_eq!(read_permits, state.borrow().writes);
+    assert_eq!(acknowledgements, state.borrow().writes);
+    let mut result = bound.expect("actual authenticated receive-job capture helper required");
+    let source_expiry = result["source_lease_expires_at_ms"].as_u64().unwrap();
+    let sink_expiry = result["sink_lease_expires_at_ms"].as_u64().unwrap();
+    assert!(source_expiry <= source_consent_ms.min(sink_consent_ms));
+    assert!(sink_expiry <= source_consent_ms.min(sink_consent_ms));
+    let stopped_at = now_ms();
+    assert!(stopped_at < source_expiry.min(sink_expiry));
+    // Metrics have caught up to all actual writes before admission closes. No
+    // incidental EOF or coarse worker failure is relabelled as a lifecycle cause.
+    job.stop();
+    assert_eq!(job.state(), JOB_STOPPED);
+    let worker_end = Instant::now() + Duration::from_millis(250);
+    while !job.worker_exited() {
+        assert!(
+            Instant::now() < worker_end,
+            "stereo worker must stop within original operation budget"
+        );
+        thread::sleep(TICK);
+    }
+    let sink_metrics = job.metrics();
+    assert_eq!(
+        sink_metrics.pcm_bytes_accepted,
+        state.borrow().bytes.len() as u64
+    );
+    job.reap_finished();
+    assert!(job.finished() && job.worker_exited());
+    let source_metrics = source_owner.metrics();
+    let sent = source_owner.packets_sent();
+    source_owner.stop().unwrap();
+    output.stop().unwrap();
+    // Close the generation before publishing the shared Runtime mutation.
+    control_live.store(false, Ordering::Release);
+    gate.invalidate();
+    sink_link.close();
+    runtime.lock().unwrap().close_session(session).unwrap();
+    closed(source_owner.runtime(), session);
+    closed(&runtime.lock().unwrap(), session);
+    let helper = result["helper_pid"].as_u64().unwrap();
+    assert!(!Path::new(&format!("/proc/{helper}")).exists());
+    no_children();
+    let before = (state.borrow().bytes.len(), state.borrow().writes);
+    assert!(state.borrow().stopped);
+    assert!(job.try_read(JOB_GENERATION, &mut buffer).is_err());
+    assert_eq!(job.state(), JOB_STOPPED);
+    assert_eq!(job.metrics(), sink_metrics);
+    assert_eq!(source_owner.metrics(), source_metrics);
+    assert_eq!(source_owner.packets_sent(), sent);
+    assert_eq!((state.borrow().bytes.len(), state.borrow().writes), before);
+    fs::write(
+        root.join("received-secure-stereo-job.pcm"),
+        &state.borrow().bytes,
+    )
+    .unwrap();
+    result.as_object_mut().unwrap().extend(json!({
+        "terminal_state":"Stopped","stopped_at_ms":stopped_at,
+        "packets_captured":source_metrics.packets_captured,"capture_bytes_read":source_metrics.bytes_read,
+        "source_records_sent":sent,"records_admitted":sink_metrics.records_admitted,
+        "records_accepted":sink_metrics.records_accepted,"pcm_bytes_accepted":sink_metrics.pcm_bytes_accepted,
+        "actual_sink_bytes":state.borrow().bytes.len(),"sink_write_calls":state.borrow().writes,
+        "read_permits":read_permits,"pcm_bytes_copied":copied_bytes,"acknowledgements":acknowledgements,
+        "busy_ack_retries":busy_ack_retries,"partial_writes":partial_writes,
+        "copy_without_acceptance_checked":true,"worker_ack_confirmed":true,
+        "source_session_closed":true,"sink_session_closed":true,"leases_released":true,
+        "helper_reaped":true,"sink_stopped":true,"worker_reaped":true,"post_stop_unchanged":true
+    }).as_object().unwrap().clone());
+    publish_job(&root, &scenario, "stopped", result);
+    wait_job_marker(&root, "stop_checked");
 }

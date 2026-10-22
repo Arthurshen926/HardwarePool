@@ -1745,3 +1745,13 @@ legacy transports cannot substitute for each other. Fragment validation is
 atomic, queues are bounded, and no reconnect or renewal follows failure. Android
 JNI/AudioTrack advertisement and production launcher integration remain separate
 acceptance boundaries; sink acceptance is not proof of physical audibility.
+
+ADR 1566's Android stereo foundation keeps the shared Runtime authoritative.
+Prepared control sends occur outside its guard and require fresh original-state
+commit; failure cannot authorize reacquisition. Current control-generation
+paired identity, both original claims and the monotonic consent cap are pinned.
+The one-record JNI-compatible bridge does not count PCM exposure as acceptance:
+exact single-use write acknowledgements and synchronous generation invalidation
+bound subsequent delivery. This does not authenticate physical rendering or
+retract data already accepted by an eventual platform sink. Java speaker
+publication/defaults remain unchanged pending the separate AudioTrack lifecycle.

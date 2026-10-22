@@ -1558,3 +1558,13 @@ cases, with old mono/UDP tests retained. Independent PipeWire-generated stereo
 waveform analysis must distinguish left/right order and silence through the real
 Source and Rust Sink APIs, plus exact owned cleanup. These are reusable-API
 fixtures, not production Node/console or Android AudioTrack/device acceptance.
+
+ADR 1566 adds shared Android stereo negotiation and acknowledged-PCM foundation
+coverage. Prepared lease provenance/consume-once tests and deterministic permit,
+claim and deadline regressions are socket-free. Hosted control/media TLS tests
+must execute both control roles, exact response correlation, Stop/replay races,
+read-without-acceptance and partial/stale ACK cases. SDK/ARM64 compilation and
+native symbol inventory are necessary but do not prove Android AudioTrack or a
+physical device. Retain the separate ADR 1565 reusable stereo and existing mono,
+legacy and long-session graph suites; a new synthetic acknowledged sink is not
+a substitute for future actual platform playback acceptance.

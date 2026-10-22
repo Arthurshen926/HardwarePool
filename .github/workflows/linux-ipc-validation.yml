@@ -131,10 +131,65 @@ jobs:
             2>&1 | tee "$RUNNER_TEMP/stereo-sink-publication-result.txt"
           grep -Fx 'test tests::sink_only_catalog_publishes_with_empty_source_selection_and_rejects_sink_selection ... ok' "$RUNNER_TEMP/stereo-sink-publication-result.txt"
           grep -F 'test result: ok. 1 passed; 0 failed; 0 ignored;' "$RUNNER_TEMP/stereo-sink-publication-result.txt"
+      - name: Require consume-once prepared control ownership contracts
+        run: |
+          set -euo pipefail
+          cargo test --locked -p capyio-control-link --doc -- --color never | tee "$RUNNER_TEMP/prepared-control-doc-tests.txt"
+          grep -F 'test result: ok. 4 passed; 0 failed; 0 ignored;' "$RUNNER_TEMP/prepared-control-doc-tests.txt"
       - name: Require finite IPC regression tests
         run: |
           set -euo pipefail
           cat > "$RUNNER_TEMP/required-ipc-tests.txt" <<'TESTS'
+          runtime_registry::tests::registry_guard_reconciles_before_normal_error_release
+          runtime_registry::tests::registry_guard_reconciles_during_unwind_preserving_poison
+          runtime_registry::tests::registry_guard_try_lock_preserves_contention_and_poison
+          stereo_negotiation::tests::pure::consent_stamp_captures_original_deadline_and_rejects_changed_or_broad_grants
+          stereo_negotiation::tests::pure::snapshot_freezes_exact_generation_route_and_original_deadlines
+          stereo_negotiation::tests::pure::snapshot_rejects_revoked_replaced_and_expired_original_sink_lease
+          stereo_negotiation::tests::pure::snapshot_rejects_profile_catalog_and_correlated_source_claim_mutation
+          stereo_negotiation::tests::pure::original_consent_intersection_and_request_ttl_cannot_renew_authority
+          stereo_negotiation::tests::hosted::ipc_stereo_supervisor_crossed_claims_both_control_roles_use_current_runtime
+          stereo_negotiation::tests::hosted::ipc_stereo_supervisor_early_or_replayed_source_response_is_terminal
+          stereo_negotiation::tests::hosted::ipc_stereo_supervisor_foreign_correlated_response_never_completes_claim
+          stereo_negotiation::tests::hosted::ipc_stereo_supervisor_queued_response_loses_to_authoritative_stop
+          stereo_negotiation::tests::hosted::ipc_stereo_supervisor_pending_sink_action_cannot_commit_after_stop
+          stereo_negotiation::tests::hosted::ipc_stereo_supervisor_duplicate_sink_acquire_and_renew_are_terminal
+          stereo_negotiation::tests::hosted::ipc_stereo_supervisor_current_generation_and_original_budget_are_not_refreshed
+          stereo_negotiation::tests::hosted::ipc_stereo_supervisor_clock_rollback_after_successful_validation_is_terminal
+          stereo_negotiation::tests::hosted::ipc_stereo_consent_stamp_clones_share_consumption_even_after_failed_prepare
+          stereo_negotiation::tests::hosted::ipc_stereo_supervisor_commits_are_exact_one_shot_actions
+          stereo_job::tests::pure::copying_exact_native_pcm_never_counts_acceptance_and_holds_one_permit
+          stereo_job::tests::pure::zero_and_partial_acks_consume_tokens_without_resetting_frame_deadline
+          stereo_job::tests::pure::stale_generation_wrong_token_offset_alignment_and_negative_equivalent_fail_closed
+          stereo_job::tests::pure::consumed_and_cross_job_permits_cannot_acknowledge_another_record
+          stereo_job::tests::pure::callbacks_never_wait_for_slot_worker_or_runtime_locks
+          stereo_job::tests::pure::wrong_copy_generation_or_buffer_length_rejects_before_pcm_copy
+          stereo_job::tests::pure::exact_250ms_budget_and_attempt_cap_do_not_restart_after_progress
+          stereo_job::tests::pure::no_read_before_bound_enable_and_enable_is_one_shot
+          stereo_job::tests::pure::stop_and_invalidation_reject_late_ack_without_acceptance_or_reopen
+          stereo_job::tests::hosted::ipc_stereo_job_weak_owner_callbacks_release_owner_and_job_after_finished_reap
+          stereo_job::tests::pure::gate_clone_and_generation_tombstone_are_permanent
+          stereo_job::tests::pure::finished_only_reaper_never_detaches_or_joins_a_running_worker
+          stereo_job::tests::pure::reconcile_under_runtime_guard_invalidates_callbacks_without_authority_callback
+          stereo_job::tests::hosted::ipc_stereo_job_real_tls_copy_is_not_acceptance_and_partial_ack_preserves_channels
+          stereo_job::tests::hosted::ipc_stereo_job_offer_commit_and_bound_enable_gate_every_media_permit
+          stereo_job::tests::hosted::ipc_stereo_job_uncommitted_offer_and_repeated_commit_fail_without_media
+          stereo_job::tests::hosted::ipc_stereo_job_zero_progress_keeps_one_original_250ms_budget
+          stereo_job::tests::hosted::ipc_stereo_job_ack_queued_before_stop_or_revoke_never_publishes_acceptance
+          stereo_job::tests::hosted::ipc_stereo_job_control_generation_loss_and_mutated_lease_close_admission
+          stereo_job::tests::hosted::ipc_stereo_job_original_lease_expiry_cannot_be_renewed_by_bound_readiness
+          stereo_job::tests::hosted::ipc_stereo_job_wrong_data_pin_and_exact_binding_are_rejected_by_real_tls
+          stereo_job::tests::hosted::ipc_stereo_job_wrong_current_identity_profile_and_claim_reject_before_listener
+          stereo_job::tests::hosted::ipc_stereo_job_malformed_second_fragment_and_wire_replay_are_terminal
+          stereo_job::tests::hosted::ipc_stereo_job_stop_interrupts_accept_bound_wait_and_actual_pending_read
+          ipc_prepared_lease_exchange_releases_runtime_guards_and_preserves_correlation
+          ipc_prepared_lease_actions_reject_replacement_link_with_identical_tls_binding
+          ipc_prepared_lease_send_after_close_rejects_and_requires_explicit_claim_cleanup
+          ipc_prepared_lease_expired_send_does_not_rollback_or_reacquire_owner_claim
+          ipc_prepared_lease_response_rechecks_runtime_before_mutation
+          lease_actions::tests::prepared_lease_provenance_requires_exact_instance_and_complete_tls_binding
+          lease_actions::tests::prepared_lease_request_freezes_exact_message_and_preserves_codec_bounds
+          lease_actions::tests::prepared_lease_closed_link_rejects_before_owner_mutation_or_send
           tests::control_poll_timeout_preserves_earlier_retained_deadline
           tests::control_poll_timeout_preserves_exact_requested_deadline
           tests::control_poll_timeout_rejects_untyped_timeouts_even_with_same_display
@@ -897,6 +952,16 @@ jobs:
             count=$((count + 1))
           done
           test "$count" -eq 9
+          grep -Fx 'hosted_secure_stereo_linux_capture_android_receive_job: test' "$RUNNER_TEMP/secure-stereo-tests.txt"
+          count=0
+          for scenario in waveform partial_ack; do
+            timeout --signal=TERM --kill-after=15s 75s python3 scripts/run_pipewire_secure_stereo.py \
+              --hosted-pipewire-secure-stereo-job --fixture "$fixture" --scenario "$scenario" \
+              2>&1 | tee "$RUNNER_TEMP/secure-stereo-job-$scenario.txt"
+            grep -Fx "capyio_pipewire_secure_stereo_job=passed scenario=$scenario pinned_tls=true independent_consent=true exact_claims=true stereo=true shared_runtime=true actual_write_ack=true worker_confirmed=true simulated_sink=true route_starting=true cleanup=true" "$RUNNER_TEMP/secure-stereo-job-$scenario.txt"
+            count=$((count + 1))
+          done
+          test "$count" -eq 2
       - name: Require actual secure playback terminal Node and private PipeWire proof
         run: |
           set -euo pipefail

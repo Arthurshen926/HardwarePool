@@ -7,7 +7,7 @@ use std::{
     ptr,
     str::FromStr,
     sync::{
-        Mutex, MutexGuard, OnceLock,
+        Arc, Mutex, OnceLock,
         atomic::{AtomicU64, Ordering},
     },
     time::{Duration, SystemTime, UNIX_EPOCH},
@@ -42,6 +42,7 @@ mod enrollment;
 mod secure_audio;
 mod secure_camera;
 mod secure_haptics;
+mod secure_stereo;
 mod secure_touchpad;
 
 #[unsafe(no_mangle)]
@@ -298,13 +299,18 @@ pub extern "system" fn Java_dev_capyio_android_AndroidNativePairingDirectory_nat
 }
 
 static NEXT_CATALOG_HANDLE: AtomicU64 = AtomicU64::new(1);
-static CATALOG_RUNTIMES: OnceLock<Mutex<BTreeMap<u64, AndroidCatalogRuntimeV1>>> = OnceLock::new();
+static CATALOG_RUNTIMES: OnceLock<CatalogRuntimeRegistry> = OnceLock::new();
 static NEXT_CONTROL_LISTENER_HANDLE: AtomicU64 = AtomicU64::new(1);
-static CONTROL_LISTENERS: OnceLock<Mutex<BTreeMap<u64, NativeControlListener>>> = OnceLock::new();
+static CONTROL_LISTENERS: OnceLock<Mutex<BTreeMap<u64, Arc<Mutex<NativeControlListener>>>>> =
+    OnceLock::new();
 const MAX_CATALOG_RUNTIMES: usize = 4;
 const MAX_CONTROL_LISTENERS: usize = 4;
 
 struct NativeControlListener {
+    closed: bool,
+    control_generation: u64,
+    stereo_identity: Option<secure_stereo::ControlMediaIdentity>,
+    stereo_pending: Option<secure_stereo::PendingStereo>,
     peer_address: Option<IpAddr>,
     listener: AndroidControlListenerV1,
     link: Option<CatalogControlLink>,
@@ -318,16 +324,44 @@ struct NativeControlListener {
     announcement: DiscoveryAnnouncement,
 }
 
-fn control_listeners() -> &'static Mutex<BTreeMap<u64, NativeControlListener>> {
+fn control_listeners() -> &'static Mutex<BTreeMap<u64, Arc<Mutex<NativeControlListener>>>> {
     CONTROL_LISTENERS.get_or_init(|| Mutex::new(BTreeMap::new()))
 }
 
-fn catalog_runtimes() -> &'static Mutex<BTreeMap<u64, AndroidCatalogRuntimeV1>> {
-    CATALOG_RUNTIMES.get_or_init(|| Mutex::new(BTreeMap::new()))
+// Global lookup never retains the registry across network I/O. A connection's
+// own mutex serializes its control protocol; independent media Stop handles do
+// not need it. Removal marks the object closed before releasing its resources.
+fn control_listener(handle: u64) -> Result<Arc<Mutex<NativeControlListener>>, String> {
+    control_listeners()
+        .lock()
+        .map_err(|_| "control listener registry poisoned".to_owned())?
+        .get(&handle)
+        .cloned()
+        .ok_or_else(|| "unknown control listener".to_owned())
+}
+
+fn check_listener_open(owner: &NativeControlListener) -> Result<(), String> {
+    if owner.closed {
+        Err("control listener is closed".to_owned())
+    } else {
+        Ok(())
+    }
+}
+
+// The portable guard is tested for ordinary error, unwind and poisoning paths.
+// It closes stale stereo admission before the authoritative Runtime is released.
+type CatalogRuntimeRegistry =
+    crate::runtime_registry::ReconciledMutex<BTreeMap<u64, AndroidCatalogRuntimeV1>>;
+type CatalogRegistryGuard<'a> =
+    crate::runtime_registry::ReconciledGuard<'a, BTreeMap<u64, AndroidCatalogRuntimeV1>>;
+fn catalog_runtimes() -> &'static CatalogRuntimeRegistry {
+    CATALOG_RUNTIMES.get_or_init(|| {
+        CatalogRuntimeRegistry::new(BTreeMap::new(), secure_stereo::reconcile_registry)
+    })
 }
 
 struct CatalogRuntimeGuard {
-    registry: MutexGuard<'static, BTreeMap<u64, AndroidCatalogRuntimeV1>>,
+    registry: CatalogRegistryGuard<'static>,
     handle: u64,
 }
 
@@ -457,7 +491,11 @@ pub extern "system" fn Java_dev_capyio_android_AndroidNativeControlListener_nati
                 }
                 listeners.insert(
                     handle,
-                    NativeControlListener {
+                    Arc::new(Mutex::new(NativeControlListener {
+                        closed: false,
+                        control_generation: 0,
+                        stereo_identity: None,
+                        stereo_pending: None,
                         listener,
                         link: None,
                         runtime_handle: None,
@@ -469,7 +507,7 @@ pub extern "system" fn Java_dev_capyio_android_AndroidNativeControlListener_nati
                         pending_heartbeat: None,
                         announcer,
                         announcement,
-                    },
+                    })),
                 );
                 i64::try_from(handle)
                     .map_err(|_| "native control listener handle exceeds signed long".to_owned())
@@ -503,12 +541,12 @@ pub extern "system" fn Java_dev_capyio_android_AndroidNativeControlListener_nati
         .with_env(|env| -> jni::errors::Result<_> {
             let result = catch_unwind(AssertUnwindSafe(|| -> Result<jint, String> {
                 let handle = catalog_handle(handle)?;
-                let listeners = control_listeners()
+                let owner_handle = control_listener(handle)?;
+                let owner = owner_handle
                     .lock()
-                    .map_err(|_| "native control listener registry is poisoned".to_owned())?;
-                let port = listeners
-                    .get(&handle)
-                    .ok_or_else(|| "unknown native control listener handle".to_owned())?
+                    .map_err(|_| "control connection poisoned")?;
+                check_listener_open(&owner)?;
+                let port = owner
                     .listener
                     .local_addr()
                     .map_err(|error| error.to_string())?
@@ -544,12 +582,11 @@ pub extern "system" fn Java_dev_capyio_android_AndroidNativeControlListener_nati
         .with_env(|_env| -> jni::errors::Result<_> {
             let result = catch_unwind(AssertUnwindSafe(|| -> Result<(), String> {
                 let handle = catalog_handle(handle)?;
-                let listeners = control_listeners()
+                let owner_handle = control_listener(handle)?;
+                let owner = owner_handle
                     .lock()
-                    .map_err(|_| "native control listener registry is poisoned".to_owned())?;
-                let owner = listeners
-                    .get(&handle)
-                    .ok_or_else(|| "unknown native control listener handle".to_owned())?;
+                    .map_err(|_| "control connection poisoned")?;
+                check_listener_open(&owner)?;
                 owner
                     .announcer
                     .announce(owner.announcement)
@@ -572,12 +609,12 @@ pub extern "system" fn Java_dev_capyio_android_AndroidNativeControlListener_nati
             let result = catch_unwind(AssertUnwindSafe(|| -> Result<bool, String> {
                 let listener_handle = catalog_handle(listener_handle)?;
                 let runtime_handle = catalog_handle(runtime_handle)?;
-                let mut listeners = control_listeners()
+                let owner_handle = control_listener(listener_handle)?;
+                let mut owner_guard = owner_handle
                     .lock()
-                    .map_err(|_| "native control listener registry is poisoned".to_owned())?;
-                let owner = listeners
-                    .get_mut(&listener_handle)
-                    .ok_or_else(|| "unknown native control listener handle".to_owned())?;
+                    .map_err(|_| "control connection poisoned".to_owned())?;
+                let owner = &mut *owner_guard;
+                check_listener_open(owner)?;
                 if owner.link.is_some() {
                     return Ok(true);
                 }
@@ -593,6 +630,13 @@ pub extern "system" fn Java_dev_capyio_android_AndroidNativeControlListener_nati
                         owner.listener.paired_display_name().to_owned(),
                         || lock_catalog_runtime(runtime_handle),
                     )?;
+                    let generation = secure_stereo::next_control_generation()?;
+                    owner.stereo_identity = Some(secure_stereo::ControlMediaIdentity::new(
+                        generation,
+                        &link,
+                        owner.listener.touchpad_identity.clone(),
+                    )?);
+                    owner.control_generation = generation;
                     owner.link = Some(link);
                     owner.runtime_handle = Some(runtime_handle);
                     owner.published_catalog_revision = revision;
@@ -658,12 +702,12 @@ pub extern "system" fn Java_dev_capyio_android_AndroidNativeControlListener_nati
                     .convert_byte_array(&encoded_credential)
                     .map_err(|error| error.to_string())?;
                 let exchange = (|| -> Result<(), String> {
-                    let mut listeners = control_listeners()
+                    let owner_handle = control_listener(listener_handle)?;
+                    let mut owner_guard = owner_handle
                         .lock()
-                        .map_err(|_| "control listener registry poisoned".to_owned())?;
-                    let owner = listeners
-                        .get_mut(&listener_handle)
-                        .ok_or("unknown control listener")?;
+                        .map_err(|_| "control connection poisoned".to_owned())?;
+                    let owner = &mut *owner_guard;
+                    check_listener_open(owner)?;
                     if owner.link.is_some() {
                         return Err("a control peer is already connected".to_owned());
                     }
@@ -685,12 +729,19 @@ pub extern "system" fn Java_dev_capyio_android_AndroidNativeControlListener_nati
                         exchange_dialed_android_catalog(channel, display_name, || {
                             lock_catalog_runtime(runtime_handle)
                         })?;
-                    owner.listener.refresh_camera_identity(
+                    let media_identity = owner.listener.refresh_camera_identity(
                         local_id,
                         link.peer_node_id(),
                         &directory,
                         &credential,
                     )?;
+                    let generation = secure_stereo::next_control_generation()?;
+                    owner.stereo_identity = Some(secure_stereo::ControlMediaIdentity::new(
+                        generation,
+                        &link,
+                        media_identity,
+                    )?);
+                    owner.control_generation = generation;
                     owner.link = Some(link);
                     owner.runtime_handle = Some(runtime_handle);
                     owner.published_catalog_revision = revision;
@@ -734,12 +785,20 @@ pub extern "system" fn Java_dev_capyio_android_AndroidNativeControlListener_nati
             let result = catch_unwind(AssertUnwindSafe(|| -> Result<bool, String> {
                 let listener_handle = catalog_handle(listener_handle)?;
                 let runtime_handle = catalog_handle(runtime_handle)?;
-                let mut listeners = control_listeners()
+                secure_stereo::reap_finished(Some(runtime_handle));
+                let owner_handle = control_listener(listener_handle)?;
+                let mut owner_guard = owner_handle
                     .lock()
-                    .map_err(|_| "native control listener registry is poisoned".to_owned())?;
-                let owner = listeners
-                    .get_mut(&listener_handle)
-                    .ok_or_else(|| "unknown native control listener handle".to_owned())?;
+                    .map_err(|_| "control connection poisoned".to_owned())?;
+                let owner = &mut *owner_guard;
+                check_listener_open(owner)?;
+                if owner
+                    .runtime_handle
+                    .is_some_and(|bound| bound != runtime_handle)
+                {
+                    return Err("control Runtime binding mismatch".into());
+                }
+                secure_stereo::retire_terminal(owner)?;
                 let now_ms = SystemTime::now()
                     .duration_since(UNIX_EPOCH)
                     .map_err(|_| "system clock is before Unix epoch".to_owned())?
@@ -797,6 +856,7 @@ pub extern "system" fn Java_dev_capyio_android_AndroidNativeControlListener_nati
                         .lock()
                         .map_err(|_| "Runtime registry poisoned")?;
                     let host = runtimes.get_mut(&runtime_handle).ok_or("unknown Runtime")?;
+                    let stereo_statuses = secure_stereo::take_statuses(host, link.session_id());
                     host.publish_audio_control(link, now_ms)?;
                     display_use::publish(host, link)?;
                     if let Some(id) = host.controller_status_pending.take() {
@@ -813,9 +873,41 @@ pub extern "system" fn Java_dev_capyio_android_AndroidNativeControlListener_nati
                             link.send_route_status(route).map_err(|e| e.to_string())?;
                         }
                     }
+                    // Only old publishers above retain their historical lock
+                    // behavior. The additive stereo path sends snapshots outside it.
+                    drop(runtimes);
+                    for route in stereo_statuses {
+                        link.send_route_status_until(
+                            &route,
+                            std::time::Instant::now()
+                                + crate::secure_stereo_receiver::MAX_STEREO_OPERATION,
+                        )
+                        .map_err(|e| e.to_string())?;
+                    }
                 }
                 let service_result = match owner.link.as_mut() {
-                    Some(link) => match link.receive_control_message() {
+                    Some(link) => match secure_stereo::receive_message(
+                        owner.stereo_pending.as_mut(),
+                        link,
+                        owner.control_generation,
+                    ) {
+                        Ok(message)
+                            if secure_stereo::handles(owner.stereo_pending.as_ref(), &message) =>
+                        {
+                            secure_stereo::receive(
+                                owner
+                                    .stereo_pending
+                                    .as_mut()
+                                    .ok_or("stereo pending state absent")?,
+                                link,
+                                owner
+                                    .stereo_identity
+                                    .as_ref()
+                                    .ok_or("stereo current identity absent")?,
+                                owner.control_generation,
+                                message,
+                            )
+                        }
                         Ok(ReceivedControlMessage::DisplaySessionControl(message)) => {
                             let mut runtimes = catalog_runtimes()
                                 .lock()
@@ -916,9 +1008,12 @@ pub extern "system" fn Java_dev_capyio_android_AndroidNativeControlListener_nati
                             let runtime = runtimes.get_mut(&runtime_handle).ok_or_else(|| {
                                 "unknown native catalog Runtime handle".to_owned()
                             })?;
-                            link.apply_catalog(&mut runtime.runtime, catalog)
+                            let result = link
+                                .apply_catalog(&mut runtime.runtime, catalog)
                                 .map(|_| ())
-                                .map_err(|error| error.to_string())
+                                .map_err(|error| error.to_string());
+                            secure_stereo::reconcile(&runtime.runtime);
+                            result
                         }
                         Ok(ReceivedControlMessage::RouteStatus(status)) => {
                             let route = {
@@ -1324,6 +1419,7 @@ pub extern "system" fn Java_dev_capyio_android_AndroidNativeControlListener_nati
                         Ok(ReceivedControlMessage::Heartbeat(_)) => {
                             Err("peer sent an unexpected heartbeat acknowledgement".to_owned())
                         }
+                        Err(secure_stereo::ControlPoll::Idle) => Ok(()),
                         Err(error) => Err(error.to_string()),
                     },
                     None => return Ok(false),
@@ -1335,6 +1431,8 @@ pub extern "system" fn Java_dev_capyio_android_AndroidNativeControlListener_nati
                 secure_touchpad::stop_runtime(runtime_handle, None);
                 secure_haptics::stop_runtime(runtime_handle, None);
                 secure_camera::stop_runtime(runtime_handle, None);
+                secure_stereo::disconnect(owner);
+                secure_stereo::stop_runtime(runtime_handle, None);
                 secure_audio::stop_runtime(runtime_handle, None);
                 if let Some(link) = owner.link.as_mut()
                     && let Some(runtime) = catalog_runtimes()
@@ -1354,6 +1452,7 @@ pub extern "system" fn Java_dev_capyio_android_AndroidNativeControlListener_nati
                 Ok(Ok(connected)) => connected,
                 Ok(Err(error)) => {
                     if let Ok(runtime) = catalog_handle(runtime_handle) {
+                        secure_stereo::stop_runtime(runtime, None);
                         secure_audio::stop_runtime(runtime, None);
                     }
                     throw(env, "java/lang/IllegalStateException", error);
@@ -1361,6 +1460,7 @@ pub extern "system" fn Java_dev_capyio_android_AndroidNativeControlListener_nati
                 }
                 Err(_) => {
                     if let Ok(runtime) = catalog_handle(runtime_handle) {
+                        secure_stereo::stop_runtime(runtime, None);
                         secure_audio::stop_runtime(runtime, None);
                     }
                     throw(
@@ -1387,12 +1487,12 @@ pub extern "system" fn Java_dev_capyio_android_AndroidNativeControlListener_nati
             let result = catch_unwind(AssertUnwindSafe(|| -> Result<(), String> {
                 let listener_handle = catalog_handle(listener_handle)?;
                 let runtime_handle = catalog_handle(runtime_handle)?;
-                let mut listeners = control_listeners()
+                let owner_handle = control_listener(listener_handle)?;
+                let mut owner_guard = owner_handle
                     .lock()
-                    .map_err(|_| "control listener registry poisoned")?;
-                let owner = listeners
-                    .get_mut(&listener_handle)
-                    .ok_or("unknown control listener")?;
+                    .map_err(|_| "control connection poisoned".to_owned())?;
+                let owner = &mut *owner_guard;
+                check_listener_open(owner)?;
                 if owner
                     .runtime_handle
                     .is_some_and(|handle| handle != runtime_handle)
@@ -1402,6 +1502,8 @@ pub extern "system" fn Java_dev_capyio_android_AndroidNativeControlListener_nati
                 secure_touchpad::stop_runtime(runtime_handle, None);
                 secure_haptics::stop_runtime(runtime_handle, None);
                 secure_camera::stop_runtime(runtime_handle, None);
+                secure_stereo::disconnect(owner);
+                secure_stereo::stop_runtime(runtime_handle, None);
                 secure_audio::stop_runtime(runtime_handle, None);
                 let link = owner.link.take();
                 owner.runtime_handle = None;
@@ -1445,7 +1547,7 @@ pub extern "system" fn Java_dev_capyio_android_AndroidNativeControlListener_nati
             let result = catch_unwind(AssertUnwindSafe(|| -> Result<(), String> {
                 let listener_handle = catalog_handle(listener_handle)?;
                 let runtime_handle = catalog_handle(runtime_handle)?;
-                let mut owner = control_listeners()
+                let owner_handle = control_listeners()
                     .lock()
                     .map_err(|_| "native control listener registry is poisoned".to_owned())?
                     .remove(&listener_handle)
@@ -1453,7 +1555,13 @@ pub extern "system" fn Java_dev_capyio_android_AndroidNativeControlListener_nati
                 secure_touchpad::stop_runtime(runtime_handle, None);
                 secure_haptics::stop_runtime(runtime_handle, None);
                 secure_camera::stop_runtime(runtime_handle, None);
+                secure_stereo::stop_runtime(runtime_handle, None);
                 secure_audio::stop_runtime(runtime_handle, None);
+                let mut owner = owner_handle
+                    .lock()
+                    .map_err(|_| "control connection poisoned")?;
+                secure_stereo::disconnect(&mut owner);
+                owner.closed = true;
                 if let Some(link) = owner.link.as_mut() {
                     if let Some(runtime) = catalog_runtimes()
                         .lock()
@@ -1855,7 +1963,9 @@ pub extern "system" fn Java_dev_capyio_android_AndroidNativeCatalogRuntime_nativ
                     .lock()
                     .map_err(|_| "native Runtime registry poisoned")?;
                 let runtime = runtimes.get_mut(&handle).ok_or("unknown native Runtime")?;
-                runtime.resource_requests_json(now)
+                let result = runtime.resource_requests_json(now);
+                secure_stereo::reconcile(&runtime.runtime);
+                result
             }));
             Ok(match result {
                 Ok(Ok(bytes)) => byte_array(env, &bytes),
@@ -1958,6 +2068,8 @@ pub extern "system" fn Java_dev_capyio_android_AndroidNativeCatalogRuntime_nativ
             let result = catch_unwind(AssertUnwindSafe(|| -> Result<(), String> {
                 let handle = catalog_handle(handle)?;
                 secure_camera::stop_runtime(handle, None);
+                secure_stereo::stop_runtime(handle, None);
+                secure_stereo::reap_finished(Some(handle));
                 secure_audio::stop_runtime(handle, None);
                 secure_audio::reap_finished(Some(handle));
                 let removed = catalog_runtimes()

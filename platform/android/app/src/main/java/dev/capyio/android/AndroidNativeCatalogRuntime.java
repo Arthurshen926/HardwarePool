@@ -106,6 +106,52 @@ public final class AndroidNativeCatalogRuntime implements AutoCloseable, io.capy
         if (current != 0) nativeAudioSecureStop(current, generation);
     }
 
+    // Foundation only: no profile selection/publication or AudioTrack owner.
+    // Native setup states never mean Route Active or audible playback.
+    long stereoSecureStart(String routeId) {
+        long current = handle;
+        return current == 0 ? 0 : nativeStereoSecureStart(current, routeId);
+    }
+
+    // counters has exactly 3 longs: admitted records, accepted records, bytes.
+    // Transient registry contention reports Pending with zero counters.
+    int stereoSecureState(long generation, long[] counters) {
+        long current = handle;
+        return current == 0 ? 3 : nativeStereoSecureState(current, generation, counters);
+    }
+
+    boolean stereoSecureEnable(long generation) {
+        long current = handle;
+        return current != 0 && nativeStereoSecureEnable(current, generation);
+    }
+
+    // 1 copied, 0 busy/empty, -1 terminal. PCM is exactly 1920 bytes;
+    // metadata is exactly three longs: token, logical frame offset, length.
+    // Busy may precede shape validation; it performs no copy or acceptance.
+    int stereoSecureRead(long generation, byte[] pcm, long[] metadata) {
+        long current = handle;
+        return current == 0 ? -1 : nativeStereoSecureRead(current, generation, pcm, metadata);
+    }
+
+    // 0 means retry this identical ACK, without repeating the platform write.
+    // Busy may precede validation; that ACK has not been accepted or consumed.
+    int stereoSecureAck(long generation, long token, int offset, int acceptedBytes) {
+        long current = handle;
+        return current == 0 ? -1 : nativeStereoSecureAck(current, generation, token, offset, acceptedBytes);
+    }
+
+    void stereoSecureStop(long generation) {
+        long current = handle;
+        if (current != 0) nativeStereoSecureStop(current, generation);
+    }
+
+    private static native long nativeStereoSecureStart(long runtime, String routeId);
+    private static native int nativeStereoSecureState(long runtime, long generation, long[] counters);
+    private static native boolean nativeStereoSecureEnable(long runtime, long generation);
+    private static native int nativeStereoSecureRead(long runtime, long generation, byte[] pcm, long[] metadata);
+    private static native int nativeStereoSecureAck(long runtime, long generation, long token, int offset, int acceptedBytes);
+    private static native void nativeStereoSecureStop(long runtime, long generation);
+
     private static native long nativeAudioSecureStart(long runtime, String routeId);
     private static native int nativeAudioSecureState(long runtime, long generation);
     private static native boolean nativeAudioSecureRecord(long runtime, long generation, byte[] record);

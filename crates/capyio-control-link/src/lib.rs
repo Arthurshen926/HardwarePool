@@ -14,16 +14,15 @@ use capyio_control_tls::{
     ControlTlsError,
 };
 use capyio_core::{
-    AuthorizationState, CapabilityId, MessageId, NodeDescriptor, NodeId, Platform, PortRef,
-    ProtocolVersion, Route, RouteId, RouteState, SessionState,
+    AuthorizationState, CapabilityId, MessageId, NodeDescriptor, NodeId, Platform, ProtocolVersion,
+    Route, RouteId, RouteState, SessionState,
 };
 use capyio_protocol::{
-    PortLeaseAction, RouteCommandAction, ValidatedControlHeartbeat, ValidatedPortLeaseRequest,
+    RouteCommandAction, ValidatedControlHeartbeat, ValidatedPortLeaseRequest,
     ValidatedPortLeaseResponse, ValidatedRouteCommand, ValidatedRouteStatus,
     decode_catalog_snapshot, decode_control_heartbeat, decode_envelope, decode_port_lease_request,
     decode_port_lease_response, decode_route_command, decode_route_status,
-    encode_control_heartbeat, encode_port_lease_request, encode_route_command, encode_route_status,
-    v1,
+    encode_control_heartbeat, encode_route_command, encode_route_status, v1,
 };
 use capyio_runtime::{NodeRuntime, PortLeasePolicy, RuntimeError};
 use thiserror::Error;
@@ -94,6 +93,8 @@ fn valid_controller_offer(offer: &v1::ControllerReceiverOffer) -> bool {
 
 mod native_audio;
 pub use native_audio::NativeAudioWorkerPreparation;
+mod lease_actions;
+pub use lease_actions::{PreparedPortLeaseRequest, PreparedPortLeaseResponse};
 
 pub struct ReceivedPortLeaseRequest {
     instance_id: MessageId,
@@ -128,6 +129,14 @@ impl CatalogControlLink {
         match self.channel.as_ref().ok_or(CatalogLinkError::Closed)? {
             Channel::Accepted(channel) => channel.peer_addr().map_err(Into::into),
             Channel::Dialed(channel) => channel.peer_addr().map_err(Into::into),
+        }
+    }
+    /// Native local address of this exact authenticated control connection.
+    /// Unlike a wildcard listener address, this identifies the selected interface.
+    pub fn authenticated_local_addr(&self) -> Result<std::net::SocketAddr, CatalogLinkError> {
+        match self.channel.as_ref().ok_or(CatalogLinkError::Closed)? {
+            Channel::Accepted(channel) => channel.local_addr().map_err(Into::into),
+            Channel::Dialed(channel) => channel.local_addr().map_err(Into::into),
         }
     }
     /// Pin of the exact authenticated control peer, not a caller-supplied Node ID.
@@ -919,73 +928,6 @@ impl CatalogControlLink {
             &encode_route_command(self.binding.session_id, route_id, action)?,
             deadline,
         )
-    }
-
-    pub fn send_port_lease_request(
-        &mut self,
-        route_id: RouteId,
-        port: PortRef,
-        action: PortLeaseAction,
-        ttl_ms: u64,
-    ) -> Result<MessageId, CatalogLinkError> {
-        let bytes =
-            encode_port_lease_request(self.binding.session_id, route_id, port, action, ttl_ms)?;
-        let message_id = decode_port_lease_request(&bytes)?.message_id;
-        self.send_bytes(&bytes)?;
-        Ok(message_id)
-    }
-
-    /// Sends an exact correlated lease request under an absolute operation deadline.
-    pub fn send_port_lease_request_until(
-        &mut self,
-        route_id: RouteId,
-        port: PortRef,
-        action: PortLeaseAction,
-        ttl_ms: u64,
-        deadline: Instant,
-    ) -> Result<MessageId, CatalogLinkError> {
-        let bytes =
-            encode_port_lease_request(self.binding.session_id, route_id, port, action, ttl_ms)?;
-        let message_id = decode_port_lease_request(&bytes)?.message_id;
-        self.send_bytes_until(&bytes, deadline)?;
-        Ok(message_id)
-    }
-
-    pub fn answer_port_lease_request(
-        &mut self,
-        runtime: &mut NodeRuntime,
-        received: ReceivedPortLeaseRequest,
-        now_ms: u64,
-    ) -> Result<(), CatalogLinkError> {
-        if received.instance_id != self.instance_id || received.binding != self.binding {
-            return Err(CatalogLinkError::BindingMismatch);
-        }
-        let response = self
-            .host
-            .handle_port_lease_request(runtime, &received.bytes, now_ms)?;
-        self.send_bytes(&response)
-    }
-
-    /// Answer one authenticated lease request under the original operation deadline.
-    /// Callers still decide whether the request action is allowed before dispatch;
-    /// this method does not broaden Acquire/Renew/Release authority.
-    pub fn answer_port_lease_request_until(
-        &mut self,
-        runtime: &mut NodeRuntime,
-        received: ReceivedPortLeaseRequest,
-        now_ms: u64,
-        deadline: Instant,
-    ) -> Result<(), CatalogLinkError> {
-        if received.instance_id != self.instance_id || received.binding != self.binding {
-            return Err(CatalogLinkError::BindingMismatch);
-        }
-        if Instant::now() >= deadline {
-            return Err(ControlTlsError::ChannelFailed.into());
-        }
-        let response = self
-            .host
-            .handle_port_lease_request(runtime, &received.bytes, now_ms)?;
-        self.send_bytes_until(&response, deadline)
     }
 
     /// Mirrors a peer Route proposal/status into this Runtime. A new proposal

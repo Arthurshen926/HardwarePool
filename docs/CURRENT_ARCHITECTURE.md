@@ -95,3 +95,11 @@ Windows background_host 只管理 UI 单实例与窗口聚焦，不拥有 Runtim
 `apps/desktop/src/styles/interface.css`，由 main.ts 按基础在前、界面层在后的顺序
 加载。停止按钮使用同一 danger-button 样式；资源按钮可见文字与无障碍名称由
 同一展示函数生成，共享 checkbox 名称包含资源名。这里不持有设备生命周期。
+
+Android secure-stereo foundation (ADR 1566) now separates shared Runtime lease
+preparation from consume-once control sends and runs a bounded native receive
+job with one exact write-ACK permit. Runtime/control generation and both original
+claims remain authoritative; copying PCM is not playback progress. The Java
+facade exposes native foundation methods only. Secure speaker selection,
+AudioTrack ownership and a reverse-audio Node/console flow are still deferred;
+existing speaker publication and legacy defaults are unchanged.

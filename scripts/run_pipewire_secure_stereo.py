@@ -268,12 +268,234 @@ class SecureStereoHarness(CaptureHarness):
         verify_execution((self.root / 'producer.out').read_text())
 
 
+# The existing reusable-owner profiles and validators above remain independent.
+JOB_SCENARIOS = ('waveform', 'partial_ack')
+JOB_TEST = 'hosted_secure_stereo_linux_capture_android_receive_job'
+JOB_PREFIX = '.capyio-secure-stereo-job-'
+JOB_MARKER = '.capyio-secure-stereo-job'
+JOB_MARKER_CONTENT = 'capyio-hosted-secure-stereo-job-v1\n'
+JOB_AUTHORITY = {'control_generation', 'job_generation', 'route_state'}
+JOB_TRUE_FIELDS = {'copy_without_acceptance_checked', 'worker_ack_confirmed',
+                   'source_session_closed', 'sink_session_closed', 'leases_released',
+                   'helper_reaped', 'sink_stopped', 'worker_reaped', 'post_stop_unchanged'}
+JOB_COUNTERS = {'stopped_at_ms', 'packets_captured', 'capture_bytes_read',
+                'source_records_sent', 'records_admitted', 'records_accepted',
+                'pcm_bytes_accepted', 'actual_sink_bytes', 'sink_write_calls',
+                'read_permits', 'pcm_bytes_copied', 'acknowledgements',
+                'busy_ack_retries', 'partial_writes'}
+
+
+def job_identity(value, scenario, stage, owner_pid):
+    if (scenario not in JOB_SCENARIOS or value.get('scenario') != scenario
+            or type(value.get('version')) is not int or value['version'] != 1
+            or value.get('stage') != stage or value.get('format') != FORMAT
+            or value.get('surface') != 'shared_runtime_receive_job'
+            or integer(value.get('owner_pid'), 2) != owner_pid):
+        raise ValueError('shared receive-job evidence identity mismatch')
+
+
+def validate_job_pending(value, scenario, stage, owner_pid):
+    job_identity(value, scenario, stage, owner_pid)
+    if (stage not in ('before_source', 'before_sink')
+            or set(value) != COMMON | {'helper_absent', 'lease_count', 'pcm_bytes_accepted'}
+            or value['helper_absent'] is not True
+            or integer(value['lease_count']) != 0
+            or integer(value['pcm_bytes_accepted']) != 0):
+        raise ValueError('receive-job capture preceded independent consent')
+    return value
+
+
+def validate_job_bound(value, scenario, owner_pid):
+    job_identity(value, scenario, 'bound', owner_pid)
+    if set(value) != COMMON | BOUND_FIELDS | JOB_AUTHORITY:
+        raise ValueError('unexpected receive-job bound fields')
+    if integer(value['helper_pid'], 2) == owner_pid:
+        raise ValueError('receive-job helper must be a distinct owned child')
+    for key in BOUND_FIELDS - {'helper_pid'}:
+        integer(value[key], 1)
+    for key in ('control_generation', 'job_generation'):
+        integer(value[key], 1)
+    if value['route_state'] != 'Starting':
+        raise ValueError('synthetic receive-job is not an Active or audibility claim')
+    cap = min(value['source_consent_end_ms'], value['sink_consent_end_ms'],
+              value['grant_expires_at_ms'])
+    if any(value[key] > cap for key in ('source_lease_expires_at_ms', 'sink_lease_expires_at_ms')):
+        raise ValueError('receive-job claim exceeded original consent or grant')
+    return value
+
+
+def validate_job_pcm_enabled(value, scenario, owner_pid, bound):
+    job_identity(value, scenario, 'pcm_enabled', owner_pid)
+    validate_job_bound(bound, scenario, owner_pid)
+    if (set(value) != COMMON | {'helper_pid', 'records_admitted', 'pcm_bytes_accepted', 'job_generation'}
+            or integer(value['helper_pid'], 2) != bound['helper_pid']
+            or integer(value['job_generation'], 1) != bound['job_generation']
+            or integer(value['records_admitted']) != 0
+            or integer(value['pcm_bytes_accepted']) != 0):
+        raise ValueError('receive-job enable requires original Bound generation and no PCM')
+    return value
+
+
+def validate_job_result(value, scenario, owner_pid, bound):
+    job_identity(value, scenario, 'stopped', owner_pid)
+    if set(value) != COMMON | BOUND_FIELDS | JOB_AUTHORITY | JOB_TRUE_FIELDS | JOB_COUNTERS | {'terminal_state'}:
+        raise ValueError('unexpected receive-job final evidence fields')
+    validate_job_bound(bound, scenario, owner_pid)
+    if any(value[key] != bound[key] for key in BOUND_FIELDS | JOB_AUTHORITY):
+        raise ValueError('receive-job original helper, claims or generation changed')
+    if value['terminal_state'] != 'Stopped':
+        raise ValueError('requested receive-job Stop was not observed')
+    if any(value[key] is not True for key in JOB_TRUE_FIELDS):
+        raise ValueError('receive-job write/ACK or owned cleanup not proven')
+    for key in JOB_COUNTERS:
+        integer(value[key])
+    expiry = min(bound[key] for key in BOUND_FIELDS - {'helper_pid'})
+    if not 0 < value['stopped_at_ms'] < expiry:
+        raise ValueError('incidental expiry cannot prove successful acknowledged capture')
+    # Admission may observe one in-flight Source write before its completion is
+    # consumed. Copy counts are separate: only successful aligned writes are ACKed,
+    # and worker-confirmed accepted bytes must exactly equal the captured output.
+    if (not 600 <= value['records_accepted'] <= value['records_admitted'] <= value['source_records_sent'] + 1
+            or value['source_records_sent'] > value['packets_captured']
+            or not value['packets_captured'] * 1920 <= value['capture_bytes_read']
+                    < (value['packets_captured'] + 1) * 1920
+            or value['pcm_bytes_accepted'] != value['records_accepted'] * 1920
+            or value['actual_sink_bytes'] != value['pcm_bytes_accepted']
+            or value['sink_write_calls'] != value['read_permits']
+            or value['acknowledgements'] != value['sink_write_calls']):
+        raise ValueError('receive-job copied, written and worker-accepted PCM accounting differs')
+    records = value['records_accepted']
+    if scenario == 'partial_ack':
+        if (value['sink_write_calls'] != 2 * records or value['partial_writes'] != records
+                or value['pcm_bytes_copied'] != 2880 * records):
+            raise ValueError('exact aligned partial write/ACK continuation absent')
+    elif (value['sink_write_calls'] != records or value['partial_writes'] != 0
+          or value['pcm_bytes_copied'] != 1920 * records):
+        raise ValueError('whole-record write/ACK window absent')
+    return value
+
+
+def verify_job_execution(raw):
+    if (f'test {JOB_TEST} ... ok' not in raw
+            or 'test result: ok. 1 passed; 0 failed; 0 ignored;' not in raw):
+        raise ValueError('exact hosted receive-job case must execute, not skip')
+
+
+class SecureStereoJobHarness(CaptureHarness):
+    def __init__(self, root, scenario):
+        if scenario not in JOB_SCENARIOS:
+            raise ValueError('explicit secure stereo receive-job scenario required')
+        super().__init__(root, 'waveform')
+        self.bridge_scenario = scenario
+        self.env.update(CAPYIO_SECURE_STEREO_JOB_HOSTED='1', CAPYIO_SECURE_STEREO_JOB_SCENARIO=scenario)
+
+    def evidence(self, producer, stage):
+        self.wait_checkpoint(producer, JOB_PREFIX + stage + '.json')
+        with (self.root / (JOB_PREFIX + stage + '.json')).open('rb') as stream:
+            return strict_json(stream.read(8193))
+
+    def checkpoint(self, name):
+        target = self.root / (JOB_PREFIX + name)
+        temporary = target.with_suffix('.tmp')
+        temporary.write_text(JOB_MARKER_CONTENT)
+        temporary.replace(target)
+
+    def run_bridge(self, fixture):
+        scenario = self.bridge_scenario
+        binary = Path('/usr/bin/pw-cat')
+        self.pipewire_identity = pipewire_binary_identity(binary)
+        self.pipewire_version = parse_pipewire_version(self.command([str(binary), '--version']))
+        if pipewire_binary_identity(binary) != self.pipewire_identity:
+            raise ValueError('PipeWire binary changed during version probe')
+        (self.root / JOB_MARKER).write_text(JOB_MARKER_CONTENT)
+        daemon = self.prepare_daemon()
+        source = self.start_source()
+        producer = self.spawn([str(fixture), '--ignored', '--exact', JOB_TEST,
+                               '--nocapture', '--test-threads=1'], 'producer')
+        self.diagnostic_processes = {'daemon': daemon.pid, 'source': source.pid,
+                                     'fixture': producer.pid, 'owner': producer.pid}
+        for stage, checked in (('before_source', 'source_checked'), ('before_sink', 'sink_checked')):
+            validate_job_pending(self.evidence(producer, stage), scenario, stage, producer.pid)
+            for _ in range(2):
+                if capture_nodes(self.dump()):
+                    raise ValueError('stereo capture appeared before both independent consents')
+                time.sleep(.05)
+            self.checkpoint(checked)
+        bound = validate_job_bound(self.evidence(producer, 'bound'), scenario, producer.pid)
+        ready = time.monotonic() + 5
+        objects = []
+        while True:
+            self.check()
+            if any(child.poll() is not None for child in (daemon, source, producer)):
+                self.report_graph_failure(objects)
+                raise ValueError('secure stereo owner exited before graph readiness')
+            objects = self.dump()
+            try:
+                capture, links = select_capture(objects)
+                break
+            except ValueError:
+                if time.monotonic() >= ready:
+                    self.report_graph_failure(objects)
+                    raise
+                time.sleep(.01)
+        helper = capture_process_id(objects, capture, producer.pid,
+                                    self.pipewire_version, self.pipewire_identity)
+        if helper != bound['helper_pid']:
+            raise ValueError('graph capture is not the exact authenticated owner helper')
+        app = next(item for item in objects if item.get('type') == 'PipeWire:Interface:Node'
+                   and item.get('info', {}).get('props', {}).get('node.name') == SOURCE)
+        if source_process_id(objects, app, {'node_name': SOURCE}) != source.pid:
+            raise ValueError('stereo signal must originate in the independent owned synthetic process')
+        fingerprint = graph_fingerprint(objects)
+        own_ids = {capture['id']} | {target for _, target in links}
+        owned = {key: value for key, value in fingerprint.items() if key in own_ids}
+        unrelated = {key: value for key, value in fingerprint.items() if key not in own_ids}
+        # Finish identity/port inspection before opening the first read permit.
+        # Start real Sink consumption BEFORE audio can flow, so the independent
+        # post-link pw-dump cannot accumulate an unconsumed startup burst.
+        self.checkpoint('sink_ready')
+        validate_job_pcm_enabled(self.evidence(producer, 'pcm_enabled'), scenario, producer.pid, bound)
+        for output, target in links:
+            self.command(['/usr/bin/pw-link', str(output), str(target)])
+        actual_links = [item for item in self.dump() if item.get('type') == 'PipeWire:Interface:Link']
+        if (len(actual_links) != 2 or {(item.get('info', {}).get('output-port-id'),
+              item.get('info', {}).get('input-port-id')) for item in actual_links} != set(links)):
+            raise ValueError('secure stereo requires only the two exact direct channel links')
+        owned.update(graph_fingerprint(actual_links))
+        self.checkpoint('links_ready')
+        result = validate_job_result(self.evidence(producer, 'stopped'), scenario, producer.pid, bound)
+        if Path('/proc', str(helper)).exists():
+            raise ValueError('exact production stereo helper was not reaped')
+        end = time.monotonic() + .35
+        while time.monotonic() < end:
+            verify_capture_removed(self.dump(), owned, unrelated)
+            self.check()
+            time.sleep(.02)
+        if scenario in JOB_SCENARIOS:
+            pcm = self.root / 'received-secure-stereo-job.pcm'
+            if pcm.stat().st_size != result['pcm_bytes_accepted']:
+                raise ValueError('actual independent Sink file and accepted bytes disagree')
+            verify_stereo(pcm.read_bytes())
+        self.checkpoint('stop_checked')
+        while producer.poll() is None:
+            self.check()
+            time.sleep(.01)
+        if producer.returncode:
+            raise ValueError('secure stereo Rust lifecycle fixture failed')
+        verify_job_execution((self.root / 'producer.out').read_text())
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('--hosted-pipewire-secure-stereo', action='store_true', required=True)
+    modes = parser.add_mutually_exclusive_group(required=True)
+    modes.add_argument('--hosted-pipewire-secure-stereo', action='store_true')
+    modes.add_argument('--hosted-pipewire-secure-stereo-job', action='store_true')
     parser.add_argument('--fixture', required=True, type=Path)
-    parser.add_argument('--scenario', choices=SCENARIOS, required=True)
+    parser.add_argument('--scenario', choices=tuple(dict.fromkeys(SCENARIOS + JOB_SCENARIOS)), required=True)
     args = parser.parse_args()
+    selected_scenarios = JOB_SCENARIOS if args.hosted_pipewire_secure_stereo_job else SCENARIOS
+    if args.scenario not in selected_scenarios:
+        parser.error('scenario does not belong to the explicitly selected stereo mode')
     if os.environ.get('GITHUB_ACTIONS') != 'true':
         parser.error('requires explicit disposable hosted CI environment')
     for tool in ('pipewire', 'pw-cat', 'pw-dump', 'pw-link'):
@@ -282,9 +504,11 @@ def main():
     signal.signal(signal.SIGTERM, interrupted)
     signal.signal(signal.SIGINT, interrupted)
     with tempfile.TemporaryDirectory(prefix='capyio-secure-stereo-') as directory:
-        harness = SecureStereoHarness(Path(directory), args.scenario)
+        harness_type = SecureStereoJobHarness if args.hosted_pipewire_secure_stereo_job else SecureStereoHarness
+        harness = harness_type(Path(directory), args.scenario)
         try:
-            harness.run_secure(args.fixture.resolve(strict=True))
+            run = harness.run_bridge if args.hosted_pipewire_secure_stereo_job else harness.run_secure
+            run(args.fixture.resolve(strict=True))
         except Exception:
             for name in ('daemon.err', 'producer.err', 'source.err', 'command.err'):
                 path = Path(directory) / name
@@ -297,6 +521,12 @@ def main():
             signal.signal(signal.SIGTERM, signal.SIG_IGN)
             signal.signal(signal.SIGINT, signal.SIG_IGN)
             harness.close()
+    if args.hosted_pipewire_secure_stereo_job:
+        print(f'capyio_pipewire_secure_stereo_job=passed scenario={args.scenario}'
+              ' pinned_tls=true independent_consent=true exact_claims=true stereo=true'
+              ' shared_runtime=true actual_write_ack=true worker_confirmed=true'
+              ' simulated_sink=true route_starting=true cleanup=true')
+        return
     print(f'capyio_pipewire_secure_stereo=passed scenario={args.scenario}'
           ' pinned_tls=true independent_consent=true exact_claims=true stereo=true'
           ' actual_rust_apis=true simulated_sink=true cleanup=true')

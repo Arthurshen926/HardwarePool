@@ -615,3 +615,14 @@ TLS transport discriminator and descriptor without changing mono or UDP framing.
 One dedicated TLS record atomically contains two canonical CPYA fragments
 (1200 + 928 encoded bytes) for one 1920-byte stereo block. It is a 60-second
 reusable API contract, not a newly advertised Android speaker or launcher mode.
+
+### Android shared secure-stereo receiver foundation
+
+[ADR 1566](adr/1566-android-shared-stereo-receiver-foundation.md) adds native shared
+supervisor admission and a one-record acknowledged PCM bridge without changing
+stereo wire framing or advertising a Java playback path. Prepared lease sends
+are consume-once and bound to the exact authenticated connection; one correlated
+Source response and original Sink claim remain pinned. A PCM copy is not sink
+acceptance: each aligned actual write needs its exact generation/permit ACK,
+under the original nonrefreshing record and consent deadlines. AudioTrack and
+user-facing secure speaker selection remain a separate integration step.

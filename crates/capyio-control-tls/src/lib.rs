@@ -370,6 +370,16 @@ impl AuthenticatedControlClientChannel {
         self.stream.io.sock.peer_addr().map_err(ControlTlsError::Io)
     }
 
+    /// Local endpoint selected by the already-authenticated TCP connection.
+    /// This is socket metadata, not a caller-supplied media address.
+    pub fn local_addr(&self) -> Result<SocketAddr, ControlTlsError> {
+        self.stream
+            .io
+            .sock
+            .local_addr()
+            .map_err(ControlTlsError::Io)
+    }
+
     pub fn connect_fresh_session(
         endpoint: ControlTlsEndpoint,
         server_name: &str,
@@ -565,6 +575,16 @@ impl AuthenticatedControlClientChannel {
 impl AuthenticatedControlServerChannel {
     pub fn peer_addr(&self) -> Result<SocketAddr, ControlTlsError> {
         self.stream.io.sock.peer_addr().map_err(ControlTlsError::Io)
+    }
+
+    /// Local endpoint selected by the already-authenticated TCP connection.
+    /// This is socket metadata, not a caller-supplied media address.
+    pub fn local_addr(&self) -> Result<SocketAddr, ControlTlsError> {
+        self.stream
+            .io
+            .sock
+            .local_addr()
+            .map_err(ControlTlsError::Io)
     }
 
     #[must_use]
