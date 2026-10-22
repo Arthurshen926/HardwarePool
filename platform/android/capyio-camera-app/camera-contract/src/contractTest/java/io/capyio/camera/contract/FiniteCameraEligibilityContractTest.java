@@ -20,7 +20,7 @@ public final class FiniteCameraEligibilityContractTest {
     private static FiniteCameraEligibility.CameraDescriptor camera(Integer rotation, boolean dynamic,
             boolean codecSize, boolean previewSize, long codecMin, long previewMin, boolean fixed30) {
         return new FiniteCameraEligibility.CameraDescriptor(SOURCE.cameraId(), SOURCE.facing(),
-                rotation, dynamic, codecSize, previewSize, codecMin, previewMin, fixed30);
+                rotation, dynamic, codecSize, previewSize, codecMin, previewMin, fixed30, true, true);
     }
 
     private static FiniteCameraEligibility.CameraDescriptor validCamera() {
@@ -29,6 +29,14 @@ public final class FiniteCameraEligibilityContractTest {
 
     private static void selectedCameraRequiresCanonicalMetadata() {
         FiniteCameraEligibility.requireCamera(SOURCE, validCamera());
+        reject(() -> FiniteCameraEligibility.requireCamera(SOURCE,
+                new FiniteCameraEligibility.CameraDescriptor(SOURCE.cameraId(), SOURCE.facing(),
+                        0, false, true, true, 33_333_333L, 33_333_333L, true, false, true)),
+                "API before explicit mirror-none control");
+        reject(() -> FiniteCameraEligibility.requireCamera(SOURCE,
+                new FiniteCameraEligibility.CameraDescriptor(SOURCE.cameraId(), SOURCE.facing(),
+                        0, false, true, true, 33_333_333L, 33_333_333L, true, true, false)),
+                "missing rotate-and-crop-none capability");
         reject(() -> FiniteCameraEligibility.requireCamera(null, validCamera()), "implicit camera");
         reject(() -> FiniteCameraEligibility.requireCamera(new CameraSourceSelection(
                 SOURCE.cameraId(), SOURCE.facing(), 1000), validCamera()), "zoom even at 1x");
@@ -36,21 +44,36 @@ public final class FiniteCameraEligibilityContractTest {
                 "different-camera", SOURCE.facing(), null), validCamera()), "changed selected camera");
         reject(() -> FiniteCameraEligibility.requireCamera(new CameraSourceSelection(
                 SOURCE.cameraId(), CameraInventory.LensFacing.FRONT, null), validCamera()), "changed lens-facing metadata");
-        for (Integer rotation : new Integer[] {null, -1, 90, 180, 270, 360}) {
+        for (CameraInventory.LensFacing facing : CameraInventory.LensFacing.values()) {
+            CameraSourceSelection selection = new CameraSourceSelection(SOURCE.cameraId(), facing, null);
+            for (int rotation : new int[] {0, 90, 180, 270}) {
+                FiniteCameraEligibility.CameraDescriptor descriptor =
+                        new FiniteCameraEligibility.CameraDescriptor(SOURCE.cameraId(), facing,
+                                rotation, false, false, true, 0, 33_333_333L, true, true, true);
+                if (facing == CameraInventory.LensFacing.UNKNOWN) {
+                    reject(() -> FiniteCameraEligibility.requireCamera(selection, descriptor),
+                            "unknown facing cannot prove no-mirror rotation policy");
+                } else {
+                    FiniteCameraEligibility.requireCamera(selection, descriptor);
+                }
+            }
+        }
+        for (Integer rotation : new Integer[] {null, -1, 1, 45, 89, 91, 179, 181, 269, 271, 360}) {
             reject(() -> FiniteCameraEligibility.requireCamera(SOURCE,
-                    camera(rotation, false, true, true, 33_333_333L, 33_333_333L, true)), "unknown/nonzero rotation");
+                    camera(rotation, false, true, true, 33_333_333L, 33_333_333L, true)), "unknown/non-cardinal rotation");
         }
         reject(() -> FiniteCameraEligibility.requireCamera(SOURCE,
                 camera(0, true, true, true, 33_333_333L, 33_333_333L, true)), "dynamic sensor orientation");
-        reject(() -> FiniteCameraEligibility.requireCamera(SOURCE,
-                camera(0, false, false, true, 33_333_333L, 33_333_333L, true)), "missing exact codec surface");
+        // Camera2 feeds only the OES SurfaceTexture. Direct MediaCodec support is not required.
+        FiniteCameraEligibility.requireCamera(SOURCE,
+                camera(0, false, false, true, 0, 33_333_333L, true));
         reject(() -> FiniteCameraEligibility.requireCamera(SOURCE,
                 camera(0, false, true, false, 33_333_333L, 33_333_333L, true)), "missing exact preview surface");
         reject(() -> FiniteCameraEligibility.requireCamera(SOURCE,
                 camera(0, false, true, true, 33_333_333L, 33_333_333L, false)), "variable AE range is insufficient");
         for (long duration : new long[] {-1, 0, 33_333_334L, 66_666_666L, Long.MAX_VALUE}) {
-            reject(() -> FiniteCameraEligibility.requireCamera(SOURCE,
-                    camera(0, false, true, true, duration, 33_333_333L, true)), "unknown/slow codec duration");
+            FiniteCameraEligibility.requireCamera(SOURCE,
+                    camera(0, false, true, true, duration, 33_333_333L, true));
             reject(() -> FiniteCameraEligibility.requireCamera(SOURCE,
                     camera(0, false, true, true, 33_333_333L, duration, true)), "unknown/slow preview duration");
         }
@@ -83,6 +106,11 @@ public final class FiniteCameraEligibilityContractTest {
         reject(() -> FiniteCameraEligibility.requireUnchanged(SOURCE, validCamera(), pinned,
                 camera(0, false, true, true, 16_666_666L, 16_666_666L, true), pinned),
                 "changed still-eligible camera metadata");
+        for (int rotation : new int[] {90, 180, 270}) {
+            reject(() -> FiniteCameraEligibility.requireUnchanged(SOURCE, validCamera(), pinned,
+                    camera(rotation, false, true, true, 33_333_333L, 33_333_333L, true), pinned),
+                    "changed still-eligible sensor orientation");
+        }
         reject(() -> FiniteCameraEligibility.requireUnchanged(SOURCE, validCamera(), pinned,
                 validCamera(), encoder("pinned-avc", 3)), "pinned codec loses Baseline level 3.1");
     }

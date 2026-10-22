@@ -427,9 +427,33 @@ jobs:
       - name: Run existing Java lifecycle and native LAN contracts
         run: |
           set -euo pipefail
-          for main in dev.capyio.android.contract.AudioNodeContractTest dev.capyio.android.contract.CapabilityCatalogContractTest dev.capyio.android.contract.CapabilityLifecycleContractTest dev.capyio.android.lan.NativeLanContractTest dev.capyio.android.lan.NativeLanEndpointConcurrencyTest io.capyio.camera.contract.CaptureStateMachineContractTest io.capyio.camera.contract.SecureAvcSenderContractTest io.capyio.camera.contract.FiniteCameraAvcValidatorContractTest io.capyio.camera.contract.FiniteCameraEligibilityContractTest; do
+          for main in dev.capyio.android.contract.AudioNodeContractTest dev.capyio.android.contract.CapabilityCatalogContractTest dev.capyio.android.contract.CapabilityLifecycleContractTest dev.capyio.android.lan.NativeLanContractTest dev.capyio.android.lan.NativeLanEndpointConcurrencyTest io.capyio.camera.contract.CaptureStateMachineContractTest io.capyio.camera.contract.SecureAvcSenderContractTest io.capyio.camera.contract.FiniteCameraAvcValidatorContractTest io.capyio.camera.contract.FiniteCameraEligibilityContractTest io.capyio.camera.contract.FiniteCameraTransformContractTest; do
             timeout --signal=TERM --kill-after=10s 60s java -ea -Dcapyio.nativeLanFixture="$GITHUB_WORKSPACE/fixtures/audio/native_lan_v1_opus_single.hex" -cp "$RUNNER_TEMP/android-contract-classes" "$main"
           done
+
+      - name: Require actual finite camera orientation pixels on software EGL only
+        run: |
+          set -euo pipefail
+          # Disposable hosted runner only. No Android device, display server or GPU access.
+          python3 -m unittest discover -s scripts -p 'test_finite_camera_rotation_oracle.py'
+          sudo apt-get update
+          sudo apt-get install --yes --no-install-recommends libegl1-mesa-dev libgles2-mesa-dev libgl1-mesa-dri
+          timeout --signal=TERM --kill-after=5s 60s cc -std=c11 -O2 -Wall -Wextra -Werror -pedantic \
+            scripts/native/finite_camera_rotation_oracle.c -o "$RUNNER_TEMP/finite-camera-rotation-oracle" \
+            -lEGL -lGLESv2 -lm
+          timeout --signal=TERM --kill-after=5s 120s python3 scripts/run_finite_camera_rotation_oracle.py \
+            --hosted-software-only --classes "$RUNNER_TEMP/android-contract-classes" \
+            --oracle "$RUNNER_TEMP/finite-camera-rotation-oracle" --artifacts "$RUNNER_TEMP/finite-camera-rotation" \
+            | tee "$RUNNER_TEMP/finite-camera-rotation-results.txt"
+          grep -Fx 'CAPYIO_FINITE_CAMERA_ROTATION_PIXELS_PASS cases=24 negative_controls=5 pixels=22118400 software=llvmpipe external_oes=true owned_cleanup=true' "$RUNNER_TEMP/finite-camera-rotation-results.txt"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: android-finite-camera-rotation-evidence
+          path: |
+            ${{ runner.temp }}/finite-camera-rotation/**
+            ${{ runner.temp }}/finite-camera-rotation-results.txt
+          if-no-files-found: ignore
 
   pipewire-loopback:
     runs-on: ubuntu-24.04

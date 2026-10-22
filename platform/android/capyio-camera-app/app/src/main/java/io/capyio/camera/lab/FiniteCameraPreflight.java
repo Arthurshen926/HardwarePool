@@ -17,6 +17,7 @@ import io.capyio.camera.contract.AvcEncoderConfig;
 import io.capyio.camera.contract.CameraInventory;
 import io.capyio.camera.contract.CameraSourceSelection;
 import io.capyio.camera.contract.FiniteCameraEligibility;
+import io.capyio.camera.contract.FiniteCameraTransform;
 import java.util.Arrays;
 import java.util.Objects;
 
@@ -30,12 +31,14 @@ public final class FiniteCameraPreflight {
         private final FiniteCameraEligibility.CameraDescriptor camera;
         private final FiniteCameraEligibility.EncoderDescriptor encoder;
         private final AvcEncoderConfig config = AvcEncoderConfig.baseline720p30();
+        private final FiniteCameraTransform.Plan transform;
 
         private Plan(CameraSourceSelection source, FiniteCameraEligibility.CameraDescriptor camera,
                 FiniteCameraEligibility.EncoderDescriptor encoder) {
             this.source = source;
             this.camera = camera;
             this.encoder = encoder;
+            this.transform = transformFor(camera);
         }
 
         public String cameraId() { return camera.cameraId(); }
@@ -43,6 +46,8 @@ public final class FiniteCameraPreflight {
         public CameraSourceSelection source() { return source; }
         public AvcEncoderConfig encoderConfig() { return config; }
         public String formatId() { return FiniteCameraEligibility.FORMAT_ID; }
+        public FiniteCameraTransform.Plan transformPlan() { return transform; }
+        public int sensorOrientationDegrees() { return camera.sensorOrientationDegrees(); }
     }
 
     private FiniteCameraPreflight() {}
@@ -72,7 +77,9 @@ public final class FiniteCameraPreflight {
         Objects.requireNonNull(plan, "plan");
         FiniteCameraEligibility.CameraDescriptor camera = describeCamera(context, plan.cameraId());
         FiniteCameraEligibility.requireCamera(plan.source(), camera);
-        if (!plan.camera.equals(camera)) throw new IllegalStateException("finite camera metadata changed");
+        if (!plan.camera.equals(camera) || !plan.transform.equals(transformFor(camera))) {
+            throw new IllegalStateException("finite camera metadata or pixel transform policy changed");
+        }
         for (MediaCodecInfo info : new MediaCodecList(MediaCodecList.REGULAR_CODECS).getCodecInfos()) {
             if (!plan.codecName().equals(info.getName())) continue;
             FiniteCameraEligibility.EncoderDescriptor encoder = describeEncoder(info);
@@ -80,6 +87,11 @@ public final class FiniteCameraPreflight {
             return;
         }
         throw new IllegalStateException("pinned finite AVC encoder is unavailable");
+    }
+
+    private static FiniteCameraTransform.Plan transformFor(FiniteCameraEligibility.CameraDescriptor camera) {
+        return FiniteCameraTransform.plan(SIZE.getWidth(), SIZE.getHeight(),
+                camera.sensorOrientationDegrees(), camera.facing(), camera.dynamicSensorOrientation());
     }
 
     private static FiniteCameraEligibility.CameraDescriptor describeCamera(Context context, String cameraId)
@@ -108,7 +120,17 @@ public final class FiniteCameraPreflight {
                 codecSize, previewSize,
                 codecSize ? map.getOutputMinFrameDuration(MediaCodec.class, SIZE) : 0,
                 previewSize ? map.getOutputMinFrameDuration(SurfaceTexture.class, SIZE) : 0,
-                fixed30);
+                fixed30, Build.VERSION.SDK_INT >= 33, supportsRotateAndCropNone(characteristics));
+    }
+
+    private static boolean supportsRotateAndCropNone(CameraCharacteristics characteristics) {
+        if (Build.VERSION.SDK_INT < 31) return false;
+        int[] modes = characteristics.get(CameraCharacteristics.SCALER_AVAILABLE_ROTATE_AND_CROP_MODES);
+        if (modes == null) return false;
+        for (int mode : modes) {
+            if (mode == CameraCharacteristics.SCALER_ROTATE_AND_CROP_NONE) return true;
+        }
+        return false;
     }
 
     private static FiniteCameraEligibility.EncoderDescriptor describeEncoder(MediaCodecInfo info) {

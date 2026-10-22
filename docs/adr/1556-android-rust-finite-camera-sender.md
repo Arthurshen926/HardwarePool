@@ -85,5 +85,6 @@ existing Android phone remains legacy-only, regardless of this sender proof.
 
 ADR 1557 adds explicit experimental Java capture eligibility/output gates. The
 legacy-only statements above describe this ADR’s original sender-only slice; the
-new option is restricted to eligible orientation-zero cameras and is not a
+initial option was restricted to eligible orientation-zero cameras. ADR 1558
+subsequently adds an actual cardinal pixel-normalization stage. Neither is a
 physical-phone compatibility claim.

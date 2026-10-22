@@ -546,13 +546,17 @@ legacy remains the default.
 
 [ADR 1556](adr/1556-android-rust-finite-camera-sender.md) adds independent finite
 profile admission to the actual Rust sender and immutable JNI generation binding.
-ADR 1557 subsequently adds explicit experimental orientation-zero eligibility and
-actual Java output admission. Synthetic sender-to-Linux evidence still does not
+ADR 1557 subsequently adds explicit experimental eligibility and actual Java
+output admission; ADR 1558 adds bounded cardinal pixel normalization. Synthetic sender-to-Linux evidence still does not
 establish phone compatibility.
 
 ### Experimental Android finite capture
 
 [ADR 1557](adr/1557-android-experimental-finite-capture.md) adds explicit opt-in
-eligibility and actual output checks for orientation-zero cameras only. Eligibility
-is not verified output or physical-device compatibility. Legacy remains default,
-and changing settings cannot extend an existing grant or start capture.
+eligibility and actual output checks. [ADR 1558](adr/1558-android-finite-camera-pixel-orientation.md)
+adds a finite-only GPU pixel stage for static cardinal sensor orientations on
+Android 13+, preserving canonical 1280×720 rotation-zero output. Quarter turns
+fit the full portrait image into the landscape canvas with black sidebars; no
+front mirroring or live display-rotation tracking is implied. Eligibility and
+hosted synthetic GPU evidence are not physical-device compatibility. Legacy
+remains default; settings changes cannot extend a grant or start capture.

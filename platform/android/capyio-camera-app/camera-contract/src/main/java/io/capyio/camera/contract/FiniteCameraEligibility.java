@@ -21,7 +21,9 @@ public final class FiniteCameraEligibility {
             boolean previewSurface720p,
             long codecMinFrameDurationNs,
             long previewMinFrameDurationNs,
-            boolean fixed30FpsRange) {
+            boolean fixed30FpsRange,
+            boolean explicitMirrorNoneControl,
+            boolean rotateAndCropNone) {
         public CameraDescriptor {
             Objects.requireNonNull(cameraId, "cameraId");
             Objects.requireNonNull(facing, "facing");
@@ -73,15 +75,17 @@ public final class FiniteCameraEligibility {
         if (!source.cameraId().equals(camera.cameraId()) || source.facing() != camera.facing()) {
             throw new IllegalArgumentException("finite camera selection changed");
         }
-        if (camera.sensorOrientationDegrees() == null || camera.sensorOrientationDegrees() != 0
-                || camera.dynamicSensorOrientation()) {
-            throw new IllegalArgumentException("finite capture requires known static zero sensor orientation");
+        if (!camera.explicitMirrorNoneControl() || !camera.rotateAndCropNone()) {
+            throw new IllegalArgumentException("finite capture requires explicit unmirrored, uncropped Camera2 output control");
         }
-        if (!camera.codecSurface720p() || !camera.previewSurface720p() || !camera.fixed30FpsRange()) {
-            throw new IllegalArgumentException("finite camera requires exact 1280x720 surfaces and fixed [30,30] AE");
+        // Every finite frame uses the same pixel transform, including orientation zero.
+        // Metadata alone never normalizes encoder output or authorizes a direct-camera path.
+        FiniteCameraTransform.plan(WIDTH, HEIGHT, camera.sensorOrientationDegrees(),
+                camera.facing(), camera.dynamicSensorOrientation());
+        if (!camera.previewSurface720p() || !camera.fixed30FpsRange()) {
+            throw new IllegalArgumentException("finite camera requires exact 1280x720 texture input and fixed [30,30] AE");
         }
-        if (!supports30Fps(camera.codecMinFrameDurationNs())
-                || !supports30Fps(camera.previewMinFrameDurationNs())) {
+        if (!supports30Fps(camera.previewMinFrameDurationNs())) {
             throw new IllegalArgumentException("finite camera minimum frame duration cannot prove 30 fps");
         }
     }

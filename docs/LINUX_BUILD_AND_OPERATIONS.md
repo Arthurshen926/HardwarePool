@@ -512,14 +512,17 @@ No physical camera, user keyring or production Android sender is exercised.
 
 [ADR 1556](adr/1556-android-rust-finite-camera-sender.md) implements finite budgets
 in the production Android Rust sender, tested with synthetic encoded frames. It
-does not enable finite Camera2 capture or advertise the format on Android. Do not
-edit a phone catalog or relabel its legacy capture to force this profile. The
-existing legacy phone path remains unchanged; canonical hardware-gated capture
-and explicit opt-in are separate remaining work.
+did not itself enable finite Camera2 capture or advertisement. ADRs 1557–1558
+add the separate explicit, hardware-gated experimental path. Do not edit a phone
+catalog or relabel legacy capture to force this profile; legacy remains default.
 
 ### Experimental Android finite capture
 
 [ADR 1557](adr/1557-android-experimental-finite-capture.md) adds explicit opt-in
-eligibility and actual output checks for orientation-zero cameras only. Eligibility
-is not verified output or physical-device compatibility. Legacy remains default,
-and changing settings cannot extend an existing grant or start capture.
+eligibility and actual output checks. [ADR 1558](adr/1558-android-finite-camera-pixel-orientation.md)
+adds a finite-only GPU pixel stage for static cardinal sensor orientations on
+Android 13+, preserving canonical 1280×720 rotation-zero output. Quarter turns
+fit the full portrait image into the landscape canvas with black sidebars; no
+front mirroring or live display-rotation tracking is implied. Eligibility and
+hosted synthetic GPU evidence are not physical-device compatibility. Legacy
+remains default; settings changes cannot extend a grant or start capture.

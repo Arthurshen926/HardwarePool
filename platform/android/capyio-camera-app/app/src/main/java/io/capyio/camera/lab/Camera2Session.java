@@ -76,6 +76,7 @@ final class Camera2Session implements AutoCloseable {
     private CameraDevice cameraDevice;
     private CameraCaptureSession captureSession;
     private MediaCodecSurfaceEncoder encoder;
+    private FiniteCameraGpuTransform finiteTransform;
     private AvcSender sender;
     private SecureCameraBinding secureBinding;
     private long lastSecureEncoded;
@@ -140,22 +141,27 @@ final class Camera2Session implements AutoCloseable {
 
     void start() {
         synchronized (lock) {
-            if (cameraThread != null) {
-                throw new IllegalStateException("camera session already started");
+            if (cameraThread != null || closed) {
+                throw new IllegalStateException("camera session already started or closed");
             }
             cameraThread = new HandlerThread("CapyIO-Camera2");
             cameraThread.start();
             cameraHandler = new Handler(cameraThread.getLooper());
         }
 
-        try {
-            openSelectedCamera();
-        } catch (CameraAccessException | IOException | RuntimeException error) {
-            fail("Unable to open Camera2: " + error.getClass().getSimpleName());
-        }
+        Handler handler;
+        synchronized (lock) { handler = cameraHandler; }
+        if (handler == null || !handler.post(() -> {
+            try {
+                openSelectedCamera();
+            } catch (CameraAccessException | IOException | RuntimeException error) {
+                fail("Unable to open Camera2: " + error.getClass().getSimpleName());
+            }
+        })) fail("Camera2 initialization callback was rejected");
     }
 
     private void openSelectedCamera() throws CameraAccessException, IOException {
+        synchronized (lock) { if (closed) return; }
         if (context.checkSelfPermission(Manifest.permission.CAMERA) != PackageManager.PERMISSION_GRANTED) {
             fail("Camera permission is not granted");
             return;
@@ -170,7 +176,8 @@ final class Camera2Session implements AutoCloseable {
             }
             FiniteCameraPreflight.revalidate(context, finitePlan);
             selection = new Selection(finitePlan.cameraId(), finitePlan.source().key(), null,
-                    new Size(1280, 720), 0,
+                    new Size(finitePlan.transformPlan().inputWidth(), finitePlan.transformPlan().inputHeight()),
+                    finitePlan.sensorOrientationDegrees(),
                     FrameObservation.LensFacing.valueOf(finitePlan.source().facing().name()));
         } else {
             selection = selectCamera(manager, preferredFacing, preferredSource);
@@ -188,9 +195,19 @@ final class Camera2Session implements AutoCloseable {
                 return;
             }
             texture.setDefaultBufferSize(selection.size().getWidth(), selection.size().getHeight());
-            previewSurface = new Surface(texture);
+            Surface createdPreview = new Surface(texture);
+            synchronized (lock) {
+                if (closed) {
+                    createdPreview.release();
+                    return;
+                }
+                previewSurface = createdPreview;
+            }
         }
-        captureSize = selection.size();
+        synchronized (lock) {
+            if (closed) return;
+            captureSize = selection.size();
+        }
         AvcEncoderConfig encoderConfig =
                 finitePlan == null
                         ? configForSize(selection.size(), qualityPreset, sensorOrientationDegrees)
@@ -219,37 +236,59 @@ final class Camera2Session implements AutoCloseable {
         }
         createdSender.start();
         MediaCodecSurfaceEncoder createdEncoder = new MediaCodecSurfaceEncoder(encoderConfig, secure, finitePlan);
+        FiniteCameraGpuTransform createdTransform = null;
         try {
             if (secureBinding != null && !secureBinding.ready()) {
                 throw new IllegalStateException("secure generation cancelled before encoder start");
             }
             createdEncoder.start();
+            if (finitePlan != null) {
+                Handler handler;
+                synchronized (lock) { handler = cameraHandler; }
+                createdTransform = new FiniteCameraGpuTransform(createdEncoder.inputSurface(), finitePlan,
+                        secureBinding, routeBinding, Objects.requireNonNull(handler), this::fail);
+            }
         } catch (IOException | RuntimeException error) {
+            createdEncoder.close();
             createdSender.close();
             throw error;
         }
         synchronized (lock) {
-            if (closed) {
-                createdEncoder.close();
-                createdSender.close();
-                return;
-            }
+            // Initialization and resource teardown share the camera owner. A concurrent Stop
+            // marks closed immediately, then its queued cleanup takes these exact resources.
             encoder = createdEncoder;
             sender = createdSender;
+            finiteTransform = createdTransform;
+            if (closed) return;
         }
 
-        if (secureBinding != null && !secureBinding.ready()) {
-            createdEncoder.close();
-            createdSender.close();
-            fail("Secure generation cancelled before camera open");
-            return;
+        if (createdTransform != null) {
+            // The camera cannot open until its dedicated EGL/OES input is ready.
+            // Even a zero-orientation finite camera never targets the encoder directly.
+            createdTransform.start(() -> openCameraAfterPreparation(manager, selection, finitePlan));
+        } else {
+            openCameraAfterPreparation(manager, selection, null);
         }
-        if (finitePlan != null) {
-            // Metadata can change during encoder creation. Revalidate the same Plan immediately
-            // before open; failure never reselects a camera, size, rate, profile or codec.
-            FiniteCameraPreflight.revalidate(context, finitePlan);
+    }
+
+    private void openCameraAfterPreparation(CameraManager manager, Selection selection,
+            FiniteCameraPreflight.Plan finitePlan) {
+        synchronized (lock) { if (closed) return; }
+        try {
+            if (secureBinding != null
+                    && (!secureBinding.ready() || routeBinding == null || !routeBinding.isLive())) {
+                throw new IllegalStateException("secure generation cancelled before camera open");
+            }
+            if (finitePlan != null) {
+                // Recheck original sensor/facing/input-size/transform/codec after EGL creation.
+                // Never reselect, silently downgrade or restart an expired generation.
+                FiniteCameraPreflight.revalidate(context, finitePlan);
+            }
+            synchronized (lock) { if (closed) return; }
+            manager.openCamera(selection.cameraId(), executor(), deviceCallback);
+        } catch (CameraAccessException | RuntimeException error) {
+            fail("Unable to open prepared Camera2: " + error.getClass().getSimpleName());
         }
-        manager.openCamera(selection.cameraId(), executor(), deviceCallback);
     }
 
     private final CameraDevice.StateCallback deviceCallback = new CameraDevice.StateCallback() {
@@ -286,8 +325,10 @@ final class Camera2Session implements AutoCloseable {
     private void configureSession(CameraDevice device) {
         MediaCodecSurfaceEncoder currentEncoder;
         Surface display;
+        FiniteCameraGpuTransform transform;
         synchronized (lock) {
             currentEncoder = encoder;
+            transform = finiteTransform;
             display = previewSurface;
             if (closed || currentEncoder == null) {
                 return;
@@ -295,13 +336,10 @@ final class Camera2Session implements AutoCloseable {
         }
 
         try {
-            Surface encoded = currentEncoder.inputSurface();
+            Surface encoded = captureInput(currentEncoder, transform);
             List<OutputConfiguration> outputs = new ArrayList<>(2);
-            OutputConfiguration encoderOutput = new OutputConfiguration(encoded);
-            if (display != null) {
-                outputs.add(new OutputConfiguration(display));
-            }
-            outputs.add(encoderOutput);
+            if (display != null) outputs.add(cameraOutput(display, transform != null));
+            outputs.add(cameraOutput(encoded, transform != null));
             SessionConfiguration configuration = new SessionConfiguration(
                     SessionConfiguration.SESSION_REGULAR,
                     outputs,
@@ -313,12 +351,37 @@ final class Camera2Session implements AutoCloseable {
         }
     }
 
+    private Surface captureInput(MediaCodecSurfaceEncoder currentEncoder,
+            FiniteCameraGpuTransform transform) {
+        if (secureBinding != null && secureBinding.finitePlan() != null) {
+            if (transform == null) throw new IllegalStateException("finite camera transform disappeared");
+            return transform.inputSurface();
+        }
+        if (transform != null) throw new IllegalStateException("legacy camera unexpectedly owns finite transform");
+        return currentEncoder.inputSurface();
+    }
+
+    private static OutputConfiguration cameraOutput(Surface surface, boolean finite) {
+        OutputConfiguration output = new OutputConfiguration(surface);
+        if (finite) {
+            if (Build.VERSION.SDK_INT < 33) {
+                throw new IllegalStateException("explicit unmirrored Camera2 output requires API 33");
+            }
+            // AUTO includes front-camera reflection in the producer matrix. Never use AUTO
+            // for finite capture; getTransformMatrix already includes the sensor rotation.
+            output.setMirrorMode(OutputConfiguration.MIRROR_MODE_NONE);
+            output.setTimestampBase(OutputConfiguration.TIMESTAMP_BASE_SENSOR);
+        }
+        return output;
+    }
+
     private final CameraCaptureSession.StateCallback sessionCallback =
             new CameraCaptureSession.StateCallback() {
                 @Override
                 public void onConfigured(CameraCaptureSession session) {
                     CameraDevice device;
                     MediaCodecSurfaceEncoder currentEncoder;
+                    FiniteCameraGpuTransform transform;
                     Surface display;
                     Size size;
                     synchronized (lock) {
@@ -329,6 +392,7 @@ final class Camera2Session implements AutoCloseable {
                         captureSession = session;
                         device = cameraDevice;
                         currentEncoder = encoder;
+                        transform = finiteTransform;
                         display = previewSurface;
                         size = captureSize;
                     }
@@ -343,7 +407,7 @@ final class Camera2Session implements AutoCloseable {
                             fail("Secure generation cancelled before capture start");
                             return;
                         }
-                        Surface encoded = currentEncoder.inputSurface();
+                        Surface encoded = captureInput(currentEncoder, transform);
                         CaptureRequest.Builder request =
                                 device.createCaptureRequest(CameraDevice.TEMPLATE_PREVIEW);
                         if (display != null) {
@@ -353,10 +417,11 @@ final class Camera2Session implements AutoCloseable {
                         if (secureBinding != null && secureBinding.finitePlan() != null) {
                             request.set(CaptureRequest.CONTROL_AE_MODE, CaptureRequest.CONTROL_AE_MODE_ON);
                             request.set(CaptureRequest.CONTROL_AE_TARGET_FPS_RANGE, new Range<>(30, 30));
-                            if (Build.VERSION.SDK_INT >= 31) {
-                                request.set(CaptureRequest.SCALER_ROTATE_AND_CROP,
-                                        CaptureRequest.SCALER_ROTATE_AND_CROP_NONE);
+                            if (Build.VERSION.SDK_INT < 33 || transform == null) {
+                                throw new IllegalStateException("finite pixel normalization is unavailable");
                             }
+                            request.set(CaptureRequest.SCALER_ROTATE_AND_CROP,
+                                    CaptureRequest.SCALER_ROTATE_AND_CROP_NONE);
                         }
                         Float selectedZoomRatio = targetZoomRatio;
                         if (selectedZoomRatio != null && Build.VERSION.SDK_INT >= 30) {
@@ -390,7 +455,20 @@ final class Camera2Session implements AutoCloseable {
                     Long timestamp = result.get(CaptureResult.SENSOR_TIMESTAMP);
                     Size size;
                     synchronized (lock) {
+                        if (closed) return;
                         size = captureSize;
+                    }
+                    if (secureBinding != null && secureBinding.finitePlan() != null) {
+                        // CaptureResult and texture notifications are not atomically paired here.
+                        // This is an additional fail-closed check after metadata arrives. The
+                        // latched producer matrix is independently checked before every GPU draw.
+                        Integer rotateAndCrop = Build.VERSION.SDK_INT >= 31
+                                ? result.get(CaptureResult.SCALER_ROTATE_AND_CROP) : null;
+                        if (rotateAndCrop == null || rotateAndCrop != CaptureResult.SCALER_ROTATE_AND_CROP_NONE
+                                || !secureBinding.ready() || routeBinding == null || !routeBinding.isLive()) {
+                            fail("Finite camera actual transform or original generation is invalid");
+                            return;
+                        }
                     }
                     if (timestamp == null || timestamp < 0 || size == null) {
                         fail("Camera2 result is missing a valid sensor timestamp or size");
@@ -503,7 +581,12 @@ final class Camera2Session implements AutoCloseable {
         }
         return command -> {
             if (!handler.post(command)) {
-                fail("Camera2 callback thread stopped");
+                // Late device/session callbacks must still close their newly delivered handles.
+                // Never discard onOpened after Stop just because its owner Looper has quit.
+                synchronized (lock) {
+                    if (!closed) fail("Camera2 callback thread stopped");
+                }
+                command.run();
             }
         };
     }
@@ -670,25 +753,43 @@ final class Camera2Session implements AutoCloseable {
 
     @Override
     public void close() {
+        Handler handler;
+        FiniteCameraGpuTransform transform;
+        synchronized (lock) {
+            if (closed) return;
+            closed = true;
+            handler = cameraHandler;
+            transform = finiteTransform;
+        }
+        // Admission is cancelled synchronously even if a platform driver delays cleanup.
+        if (transform != null) transform.requestStop();
+        try {
+            if (secureBinding != null) secureBinding.stop();
+        } finally {
+            if (handler == null || !handler.post(this::closeResourcesOnCameraOwner)) {
+                closeResourcesOnCameraOwner();
+            }
+        }
+    }
+
+    private void closeResourcesOnCameraOwner() {
         CameraCaptureSession session;
         CameraDevice device;
         MediaCodecSurfaceEncoder currentEncoder;
+        FiniteCameraGpuTransform transform;
         AvcSender currentSender;
         Surface display;
         HandlerThread thread;
         Handler handler;
         synchronized (lock) {
-            if (closed) {
-                notifyClosedOnce();
-                return;
-            }
-            closed = true;
             session = captureSession;
             captureSession = null;
             device = cameraDevice;
             cameraDevice = null;
             currentEncoder = encoder;
             encoder = null;
+            transform = finiteTransform;
+            finiteTransform = null;
             currentSender = sender;
             sender = null;
             display = previewSurface;
@@ -700,28 +801,52 @@ final class Camera2Session implements AutoCloseable {
             cameraHandler = null;
         }
 
-        if (session != null) {
-            session.close();
+        Runnable finish = () -> {
+            try {
+                if (currentEncoder != null) currentEncoder.close();
+            } finally {
+                try {
+                    if (display != null) display.release();
+                } finally {
+                    if (thread != null) thread.quitSafely();
+                    notifyClosedOnce();
+                }
+            }
+        };
+        boolean teardownFailed = false;
+        try {
+            // Stop native sends before any potentially blocking platform teardown operation.
+            if (secureBinding != null) {
+                try { secureBinding.stop(); }
+                catch (RuntimeException error) { teardownFailed = true; }
+            }
+            if (handler != null) handler.removeCallbacks(progressWatchdog);
+            if (session != null) {
+                try { session.stopRepeating(); }
+                catch (CameraAccessException | RuntimeException error) { teardownFailed = true; }
+                try { session.abortCaptures(); }
+                catch (CameraAccessException | RuntimeException error) { teardownFailed = true; }
+                try { session.close(); }
+                catch (RuntimeException error) { teardownFailed = true; }
+            }
+            if (device != null) {
+                try { device.close(); }
+                catch (RuntimeException error) { teardownFailed = true; }
+            }
+        } finally {
+            try {
+                if (currentSender != null) currentSender.close();
+            } finally {
+                if (transform != null) {
+                    // No timeout can safely release an encoder still in use by a stuck EGL driver.
+                    // Cooperative cleanup is bounded in queued work, not driver wall-clock time.
+                    transform.closeAfterCameraStopped(finish);
+                } else {
+                    finish.run();
+                }
+            }
         }
-        if (device != null) {
-            device.close();
-        }
-        if (currentEncoder != null) {
-            currentEncoder.close();
-        }
-        if (currentSender != null) {
-            currentSender.close();
-        }
-        if (display != null) {
-            display.release();
-        }
-        if (handler != null) {
-            handler.removeCallbacks(progressWatchdog);
-        }
-        if (thread != null) {
-            thread.quitSafely();
-        }
-        notifyClosedOnce();
+        if (teardownFailed) listener.onError("Camera2 producer teardown reported a platform failure");
     }
 
     private void notifyClosedOnce() {

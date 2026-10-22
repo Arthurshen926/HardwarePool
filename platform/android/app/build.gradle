@@ -348,4 +348,13 @@ tasks.register('secureCameraContractTest', JavaExec) {
     mainClass = 'io.capyio.camera.contract.SecureAvcSenderContractTest'
     enableAssertions = true
 }
-tasks.named('check') { dependsOn tasks.named('secureCameraContractTest') }
+tasks.register('finiteCameraTransformContractTest', JavaExec) {
+    group = 'verification'
+    dependsOn tasks.named('compileSecureCameraContractTest')
+    classpath = files(secureCameraContractOutput)
+    mainClass = 'io.capyio.camera.contract.FiniteCameraTransformContractTest'
+    enableAssertions = true
+}
+tasks.named('check') {
+    dependsOn tasks.named('secureCameraContractTest'), tasks.named('finiteCameraTransformContractTest')
+}

@@ -1929,7 +1929,7 @@ async function refreshVisibleState(): Promise<void> {
         <button class="ghost-button" type="submit" :disabled="cameraSettingsBusy || ['starting', 'active'].includes(androidCamera.state) || !androidCamera.permissionReady">刷新硬件来源</button>
       </form>
       <p v-if="androidCamera.captureProfile === 'finite_720p30_v1'" class="gamepad-lab__note" role="status">
-        实验有限模式：1280×720 / 30 fps / Balanced 4 Mbit/s；仅接受 sensor orientation = 0°，普通手机通常不支持。必须明确选择相机，自动或不兼容来源不会退回 Legacy。
+        实验有限模式：Android 13+，1280×720 / 30 fps / Balanced 4 Mbit/s。静态 0°/90°/180°/270° 传感器经像素校正；90°/270° 保留完整画面并加黑色侧边，不镜像、不跟随屏幕旋转。仍需硬件能力和实际输出检查，不代表所有手机兼容。必须明确选择相机，失败不会退回 Legacy。
         预检：{{ androidCamera.finitePreflight === 'eligible' ? '符合元数据条件（eligible），不代表已验证编码输出、设备兼容或接收端显示' : '不支持或未满足条件，未发布有限格式' }}。
         最长 60 秒且受帧数、字节和速率上限约束，不是连续相机支持声明。
       </p>

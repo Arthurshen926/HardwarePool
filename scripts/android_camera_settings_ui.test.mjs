@@ -1,5 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 import { parseAndroidCameraSettings } from '../apps/desktop/src/lib/android-camera-settings.ts';
 
 const source = { key: '0@auto', cameraId: '0', facing: 'back', zoomRatioMilli: null };
@@ -49,4 +50,14 @@ test('source inventory and optional counters are bounded and reconstructed', () 
   assert.notEqual(parsed, dto);
   assert.notEqual(parsed.sources, dto.sources);
   assert.notEqual(parsed.sources[0], dto.sources[0]);
+});
+
+
+test('finite camera UI states canonical pixel policy without promising physical compatibility', () => {
+  const view = readFileSync(new URL('../apps/desktop/src/App.vue', import.meta.url), 'utf8');
+  for (const required of ['Android 13+', '0°/90°/180°/270°', '像素校正', '黑色侧边',
+    '不镜像', '不跟随屏幕旋转', '不代表所有手机兼容', '失败不会退回 Legacy']) {
+    assert.ok(view.includes(required), required);
+  }
+  assert.ok(!view.includes('仅接受 sensor orientation = 0°'));
 });

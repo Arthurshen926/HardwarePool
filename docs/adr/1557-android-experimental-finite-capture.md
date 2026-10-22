@@ -2,6 +2,10 @@
 
 Status: implementation and hardware-free acceptance; not physical-device proof.
 
+The orientation-zero-only restriction below describes this initial slice.
+[ADR 1558](1558-android-finite-camera-pixel-orientation.md) supersedes that restriction
+with an actual finite-only GPU pixel-normalization stage, not a metadata relabel.
+
 ## Scope
 
 ADR 1556 added the actual Rust finite sender, but intentionally left Java capture
