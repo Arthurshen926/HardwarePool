@@ -1095,8 +1095,8 @@ fn assert_camera_not_consumer_proof(event: &Value, id: RouteId) {
     assert_eq!(event["consumer_delivery_verified"], false);
 }
 
-/// Synthetic finite Source only. Android's shipping catalog and
-/// SecureCameraSender remain legacy-only. This fixture reuses the real Android
+/// Raw TLS synthetic Source for receiver-side defenses, intentionally bypassing
+/// the production sender budget. This fixture reuses the real Android
 /// consent/lease policy and production pinned TLS, not a new transport or grant.
 #[cfg(feature = "paired-store")]
 struct FiniteFixtureSender {
@@ -1714,6 +1714,332 @@ fn hosted_linux_camera_finite_stream_graph() {
             "malicious input rejected under still-live authority, not incidental expiry"
         );
         sender.check(&peer.runtime).unwrap();
+    }
+    drop(sender);
+    for pid in [helper, decoder] {
+        assert!(
+            !std::path::Path::new(&format!("/proc/{pid}")).exists(),
+            "owned media child reaped"
+        );
+    }
+    assert_paired_no_leak(&store, &process);
+    println!("VERIFIED {scenario}\nCAMERA_STOPPED");
+}
+
+/// Actual production Rust Android sender, with synthetic AVC only. This is not
+/// Java Camera2/MediaCodec or physical-phone capture evidence. The independent
+/// native consumer retains the >120-frame, sequence-240, five-second pixel oracle.
+#[cfg(feature = "paired-store")]
+#[test]
+#[ignore = "requires explicit disposable paired-store finite-stream private PipeWire graph harness"]
+fn hosted_linux_camera_android_sender_finite_stream_graph() {
+    assert_eq!(
+        std::env::var("CAPYIO_CAMERA_ANDROID_SENDER").as_deref(),
+        Ok("1")
+    );
+    use capyio_vcamdroid_adapter::{AvcAccessUnit, AvcStreamKey, encode_access_unit};
+    assert_eq!(
+        std::env::var("CAPYIO_CAMERA_LAUNCHER_HOSTED").as_deref(),
+        Ok("1")
+    );
+    assert_eq!(
+        std::env::var("CAPYIO_CAMERA_FINITE_STREAM").as_deref(),
+        Ok("1")
+    );
+    assert_eq!(
+        std::env::var("CAPYIO_CAMERA_PAIRED_STORE").as_deref(),
+        Ok("1")
+    );
+    assert_eq!(std::env::var("CAPYIO_CAMERA_CONSOLE").as_deref(), Ok("0"));
+    assert_eq!(
+        std::env::var("PIPEWIRE_REMOTE").as_deref(),
+        Ok("capyio-test")
+    );
+    let scenario = std::env::var("CAPYIO_CAMERA_SCENARIO").unwrap();
+    assert!(
+        [
+            "sustained",
+            "local_stop",
+            "sender_stop",
+            "control_stop",
+            "control_eof",
+            "source_revoke",
+            "expiry",
+            "sender_rate",
+            "sender_oversize"
+        ]
+        .contains(&scenario.as_str())
+    );
+    let mut fixture = Fixture::with_profile(true);
+    fixture.config["stream_profile"] = json!("finite_720p30_v1");
+    fixture.config["duration_secs"] = json!(12);
+    let store = persisted_fixture(&fixture);
+    let mut process = paired_process(&store);
+    println!("\nLAUNCHER_PID {}", process.child.id());
+    println!("FINITE_STREAM profile=finite_720p30_v1 source=synthetic_android_sender");
+    io::stdout().flush().unwrap();
+    harness_line("approve synthetic camera");
+    paired_bootstrap(&fixture, &mut process);
+    let mut peer = fixture.connect_catalog(&mut process, false);
+    println!("PAIRED_STORE_AUTH verified");
+    io::stdout().flush().unwrap();
+    let approval = process.event("approval_required");
+    assert_eq!(approval["stream_profile"], "finite_720p30_v1");
+    assert_eq!(approval["format"], FINITE_FORMAT);
+    assert_eq!(approval["duration_secs"], 12);
+    assert_eq!(approval["max_frames"], 360);
+    assert_eq!(approval["max_input_bytes"], 28 * 1024 * 1024);
+    peer.idle(&process);
+    process.command(approval_command(&approval));
+    let id = serde_json::from_value(approval["route_id"].clone()).unwrap();
+    peer.proposal(id);
+    peer.grant(id, true, if scenario == "expiry" { 4000 } else { 12000 });
+    let offer = peer.offer(id);
+    no_children(&process);
+    println!("SECURE_LISTENING no_media_children=true");
+    io::stdout().flush().unwrap();
+    let route = peer.runtime.route(id).unwrap();
+    let lease_deadline = peer
+        .runtime
+        .route_port_lease_claim(id, route.source)
+        .unwrap()
+        .expires_at_ms;
+    let mut sender = SecureCameraSender::connect(
+        &peer.runtime,
+        &peer.link,
+        id,
+        offer,
+        &peer.directory,
+        &peer.credentials,
+        now_ms(),
+    )
+    .unwrap();
+    println!("ANDROID_SENDER production=SecureCameraSender capture=synthetic");
+    let bound = process.event("camera_bound");
+    assert_camera_not_consumer_proof(&bound, id);
+    let helper = bound["helper_pid"].as_u64().unwrap();
+    let decoder = bound["decoder_pid"].as_u64().unwrap();
+    println!(
+        "CAMERA_READY {} {}",
+        helper,
+        bound["node_name"].as_str().unwrap()
+    );
+    println!("DECODER_READY {decoder}");
+    io::stdout().flush().unwrap();
+    harness_line("start frames");
+    let stream = AvcStreamKey {
+        stream_id: *sender.binding().stream_id.as_uuid().as_bytes(),
+        epoch: sender.binding().epoch,
+    };
+    let (config, units) = fixture_records(stream);
+    sender
+        .send_record(&peer.runtime, &config, now_ms())
+        .unwrap();
+    let record = process.event("camera_record");
+    assert_camera_not_consumer_proof(&record, id);
+    assert_eq!(record["queued"], 0);
+    let encode = |sequence| {
+        encode_access_unit(&AvcAccessUnit {
+            stream,
+            sequence,
+            presentation_time_us: sequence * 33333,
+            ..units[(sequence as usize - 1) % units.len()].clone()
+        })
+        .unwrap()
+    };
+    let mut accepted_burst_prefix = 0;
+    if scenario == "sender_oversize" {
+        // Complete legal CAVC/TLS framing, deliberately over the finite local
+        // byte burst (including its 56-byte header). This is not outer framing.
+        let mut payload = units[0].payload.clone();
+        // Append a legal Annex B filler-data NAL to the real keyframe, rather
+        // than making decoder corruption an alternate explanation for failure.
+        payload.extend_from_slice(&[0, 0, 0, 1, 12]);
+        payload.resize(
+            capyio_vcamdroid_adapter::AVC_WIRE_MAX_ACCESS_UNIT_BYTES - 1,
+            0xff,
+        );
+        payload.push(0x80);
+        let bytes = encode_access_unit(&AvcAccessUnit {
+            stream,
+            sequence: 1,
+            presentation_time_us: 33333,
+            payload,
+            ..units[0].clone()
+        })
+        .unwrap();
+        assert_eq!(bytes.len(), 4 * 1024 * 1024 + 56);
+        assert_eq!(
+            sender
+                .send_record(&peer.runtime, &bytes, now_ms())
+                .unwrap_err(),
+            "finite camera arrival rate exceeded"
+        );
+        println!("ANDROID_REJECT sender_oversize before_write=true closed=true");
+    } else if scenario == "sender_rate" {
+        // No pacing: the production sender charges actual monotonic arrival
+        // time, independently of wall-clock authority and record timestamps.
+        let mut rejected = false;
+        for sequence in 1..=60 {
+            match sender.send_record(&peer.runtime, &encode(sequence), now_ms()) {
+                Ok(()) => accepted_burst_prefix += 1,
+                Err(error) => {
+                    assert_eq!(error, "finite camera arrival rate exceeded");
+                    rejected = true;
+                    break;
+                }
+            }
+        }
+        assert!(
+            rejected,
+            "bounded burst must fail in production sender before write"
+        );
+        println!("ANDROID_REJECT sender_rate before_write=true closed=true");
+    } else {
+        let count = if scenario == "sustained" { 300 } else { 30 };
+        let start = Instant::now();
+        let mut queued = 0;
+        let mut dropped = 0;
+        for sequence in 1..=count {
+            let sent_at = Instant::now();
+            sender
+                .send_record(&peer.runtime, &encode(sequence), now_ms())
+                .unwrap();
+            let record = process.event("camera_record");
+            assert_camera_not_consumer_proof(&record, id);
+            queued = record["queued"].as_u64().unwrap();
+            dropped = record["dropped"].as_u64().unwrap();
+            assert_eq!(
+                queued, sequence,
+                "successful secure records are queued, not delivered"
+            );
+            assert_eq!(
+                dropped, 0,
+                "secure projection backpressure is terminal, never continued"
+            );
+            for field in ["helper_pid", "decoder_pid", "node_name"] {
+                assert_eq!(record[field], bound[field]);
+            }
+            // Pace from the previous actual send instead of catching up after a
+            // scheduler stall and accidentally violating the finite rate bucket.
+            if let Some(wait) =
+                (sent_at + Duration::from_nanos(33_333_334)).checked_duration_since(Instant::now())
+            {
+                thread::sleep(wait);
+            }
+        }
+        if scenario == "sustained" {
+            assert!(start.elapsed() >= Duration::from_secs(10));
+            assert!(
+                now_ms() < lease_deadline,
+                "no authority extension for fixture drain"
+            );
+            println!(
+                "FINITE_SENT frames={count} elapsed_ms={} queued={queued} dropped={dropped}",
+                start.elapsed().as_millis()
+            );
+            let decoder_peak = observed_peak_kib(decoder as u32);
+            assert!(
+                decoder_peak < 512 * 1024,
+                "observed decoder high-water RSS below existing 512 MiB address-space limit"
+            );
+            println!(
+                "FINITE_MEMORY decoder_vm_hwm_kib={decoder_peak} helper_vm_hwm_kib={} node_vm_hwm_kib={}",
+                observed_peak_kib(helper as u32),
+                observed_peak_kib(process.owner_pid())
+            );
+            io::stdout().flush().unwrap();
+            let drain_until = Instant::now() + Duration::from_millis(200);
+            while Instant::now() < drain_until {
+                assert!(now_ms() < lease_deadline);
+                assert!(process.child.try_wait().unwrap().is_none());
+                process.collect();
+                thread::sleep(Duration::from_millis(2));
+            }
+        }
+        match scenario.as_str() {
+            "sustained" | "local_stop" => process.command(json!({"version":1,"command":"stop"})),
+            "sender_stop" => {
+                sender.stop_handle().unwrap().stop();
+                assert!(
+                    sender
+                        .send_record(&peer.runtime, &encode(count + 1), now_ms())
+                        .is_err()
+                );
+            }
+            "control_stop" => peer
+                .link
+                .send_route_command_until(id, RouteCommandAction::Stop, Instant::now() + BOUND)
+                .unwrap(),
+            "control_eof" => peer.link.close(),
+            "source_revoke" => {
+                let route = peer.runtime.route(id).unwrap().clone();
+                peer.runtime
+                    .release_route_port_lease(id, route.source, route.session_id)
+                    .unwrap();
+                assert_eq!(
+                    sender
+                        .send_record(&peer.runtime, &encode(count + 1), now_ms())
+                        .unwrap_err(),
+                    "camera Source authority revoked"
+                );
+            }
+            "expiry" => {
+                let expiry = lease_deadline;
+                let deadline =
+                    Instant::now() + Duration::from_millis(expiry.saturating_sub(now_ms())) + BOUND;
+                while now_ms() < expiry {
+                    assert!(Instant::now() < deadline);
+                    assert_finite_not_early_expiry(&mut process, expiry);
+                    thread::sleep(Duration::from_millis(2));
+                }
+                assert_eq!(
+                    sender
+                        .send_record(&peer.runtime, &encode(count + 1), now_ms())
+                        .unwrap_err(),
+                    "camera Source lease expired or clock regressed"
+                );
+            }
+            _ => unreachable!(),
+        }
+    }
+    if matches!(scenario.as_str(), "sender_rate" | "sender_oversize") {
+        assert!(
+            now_ms() < lease_deadline,
+            "sender rejected under live authority"
+        );
+        assert_eq!(
+            sender
+                .send_record(&peer.runtime, &encode(61), now_ms())
+                .unwrap_err(),
+            "camera sender is terminal",
+            "rejected sender cannot resume"
+        );
+        // Do not pace the sender burst on decoder acknowledgements. The
+        // receiver may independently reject its accepted fast prefix; only
+        // those submitted AUs can have queue acknowledgements before failure.
+        let mut acknowledged = 0;
+        loop {
+            let event = process.next_event();
+            if event["event"] == "failed" {
+                break;
+            }
+            assert_eq!(event["event"], "camera_record");
+            assert_camera_not_consumer_proof(&event, id);
+            acknowledged += 1;
+            assert!(
+                acknowledged <= accepted_burst_prefix,
+                "sender-rejected AU must never reach receiver queue"
+            );
+            assert_eq!(event["queued"], acknowledged);
+            assert_eq!(event["dropped"], 0);
+        }
+        finish_terminal(&mut process, false);
+    } else {
+        terminal(
+            &mut process,
+            matches!(scenario.as_str(), "sustained" | "local_stop"),
+        );
     }
     drop(sender);
     for pid in [helper, decoder] {

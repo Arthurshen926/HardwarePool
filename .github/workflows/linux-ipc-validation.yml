@@ -331,6 +331,7 @@ jobs:
           camera_job::lifecycle_tests::stop_during_actual_tls_handshake_never_publishes_ready_and_finishes_bounded
           camera_job::lifecycle_tests::stop_after_actual_tls_connect_before_ready_installation_cannot_resurrect_job
           camera_job::lifecycle_tests::actual_source_lease_revoke_after_ready_closes_media_and_rejects_records
+          camera_job::lifecycle_tests::actual_tls_valid_eos_finishes_job_stopped_not_failed
           TESTS
           cargo test --locked -p capyio-mock-source -p capyio-mock-sink -p capyio-linux-host -p capyio-node -p capyio-linux-audio -p capyio-native-audio-lan -p capyio-control-tls -p capyio-control-link -p capyio-core -p capyio-runtime -p capyio-android-jni -p capyio-protocol --all-targets -- --list --color never | tee "$RUNNER_TEMP/linux-test-list.txt"
           while IFS= read -r test_name; do

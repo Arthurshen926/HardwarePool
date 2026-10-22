@@ -173,6 +173,23 @@ jobs:
             count=$((count + 1))
           done
           test "$count" -eq 11
+      - name: Require real Android Rust sender finite camera profiles
+        run: |
+          set -euo pipefail
+          driver="$(cat "$RUNNER_TEMP/camera-launcher-driver")"
+          "$driver" --list | tee "$RUNNER_TEMP/camera-android-sender-tests-list.txt"
+          grep -Fx 'hosted_linux_camera_android_sender_finite_stream_graph: test' "$RUNNER_TEMP/camera-android-sender-tests-list.txt"
+          count=0
+          for scenario in sustained local_stop sender_stop control_stop control_eof source_revoke expiry sender_rate sender_oversize; do
+            timeout --signal=TERM --kill-after=5s 45s python3 scripts/run_pipewire_camera_launcher.py \
+              --hosted-private-camera-launcher --paired-store --finite-stream --android-sender --driver "$driver" --node target/debug/capyio-node \
+              --helper target/debug/capyio-linux-camera-helper --decoder target/debug/capyio-linux-avc-helper \
+              --consumer "$RUNNER_TEMP/avc-consumer" --scenario "$scenario" \
+              | tee "$RUNNER_TEMP/camera-android-sender-$scenario.txt"
+            grep -Fx "capyio_pipewire_camera_android_sender=passed scenario=$scenario actual_executable=true production_sender=SecureCameraSender capture=synthetic paired_store=true real_graph=true owned_cleanup=true" "$RUNNER_TEMP/camera-android-sender-$scenario.txt"
+            count=$((count + 1))
+          done
+          test "$count" -eq 9
       - name: Require thirteen actual-console paired camera profiles
         run: |
           set -euo pipefail
@@ -202,5 +219,6 @@ jobs:
             ${{ runner.temp }}/camera-launcher-*.txt
             ${{ runner.temp }}/camera-console-*.txt
             ${{ runner.temp }}/camera-finite-*.txt
+            ${{ runner.temp }}/camera-android-sender-*.txt
             ${{ runner.temp }}/camera-launcher-build.jsonl
           if-no-files-found: ignore

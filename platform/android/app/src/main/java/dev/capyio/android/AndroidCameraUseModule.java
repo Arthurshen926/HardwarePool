@@ -117,6 +117,13 @@ final class AndroidCameraUseModule {
         }
         if (secureRouteId != null && !secureRouteId.equals(id)) close();
         secureLaunchConfig = use.optJSONObject("secureConfig");
+        // Rust's finite sender can be exercised with synthetic encoded frames,
+        // but this Camera2 path must not mislabel its legacy capture as canonical.
+        if (secureLaunchConfig != null
+                && !io.capyio.camera.contract.SecureCameraCaptureSession.supportsCaptureFormat(
+                        secureLaunchConfig.optString("format", null))) {
+            throw new IllegalArgumentException("unsupported secure capture format");
+        }
         if (secureSession == null) {
             if (id.equals(attemptedSecureRoute)) return;
             attemptedSecureRoute = id;

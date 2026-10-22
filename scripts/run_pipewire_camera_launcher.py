@@ -24,7 +24,10 @@ FINITE_SCENARIOS = ('sustained', 'local_stop', 'control_stop', 'control_eof',
                     'oversize', 'profile_mismatch', 'old_source_guard')
 FINITE_NO_MEDIA = ('profile_mismatch', 'old_source_guard')
 FINITE_TEST = 'hosted_linux_camera_finite_stream_graph'
-ALL_SCENARIOS = tuple(dict.fromkeys((*SCENARIOS, *CONSOLE_SCENARIOS, *FINITE_SCENARIOS)))
+ANDROID_SCENARIOS = ('sustained', 'local_stop', 'sender_stop', 'control_stop', 'control_eof',
+                     'source_revoke', 'expiry', 'sender_rate', 'sender_oversize')
+ANDROID_TEST = 'hosted_linux_camera_android_sender_finite_stream_graph'
+ALL_SCENARIOS = tuple(dict.fromkeys((*SCENARIOS, *CONSOLE_SCENARIOS, *FINITE_SCENARIOS, *ANDROID_SCENARIOS)))
 CONSOLE_TEST = 'hosted_linux_camera_console_graph'
 PATTERNS = {
     'PAIRED_STORE_AUTH': r'PAIRED_STORE_AUTH verified',
@@ -38,7 +41,9 @@ PATTERNS = {
     'CONSOLE_VERIFIED': (r'CONSOLE_VERIFIED (' + '|'.join(CONSOLE_SCENARIOS)
                          + r') actual_tty=true fresh_consent=true secret_redacted=true node_reaped=true'),
     'CAMERA_STOPPED': r'CAMERA_STOPPED',
-    'FINITE_STREAM': r'FINITE_STREAM profile=finite_720p30_v1 source=synthetic_tls',
+    'FINITE_STREAM': r'FINITE_STREAM profile=finite_720p30_v1 source=(synthetic_tls|synthetic_android_sender)',
+    'ANDROID_SENDER': r'ANDROID_SENDER production=SecureCameraSender capture=synthetic',
+    'ANDROID_REJECT': r'ANDROID_REJECT (sender_rate|sender_oversize) before_write=true closed=true',
     'FINITE_REJECT_PENDING': (r'FINITE_REJECT_PENDING (profile_mismatch|old_source_guard) '
                               r'no_data_listener=true no_media_children=true'),
     'FINITE_SENT': r'FINITE_SENT frames=([1-9][0-9]*) elapsed_ms=([1-9][0-9]*) queued=([0-9]+) dropped=([0-9]+)',
@@ -71,7 +76,11 @@ def verify_process(pid, parent_pid, executable):
         raise ValueError('owned process executable or direct parent mismatch')
 
 
-def verify_mode(scenario, paired_store=False, console=False, finite_stream=False):
+def verify_mode(scenario, paired_store=False, console=False, finite_stream=False, android_sender=False):
+    if android_sender:
+        if not finite_stream or not paired_store or console or scenario not in ANDROID_SCENARIOS:
+            raise ValueError("Android sender requires exact paired finite-stream fixture mode")
+        return
     if finite_stream:
         if console or not paired_store or scenario not in FINITE_SCENARIOS:
             raise ValueError('finite stream requires exact paired Node fixture mode')
@@ -82,14 +91,25 @@ def verify_mode(scenario, paired_store=False, console=False, finite_stream=False
         raise ValueError('scenario does not belong to the selected exact fixture mode')
 
 
-def verify_completion(text, scenario, code, paired_store=False, console=False, finite_stream=False):
-    verify_mode(scenario, paired_store, console, finite_stream)
+def verify_completion(text, scenario, code, paired_store=False, console=False, finite_stream=False, android_sender=False):
+    verify_mode(scenario, paired_store, console, finite_stream, android_sender)
     result = markers(text, complete=True)
     required = {'LAUNCHER_PID', 'VERIFIED', 'CAMERA_STOPPED'}
     if paired_store:
         required.add('PAIRED_STORE_AUTH')
     elif 'PAIRED_STORE_AUTH' in result:
         raise ValueError('unexpected paired-store authentication mode')
+    android_keys = {'ANDROID_SENDER', 'ANDROID_REJECT'}
+    if android_sender:
+        required.add('ANDROID_SENDER')
+        if scenario in ('sender_rate', 'sender_oversize'):
+            required.add('ANDROID_REJECT')
+            if result.get('ANDROID_REJECT') != (scenario,):
+                raise ValueError('exact production sender rejection evidence absent')
+        elif 'ANDROID_REJECT' in result:
+            raise ValueError('unexpected sender rejection evidence')
+    elif android_keys.intersection(result):
+        raise ValueError('unexpected Android sender evidence')
     console_keys = {'CONSOLE_PID', 'CONSOLE_CONSENT', 'CONSOLE_VERIFIED'}
     if console:
         required.update(console_keys)
@@ -103,7 +123,11 @@ def verify_completion(text, scenario, code, paired_store=False, console=False, f
                    'FINITE_ATTACK', 'FINITE_READBACK_REQUIRED', 'FINITE_PRESSURE'}
     if finite_stream:
         required.add('FINITE_STREAM')
-        if (f'test {FINITE_TEST} ... ok' not in text
+        expected_test = ANDROID_TEST if android_sender else FINITE_TEST
+        expected_source = 'synthetic_android_sender' if android_sender else 'synthetic_tls'
+        if result.get('FINITE_STREAM') != (expected_source,):
+            raise ValueError('exact finite source implementation evidence absent')
+        if (f'test {expected_test} ... ok' not in text
                 or 'test result: ok. 1 passed; 0 failed; 0 ignored;' not in text):
             raise ValueError('exact finite-stream test must execute successfully, never skip or substitute')
         if scenario in FINITE_NO_MEDIA:
@@ -267,20 +291,21 @@ class LauncherHarness(CameraHarness):
             raise ValueError('launcher fixture exited before both media readiness markers')
         return None
 
-    def run_launcher(self, driver, node_binary, helper, decoder, consumer, scenario, paired_store=False, console=False, finite_stream=False):
-        verify_mode(scenario, paired_store, console, finite_stream)
+    def run_launcher(self, driver, node_binary, helper, decoder, consumer, scenario, paired_store=False, console=False, finite_stream=False, android_sender=False):
+        verify_mode(scenario, paired_store, console, finite_stream, android_sender)
         self.console = console  # Reuse exact owned-PTY-session cleanup on all failures.
         self.node, self.helper, self.decoder = node_binary, helper, decoder
         self.env.update(CAPYIO_CAMERA_LAUNCHER_HOSTED='1', CAPYIO_CAMERA_SCENARIO=scenario,
                         CAPYIO_CAMERA_PAIRED_STORE='1' if paired_store else '0',
                         CAPYIO_CAMERA_CONSOLE='1' if console else '0',
-                        CAPYIO_CAMERA_FINITE_STREAM='1' if finite_stream else '0')
+                        CAPYIO_CAMERA_FINITE_STREAM='1' if finite_stream else '0',
+                        CAPYIO_CAMERA_ANDROID_SENDER='1' if android_sender else '0')
         self.prepare_daemon()
         baseline = graph_fingerprint(self.dump())
         named(self.dump(), 'capyio.test.null')
         if not baseline:
             raise ValueError('sentinel absent')
-        test = FINITE_TEST if finite_stream else (CONSOLE_TEST if console else 'hosted_linux_camera_graph')
+        test = ANDROID_TEST if android_sender else FINITE_TEST if finite_stream else (CONSOLE_TEST if console else 'hosted_linux_camera_graph')
         owner = self.launch([str(driver), '--exact', test, '--ignored', '--nocapture'], 'owner')
         for _ in range(2):
             if not no_camera(self.dump()):
@@ -393,7 +418,7 @@ class LauncherHarness(CameraHarness):
             owner.stdin.flush()
         code = owner.wait(timeout=15)
         self.check()
-        verify_completion((self.root / 'owner.out').read_text(), scenario, code, paired_store=paired_store, console=console, finite_stream=finite_stream)
+        verify_completion((self.root / 'owner.out').read_text(), scenario, code, paired_store=paired_store, console=console, finite_stream=finite_stream, android_sender=android_sender)
         if app is not None:
             if app.wait(timeout=5) != 0:
                 raise ValueError('independent native pixel consumer failed')
@@ -419,14 +444,16 @@ def main():
                         help='Require the actual paired console, private PTY and fixed sibling Node')
     parser.add_argument('--finite-stream', action='store_true',
                         help='Require explicit finite_720p30_v1 synthetic paired Node profile, never legacy or console substitution')
+    parser.add_argument('--android-sender', action='store_true',
+                        help='Require actual production Rust SecureCameraSender with synthetic AVC, not phone capture')
     args = parser.parse_args()
-    verify_mode(args.scenario, args.paired_store, args.console, args.finite_stream)
+    verify_mode(args.scenario, args.paired_store, args.console, args.finite_stream, args.android_sender)
     with tempfile.TemporaryDirectory(prefix='capyio-camera-launcher-') as temporary:
         root = Path(temporary)
         root.chmod(0o700)
         harness = LauncherHarness(root, e2e=True)
         try:
-            harness.run_launcher(*(getattr(args, name).resolve() for name in ('driver', 'node', 'helper', 'decoder', 'consumer')), args.scenario, paired_store=args.paired_store, console=args.console, finite_stream=args.finite_stream)
+            harness.run_launcher(*(getattr(args, name).resolve() for name in ('driver', 'node', 'helper', 'decoder', 'consumer')), args.scenario, paired_store=args.paired_store, console=args.console, finite_stream=args.finite_stream, android_sender=args.android_sender)
         except Exception:
             for label in ('daemon.err', 'owner.out', 'owner.err', 'consumer.out', 'consumer.err', 'command.err'):
                 path = root / label
@@ -437,7 +464,9 @@ def main():
             harness.close()
     real_graph = (args.scenario != 'handshake_timeout' and args.scenario not in CONSOLE_PENDING
                   and not (args.finite_stream and args.scenario in FINITE_NO_MEDIA))
-    if args.finite_stream:
+    if args.android_sender:
+        print(f'capyio_pipewire_camera_android_sender=passed scenario={args.scenario} actual_executable=true production_sender=SecureCameraSender capture=synthetic paired_store=true real_graph={str(real_graph).lower()} owned_cleanup=true')
+    elif args.finite_stream:
         print(f'capyio_pipewire_camera_finite_stream=passed scenario={args.scenario} actual_executable=true paired_store=true real_graph={str(real_graph).lower()} owned_cleanup=true')
     elif args.console:
         print(f'capyio_pipewire_camera_console=passed scenario={args.scenario} actual_console=true paired_store=true real_graph={str(real_graph).lower()} owned_cleanup=true')

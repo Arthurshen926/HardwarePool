@@ -9,6 +9,11 @@ import java.util.concurrent.TimeUnit;
  * no callback may perform network I/O or join a cleanup worker under this gate's monitor.
  */
 public final class SecureCameraCaptureSession implements AutoCloseable {
+    /** Real Camera2 capture remains legacy-only until canonical finite capture is implemented. */
+    public static boolean supportsCaptureFormat(String format) {
+        return "cavc-avc-access-unit-v1".equals(format);
+    }
+
     public interface Capture {
         boolean permissionGranted();
         boolean start(long generation);

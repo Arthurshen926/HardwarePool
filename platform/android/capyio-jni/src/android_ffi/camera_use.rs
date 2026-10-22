@@ -47,6 +47,20 @@ pub(super) fn receive_status(
     address: String,
     now: u64,
 ) -> Result<(), String> {
+    if let Some(profile) = host
+        .camera_use
+        .as_ref()
+        .filter(|job| job.route_id == peer.id)
+        .and_then(|job| job.secure_profile)
+    {
+        let route = host.runtime.route(peer.id).map_err(|e| e.to_string())?;
+        if !profile.matches_selection(peer.selected_format.as_ref())
+            || !profile.matches_selection(route.selected_format.as_ref())
+        {
+            secure_camera::reconcile(&host.runtime);
+            return Err("secure camera format changed within Route".into());
+        }
+    }
     if !local(host, peer) {
         return Ok(());
     }
@@ -73,6 +87,7 @@ pub(super) fn receive_status(
             secure_transport: false,
             secure_offer: None,
             secure_binding: None,
+            secure_profile: None,
             secure_generation: crate::camera_job::GenerationClaim::default(),
             local_intent: false,
         });
@@ -80,6 +95,12 @@ pub(super) fn receive_status(
     if let Some(secure) = secure_offer {
         let route = host.runtime.route(peer.id).map_err(|e| e.to_string())?;
         secure.validate(route).map_err(|e| e.to_string())?;
+        let profile = crate::camera_sender::CameraSenderProfile::from_selection(
+            route.selected_format.as_ref(),
+        )?;
+        if !profile.matches_selection(peer.selected_format.as_ref()) {
+            return Err("secure camera status selection differs from Route".into());
+        }
         if authority(host, route, now).is_none() {
             return Err("secure camera offer lacks current Source authority".into());
         }
@@ -98,6 +119,12 @@ pub(super) fn receive_status(
         {
             return Err("secure camera offer changed within Route".into());
         }
+        if job.secure_binding.is_some_and(|old| old != binding)
+            || job.secure_profile.is_some_and(|old| old != profile)
+        {
+            return Err("secure camera binding or format changed within Route".into());
+        }
+        job.secure_profile = Some(profile);
         job.secure_offer = Some((secure, peer.epoch));
         job.secure_binding = Some(binding);
         job.offer = None;
@@ -179,6 +206,7 @@ pub extern "system" fn Java_dev_capyio_android_AndroidNativeCatalogRuntime_nativ
             let host=runtimes.get_mut(&catalog_handle(handle)?).ok_or("Runtime absent")?;
             let now=SystemTime::now().duration_since(UNIX_EPOCH).map_err(|e|e.to_string())?.as_millis()as u64;
             host.runtime.expire_port_leases(now);
+            secure_camera::reconcile(&host.runtime);
             if action=="stop" || action=="failed" { secure_camera::stop_runtime(handle as u64,None); }
             if action=="peers" {
                 let s=host.runtime.snapshot();
@@ -205,15 +233,15 @@ pub extern "system" fn Java_dev_capyio_android_AndroidNativeCatalogRuntime_nativ
                 let source=PortRef{node_id:s.local_node.id,capability_id:cap.id,port_id:port.id};
                 let sink=PortRef{node_id:session.remote_node_id,capability_id:SINK_CAP.parse().map_err(|_|"invalidcap")?,port_id:SINK_PORT.parse().map_err(|_|"invalidport")?};
                 let id=host.runtime.create_route(session.id,source,sink,RouteBackend::AdapterManaged).map_err(|e|e.to_string())?;
-                host.camera_use=Some(crate::AndroidCameraUse{route_id:id,offer:None,secure_transport:false,secure_offer:None,secure_binding:None,secure_generation:crate::camera_job::GenerationClaim::default(),local_intent:true});host.audio_status_pending.insert(id);
+                host.camera_use=Some(crate::AndroidCameraUse{route_id:id,offer:None,secure_transport:false,secure_offer:None,secure_binding:None,secure_profile:None,secure_generation:crate::camera_job::GenerationClaim::default(),local_intent:true});host.audio_status_pending.insert(id);
             }
             let output=if let Some(job)=&host.camera_use {
                 let r=host.runtime.route(job.route_id).map_err(|e|e.to_string())?;let expiry=authority(host,r,now);
                 let secure_ready=secure_camera::ready_for_route(handle as u64,r.id);
-                let should_run=expiry.is_some()&&matches!(r.state,RouteState::Starting|RouteState::Active)&&if job.secure_transport {secure_ready&&job.secure_offer.is_some_and(|(_,epoch)|epoch==r.epoch)}else{job.offer.as_ref().is_some_and(|(_,_,epoch)|*epoch==r.epoch)};
+                let should_run=expiry.is_some()&&matches!(r.state,RouteState::Starting|RouteState::Active)&&if job.secure_transport {secure_ready&&job.secure_profile.is_some_and(|profile|profile.matches_selection(r.selected_format.as_ref()))&&job.secure_offer.is_some_and(|(_,epoch)|epoch==r.epoch)}else{job.offer.as_ref().is_some_and(|(_,_,epoch)|*epoch==r.epoch)};
                 let s=host.runtime.snapshot();
                 serde_json::json!({"routeId":r.id.to_string(),"peerNodeId":r.sink.node_id.to_string(),"status":if r.authorization==AuthorizationState::Denied{"idle"}else{match r.state{RouteState::Draft=>"awaiting_consent",RouteState::Prepared|RouteState::Starting=>"starting",RouteState::Active=>"active",RouteState::Stopping=>"stopping",RouteState::Stopped=>"idle",_=>"failed"}},
-                    "shouldRun":should_run,"secureTransport":job.secure_transport,"secureCapturePending":job.secure_transport&&!secure_ready,"secureConfig":job.secure_offer.map(|(o,epoch)|serde_json::json!({"streamId":o.stream_id.to_string(),"epoch":epoch})),"expiresAtMs":expiry,"config":job.offer.as_ref().map(|(o,host,epoch)|serde_json::json!({"host":host,"port":o.port,"streamId":o.stream_id.to_string(),"epoch":epoch})),
+                    "shouldRun":should_run,"secureTransport":job.secure_transport,"secureCapturePending":job.secure_transport&&!secure_ready,"secureConfig":job.secure_offer.zip(job.secure_profile).filter(|(_,profile)|profile.matches_selection(r.selected_format.as_ref())).map(|((o,epoch),profile)|serde_json::json!({"streamId":o.stream_id.to_string(),"epoch":epoch,"format":profile.format_name()})),"expiresAtMs":expiry,"config":job.offer.as_ref().map(|(o,host,epoch)|serde_json::json!({"host":host,"port":o.port,"streamId":o.stream_id.to_string(),"epoch":epoch})),
                     "error":s.problems.iter().rev().find(|p|p.related_route==Some(r.id)).map(|p|format!("{}: {}",p.code,p.human_message))})
             }else{serde_json::json!({"status":"idle"})};
             serde_json::to_vec(&output).map_err(|e|e.to_string())

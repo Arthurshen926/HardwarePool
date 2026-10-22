@@ -474,3 +474,117 @@ class FiniteStreamLauncherTests(TestCase):
         with mock.patch.object(h, 'prepare_daemon') as prepare, self.assertRaises(ValueError):
             h.run_launcher(*(Path('/unused') for _ in range(5)), 'sustained', finite_stream=True)
         prepare.assert_not_called()
+
+
+class AndroidSenderLauncherTests(TestCase):
+    """Pure contracts only; these tests never stand in for native pixel evidence."""
+    def transcript(self, scenario):
+        from run_pipewire_camera_launcher import ANDROID_TEST
+        text = ('PAIRED_STORE_AUTH verified\n' + LauncherTests.base
+                + 'FINITE_STREAM profile=finite_720p30_v1 source=synthetic_android_sender\n'
+                + 'ANDROID_SENDER production=SecureCameraSender capture=synthetic\n')
+        if scenario == 'sustained':
+            text += ('FINITE_SENT frames=300 elapsed_ms=10035 queued=300 dropped=0\n'
+                     'FINITE_MEMORY decoder_vm_hwm_kib=30000 helper_vm_hwm_kib=10000 node_vm_hwm_kib=20000\n')
+        if scenario in ('sender_rate', 'sender_oversize'):
+            text += f'ANDROID_REJECT {scenario} before_write=true closed=true\n'
+        return (text + f'VERIFIED {scenario}\nCAMERA_STOPPED\n'
+                f'test {ANDROID_TEST} ... ok\n'
+                'test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 15 filtered out\n')
+
+    def verify(self, text, scenario, code=0):
+        return verify_completion(text, scenario, code, paired_store=True,
+                                 finite_stream=True, android_sender=True)
+
+    def test_exact_nine_sender_scenarios_do_not_replace_receiver_console_or_legacy(self):
+        from run_pipewire_camera_launcher import ANDROID_SCENARIOS
+        self.assertEqual(set(ANDROID_SCENARIOS), {'sustained', 'local_stop', 'sender_stop',
+                         'control_stop', 'control_eof', 'source_revoke', 'expiry',
+                         'sender_rate', 'sender_oversize'})
+        self.assertEqual((len(SCENARIOS), len(CONSOLE_SCENARIOS), len(FINITE_SCENARIOS)), (8, 13, 11))
+        for scenario in ANDROID_SCENARIOS:
+            verify_mode(scenario, True, False, True, True)
+        for args in (('sustained', False, False, True, True),
+                     ('sustained', True, False, False, True),
+                     ('sustained', True, True, True, True),
+                     ('malicious_rate', True, False, True, True),
+                     ('oversize', True, False, True, True),
+                     ('sender_rate', True, False, True, False)):
+            with self.subTest(args=args), self.assertRaises(ValueError):
+                verify_mode(*args)
+
+    def test_every_scenario_requires_exact_test_type_source_and_all_evidence(self):
+        from run_pipewire_camera_launcher import ANDROID_SCENARIOS
+        for scenario in ANDROID_SCENARIOS:
+            text = self.transcript(scenario)
+            self.verify(text, scenario)
+            for line in text.splitlines():
+                with self.subTest(scenario=scenario, line=line), self.assertRaises(ValueError):
+                    self.verify(text.replace(line + '\n', ''), scenario)
+            for code in (1, 2, -15):
+                with self.assertRaises(ValueError):
+                    self.verify(text, scenario, code)
+
+    def test_raw_tls_old_tests_skips_and_fake_android_claims_fail_closed(self):
+        from run_pipewire_camera_launcher import ANDROID_TEST
+        text = self.transcript('sustained')
+        for before, after in ((ANDROID_TEST, FINITE_TEST), (ANDROID_TEST, CONSOLE_TEST),
+                              ('source=synthetic_android_sender', 'source=synthetic_tls'),
+                              ('production=SecureCameraSender', 'production=FiniteFixtureSender'),
+                              ('capture=synthetic', 'capture=phone'),
+                              ('1 passed; 0 failed; 0 ignored', '0 passed; 0 failed; 1 ignored'),
+                              ('frames=300', 'frames=120'), ('elapsed_ms=10035', 'elapsed_ms=12000')):
+            with self.subTest(after=after), self.assertRaises(ValueError):
+                self.verify(text.replace(before, after), 'sustained')
+        with self.assertRaises(ValueError):
+            verify_completion(text, 'sustained', 0, paired_store=True, finite_stream=True)
+        with self.assertRaises(ValueError):
+            self.verify(FiniteStreamLauncherTests().transcript('sustained'), 'sustained')
+
+    def test_sender_rejections_are_specific_and_cannot_be_receiver_attacks(self):
+        for scenario in ('sender_rate', 'sender_oversize'):
+            text = self.transcript(scenario)
+            for before, after in (('before_write=true', 'before_write=false'),
+                                  ('closed=true', 'closed=false'),
+                                  (f'ANDROID_REJECT {scenario}', 'ANDROID_REJECT expiry')):
+                with self.assertRaises(ValueError):
+                    self.verify(text.replace(before, after), scenario)
+            with self.assertRaises(ValueError):
+                self.verify(text + 'FINITE_ATTACK byte_burst complete_cavc=true wire_oversize=false\n', scenario)
+        with self.assertRaises(ValueError):
+            self.verify(self.transcript('local_stop') + 'ANDROID_REJECT sender_rate before_write=true closed=true\n', 'local_stop')
+
+    def test_sender_markers_reject_duplicate_or_malformed_claims(self):
+        text = self.transcript('sender_rate')
+        for line in text.splitlines():
+            if line.startswith('ANDROID_'):
+                for invalid in (text + line + '\n', text.replace(line, line + ' extra')):
+                    with self.assertRaises(ValueError):
+                        self.verify(invalid, 'sender_rate')
+
+    def test_invalid_android_mode_fails_before_daemon_or_process_start(self):
+        h = object.__new__(LauncherHarness)
+        with mock.patch.object(h, 'prepare_daemon') as prepare, self.assertRaises(ValueError):
+            h.run_launcher(*(Path('/unused') for _ in range(5)), 'sustained',
+                           paired_store=True, android_sender=True)
+        prepare.assert_not_called()
+
+    def test_orchestration_selects_only_exact_production_sender_fixture(self):
+        from run_pipewire_camera_launcher import ANDROID_TEST
+        h = object.__new__(LauncherHarness)
+        h.env = {}
+        graph = [{'id': 1, 'type': 'PipeWire:Interface:Node', 'info': {'props': {
+            'node.name': 'capyio.test.null', 'object.serial': '1'}}}]
+        paths = [Path('/fixed/' + name) for name in ('driver', 'node', 'helper', 'decoder', 'consumer')]
+        # Deliberately stop at the first launch; no process or native graph runs.
+        with mock.patch.object(h, 'prepare_daemon'), mock.patch.object(h, 'dump', return_value=graph), \
+                mock.patch.object(h, 'launch', side_effect=RuntimeError('launch checkpoint')) as launch:
+            with self.assertRaisesRegex(RuntimeError, 'launch checkpoint'):
+                h.run_launcher(*paths, 'sustained', paired_store=True,
+                               finite_stream=True, android_sender=True)
+            launch.assert_called_once_with([str(paths[0]), '--exact', ANDROID_TEST,
+                                            '--ignored', '--nocapture'], 'owner')
+        for key in ('CAPYIO_CAMERA_PAIRED_STORE', 'CAPYIO_CAMERA_FINITE_STREAM',
+                    'CAPYIO_CAMERA_ANDROID_SENDER'):
+            self.assertEqual(h.env[key], '1')
+        self.assertEqual(h.env['CAPYIO_CAMERA_CONSOLE'], '0')

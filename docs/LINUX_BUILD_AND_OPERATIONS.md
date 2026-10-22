@@ -507,3 +507,12 @@ Hosted software acceptance targets 300 paced submitted frames over about ten
 seconds, with independently verified pixels and actual delivered count/span
 beyond frame 120. Queue counters, even without drops, are not delivery evidence.
 No physical camera, user keyring or production Android sender is exercised.
+
+### Android sender implementation boundary
+
+[ADR 1556](adr/1556-android-rust-finite-camera-sender.md) implements finite budgets
+in the production Android Rust sender, tested with synthetic encoded frames. It
+does not enable finite Camera2 capture or advertise the format on Android. Do not
+edit a phone catalog or relabel its legacy capture to force this profile. The
+existing legacy phone path remains unchanged; canonical hardware-gated capture
+and explicit opt-in are separate remaining work.

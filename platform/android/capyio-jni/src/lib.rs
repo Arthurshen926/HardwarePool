@@ -485,6 +485,7 @@ struct AndroidCameraUse {
     secure_transport: bool,
     secure_offer: Option<(capyio_protocol::SecureCameraDataOffer, u64)>,
     secure_binding: Option<capyio_control_tls::camera::CameraTlsBinding>,
+    secure_profile: Option<crate::camera_sender::CameraSenderProfile>,
     secure_generation: crate::camera_job::GenerationClaim,
     local_intent: bool,
 }

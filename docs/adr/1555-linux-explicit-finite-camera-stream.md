@@ -82,8 +82,10 @@ match its fresh approval to the new profile and duration-derived maxima.
 or write the new profile. Read-only catalog output exposes actual format IDs,
 while its default camera compatibility/export hint remains legacy-oriented.
 
-The actual Android catalog, Java Camera2 settings and production SecureCameraSender
-remain unchanged and do not advertise this format. Supporting a phone requires a
+This ADR left the Android catalog, Java Camera2 settings and production sender
+unchanged. [ADR 1556](1556-android-rust-finite-camera-sender.md) subsequently adds
+finite admission to the actual Rust sender, while Android catalog advertisement
+and Java capture remain legacy-only. Supporting a phone still requires a
 separate profile-aware canonical capture/configuration and sender-budget path,
 then explicit advertisement and separately authorized physical-device evidence.
 An old Android Source is expected to reject this new-profile session, not work

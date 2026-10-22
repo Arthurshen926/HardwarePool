@@ -1,5 +1,5 @@
 //! One-shot, bounded native media job. No Java/UI/Runtime lock is held across I/O.
-use crate::camera_sender::PreparedCameraSender;
+use crate::camera_sender::{CameraSenderProfile, PreparedCameraSender};
 use capyio_control_tls::camera::{
     CameraTlsBinding, CameraTlsStopHandle, MAX_CAMERA_TLS_RECORD_BYTES,
 };
@@ -40,6 +40,24 @@ impl GenerationClaim {
     }
 }
 
+/// Equivalent status offers are idempotent: never replace their original
+/// preparation, including its budget origin and absolute deadlines.
+pub(crate) fn retain_preparation<T>(
+    cached: &mut Option<(u64, T)>,
+    runtime: u64,
+    candidate: T,
+    equivalent: impl FnOnce(&T, &T) -> bool,
+) -> Result<(), String> {
+    if let Some((owner, original)) = cached.as_ref() {
+        if *owner != runtime || !equivalent(original, &candidate) {
+            return Err("camera preparation changed within Route".into());
+        }
+        return Ok(());
+    }
+    *cached = Some((runtime, candidate));
+    Ok(())
+}
+
 struct Status {
     state: i32,
     stop: Option<CameraTlsStopHandle>,
@@ -63,6 +81,7 @@ pub(crate) struct CameraJob {
     pub(crate) runtime: u64,
     pub(crate) generation: u64,
     pub(crate) binding: CameraTlsBinding,
+    pub(crate) profile: CameraSenderProfile,
     status: Mutex<Status>,
     cancelled: AtomicBool,
     reserved: AtomicUsize,
@@ -77,6 +96,7 @@ impl CameraJob {
         runtime: u64,
         generation: u64,
         binding: CameraTlsBinding,
+        profile: CameraSenderProfile,
         lease_deadline_ms: u64,
     ) -> (Arc<Self>, Receiver<Record>) {
         let (queue, receiver) = mpsc::sync_channel(RECORD_SLOTS);
@@ -85,6 +105,7 @@ impl CameraJob {
                 runtime,
                 generation,
                 binding,
+                profile,
                 status: Mutex::new(Status {
                     state: PENDING,
                     stop: None,
@@ -231,8 +252,11 @@ impl CameraJob {
         // Prepared data was captured under brief locks. All connect/send work is
         // here, outside them; Runtime snapshots contain no borrowed registry guard.
         let prepared = prepared()?;
-        if prepared.lease_deadline() != self.lease_deadline_ms {
-            return Err("camera job lease differs from preparation".into());
+        if prepared.lease_deadline() != self.lease_deadline_ms
+            || prepared.binding != self.binding
+            || prepared.profile() != self.profile
+        {
+            return Err("camera job selection differs from preparation".into());
         }
         prepared.validate_snapshot(&snapshot()?, now()?)?;
         if self.cancelled.load(Ordering::Acquire) {
@@ -261,7 +285,7 @@ impl CameraJob {
                     sender.send_record(&current, &record.bytes, now()?)?;
                     // A revoke/control EOF during the write cancels the stop
                     // handle; fresh state is mandatory after any completed I/O.
-                    sender.check(&snapshot()?, now()?)?;
+                    sender.check_after_send(&snapshot()?, now()?)?;
                     if sender.ended() {
                         return Ok(());
                     }
@@ -323,8 +347,21 @@ mod tests {
                 epoch: 1,
                 expires_at_ms: now().unwrap() + 1000,
             },
+            CameraSenderProfile::Legacy,
             now().unwrap() + 1000,
         )
+    }
+    #[test]
+    fn equivalent_preparation_preserves_original_budget_origin() {
+        // The comparison key models immutable owner/binding/profile/endpoint/
+        // original expiry; the second field is mutable preparation state.
+        let mut cached = None;
+        retain_preparation(&mut cached, 7, ("selection", 100), |a, b| a.0 == b.0).unwrap();
+        retain_preparation(&mut cached, 7, ("selection", 200), |a, b| a.0 == b.0).unwrap();
+        assert_eq!(cached, Some((7, ("selection", 100))));
+        assert!(retain_preparation(&mut cached, 8, ("selection", 300), |a, b| a.0 == b.0).is_err());
+        assert!(retain_preparation(&mut cached, 7, ("mutation", 300), |a, b| a.0 == b.0).is_err());
+        assert_eq!(cached, Some((7, ("selection", 100))));
     }
     #[test]
     fn pending_and_stopped_generations_cannot_allocate_records() {
@@ -432,7 +469,13 @@ mod tests {
     #[test]
     fn initial_lease_deadline_revokes_ready_without_runtime_snapshot() {
         let (template, _) = fixture();
-        let (job, _) = CameraJob::pending(1, 2, template.binding, now().unwrap() + 20);
+        let (job, _) = CameraJob::pending(
+            1,
+            2,
+            template.binding,
+            template.profile,
+            now().unwrap() + 20,
+        );
         job.status.lock().unwrap().state = READY;
         assert_eq!(job.state(), READY);
         // No Runtime/snapshot callback is needed, even if its owner is blocked.

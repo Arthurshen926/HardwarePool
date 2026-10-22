@@ -3,10 +3,21 @@ package io.capyio.camera.contract;
 /** Exercises the same orchestration gate used by AndroidCameraUseModule without hardware. */
 public final class SecureCameraCaptureSessionContractTest {
     public static void run() {
+        finiteSenderDoesNotEnableLegacyCapture();
         waitsForReadyAndAuthorization();
         stopBeforeReadyAndStaleGenerationStayStopped();
         permissionAndExpiryAreRequired();
         failureAndRevocationNeverRetry();
+    }
+
+    private static void finiteSenderDoesNotEnableLegacyCapture() {
+        check(SecureCameraCaptureSession.supportsCaptureFormat("cavc-avc-access-unit-v1"),
+                "legacy capture remains supported");
+        for (String format : new String[] {null, "", "cavc-avc-finite-720p30-v1",
+                "cavc-avc-access-unit-v1 ", "CAVC-AVC-ACCESS-UNIT-V1", "unknown"}) {
+            check(!SecureCameraCaptureSession.supportsCaptureFormat(format),
+                    "unsupported native profile cannot start legacy Camera2 capture");
+        }
     }
 
     private static SecureCameraCaptureSession gate(FakeTransport transport, FakeCapture capture) {

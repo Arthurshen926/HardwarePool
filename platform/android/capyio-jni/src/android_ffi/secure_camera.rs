@@ -29,14 +29,9 @@ pub(super) fn cache_offer(
     let mut cached = offers()
         .lock()
         .map_err(|_| "camera offer registry poisoned")?;
-    if cached
-        .as_ref()
-        .is_some_and(|(owner, old)| *owner != runtime || old.binding != prepared.binding)
-    {
-        return Err("another camera offer is owned".into());
-    }
-    *cached = Some((runtime, prepared));
-    Ok(())
+    camera_job::retain_preparation(&mut cached, runtime, prepared, |old, new| {
+        old.same_preparation(new)
+    })
 }
 fn find(runtime: u64, generation: u64) -> Result<Arc<CameraJob>, String> {
     jobs()
@@ -86,6 +81,9 @@ pub(super) fn reconcile(runtime: &capyio_runtime::NodeRuntime) {
         let valid = camera_job::now().ok().is_some_and(|now| {
             runtime.route(job.binding.route_id).is_ok_and(|route| {
                 source_authority(runtime, route, now).is_some()
+                    && job
+                        .profile
+                        .matches_selection(route.selected_format.as_ref())
                     && capyio_control_tls::camera::CameraTlsBinding::from_route(
                         job.binding.session,
                         route,
@@ -112,6 +110,13 @@ pub(super) fn reconcile(runtime: &capyio_runtime::NodeRuntime) {
 }
 
 fn start(runtime: u64, route: RouteId) -> Result<u64, String> {
+    {
+        let runtimes = catalog_runtimes()
+            .lock()
+            .map_err(|_| "Runtime registry poisoned")?;
+        let host = runtimes.get(&runtime).ok_or("Runtime absent")?;
+        reconcile(&host.runtime);
+    }
     // Reap only completed work, outside every Service/Runtime/control registry lock.
     let old = {
         let mut jobs = jobs().lock().map_err(|_| "camera registry poisoned")?;
@@ -135,7 +140,7 @@ fn start(runtime: u64, route: RouteId) -> Result<u64, String> {
     if let Some(old) = old {
         old.reap();
     }
-    let binding = {
+    let (binding, profile) = {
         let mut runtimes = catalog_runtimes()
             .lock()
             .map_err(|_| "Runtime registry poisoned")?;
@@ -146,6 +151,18 @@ fn start(runtime: u64, route: RouteId) -> Result<u64, String> {
             .filter(|j| j.route_id == route && j.secure_transport)
             .ok_or("secure camera route absent")?;
         let binding = use_.secure_binding.ok_or("secure camera binding absent")?;
+        let profile = use_
+            .secure_profile
+            .ok_or("secure camera selection absent")?;
+        if !profile.matches_selection(
+            host.runtime
+                .route(route)
+                .map_err(|e| e.to_string())?
+                .selected_format
+                .as_ref(),
+        ) {
+            return Err("secure camera selection changed".into());
+        }
         source_authority(
             &host.runtime,
             host.runtime.route(route).map_err(|e| e.to_string())?,
@@ -157,7 +174,7 @@ fn start(runtime: u64, route: RouteId) -> Result<u64, String> {
             .ok_or("camera use absent")?
             .secure_generation
             .reserve()?;
-        binding
+        (binding, profile)
     };
     let prepared = {
         let cached = offers()
@@ -165,7 +182,9 @@ fn start(runtime: u64, route: RouteId) -> Result<u64, String> {
             .map_err(|_| "camera offer registry poisoned")?;
         let (_, prepared) = cached
             .as_ref()
-            .filter(|(owner, p)| *owner == runtime && p.binding == binding)
+            .filter(|(owner, p)| {
+                *owner == runtime && p.binding == binding && p.profile() == profile
+            })
             .ok_or("current authenticated camera preparation absent")?;
         prepared.clone()
     };
@@ -176,6 +195,7 @@ fn start(runtime: u64, route: RouteId) -> Result<u64, String> {
         if let Some(existing) = registry.as_ref() {
             if existing.runtime == runtime
                 && existing.binding == binding
+                && existing.profile == profile
                 && !matches!(existing.state(), FAILED | STOPPED)
             {
                 return Ok(existing.generation);
@@ -187,7 +207,8 @@ fn start(runtime: u64, route: RouteId) -> Result<u64, String> {
                 n.checked_add(1).filter(|n| *n <= i64::MAX as u64)
             })
             .map_err(|_| "camera generations exhausted")?;
-        let (job, receiver) = CameraJob::pending(runtime, generation, binding, lease_deadline);
+        let (job, receiver) =
+            CameraJob::pending(runtime, generation, binding, profile, lease_deadline);
         *registry = Some(job.clone());
         (job, receiver)
     };

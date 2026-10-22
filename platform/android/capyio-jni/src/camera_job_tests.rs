@@ -122,8 +122,13 @@ impl Fixture {
         Arc::new(move || Ok(runtime.lock().unwrap().clone()))
     }
     fn start(&self, snapshot: Snapshot) -> Arc<CameraJob> {
-        let (job, receiver) =
-            CameraJob::pending(1, 1, self.prepared.binding, self.prepared.lease_deadline());
+        let (job, receiver) = CameraJob::pending(
+            1,
+            1,
+            self.prepared.binding,
+            self.prepared.profile(),
+            self.prepared.lease_deadline(),
+        );
         let prepared = self.prepared.clone();
         job.spawn(
             receiver,
@@ -288,6 +293,71 @@ fn actual_source_lease_revoke_after_ready_closes_media_and_rejects_records() {
     fixture.revoke_source_lease();
     wait_until(|| job.finished());
     assert_eq!(job.state(), FAILED);
+    assert!(job.status.lock().unwrap().stop.is_none());
+    assert!(job.reserve(56).is_err());
+    assert!(peer.receive_record().is_err());
+    job.reap();
+}
+#[test]
+fn actual_tls_valid_eos_finishes_job_stopped_not_failed() {
+    use capyio_vcamdroid_adapter::{
+        AvcAccessUnit, AvcRecord, AvcStreamKey, decode_record, encode_access_unit, encode_config,
+    };
+    let media = TcpListener::bind("127.0.0.1:0").unwrap();
+    let fixture = Fixture::new(media.local_addr().unwrap().port());
+    let listener = CameraTlsListener::from_listener(
+        media,
+        fixture.identity.clone(),
+        fixture.prepared.binding,
+        Duration::from_millis(500),
+    )
+    .unwrap();
+    let accepted = accept_media(listener);
+    let job = fixture.start(fixture.snapshot());
+    let mut peer = accepted.join().unwrap();
+    wait_until(|| job.state() == READY);
+    let bytes = include_bytes!("../../../../fixtures/linux-avc/solid-720p30.cavc");
+    let config_length = 56 + u32::from_be_bytes(bytes[52..56].try_into().unwrap()) as usize;
+    let AvcRecord::Config { config, .. } = decode_record(&bytes[..config_length]).unwrap() else {
+        panic!("configuration fixture missing")
+    };
+    let frame_bytes = &bytes[config_length..];
+    let frame_length = 56 + u32::from_be_bytes(frame_bytes[52..56].try_into().unwrap()) as usize;
+    let AvcRecord::AccessUnit(mut frame) = decode_record(&frame_bytes[..frame_length]).unwrap()
+    else {
+        panic!("key-frame fixture missing")
+    };
+    let stream = AvcStreamKey {
+        stream_id: *fixture.prepared.binding.stream_id.as_uuid().as_bytes(),
+        epoch: fixture.prepared.binding.epoch,
+    };
+    frame.stream = stream;
+    assert!(frame.key_frame && !frame.end_of_stream);
+    let eos = AvcAccessUnit {
+        stream,
+        sequence: frame.sequence + 1,
+        presentation_time_us: frame.presentation_time_us,
+        key_frame: false,
+        end_of_stream: true,
+        discontinuity: false,
+        payload: Vec::new(),
+    };
+    // Admit and observe each record separately, preserving the two-slot bound.
+    for wire in [
+        encode_config(stream, &config).unwrap(),
+        encode_access_unit(&frame).unwrap(),
+        encode_access_unit(&eos).unwrap(),
+    ] {
+        job.submit(job.reserve(wire.len()).unwrap(), wire.clone())
+            .unwrap();
+        assert_eq!(peer.receive_record().unwrap(), wire);
+    }
+    wait_until(|| job.finished());
+    assert_eq!(
+        job.state(),
+        STOPPED,
+        "successful EOS must not report sender failure"
+    );
     assert!(job.status.lock().unwrap().stop.is_none());
     assert!(job.reserve(56).is_err());
     assert!(peer.receive_record().is_err());
