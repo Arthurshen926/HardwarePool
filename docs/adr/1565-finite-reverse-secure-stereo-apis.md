@@ -102,6 +102,12 @@ Zero progress, slow trickle, invalid byte counts and backpressure cannot grow
 queues or sustain an expired generation. Owner shutdown joins workers and
 cleans up only its owned resources. This is bounded application design, not a
 hard arbitrary OS scheduling/driver guarantee.
+Pending PCM deadlines are checked before and after successful control polling,
+with original authority taking precedence. A control timeout is attributed to
+the pending PCM budget only when its trusted internal effective deadline exactly
+matches that budget; an earlier retained control-frame deadline or an untyped
+OS timeout remains a control failure. Error kinds, wire bytes and time budgets
+are unchanged.
 
 Routes remain Starting and counters describe actual transport or sink acceptance,
 not physical audibility. This API slice neither creates an AudioTrack nor claims

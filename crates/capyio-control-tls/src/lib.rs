@@ -815,11 +815,30 @@ impl IncrementalEnvelope {
     }
 }
 
+// Provenance is attached only by the deadline check, never inferred from an
+// operating-system timeout or its human-readable error message.
+#[derive(Debug, Error)]
+#[error("control poll deadline expired")]
+struct ControlPollDeadlineExpired {
+    deadline: Instant,
+}
+
+/// Return the exact local deadline checked by a control poll timeout.
+/// A retained partial-frame deadline may be earlier than the caller's requested
+/// deadline. Ordinary I/O timeouts, including identical messages, return None.
+/// This is attribution only: it does not authorize retrying a failed channel.
+pub fn control_poll_timeout_deadline(error: &std::io::Error) -> Option<Instant> {
+    error
+        .get_ref()?
+        .downcast_ref::<ControlPollDeadlineExpired>()
+        .map(|timeout| timeout.deadline)
+}
+
 fn check_poll_deadline(deadline: Instant) -> std::io::Result<()> {
     if Instant::now() >= deadline {
         Err(std::io::Error::new(
             std::io::ErrorKind::TimedOut,
-            "control poll deadline expired",
+            ControlPollDeadlineExpired { deadline },
         ))
     } else {
         Ok(())
@@ -1296,6 +1315,78 @@ mod tests {
             channel.receive(),
             Err(ControlTlsError::ChannelFailed)
         ));
+    }
+
+    #[test]
+    fn control_poll_timeout_preserves_earlier_retained_deadline() {
+        let now = Instant::now();
+        let saved = now - Duration::from_secs(1);
+        let requested = now + Duration::from_secs(60);
+        let frame = IncrementalEnvelope {
+            prefix_read: 1,
+            deadline: Some(saved),
+            ..Default::default()
+        };
+        // This is the same effective deadline FramedControl::poll_until passes
+        // to its preflight, bounded TLS I/O and incremental envelope checks.
+        let effective = frame.effective_deadline(requested);
+        assert_eq!(effective, saved);
+        let error = check_poll_deadline(effective).unwrap_err();
+        assert_eq!(error.kind(), std::io::ErrorKind::TimedOut);
+        assert_eq!(error.to_string(), "control poll deadline expired");
+        assert_eq!(control_poll_timeout_deadline(&error), Some(saved));
+        assert_ne!(control_poll_timeout_deadline(&error), Some(requested));
+        let wrapped = ControlTlsError::Io(error);
+        assert_eq!(
+            wrapped.to_string(),
+            "control TLS I/O failed: control poll deadline expired"
+        );
+    }
+
+    #[test]
+    fn control_poll_timeout_preserves_exact_requested_deadline() {
+        let now = Instant::now();
+        let requested = now - Duration::from_secs(1);
+        for saved in [None, Some(now + Duration::from_secs(60)), Some(requested)] {
+            let frame = IncrementalEnvelope {
+                deadline: saved,
+                ..Default::default()
+            };
+            let effective = frame.effective_deadline(requested);
+            assert_eq!(effective, requested);
+            let error = check_poll_deadline(effective).unwrap_err();
+            assert_eq!(error.kind(), std::io::ErrorKind::TimedOut);
+            assert_eq!(control_poll_timeout_deadline(&error), Some(requested));
+        }
+    }
+
+    #[test]
+    fn control_poll_timeout_rejects_untyped_timeouts_even_with_same_display() {
+        let errors = [
+            std::io::Error::from(std::io::ErrorKind::TimedOut),
+            std::io::Error::new(
+                std::io::ErrorKind::TimedOut,
+                "control poll deadline expired",
+            ),
+            std::io::Error::new(
+                std::io::ErrorKind::TimedOut,
+                "control operation deadline expired",
+            ),
+            std::io::Error::from(std::io::ErrorKind::WouldBlock),
+        ];
+        for error in errors {
+            assert_eq!(control_poll_timeout_deadline(&error), None);
+        }
+        #[cfg(target_os = "linux")]
+        {
+            // Linux ETIMEDOUT, constructed without a socket or elapsed wait.
+            let os_timeout = std::io::Error::from_raw_os_error(110);
+            assert_eq!(os_timeout.kind(), std::io::ErrorKind::TimedOut);
+            assert_eq!(control_poll_timeout_deadline(&os_timeout), None);
+        }
+        let error = check_poll_deadline(Instant::now() - Duration::from_secs(1)).unwrap_err();
+        assert!(control_poll_timeout_deadline(&error).is_some());
+        assert!(check_poll_deadline(Instant::now() + Duration::from_secs(60)).is_ok());
     }
 
     #[test]

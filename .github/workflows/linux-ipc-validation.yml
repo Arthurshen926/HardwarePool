@@ -135,6 +135,9 @@ jobs:
         run: |
           set -euo pipefail
           cat > "$RUNNER_TEMP/required-ipc-tests.txt" <<'TESTS'
+          tests::control_poll_timeout_preserves_earlier_retained_deadline
+          tests::control_poll_timeout_preserves_exact_requested_deadline
+          tests::control_poll_timeout_rejects_untyped_timeouts_even_with_same_display
           audio_stereo::tests::every_binding_field_is_exact_and_ack_is_directional
           audio_stereo::tests::malformed_lengths_and_partial_records_are_rejected
           audio_stereo::tests::protocol_requires_exact_alpn_and_tls13
@@ -183,6 +186,9 @@ jobs:
           secure_stereo_receiver::tests::pure::consent_time_is_not_refreshed_by_negotiation_or_long_duration
           secure_stereo_receiver::tests::pure::every_partial_write_is_frame_aligned_and_retains_absolute_budget
           secure_stereo_receiver::tests::pure::zero_backpressure_and_interrupted_writes_have_bounded_attempts
+          secure_stereo_receiver::tests::pure::expired_pending_pcm_budget_precedes_control_poll_without_refresh
+          secure_stereo_receiver::tests::pure::control_poll_timeouts_require_exact_trusted_effective_deadline_provenance
+          secure_stereo_receiver::tests::pure::crossed_pending_pcm_budget_after_successful_control_poll_preserves_authority
           secure_stereo_receiver::tests::pure::slow_or_failed_completion_cannot_be_counted_as_accepted
           secure_stereo_receiver::tests::pure::stop_handle_is_terminal_before_transport_registration
           secure_stereo_receiver::tests::hosted::actual_tls_crossed_claim_orders_and_both_control_roles_preserve_stereo

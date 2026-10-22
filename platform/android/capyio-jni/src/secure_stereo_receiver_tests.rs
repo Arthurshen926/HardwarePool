@@ -314,6 +314,150 @@ mod pure {
         }
     }
     #[test]
+    fn expired_pending_pcm_budget_precedes_control_poll_without_refresh() {
+        let now = Instant::now();
+        let pending = PendingPcm::new(vec![0; 1920], now, now + Duration::from_secs(1)).unwrap();
+        let deadline = pending.deadline;
+        let mut control_polls = 0;
+        let result = (|| {
+            check_pending_pcm_budget(Ok(()), Some(deadline), deadline)?;
+            control_polls += 1;
+            Ok::<_, io::Error>(())
+        })();
+        assert_terminal(result.unwrap_err(), "sink_backpressure");
+        assert_eq!(control_polls, 0);
+        assert_eq!(pending.deadline, deadline);
+        check_pending_pcm_budget(Ok(()), Some(deadline), deadline - Duration::from_nanos(1))
+            .unwrap();
+        check_pending_pcm_budget(Ok(()), None, deadline).unwrap();
+        assert_terminal(
+            check_pending_pcm_budget(
+                Err(terminal_error("authority_expired")),
+                Some(deadline),
+                deadline,
+            )
+            .unwrap_err(),
+            "authority_expired",
+        );
+    }
+    fn assert_terminal(error: io::Error, expected: &str) {
+        assert_eq!(
+            error
+                .get_ref()
+                .unwrap()
+                .downcast_ref::<TerminalFault>()
+                .unwrap()
+                .0,
+            expected
+        );
+    }
+    #[test]
+    fn control_poll_timeouts_require_exact_trusted_effective_deadline_provenance() {
+        let start = Instant::now();
+        let pending = start + MAX_STEREO_OPERATION;
+        let failure =
+            |kind| CatalogLinkError::Transport(ControlTlsError::Io(io::Error::from(kind)));
+        let timed_out = failure(io::ErrorKind::TimedOut);
+        // This private helper receives the TLS accessor's result in production.
+        // Synthetic Options test classification without exposing a forge API.
+        let cause = |error: &CatalogLinkError, requested, pinned, trusted, now| {
+            control_poll_failure_cause(Ok(()), error, requested, pinned, trusted, now).unwrap()
+        };
+        assert_eq!(
+            cause(&timed_out, pending, Some(pending), Some(pending), pending),
+            "sink_backpressure"
+        );
+        for trusted in [None, Some(start), Some(pending + Duration::from_nanos(1))] {
+            assert_eq!(
+                cause(&timed_out, pending, Some(pending), trusted, pending),
+                "control_failure"
+            );
+        }
+        assert_eq!(
+            cause(&timed_out, start, Some(pending), Some(pending), pending),
+            "control_failure"
+        );
+        assert_eq!(
+            cause(&timed_out, pending, None, Some(pending), pending),
+            "control_failure"
+        );
+        assert_eq!(
+            cause(&timed_out, pending, Some(pending), Some(pending), start),
+            "control_failure"
+        );
+        for kind in [
+            io::ErrorKind::WouldBlock,
+            io::ErrorKind::Other,
+            io::ErrorKind::InvalidData,
+        ] {
+            assert_eq!(
+                cause(
+                    &failure(kind),
+                    pending,
+                    Some(pending),
+                    Some(pending),
+                    pending
+                ),
+                "control_failure"
+            );
+        }
+        assert_eq!(
+            cause(
+                &failure(io::ErrorKind::UnexpectedEof),
+                pending,
+                Some(pending),
+                Some(pending),
+                pending
+            ),
+            "control_closed"
+        );
+        assert_eq!(
+            cause(
+                &CatalogLinkError::InvalidPeerControlMessage,
+                pending,
+                Some(pending),
+                Some(pending),
+                pending
+            ),
+            "control_failure"
+        );
+        for authority in ["authority_expired", "sink_lease_changed", "local_stop"] {
+            assert_terminal(
+                control_poll_failure_cause(
+                    Err(terminal_error(authority)),
+                    &timed_out,
+                    pending,
+                    Some(pending),
+                    Some(pending),
+                    pending,
+                )
+                .unwrap_err(),
+                authority,
+            );
+        }
+    }
+    #[test]
+    fn crossed_pending_pcm_budget_after_successful_control_poll_preserves_authority() {
+        let start = Instant::now();
+        let deadline = start + MAX_STEREO_OPERATION;
+        check_pending_pcm_budget(Ok(()), Some(deadline), start).unwrap();
+        // Model a successful control poll crossing the immutable PCM cap. No
+        // write is allowed afterward, even though control returned successfully.
+        assert_terminal(
+            check_pending_pcm_budget(Ok(()), Some(deadline), deadline).unwrap_err(),
+            "sink_backpressure",
+        );
+        assert_terminal(
+            check_pending_pcm_budget(
+                Err(terminal_error("authority_expired")),
+                Some(deadline),
+                deadline,
+            )
+            .unwrap_err(),
+            "authority_expired",
+        );
+    }
+    #[test]
     fn slow_or_failed_completion_cannot_be_counted_as_accepted() {
         let now = Instant::now();
         let mut pending =
@@ -857,6 +1001,14 @@ mod hosted {
                 assert!(start.elapsed() < Duration::from_secs(2));
             }
             assert_eq!(f.owner.metrics().records_accepted, 0);
+            assert_eq!(
+                f.owner.terminal_cause(),
+                Some(if eof {
+                    "control_closed"
+                } else {
+                    "sink_backpressure"
+                }),
+            );
         }
     }
     #[test]

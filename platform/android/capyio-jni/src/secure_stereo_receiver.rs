@@ -5,10 +5,11 @@
 //! consent/lifecycle, and implement a nonblocking AudioTrack boundary separately.
 //! This API never advertises a capability, opens AudioTrack or reports Active.
 use capyio_audio::{AudioMediaStreamBinding, AudioStreamSpec};
-use capyio_control_link::{CatalogControlLink, ReceivedControlMessage};
+use capyio_control_link::{CatalogControlLink, CatalogLinkError, ReceivedControlMessage};
 use capyio_control_tls::{
     ControlTlsBinding, ControlTlsError, ControlTlsServerIdentity,
     audio_stereo::{StereoAudioTlsBinding, StereoAudioTlsListener, StereoAudioTlsStopHandle},
+    control_poll_timeout_deadline,
 };
 use capyio_core::{
     AdapterInstanceDescriptor, AdapterState, AuthorizationState, Availability,
@@ -55,6 +56,52 @@ fn closed_io(kind: io::ErrorKind) -> bool {
             | io::ErrorKind::BrokenPipe
     )
 }
+// The original authority always wins over the per-record write budget. Keep
+// this check before control polling: an already expired PCM budget is not a
+// control transport failure merely because it also limits that poll's deadline.
+fn check_pending_pcm_budget(
+    authority: io::Result<()>,
+    pending_deadline: Option<Instant>,
+    now: Instant,
+) -> io::Result<()> {
+    authority?;
+    if pending_deadline.is_some_and(|deadline| now >= deadline) {
+        return Err(terminal_error("sink_backpressure"));
+    }
+    Ok(())
+}
+
+fn control_poll_failure_cause(
+    authority: io::Result<()>,
+    failure: &CatalogLinkError,
+    requested_deadline: Instant,
+    pending_deadline: Option<Instant>,
+    // Production obtains this only from control_poll_timeout_deadline, not from
+    // error text or from the requested budget; retained partial frames may have
+    // an earlier effective deadline.
+    trusted_effective_deadline: Option<Instant>,
+    now: Instant,
+) -> io::Result<&'static str> {
+    authority?;
+    Ok(match failure {
+        CatalogLinkError::Closed => "control_closed",
+        CatalogLinkError::Transport(ControlTlsError::Io(e)) if closed_io(e.kind()) => {
+            "control_closed"
+        }
+        CatalogLinkError::Transport(ControlTlsError::Io(e))
+            if e.kind() == io::ErrorKind::TimedOut
+                && pending_deadline.is_some_and(|pending| {
+                    trusted_effective_deadline == Some(pending)
+                        && requested_deadline == pending
+                        && now >= pending
+                }) =>
+        {
+            "sink_backpressure"
+        }
+        _ => "control_failure",
+    })
+}
+
 fn media_error(error: ControlTlsError) -> io::Error {
     match error {
         ControlTlsError::Io(e) => e,
@@ -537,22 +584,36 @@ impl<S: PcmSink> SecureStereoSinkOwner<S> {
         result
     }
     fn poll_inner(&mut self) -> io::Result<Option<SecureStereoSinkEvent>> {
-        self.check()?;
+        let pending_deadline = self.pending.as_ref().map(|pending| pending.deadline);
+        check_pending_pcm_budget(self.check(), pending_deadline, Instant::now())?;
         let deadline = self.operation_deadline();
-        let incoming =
-            self.link
-                .poll_control_message_until(deadline)
-                .map_err(|e| {
-                    let cause = match &e {
-                        capyio_control_link::CatalogLinkError::Closed => "control_closed",
-                        capyio_control_link::CatalogLinkError::Transport(ControlTlsError::Io(
-                            e,
-                        )) if closed_io(e.kind()) => "control_closed",
-                        _ => "control_failure",
-                    };
-                    self.observe(cause);
-                    error(e)
-                })?;
+        let incoming = match self.link.poll_control_message_until(deadline) {
+            Ok(incoming) => incoming,
+            Err(failure) => {
+                // poll_control_message_until closes its link on every error.
+                // Ignore only that consequential flag while rechecking original
+                // authority, so expiry/revocation cannot become control_closed.
+                let effective_deadline = match &failure {
+                    CatalogLinkError::Transport(ControlTlsError::Io(e)) => {
+                        control_poll_timeout_deadline(e)
+                    }
+                    _ => None,
+                };
+                let cause = control_poll_failure_cause(
+                    self.check_authority(true),
+                    &failure,
+                    deadline,
+                    pending_deadline,
+                    effective_deadline,
+                    Instant::now(),
+                )?;
+                self.observe(cause);
+                return Err(error(failure));
+            }
+        };
+        // A successful nonblocking control step may cross the PCM deadline.
+        // Recheck original authority first and never grant the write a new cap.
+        check_pending_pcm_budget(self.check(), pending_deadline, Instant::now())?;
         if let Some(message) = incoming
             && self.handle_control(message, deadline)?
         {
@@ -746,11 +807,15 @@ impl<S: PcmSink> SecureStereoSinkOwner<S> {
         Ok(false)
     }
     fn check(&mut self) -> io::Result<()> {
+        self.check_authority(false)
+    }
+    fn check_authority(&mut self, ignore_failed_control_close: bool) -> io::Result<()> {
+        let control_closed = !ignore_failed_control_close && self.link.is_closed();
         let now = now_ms()?;
         let instant = Instant::now();
         if self.closed
             || self.stop.stopped.load(Ordering::Acquire)
-            || self.link.is_closed()
+            || control_closed
             || now < self.last_wall
             || instant >= self.end
             || (self.local_offer.is_none() && instant >= self.negotiation_end)
@@ -759,7 +824,7 @@ impl<S: PcmSink> SecureStereoSinkOwner<S> {
             return Err(terminal_error(
                 if self.stop.stopped.load(Ordering::Acquire) {
                     "local_stop"
-                } else if self.link.is_closed() {
+                } else if control_closed {
                     "control_closed"
                 } else if instant >= self.end {
                     "authority_expired"
