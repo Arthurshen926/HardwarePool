@@ -7,7 +7,7 @@ export function parseAndroidMicrophoneSettings(value: unknown): UiAndroidMicroph
   const dto = value as Record<string, unknown>;
   if (Object.keys(dto).sort().join() !== 'captureProfile,eligibility,permissionReady,revision,schemaVersion,source'
     || dto.schemaVersion !== 1 || typeof dto.revision !== 'number' || !Number.isSafeInteger(dto.revision) || dto.revision < 0
-    || !['legacy', 'secure_mono_tls13_v1'].includes(dto.captureProfile as string)
+    || !['legacy', 'secure_mono_tls13_v1', 'secure_mono_tls13_300s_v1'].includes(dto.captureProfile as string)
     || !['not_requested', 'eligible', 'unavailable'].includes(dto.eligibility as string)
     || (dto.captureProfile === 'legacy') !== (dto.eligibility === 'not_requested')
     || dto.source !== 'system_default' || typeof dto.permissionReady !== 'boolean') return invalid();

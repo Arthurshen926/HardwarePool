@@ -1540,5 +1540,14 @@ exact original-lease expiry. Initial waveform or final counters cannot substitut
 for late-window signal evidence. Verify original Route/epoch/helper/leases,
 post-terminal silence and owned cleanup. Separate long-only deadlines and bounded
 recording windows do not relax prior short-test timeouts. Pure tests preserve
-old 60-second rejection, total-work/burst caps, checked arithmetic, no renewal and
-Android live-capture rejection. This is not hours or physical phone acceptance.
+old 60-second rejection, total-work/burst caps, checked arithmetic and no renewal.
+ADR 1563 initially required Android live-capture rejection; the separately gated
+ADR 1564 below replaces only that temporary boundary. This is not hours or
+physical phone acceptance.
+
+[ADR 1564](adr/1564-android-five-minute-secure-microphone.md) is the explicit
+Android follow-on to ADR 1563. Its selected long profile replaces the temporary
+blanket live-capture rejection with exact profile/settings/generation admission.
+Tests must retain rejection of unknown, mismatched or mutated profiles and the
+old 60-second maximum. Java fake recorder and permission tests are not physical
+phone evidence; SDK/ARM64/JNI and production AudioJob/TLS execution remain required.

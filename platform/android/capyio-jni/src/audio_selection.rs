@@ -55,16 +55,54 @@ pub(crate) fn select_endpoint(
     select_endpoint_format(node, direction, local, &direction.format())
 }
 
+/// The current local catalog is an explicit settings selection, not a list of
+/// fallback preferences. Resolve exactly one profile before considering a peer.
 pub(crate) fn select_secure_endpoint(
     node: &NodeDescriptor,
     local: bool,
 ) -> Result<PortRef, &'static str> {
-    select_endpoint_format(
-        node,
-        AudioDirection::Microphone,
-        local,
-        &FormatDescriptor::new(capyio_protocol::SECURE_AUDIO_MONO_FORMAT),
-    )
+    secure_endpoint_profile(node, local).map(|(endpoint, _)| endpoint)
+}
+
+fn secure_endpoint_profile(
+    node: &NodeDescriptor,
+    local: bool,
+) -> Result<(PortRef, capyio_protocol::SecureAudioSessionProfile), &'static str> {
+    use capyio_protocol::SecureAudioSessionProfile::{Finite60sV1, Finite300sV1};
+    let mut selected = None;
+    for profile in [Finite60sV1, Finite300sV1] {
+        let candidate = select_endpoint_format(
+            node,
+            AudioDirection::Microphone,
+            local,
+            &profile.descriptor(),
+        );
+        match candidate {
+            Ok(endpoint) => {
+                if selected.is_some() {
+                    return Err("ambiguous secure audio profiles; select exactly one");
+                }
+                let port = &node.capabilities[&endpoint.capability_id].ports[&endpoint.port_id];
+                if port.formats != [profile.descriptor()] {
+                    return Err("secure audio Source requires one exact advertised profile");
+                }
+                selected = Some((endpoint, profile));
+            }
+            Err("no compatible audio endpoint") => {}
+            Err(error) => return Err(error),
+        }
+    }
+    selected.ok_or("no compatible secure audio endpoint")
+}
+
+pub(crate) fn select_secure_endpoints(
+    local: &NodeDescriptor,
+    peer: &NodeDescriptor,
+) -> Result<(PortRef, PortRef), &'static str> {
+    let source = select_secure_endpoint(local, true)?;
+    let format = &local.capabilities[&source.capability_id].ports[&source.port_id].formats[0];
+    let sink = select_endpoint_format(peer, AudioDirection::Microphone, false, format)?;
+    Ok((source, sink))
 }
 
 fn select_endpoint_format(
@@ -308,6 +346,40 @@ mod tests {
             .values_mut()
             .next()
             .unwrap()
+    }
+    #[test]
+    fn secure_endpoint_selection_binds_local_exact_profile_without_duration_or_fallback() {
+        use capyio_protocol::SecureAudioSessionProfile::{Finite60sV1, Finite300sV1};
+        for profile in [Finite60sV1, Finite300sV1] {
+            let mut local = node(true, AudioDirection::Microphone, false);
+            let mut remote = node(false, AudioDirection::Microphone, false);
+            port(&mut local).formats = vec![profile.descriptor()];
+            port(&mut remote).formats = vec![profile.descriptor()];
+            let (source, sink) = select_secure_endpoints(&local, &remote).unwrap();
+            assert_eq!(source.node_id, local.id);
+            assert_eq!(sink.node_id, remote.id);
+            // A peer may advertise multiple choices, but only the current
+            // explicit local setting can be offered, never a fallback.
+            port(&mut remote).formats = vec![Finite60sV1.descriptor(), Finite300sV1.descriptor()];
+            assert_eq!(select_secure_endpoints(&local, &remote), Ok((source, sink)));
+            port(&mut remote).formats = vec![if profile == Finite60sV1 {
+                Finite300sV1.descriptor()
+            } else {
+                Finite60sV1.descriptor()
+            }];
+            assert!(select_secure_endpoints(&local, &remote).is_err());
+            port(&mut remote).formats = vec![profile.descriptor()];
+            port(&mut local).formats = vec![Finite60sV1.descriptor(), Finite300sV1.descriptor()];
+            assert!(select_secure_endpoints(&local, &remote).is_err());
+            port(&mut local).formats =
+                vec![profile.descriptor(), AudioDirection::Microphone.format()];
+            assert!(select_secure_endpoints(&local, &remote).is_err());
+            port(&mut local).formats = vec![profile.descriptor()];
+            port(&mut local).formats[0]
+                .parameters
+                .insert("duration".into(), "300".into());
+            assert!(select_secure_endpoints(&local, &remote).is_err());
+        }
     }
     #[test]
     fn linux_random_speaker_sink_is_compatible_but_not_initiable() {

@@ -27,7 +27,7 @@ import { encodeTrustedEndpointHints, parseTrustedEndpointHints, rememberAuthenti
   retainActivelyPairedEndpoints, type TrustedEndpointHint } from "./lib/trusted-endpoints";
 import { controlConnectionError, requiresConnectionAttention } from "./lib/peer-connection";
 import { automaticConnectionStatus } from "./lib/automatic-connection-status";
-import { hasIntegratedRemoteDataBinding, knownRouteUsage } from "./lib/remote-resource-support";
+import { hasIntegratedRemoteDataBinding, hasLegacyRemoteAudioBinding, remoteResourceUseHint, knownRouteUsage } from "./lib/remote-resource-support";
 import { clearConnectionProfile, readConnectionProfile, saveConnectionProfile } from "./lib/connection-profile";
 import { actionPresentation, backResourceNavigation, createResourceNavigation, initialResourceView, isHomeView, localResourceBindings, moveResourceNavigation, peerResourceGroups, primaryHardwareResources, resourceActions, type ResourceView } from "./lib/resource-navigation";
 import type { DsuProjectionMode, GamepadControlUpdate, QuickActionOperation, TouchpadControlUpdate, UiAndroidAudioCapability, UiAndroidAudioState, UiAndroidCameraSettings, UiAudioEndpointCatalog, UiCapability, UiGamepadState, UiLiveImu, UiQuickAction, UiRoute, UiSnapshot, UiTouchpadState, WindowsControllerKind } from "./lib/types";
@@ -97,6 +97,7 @@ const selectedRemoteCapabilityPending = computed(() => !selectedCatalogCapabilit
 const selectedCompatibilityAction = computed(() => {
   const capability = selectedCatalogCapability.value;
   if (!capability || capability.local || selectedCatalogNode.value?.platform !== "android") return undefined;
+  if (['microphone', 'speaker'].includes(capability.capabilityClass) && !hasLegacyRemoteAudioBinding(capability)) return undefined;
   const actionId = ({ camera: "capyio.quick-action.android-system-camera", speaker: "capyio.quick-action.remote-speaker", microphone: "capyio.quick-action.remote-microphone" } as Record<string, string>)[capability.capabilityClass];
   return quickActions.value.find(action => !action.simulated && action.id === actionId);
 });
@@ -1115,6 +1116,7 @@ async function toggleCapability(capability: UiCapability, selected: boolean): Pr
 async function toggleRemoteCapabilityUse(): Promise<void> {
   const capability = selectedCatalogCapability.value;
   if (!capability || capability.local || remoteUseBusy.value) return;
+  if (!selectedRemoteCapabilityInUse.value && !selectedRemoteCapabilityPending.value && !hasIntegratedRemoteDataBinding(capability)) return;
   remoteUseBusy.value = true;
   errorMessage.value = "";
   try {
@@ -1557,7 +1559,7 @@ async function refreshVisibleState(): Promise<void> {
         <div><dt>节点状态</dt><dd>{{ selectedCatalogNode?.online ? '在线' : '离线或未确认' }}</dd></div>
         <div><dt>使用状态</dt><dd>{{ selectedCatalogCapability.availability === 'busy' ? '宿主报告忙碌' : selectedCatalogCapability.availability === 'available' ? '目录报告可用' : '当前不可直接使用' }}</dd></div>
         <div><dt>本节点已知使用状态</dt><dd>{{ knownRouteUsage(selectedCatalogRoutes, selectedCatalogLeases.length) }}</dd></div>
-        <div><dt>远程授权</dt><dd>{{ selectedCatalogCapability.local ? '由本机启动流程确认' : selectedAndroidEntry ? '通过下方功能面板申请；授权与运行状态见面板' : selectedRemoteCapabilityPending ? '等待对端确认，允许后自动继续' : selectedCatalogRoutes.some(route => route.authorization === 'authorized') ? '已有已授权 Route；准备和媒体状态见下方' : selectedCatalogCapability.capabilityClass === 'gamepad' ? '在手柄与体感中选择节点并申请' : hasIntegratedRemoteDataBinding(selectedCatalogCapability) ? '可通过下方按钮申请' : '兼容入口独立启动；尚未接入统一 Route 授权' }}</dd></div>
+        <div><dt>远程授权</dt><dd>{{ selectedCatalogCapability.local ? '由本机启动流程确认' : selectedAndroidEntry ? '通过下方功能面板申请；授权与运行状态见面板' : selectedRemoteCapabilityPending ? '等待对端确认，允许后自动继续' : selectedCatalogRoutes.some(route => route.authorization === 'authorized') ? '已有已授权 Route；准备和媒体状态见下方' : selectedCatalogCapability.capabilityClass === 'gamepad' ? '在手柄与体感中选择节点并申请' : hasIntegratedRemoteDataBinding(selectedCatalogCapability) ? '可通过下方按钮申请' : selectedCompatibilityAction ? '兼容入口独立启动；尚未接入统一 Route 授权' : '当前入口不支持此配置；查看下方使用说明' }}</dd></div>
       </dl>
       <template v-if="selectedCatalogRoutes.length">
         <h3>本节点已知 Route</h3>
@@ -1589,7 +1591,8 @@ async function refreshVisibleState(): Promise<void> {
       <button v-if="selectedCatalogCapability.local && selectedCatalogCapability.capabilityClass === 'display'" class="primary-button" type="button" @click="navigate('display')">打开显示共享</button>
       <details v-if="selectedCompatibilityAction && hasIntegratedRemoteDataBinding(selectedCatalogCapability)"><summary>高级：兼容诊断入口</summary><button class="ghost-button" @click="openAction(selectedCompatibilityAction)">打开独立兼容连接设置</button><p>与上方自动连接分开使用；不需要同时启动。</p></details>
       <p v-if="selectedCompatibilityAction && !hasIntegratedRemoteDataBinding(selectedCatalogCapability)" class="resource-detail__notice">此入口打开本机兼容接收/投影配置，不会自动选择或启动当前节点。请核对入口内的目标地址；宿主忙碌不代表本机已收到数据。相机需两端分别启动。</p>
-      <p v-if="!selectedCatalogCapability.local && ['microphone', 'speaker'].includes(selectedCatalogCapability.capabilityClass)" class="resource-detail__notice">一次申请自动准备两端，停止使用会清理对应方向；麦克风和扬声器可分别控制。当前音频数据沿既有可信局域网／Tailscale UDP 通道传输，并非应用层加密音频。Starting 表示正在准备，不能当作已收到声音；请同时检查实际录音或播放。</p>
+      <p v-if="!selectedCatalogCapability.local && ['microphone', 'speaker'].includes(selectedCatalogCapability.capabilityClass) && !hasLegacyRemoteAudioBinding(selectedCatalogCapability)" class="resource-detail__notice">{{ remoteResourceUseHint(selectedCatalogCapability)?.detail }}</p>
+      <p v-else-if="!selectedCatalogCapability.local && ['microphone', 'speaker'].includes(selectedCatalogCapability.capabilityClass)" class="resource-detail__notice">一次申请自动准备两端，停止使用会清理对应方向；麦克风和扬声器可分别控制。当前音频数据沿既有可信局域网／Tailscale UDP 通道传输，并非应用层加密音频。Starting 表示正在准备，不能当作已收到声音；请同时检查实际录音或播放。</p>
       <p v-else-if="!selectedCatalogCapability.local && selectedCatalogCapability.capabilityClass === 'camera'" class="resource-detail__notice">一次申请自动准备相机发送和系统接收；在 Windows 应用中选择 CapyIO 虚拟相机检查实际画面，不需要再分别启动。停止或断线清理对应连接；相机许可不包含录音。当前使用既有可信局域网／Tailscale 视频通道。</p>
       <p v-else-if="!selectedCatalogCapability.local" class="resource-detail__notice">资源授权与配对独立；停止或断线会清理当前使用。触控板使用加密数据通道；其他未接入自动连接的资源保留独立兼容入口。</p>
     </section>

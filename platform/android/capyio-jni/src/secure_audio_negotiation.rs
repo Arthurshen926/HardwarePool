@@ -10,6 +10,7 @@ use capyio_protocol::{
 #[derive(Clone, Debug)]
 pub(crate) struct SecureAudioUse {
     pub(crate) binding: capyio_control_tls::audio::AudioTlsBinding,
+    pub(crate) profile: SecureAudioSessionProfile,
     pub(crate) generation: crate::audio_job::GenerationClaim,
     pub(crate) terminal: Option<i32>,
 }
@@ -32,16 +33,28 @@ pub(crate) fn proposed(route: &Route) -> bool {
         || (route.selected_format.is_none() && route.compatible_formats.iter().any(secure))
 }
 
-/// Java AudioRecord has only the original finite profile. Recognize new secure
-/// IDs before any legacy dispatch, but never prepare or activate them here.
+/// Resolve the exact selected descriptor, or the only unambiguous Draft
+/// candidate. Remaining grant/lease duration is never a profile discriminator.
+#[cfg(any(target_os = "android", test))]
+pub(crate) fn live_profile(route: &Route) -> Result<SecureAudioSessionProfile, String> {
+    let descriptor = match route.selected_format.as_ref() {
+        Some(selected) if route.compatible_formats.contains(selected) => selected,
+        Some(_) => return Err("secure audio selection is not mutually advertised".into()),
+        None => {
+            let [descriptor] = route.compatible_formats.as_slice() else {
+                return Err("secure audio requires one exact live profile".into());
+            };
+            descriptor
+        }
+    };
+    SecureAudioSessionProfile::from_descriptor(descriptor)
+        .ok_or_else(|| "unsupported exact secure audio live profile".into())
+}
+
 #[cfg(any(target_os = "android", test))]
 pub(crate) fn require_live_profile(route: &Route) -> Result<(), String> {
-    if proposed(route)
-        && !(route.selected_format == Some(FormatDescriptor::new(SECURE_AUDIO_MONO_FORMAT))
-            || (route.selected_format.is_none()
-                && route.compatible_formats == [FormatDescriptor::new(SECURE_AUDIO_MONO_FORMAT)]))
-    {
-        return Err("Android live AudioRecord does not support this secure audio profile".into());
+    if proposed(route) {
+        live_profile(route)?;
     }
     Ok(())
 }
@@ -54,12 +67,13 @@ pub(crate) fn direction<'a>(route: &Route, legacy: &'a str) -> &'a str {
 }
 
 #[cfg(any(target_os = "android", test))]
-pub(crate) fn config() -> serde_json::Value {
-    serde_json::json!({
+pub(crate) fn config(route: &Route) -> Result<serde_json::Value, String> {
+    let profile = live_profile(route)?;
+    Ok(serde_json::json!({
         "schemaVersion":2,"transport":"pinned-tls13-mono-v1",
-        "format":SECURE_AUDIO_MONO_FORMAT,"pcmBytesPerFrame":960,
+        "format":profile.descriptor().id,"pcmBytesPerFrame":960,
         "sampleRateHz":48000,"channels":1,"samplesPerFrame":480
-    })
+    }))
 }
 
 /// A peer can select only the exact advertised secure Source. This copies no
@@ -142,8 +156,8 @@ impl AndroidCatalogRuntimeV1 {
         if sessions.next().is_some() {
             return Err("ambiguous ready Sessions".into());
         }
-        let source = crate::audio_selection::select_secure_endpoint(&snapshot.local_node, true)?;
-        let sink = crate::audio_selection::select_secure_endpoint(peer, false)?;
+        let (source, sink) =
+            crate::audio_selection::select_secure_endpoints(&snapshot.local_node, peer)?;
         let id = self
             .runtime
             .create_route(session.id, source, sink, RouteBackend::AdapterManaged)
@@ -223,8 +237,11 @@ mod tests {
         };
         host.runtime.register_peer(peer.clone(), true).unwrap();
         let session = host.runtime.open_session(peer.id).unwrap();
-        // Synthetic Rust Source opts in; the Java catalog/selector still cannot.
-        assert!(crate::audio_selection::select_secure_endpoint(&local, true).is_err());
+        // The explicitly advertised Source is now eligible for live preparation.
+        assert_eq!(
+            crate::audio_selection::select_secure_endpoint(&local, true),
+            Ok(source)
+        );
         let id = host
             .runtime
             .create_route(session, source, sink, RouteBackend::AdapterManaged)
@@ -240,7 +257,10 @@ mod tests {
         apply_selection(&mut host, &status, 103).unwrap();
         let prepared = host.runtime.route(id).unwrap().clone();
         assert!(selected(&prepared));
-        assert!(require_live_profile(&prepared).is_err());
+        assert_eq!(
+            live_profile(&prepared),
+            Ok(SecureAudioSessionProfile::Finite300sV1)
+        );
         apply_selection(&mut host, &status, 104).unwrap();
         assert_eq!(host.runtime.route(id).unwrap(), &prepared);
         status.route.selected_format = Some(SecureAudioSessionProfile::Finite60sV1.descriptor());
@@ -249,17 +269,26 @@ mod tests {
     }
 
     #[test]
-    fn jni_live_capture_rejects_long_profile_before_preparation_without_udp_fallback() {
+    fn jni_live_capture_requires_exact_selected_profile_without_udp_fallback() {
         let (host, id) = fixture();
         let mut route = host.runtime.route(id).unwrap().clone();
-        require_live_profile(&route).unwrap();
+        assert_eq!(
+            live_profile(&route),
+            Ok(SecureAudioSessionProfile::Finite60sV1)
+        );
         route.compatible_formats = vec![SecureAudioSessionProfile::Finite300sV1.descriptor()];
         assert!(proposed(&route));
         assert_eq!(direction(&route, "microphone"), "microphone-secure");
-        assert!(require_live_profile(&route).is_err());
+        assert_eq!(
+            live_profile(&route),
+            Ok(SecureAudioSessionProfile::Finite300sV1)
+        );
         route.selected_format = route.compatible_formats.first().cloned();
         assert!(selected(&route));
+        require_live_profile(&route).unwrap();
+        route.selected_format = Some(SecureAudioSessionProfile::Finite60sV1.descriptor());
         assert!(require_live_profile(&route).is_err());
+        route.selected_format = route.compatible_formats.first().cloned();
         route
             .selected_format
             .as_mut()
@@ -269,28 +298,46 @@ mod tests {
         assert!(proposed(&route));
         assert!(!selected(&route));
         assert!(require_live_profile(&route).is_err());
+        route.selected_format = None;
+        route
+            .compatible_formats
+            .push(SecureAudioSessionProfile::Finite60sV1.descriptor());
+        assert!(require_live_profile(&route).is_err());
         assert!(host.secure_audio_uses.is_empty());
     }
 
     #[test]
-    fn secure_dto_is_separate_and_contains_no_endpoint_or_authority() {
-        let config = config();
-        assert_eq!(config.as_object().unwrap().len(), 7);
-        assert_eq!(config["schemaVersion"], 2);
-        assert_eq!(config["transport"], "pinned-tls13-mono-v1");
-        assert_eq!(config["format"], SECURE_AUDIO_MONO_FORMAT);
-        assert_eq!(config["pcmBytesPerFrame"], 960);
-        for field in [
-            "host",
-            "port",
-            "peerPort",
-            "streamId",
-            "epoch",
-            "expiresAtMs",
-            "certificate",
-            "privateKey",
+    fn secure_dto_pins_exact_profile_and_contains_no_endpoint_or_authority() {
+        let (host, id) = fixture();
+        for profile in [
+            SecureAudioSessionProfile::Finite60sV1,
+            SecureAudioSessionProfile::Finite300sV1,
         ] {
-            assert!(config.get(field).is_none());
+            let mut route = host.runtime.route(id).unwrap().clone();
+            route.compatible_formats = vec![profile.descriptor()];
+            route.selected_format = Some(profile.descriptor());
+            // A short or long grant never substitutes the selected format.
+            route.authorization = AuthorizationState::Authorized {
+                expires_at_ms: Some(1_000_000),
+            };
+            let config = config(&route).unwrap();
+            assert_eq!(config.as_object().unwrap().len(), 7);
+            assert_eq!(config["schemaVersion"], 2);
+            assert_eq!(config["transport"], "pinned-tls13-mono-v1");
+            assert_eq!(config["format"], profile.descriptor().id);
+            assert_eq!(config["pcmBytesPerFrame"], 960);
+            for field in [
+                "host",
+                "port",
+                "peerPort",
+                "streamId",
+                "epoch",
+                "expiresAtMs",
+                "certificate",
+                "privateKey",
+            ] {
+                assert!(config.get(field).is_none());
+            }
         }
     }
     #[test]
@@ -390,6 +437,7 @@ mod tests {
             id,
             SecureAudioUse {
                 binding,
+                profile: SecureAudioSessionProfile::Finite60sV1,
                 generation: Default::default(),
                 terminal: None,
             },
@@ -402,6 +450,10 @@ mod tests {
             .unwrap();
         assert!(host.secure_audio_uses.get_mut(&RouteId::new()).is_none());
         assert_eq!(host.secure_audio_uses.get(&id).unwrap().binding, binding);
+        assert_eq!(
+            host.secure_audio_uses.get(&id).unwrap().profile,
+            SecureAudioSessionProfile::Finite60sV1
+        );
         assert_eq!(host.secure_audio_uses.get(&id).unwrap().terminal, None);
         assert!(
             host.secure_audio_uses

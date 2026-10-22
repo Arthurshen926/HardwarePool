@@ -14,7 +14,7 @@ for (const [panel, peersMethod, stateMethod, expression, oldState, newState] of 
     const script = stripTypeScriptTypes(source.slice(source.indexOf('const peers ='),end));
     let finishOld, failOld, calls = 0;
     const oldRead = new Promise((resolve,reject) => {finishOld = resolve;failOld = reject;});
-    const api = {[peersMethod]:async () => [{nodeId:'pc',directions:['speaker']}], [stateMethod]:() => ++calls === 1 ? oldRead : Promise.resolve(newState)};
+    const api = {getAndroidMicrophoneSettings: async () => null, [peersMethod]:async () => [{nodeId:'pc',directions:['speaker']}], [stateMethod]:() => ++calls === 1 ? oldRead : Promise.resolve(newState)};
     const model = new Function('props','ref','computed',script + `\nreturn {refresh, state:()=>${expression}, error:()=>${panel === 'DisplayUsePanel' ? 'pollError' : 'readError'}.value};`)(
       {api}, value => ({value}), getter => ({get value(){return getter();}}));
     const pending = model.refresh();

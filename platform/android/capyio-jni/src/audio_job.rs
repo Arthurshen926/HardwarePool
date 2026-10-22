@@ -7,6 +7,7 @@ use capyio_native_audio_lan::{
     SECURE_MONO_PCM_PAYLOAD_BYTES, SECURE_MONO_PCM_RECORD_BYTES, SECURE_MONO_PCM_SAMPLES,
     SecureMonoPcmAdmission,
 };
+use capyio_protocol::SecureAudioSessionProfile;
 use capyio_runtime::NodeRuntime;
 use std::sync::{
     Arc, Mutex, OnceLock,
@@ -65,6 +66,7 @@ pub(crate) struct AudioJob {
     pub(crate) runtime: u64,
     pub(crate) generation: u64,
     pub(crate) binding: AudioTlsBinding,
+    pub(crate) profile: SecureAudioSessionProfile,
     state: AtomicI32,
     stop_handle: OnceLock<AudioTlsStopHandle>,
     reserved: AtomicUsize,
@@ -73,23 +75,27 @@ pub(crate) struct AudioJob {
     finished: AtomicBool,
     lease_deadline_ms: u64,
     lease_deadline: Instant,
+    preparation_deadline: Instant,
 }
 impl AudioJob {
     pub(crate) fn pending(
         runtime: u64,
         generation: u64,
         binding: AudioTlsBinding,
+        profile: SecureAudioSessionProfile,
         lease_deadline_ms: u64,
+        preparation_deadline: Instant,
     ) -> (Arc<Self>, Receiver<Record>) {
         let (queue, receiver) = mpsc::sync_channel(RECORD_SLOTS);
         let lifetime =
             Duration::from_millis(lease_deadline_ms.saturating_sub(now().unwrap_or(u64::MAX)))
-                .min(Duration::from_secs(60));
+                .min(profile.max_duration());
         (
             Arc::new(Self {
                 runtime,
                 generation,
                 binding,
+                profile,
                 state: AtomicI32::new(PENDING),
                 stop_handle: OnceLock::new(),
                 reserved: AtomicUsize::new(0),
@@ -97,9 +103,11 @@ impl AudioJob {
                 worker: Mutex::new(None),
                 finished: AtomicBool::new(false),
                 lease_deadline_ms,
+                preparation_deadline,
                 lease_deadline: Instant::now()
                     .checked_add(lifetime)
-                    .unwrap_or_else(Instant::now),
+                    .unwrap_or_else(Instant::now)
+                    .min(preparation_deadline),
             }),
             receiver,
         )
@@ -245,7 +253,10 @@ impl AudioJob {
             return Ok(());
         }
         let prepared = prepared()?;
-        if prepared.binding() != self.binding || prepared.lease_deadline() != self.lease_deadline_ms
+        if prepared.binding() != self.binding
+            || prepared.profile() != self.profile
+            || prepared.lease_deadline() != self.lease_deadline_ms
+            || prepared.monotonic_deadline() != self.preparation_deadline
         {
             return Err("audio job selection differs from preparation".into());
         }

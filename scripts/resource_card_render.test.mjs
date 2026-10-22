@@ -43,6 +43,46 @@ test('resource cards retain independent publication control and hide operations 
     assert.match(remoteHtml, /尚未接入统一连接的一键使用/);
     assert.match(remoteHtml, /平板摄像头：选择使用/);
     assert.doesNotMatch(remoteHtml, /可从远端使用/);
+    for (const [format, maximum] of [['pcm-s16le-48000-mono-tls13-v1', /最多 60 秒/],
+      ['pcm-s16le-48000-mono-tls13-300s-v1', /最多 5 分钟（300 秒）/]]) {
+      const secure = { ...capability, local: false, selectableForSharing: false,
+        ports: [{ ...capability.ports[0], profile: 'capyio.audio.frames/1', formats: [format] }] };
+      const secureHtml = await renderToString(createSSRApp(Catalog, { ...props, capabilities: [secure] }));
+      assert.match(secureHtml, /安全音频需匹配接收端/);
+      assert.match(secureHtml, maximum);
+      assert.match(secureHtml, /目录不表示已经授权、加密传输或播放/);
+      assert.match(secureHtml, /原始授权或租约可能更短/);
+      assert.match(secureHtml, /不支持 Windows 一键使用/);
+      assert.doesNotMatch(secureHtml, /音频可申请|Streaming|已加密|运行状态/);
+    }
+    const legacy = { ...capability, local: false, selectableForSharing: false,
+      ports: [{ ...capability.ports[0], profile: 'capyio.audio.frames/1', formats: ['pcm-s16le-48000-mono'] }] };
+    const legacyHtml = await renderToString(createSSRApp(Catalog, { ...props, capabilities: [legacy] }));
+    assert.match(legacyHtml, /音频可申请/);
+    assert.match(legacyHtml, /UDP 明文音频/);
+    assert.doesNotMatch(legacyHtml, /安全音频|TLS 1.3|已加密/);
+    const { default: AudioUsePanel } = await server.ssrLoadModule('/src/components/AudioUsePanel.vue');
+    for (const captureProfile of ['legacy', 'secure_mono_tls13_v1', 'secure_mono_tls13_300s_v1']) {
+      const settings = { schemaVersion: 1, revision: 4, captureProfile, source: 'system_default',
+        eligibility: captureProfile === 'legacy' ? 'not_requested' : 'eligible', permissionReady: false };
+      const PanelWithSettings = { ...AudioUsePanel, setup(props, context) {
+        const state = AudioUsePanel.setup(props, context);
+        state.microphoneSettings.value = settings;
+        state.loaded.value = true;
+        return state;
+      } };
+      const panelHtml = await renderToString(createSSRApp(PanelWithSettings, { api: {} }));
+      assert.match(panelHtml, /value="secure_mono_tls13_300s_v1"/);
+      assert.match(panelHtml, /最多 5 分钟（300 秒）/);
+      assert.doesNotMatch(panelHtml, /Streaming|音频使用中/);
+      if (captureProfile !== 'legacy') {
+        assert.match(panelHtml, /原始授权或租约期限可能更短/);
+        assert.match(panelHtml, /选择配置不表示正在传输/);
+        assert.match(panelHtml, /合成测试不保证真机录音/);
+        assert.match(panelHtml, /系统录音或通知权限尚未授予/);
+        assert.match(panelHtml, /<button[^>]+disabled[^>]*>开始使用/);
+      }
+    }
     const { default: AudioConnection } = await server.ssrLoadModule('/src/components/AndroidAudioConnection.vue');
     const audioState = { microphone: { state: 'stopped' }, speaker: { state: 'active' } };
     const audioHtml = await renderToString(createSSRApp(AudioConnection, { api: {}, state: audioState, suggestedHost: '100.64.0.9', initialDirection: 'speaker', expanded: true }));

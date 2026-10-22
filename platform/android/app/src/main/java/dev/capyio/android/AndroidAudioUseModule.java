@@ -228,9 +228,9 @@ final class AndroidAudioUseModule {
         while (names.hasNext()) { String key = names.next(); fields.put(key, config.get(key)); }
         AndroidSecureAudioLaunch launch = AndroidSecureAudioLaunch.admit(fields, use.getString("routeId"),
                 use.getString("sessionId"), use.getString("peerNodeId"), use.getString("direction"),
-                strictLong(use, "expiresAtMs"));
+                strictLong(use, "expiresAtMs"), settings.selection(), System.currentTimeMillis());
         String id = launch.routeId();
-        if (!settings.secure() || jobs.containsKey(id) || launch.expiresAtMs() <= System.currentTimeMillis()) {
+        if (!launch.matches(settings) || jobs.containsKey(id)) {
             throw new IllegalArgumentException("Secure microphone selection or binding changed");
         }
         SecureAudioJob job = secureJobs.get(id);
@@ -269,7 +269,8 @@ final class AndroidAudioUseModule {
                         @Override public void stop(long value) { runtime.audioSecureStop(value); }
                     };
                     AndroidSecureMicrophoneCapture capture = new AndroidSecureMicrophoneCapture(
-                            context, () -> securePermitted.get() && secureUiVisible.getAsBoolean(), generation, sender);
+                            context, () -> securePermitted.get() && secureUiVisible.getAsBoolean()
+                                    && launch.matches(settings), generation, sender);
                     SecureAudioJob created = new SecureAudioJob(launch, transition.generation(), generation, runtime, capture);
                     secureJobs.put(id, created); // Retain cleanup ownership before any worker can start.
                     return created;

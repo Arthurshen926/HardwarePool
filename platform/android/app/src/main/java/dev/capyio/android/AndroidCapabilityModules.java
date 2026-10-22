@@ -490,7 +490,8 @@ final class AndroidCapabilityModules {
                     && notificationReady;
             List<String> formats = microphoneFormats.get();
             if (!formats.equals(List.of("pcm-s16le-48000-mono"))
-                    && !formats.equals(List.of("pcm-s16le-48000-mono-tls13-v1"))) {
+                    && !formats.equals(List.of("pcm-s16le-48000-mono-tls13-v1"))
+                    && !formats.equals(List.of("pcm-s16le-48000-mono-tls13-300s-v1"))) {
                 throw new IllegalArgumentException("Microphone requires one exact explicitly selected format");
             }
             return List.of(

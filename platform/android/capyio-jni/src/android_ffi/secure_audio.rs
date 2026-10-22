@@ -101,6 +101,7 @@ pub(super) fn cache_offer(
         route,
         crate::secure_audio_negotiation::SecureAudioUse {
             binding,
+            profile: prepared.profile(),
             generation: audio_job::GenerationClaim::default(),
             terminal: None,
         },
@@ -173,7 +174,7 @@ pub(super) fn reconcile(runtime: &capyio_runtime::NodeRuntime) {
             runtime.route(job.binding.route_id).is_ok_and(|r| {
                 crate::audio_sender::source_authority(runtime, r, now).is_some()
                     && crate::secure_audio_negotiation::selected(r)
-                    && crate::secure_audio_negotiation::require_live_profile(r).is_ok()
+                    && crate::secure_audio_negotiation::live_profile(r) == Ok(job.profile)
                     && capyio_control_tls::audio::AudioTlsBinding::from_route(
                         job.binding.session,
                         r,
@@ -232,10 +233,9 @@ fn start(runtime: u64, route: RouteId) -> Result<u64, String> {
         let cached = offers()
             .lock()
             .map_err(|_| "audio offer registry poisoned")?;
-        if !cached
-            .as_ref()
-            .is_some_and(|(owner, p)| *owner == runtime && p.binding() == binding)
-        {
+        if !cached.as_ref().is_some_and(|(owner, p)| {
+            *owner == runtime && p.binding() == binding && p.profile() == prepared.profile()
+        }) {
             return Err("secure audio preparation was cancelled".into());
         }
         prepared.validate_snapshot(&host.runtime, audio_job::now()?)?;
@@ -246,7 +246,7 @@ fn start(runtime: u64, route: RouteId) -> Result<u64, String> {
         let use_ = host
             .secure_audio_uses
             .get_mut(&route)
-            .filter(|j| j.binding == binding)
+            .filter(|j| j.binding == binding && j.profile == prepared.profile())
             .ok_or("secure audio Route absent")?;
         use_.generation.reserve()?;
         let generation = NEXT_JOB
@@ -254,8 +254,14 @@ fn start(runtime: u64, route: RouteId) -> Result<u64, String> {
                 n.checked_add(1).filter(|n| *n <= i64::MAX as u64)
             })
             .map_err(|_| "audio generations exhausted")?;
-        let (job, receiver) =
-            AudioJob::pending(runtime, generation, binding, prepared.lease_deadline());
+        let (job, receiver) = AudioJob::pending(
+            runtime,
+            generation,
+            binding,
+            prepared.profile(),
+            prepared.lease_deadline(),
+            prepared.monotonic_deadline(),
+        );
         *registry = Some(job.clone());
         (job, receiver)
     };

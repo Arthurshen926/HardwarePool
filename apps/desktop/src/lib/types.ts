@@ -488,7 +488,7 @@ export interface UiCameraUse {
 export interface UiAndroidMicrophoneSettings {
   schemaVersion: 1;
   revision: number;
-  captureProfile: 'legacy' | 'secure_mono_tls13_v1';
+  captureProfile: 'legacy' | 'secure_mono_tls13_v1' | 'secure_mono_tls13_300s_v1';
   source: 'system_default';
   eligibility: 'not_requested' | 'eligible' | 'unavailable';
   permissionReady: boolean;

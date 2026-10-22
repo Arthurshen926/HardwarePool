@@ -602,7 +602,10 @@ The requested duration is an upper bound. Negotiation consumes it, and original
 grants/leases may shorten it; existing Source negotiation headroom also remains.
 Stop, revocation, EOF and exact expiry end the same generation without renewal.
 At most 30,000 records are admitted while rate and memory queues remain fixed.
-This slice supports the production Rust Source and Linux launcher, not Android
-Java AudioRecord: that live path explicitly rejects the new profile until its
-separate opt-in integration. Hosted synthetic five-minute and late-waveform
-evidence does not establish hours-long stability or physical phone compatibility.
+ADR 1564 adds the separate Android microphone preference
+`secure_mono_tls13_300s_v1` for this exact descriptor; legacy remains the factory
+default and the existing secure preference remains capped at 60 seconds. Changing
+that preference retires current capture rather than extending it. Select the
+matching fresh catalog entry and approve a new finite session on both ends.
+Hosted synthetic five-minute and late-waveform evidence does not establish
+hours-long stability or physical phone AudioRecord compatibility.

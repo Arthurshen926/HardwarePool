@@ -28,5 +28,5 @@ jobs:
           install: false
       - run: pnpm install --frozen-lockfile
       - run: pnpm --filter @capyio/desktop typecheck
-      - run: node --test scripts/android_camera_settings_ui.test.mjs scripts/android_microphone_settings_ui.test.mjs
+      - run: node --test scripts/android_camera_settings_ui.test.mjs scripts/android_microphone_settings_ui.test.mjs scripts/remote_resource_support.test.mjs scripts/resource_card_render.test.mjs scripts/audio_catalog_selection_ui.test.mjs scripts/media_refresh_order.test.mjs
       - run: pnpm --filter @capyio/desktop build

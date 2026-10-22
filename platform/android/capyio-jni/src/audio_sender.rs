@@ -311,6 +311,14 @@ impl PreparedAudioSender {
         self.authority.binding
     }
     #[cfg(any(target_os = "android", test))]
+    pub(crate) fn profile(&self) -> SecureAudioSessionProfile {
+        self.authority.profile
+    }
+    #[cfg(any(target_os = "android", test))]
+    pub(crate) fn monotonic_deadline(&self) -> Instant {
+        self.clock.deadline
+    }
+    #[cfg(any(target_os = "android", test))]
     pub(crate) fn lease_deadline(&self) -> u64 {
         self.authority.source_lease.expires_at_ms
     }

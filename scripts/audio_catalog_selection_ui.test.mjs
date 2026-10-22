@@ -19,5 +19,6 @@ test('JNI binds Start through the same current-catalog initiator tested on the h
   assert.doesNotMatch(native, /d41251b3|suffix|等待 Windows/);
   assert.match(native, /supports_inbound_draft\(peer, endpoint, direction\)/);
   assert.match(native, /unavailableDirections/);
-  assert.match(panel, /Linux 当前仅支持指定目标播放，不提供虚拟麦克风/);
+  assert.match(panel, /Linux 有限会话入口可选择指定目标播放或虚拟麦克风/);
+  assert.match(panel, /不支持的接收端不能退回较短配置或 UDP/);
 });

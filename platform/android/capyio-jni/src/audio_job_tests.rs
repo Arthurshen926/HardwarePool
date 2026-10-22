@@ -5,6 +5,12 @@ use capyio_control_tls::ControlTlsBinding;
 use capyio_core::*;
 
 fn bare_job() -> (Arc<AudioJob>, Receiver<Record>) {
+    bare_profile_job(SecureAudioSessionProfile::Finite60sV1, 10_000)
+}
+fn bare_profile_job(
+    profile: SecureAudioSessionProfile,
+    remaining_ms: u64,
+) -> (Arc<AudioJob>, Receiver<Record>) {
     let source = PortRef {
         node_id: NodeId::new(),
         capability_id: CapabilityId::new(),
@@ -15,7 +21,7 @@ fn bare_job() -> (Arc<AudioJob>, Receiver<Record>) {
         capability_id: CapabilityId::new(),
         port_id: PortId::new(),
     };
-    let deadline = now().unwrap() + 10_000;
+    let deadline = now().unwrap() + remaining_ms;
     AudioJob::pending(
         7,
         11,
@@ -29,7 +35,9 @@ fn bare_job() -> (Arc<AudioJob>, Receiver<Record>) {
             epoch: 1,
             expires_at_ms: deadline,
         },
+        profile,
         deadline,
+        Instant::now() + profile.max_duration(),
     )
 }
 fn wait_until(mut condition: impl FnMut() -> bool) {
@@ -45,6 +53,84 @@ fn wait_until(mut condition: impl FnMut() -> bool) {
 
 mod pure {
     use super::*;
+    #[test]
+    fn exact_profile_caps_pending_deadline_without_inference_or_queue_growth() {
+        for (profile, cap) in [
+            (SecureAudioSessionProfile::Finite60sV1, 60),
+            (SecureAudioSessionProfile::Finite300sV1, 300),
+        ] {
+            let before = Instant::now();
+            let (job, _) = bare_profile_job(profile, 600_000);
+            let after = Instant::now();
+            assert_eq!(job.profile, profile);
+            assert!(job.lease_deadline >= before + Duration::from_secs(cap));
+            assert!(job.lease_deadline <= after + Duration::from_secs(cap));
+            assert_eq!(RECORD_SLOTS, 2);
+            job.state.store(READY, Ordering::Release);
+            let a = job.reserve(960).unwrap();
+            let b = job.reserve(960).unwrap();
+            assert!(job.reserve(960).is_err());
+            drop((a, b));
+            assert_eq!(job.reserved.load(Ordering::Acquire), 0);
+            let (short, _) = bare_profile_job(profile, 1000);
+            assert!(short.lease_deadline <= Instant::now() + Duration::from_secs(1));
+            assert_eq!(short.profile, profile);
+        }
+    }
+
+    #[test]
+    fn immutable_preparation_deadline_survives_delayed_start_for_both_profiles() {
+        for profile in [
+            SecureAudioSessionProfile::Finite60sV1,
+            SecureAudioSessionProfile::Finite300sV1,
+        ] {
+            let (template, _) = bare_profile_job(profile, 299_000);
+            let original_end = Instant::now();
+            let (job, receiver) = AudioJob::pending(
+                7,
+                12,
+                template.binding,
+                profile,
+                template.lease_deadline_ms,
+                original_end,
+            );
+            assert_eq!(job.preparation_deadline, original_end);
+            assert_eq!(job.lease_deadline, original_end);
+            job.spawn(
+                receiver,
+                Box::new(|| panic!("expired preparation executed")),
+                Arc::new(|| panic!("expired snapshot executed")),
+                Arc::new(|| {}),
+            )
+            .unwrap();
+            wait_until(|| job.worker_exited());
+            job.reap();
+            assert_eq!(job.state(), FAILED);
+            assert!(job.reserve(960).is_err());
+        }
+    }
+    #[test]
+    fn stop_before_preparation_is_one_shot_for_both_explicit_profiles() {
+        for profile in [
+            SecureAudioSessionProfile::Finite60sV1,
+            SecureAudioSessionProfile::Finite300sV1,
+        ] {
+            let (job, receiver) = bare_profile_job(profile, 299_000);
+            job.stop();
+            job.spawn(
+                receiver,
+                Box::new(|| panic!("cancelled preparation")),
+                Arc::new(|| panic!("cancelled snapshot")),
+                Arc::new(|| panic!("Stop is not failure")),
+            )
+            .unwrap();
+            wait_until(|| job.worker_exited());
+            job.reap();
+            assert_eq!(job.state(), STOPPED);
+            assert!(job.reserve(960).is_err());
+            assert!(job.worker.lock().unwrap().is_none());
+        }
+    }
     #[test]
     fn pending_and_terminal_generations_never_reserve_pcm() {
         let (job, _) = bare_job();
@@ -238,7 +324,14 @@ mod pure {
     #[test]
     fn original_deadline_fails_without_runtime_snapshot_and_cannot_revive() {
         let (template, _) = bare_job();
-        let (job, _) = AudioJob::pending(7, 12, template.binding, now().unwrap());
+        let (job, _) = AudioJob::pending(
+            7,
+            12,
+            template.binding,
+            template.profile,
+            now().unwrap(),
+            template.preparation_deadline,
+        );
         job.state.store(READY, Ordering::Release);
         assert_eq!(job.state(), FAILED);
         assert!(job.reserve(960).is_err());
@@ -258,7 +351,7 @@ mod hosted {
         audio::{AudioTlsChannel, AudioTlsListener},
     };
     use capyio_pairing::CertificateFingerprint;
-    use capyio_protocol::{SECURE_AUDIO_MONO_FORMAT, SecureAudioDataOffer, SecureAudioTransport};
+    use capyio_protocol::{SecureAudioDataOffer, SecureAudioTransport};
     use rcgen::{
         BasicConstraints, CertificateParams, ExtendedKeyUsagePurpose, IsCa, Issuer, KeyPair,
         KeyUsagePurpose,
@@ -277,7 +370,10 @@ mod hosted {
             Self::with_lease(port, 10_000)
         }
         fn with_lease(port: u16, lease_ms: u64) -> Self {
-            let (android, sink_node, source, sink) = nodes();
+            Self::with_profile(port, lease_ms, SecureAudioSessionProfile::Finite60sV1)
+        }
+        fn with_profile(port: u16, lease_ms: u64, profile: SecureAudioSessionProfile) -> Self {
+            let (android, sink_node, source, sink) = nodes(profile);
             let (identity, bundle, pin) = dual_identities();
             let binding =
                 ControlTlsBinding::new(SessionId::new(), sink_node.id, android.id).unwrap();
@@ -362,7 +458,10 @@ mod hosted {
             );
             host.resolve_touchpad_request(id, true, timestamp).unwrap();
             sink_runtime
-                .authorize_route(id, Some(timestamp + 20_000))
+                .authorize_route(
+                    id,
+                    Some(timestamp + lease_ms.saturating_add(10_000).clamp(20_000, 300_000)),
+                )
                 .unwrap();
             sink_control
                 .send_route_status(sink_runtime.route(id).unwrap())
@@ -402,7 +501,7 @@ mod hosted {
             sink_runtime
                 .prepare_route(
                     id,
-                    Some(FormatDescriptor::new(SECURE_AUDIO_MONO_FORMAT)),
+                    Some(profile.descriptor()),
                     QosMode::Interactive,
                     timestamp,
                 )
@@ -412,10 +511,7 @@ mod hosted {
                 .unwrap();
             let prepared_route = receive_status(&mut host, &mut source_control, timestamp);
             assert_eq!(prepared_route.state, RouteState::Prepared);
-            assert_eq!(
-                prepared_route.selected_format,
-                Some(FormatDescriptor::new(SECURE_AUDIO_MONO_FORMAT))
-            );
+            assert_eq!(prepared_route.selected_format, Some(profile.descriptor()));
             assert!(host.audio_uses.is_empty());
             sink_runtime.begin_route_start(id, timestamp).unwrap();
             sink_control
@@ -475,7 +571,9 @@ mod hosted {
                 7,
                 11,
                 self.prepared.binding(),
+                self.prepared.profile(),
                 self.prepared.lease_deadline(),
+                self.prepared.monotonic_deadline(),
             );
             let prepared = self.prepared.clone();
             job.spawn(
@@ -851,6 +949,244 @@ mod hosted {
         assert_eq!(job.state(), STOPPED);
         assert!(peer.receive_record().is_err());
     }
+    #[test]
+    fn finite_profiles_bind_actual_job_and_preserve_exact_deadline_caps() {
+        for profile in [
+            SecureAudioSessionProfile::Finite60sV1,
+            SecureAudioSessionProfile::Finite300sV1,
+        ] {
+            let media = TcpListener::bind("127.0.0.1:0").unwrap();
+            let fixture =
+                Fixture::with_profile(media.local_addr().unwrap().port(), 299_000, profile);
+            let accepted = accept_media(fixture.listener(media));
+            let job = fixture.start(fixture.snapshot());
+            let mut peer = accepted.join().unwrap();
+            wait_until(|| job.state() == READY);
+            assert_eq!(job.profile, profile);
+            assert_eq!(fixture.prepared.profile(), profile);
+            let remaining = job.lease_deadline.saturating_duration_since(Instant::now());
+            match profile {
+                SecureAudioSessionProfile::Finite60sV1 => {
+                    assert!(remaining <= Duration::from_secs(60))
+                }
+                SecureAudioSessionProfile::Finite300sV1 => {
+                    assert!(remaining > Duration::from_secs(290))
+                }
+            }
+            assert_eq!(job.lease_deadline_ms, fixture.prepared.lease_deadline());
+            let original = fixture
+                .runtime
+                .lock()
+                .unwrap()
+                .route(job.binding.route_id)
+                .unwrap()
+                .clone();
+            assert_eq!(original.selected_format, Some(profile.descriptor()));
+            job.submit(job.reserve(960).unwrap(), [0x6c; 960]).unwrap();
+            let mut records = SecureMonoPcmAdmission::new(
+                PcmTimeline::new(job.binding)
+                    .unwrap()
+                    .admission
+                    .binding()
+                    .clone(),
+            )
+            .unwrap();
+            assert_eq!(
+                records
+                    .admit_record(&peer.receive_record().unwrap())
+                    .unwrap()
+                    .payload,
+                [0x6c; 960]
+            );
+            wait_until(|| job.state() == STREAMING);
+            assert_eq!(
+                fixture.runtime.lock().unwrap().route(original.id).unwrap(),
+                &original
+            );
+            let late = job.reserve(960).unwrap();
+            job.stop();
+            assert!(job.submit(late, [0; 960]).is_err());
+            assert_reaped(&job);
+            assert_eq!(job.state(), STOPPED);
+            assert!(peer.receive_record().is_err());
+        }
+    }
+
+    #[test]
+    fn long_profile_preparation_rejects_wrong_job_profile_before_media_connect() {
+        let media = TcpListener::bind("127.0.0.1:0").unwrap();
+        let fixture = Fixture::with_profile(
+            media.local_addr().unwrap().port(),
+            299_000,
+            SecureAudioSessionProfile::Finite300sV1,
+        );
+        let (job, receiver) = AudioJob::pending(
+            7,
+            11,
+            fixture.prepared.binding(),
+            SecureAudioSessionProfile::Finite60sV1,
+            fixture.prepared.lease_deadline(),
+            fixture.prepared.monotonic_deadline(),
+        );
+        let prepared = fixture.prepared.clone();
+        job.spawn(
+            receiver,
+            Box::new(move || Ok(prepared)),
+            fixture.snapshot(),
+            Arc::new(|| {}),
+        )
+        .unwrap();
+        assert_reaped(&job);
+        assert_eq!(job.state(), FAILED);
+        media.set_nonblocking(true).unwrap();
+        assert!(
+            matches!(media.accept(), Err(error) if error.kind() == std::io::ErrorKind::WouldBlock)
+        );
+    }
+
+    #[test]
+    fn long_profile_original_lease_grant_and_catalog_changes_close_actual_tls() {
+        for change in 0..5 {
+            let media = TcpListener::bind("127.0.0.1:0").unwrap();
+            let fixture = Fixture::with_profile(
+                media.local_addr().unwrap().port(),
+                290_000,
+                SecureAudioSessionProfile::Finite300sV1,
+            );
+            let accepted = accept_media(fixture.listener(media));
+            let job = fixture.start(fixture.snapshot());
+            let mut peer = accepted.join().unwrap();
+            wait_until(|| job.state() == READY);
+            job.submit(job.reserve(960).unwrap(), [0x31; 960]).unwrap();
+            assert_eq!(peer.receive_record().unwrap().len(), 1064);
+            wait_until(|| job.state() == STREAMING);
+            {
+                let mut runtime = fixture.runtime.lock().unwrap();
+                let route = runtime.route(job.binding.route_id).unwrap().clone();
+                match change {
+                    0 | 1 => {
+                        let expiry = fixture.prepared.lease_deadline();
+                        // Both narrowing and extending the original full lease are forbidden.
+                        let replacement = if change == 0 {
+                            expiry - 1000
+                        } else {
+                            expiry + 1000
+                        };
+                        runtime
+                            .acquire_route_port_lease(
+                                route.id,
+                                route.source,
+                                replacement,
+                                now().unwrap() + 1,
+                            )
+                            .unwrap();
+                    }
+                    2 => runtime
+                        .renew_route_authorization(
+                            route.id,
+                            job.binding.expires_at_ms + 1000,
+                            now().unwrap(),
+                        )
+                        .unwrap(),
+                    _ => {
+                        let mut node = runtime.snapshot().local_node;
+                        let port = node
+                            .capabilities
+                            .get_mut(&route.source.capability_id)
+                            .unwrap()
+                            .ports
+                            .get_mut(&route.source.port_id)
+                            .unwrap();
+                        if change == 3 {
+                            port.formats =
+                                vec![SecureAudioSessionProfile::Finite60sV1.descriptor()];
+                        } else {
+                            port.formats[0]
+                                .parameters
+                                .insert("duration".into(), "300".into());
+                        }
+                        runtime.replace_local_catalog(node).unwrap();
+                    }
+                }
+            }
+            assert_reaped(&job);
+            assert_eq!(job.state(), FAILED);
+            assert!(job.reserve(960).is_err());
+            assert!(peer.receive_record().is_err());
+        }
+    }
+
+    #[test]
+    fn long_profile_stop_interrupts_pending_tls_and_rejects_stale_callbacks() {
+        let media = TcpListener::bind("127.0.0.1:0").unwrap();
+        let fixture = Fixture::with_profile(
+            media.local_addr().unwrap().port(),
+            299_000,
+            SecureAudioSessionProfile::Finite300sV1,
+        );
+        let job = fixture.start(fixture.snapshot());
+        media.set_nonblocking(true).unwrap();
+        let mut held = None;
+        wait_until(|| match media.accept() {
+            Ok((socket, _)) => {
+                held = Some(socket);
+                true
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => false,
+            Err(error) => panic!("{error}"),
+        });
+        wait_until(|| job.stop_handle.get().is_some());
+        assert_eq!(job.state(), PENDING);
+        job.stop();
+        assert_reaped(&job);
+        assert_eq!(job.state(), STOPPED);
+        assert!(job.reserve(960).is_err());
+        drop(held);
+    }
+
+    #[test]
+    fn long_profile_cancel_after_actual_tls_never_publishes_ready() {
+        let media = TcpListener::bind("127.0.0.1:0").unwrap();
+        let fixture = Fixture::with_profile(
+            media.local_addr().unwrap().port(),
+            299_000,
+            SecureAudioSessionProfile::Finite300sV1,
+        );
+        let accepted = accept_media(fixture.listener(media));
+        let (snapshot, reached, release) = gated_snapshot(fixture.runtime.clone(), 1);
+        let job = fixture.start(snapshot);
+        reached.recv_timeout(Duration::from_secs(2)).unwrap();
+        let mut peer = accepted.join().unwrap();
+        assert_eq!(job.state(), PENDING);
+        job.stop();
+        release.send(()).unwrap();
+        assert_reaped(&job);
+        assert_eq!(job.state(), STOPPED);
+        assert!(job.reserve(960).is_err());
+        assert!(peer.receive_record().is_err());
+    }
+
+    #[test]
+    fn long_profile_short_original_lease_expires_without_renewal() {
+        let media = TcpListener::bind("127.0.0.1:0").unwrap();
+        let fixture = Fixture::with_profile(
+            media.local_addr().unwrap().port(),
+            1000,
+            SecureAudioSessionProfile::Finite300sV1,
+        );
+        let accepted = accept_media(fixture.listener(media));
+        let job = fixture.start(fixture.snapshot());
+        let mut peer = accepted.join().unwrap();
+        wait_until(|| job.state() == READY);
+        assert_eq!(job.profile, SecureAudioSessionProfile::Finite300sV1);
+        assert!(
+            job.lease_deadline.saturating_duration_since(Instant::now()) <= Duration::from_secs(1)
+        );
+        assert_reaped(&job);
+        assert_eq!(job.state(), FAILED);
+        assert!(peer.receive_record().is_err());
+    }
+
     fn gated_snapshot(
         runtime: Arc<Mutex<NodeRuntime>>,
         index: usize,
@@ -883,7 +1219,9 @@ mod hosted {
         });
         (snapshot, reached_rx, release_tx)
     }
-    fn nodes() -> (NodeDescriptor, NodeDescriptor, PortRef, PortRef) {
+    fn nodes(
+        profile: SecureAudioSessionProfile,
+    ) -> (NodeDescriptor, NodeDescriptor, PortRef, PortRef) {
         let mut android = capyio_testkit::android_node();
         let mut sink_node = capyio_testkit::windows_node();
         for node in [&mut android, &mut sink_node] {
@@ -906,7 +1244,7 @@ mod hosted {
             .find(|c| c.class == CapabilityClass::Microphone)
             .unwrap();
         let port = cap.ports.values_mut().next().unwrap();
-        port.formats = vec![FormatDescriptor::new(SECURE_AUDIO_MONO_FORMAT)];
+        port.formats = vec![profile.descriptor()];
         port.qos_modes.insert(QosMode::Interactive);
         let source = PortRef {
             node_id: android.id,

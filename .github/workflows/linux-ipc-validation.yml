@@ -169,6 +169,12 @@ jobs:
           audio_job::tests::hosted::queue_overflow_during_inflight_snapshot_closes_actual_tls_terminally
           audio_job::tests::hosted::revoke_in_post_write_snapshot_never_publishes_streaming_success
           audio_job::tests::hosted::stop_during_post_write_snapshot_cannot_resurrect_streaming
+          audio_job::tests::hosted::finite_profiles_bind_actual_job_and_preserve_exact_deadline_caps
+          audio_job::tests::hosted::long_profile_preparation_rejects_wrong_job_profile_before_media_connect
+          audio_job::tests::hosted::long_profile_original_lease_grant_and_catalog_changes_close_actual_tls
+          audio_job::tests::hosted::long_profile_stop_interrupts_pending_tls_and_rejects_stale_callbacks
+          audio_job::tests::hosted::long_profile_cancel_after_actual_tls_never_publishes_ready
+          audio_job::tests::hosted::long_profile_short_original_lease_expires_without_renewal
           audio_sender::tests::actual_microphone_consent_never_mints_a_source_lease
           audio_sender::tests::explicit_denial_and_camera_substitution_cannot_authorize_audio
           audio_sender::tests::original_grant_and_source_lease_cannot_be_renewed_or_narrowed
@@ -429,7 +435,7 @@ jobs:
           set -euo pipefail
           timeout --signal=TERM --kill-after=10s 180s pnpm install --frozen-lockfile --ignore-scripts
           pnpm --filter @capyio/desktop typecheck
-          node --test scripts/android_camera_settings_ui.test.mjs scripts/android_microphone_settings_ui.test.mjs
+          node --test scripts/android_camera_settings_ui.test.mjs scripts/android_microphone_settings_ui.test.mjs scripts/remote_resource_support.test.mjs scripts/resource_card_render.test.mjs scripts/audio_catalog_selection_ui.test.mjs scripts/media_refresh_order.test.mjs
       - name: Require preinstalled pinned NDK and JDK
         run: |
           set -euo pipefail

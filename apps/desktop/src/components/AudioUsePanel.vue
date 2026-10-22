@@ -13,7 +13,9 @@ const loaded = ref(false);
 const microphoneSettings = ref<UiAndroidMicrophoneSettings | null>(null);
 const profileBusy = ref(false);
 const profileError = ref('');
-const microphoneDirection = computed<AudioUseDirection>(() => microphoneSettings.value?.captureProfile === 'secure_mono_tls13_v1' ? 'microphone-secure' : 'microphone');
+const secureMicrophoneSelected = computed(() => microphoneSettings.value?.captureProfile === 'secure_mono_tls13_v1'
+  || microphoneSettings.value?.captureProfile === 'secure_mono_tls13_300s_v1');
+const microphoneDirection = computed<AudioUseDirection>(() => secureMicrophoneSelected.value ? 'microphone-secure' : 'microphone');
 let polling = false;
 let readGeneration = 0;
 let disposed = false;
@@ -68,7 +70,7 @@ async function selectProfile(event: Event) {
   const settings = microphoneSettings.value;
   if (!settings || disposed || busy.value || profileBusy.value) return;
   const value = (event.target as HTMLSelectElement).value;
-  if (value !== 'legacy' && value !== 'secure_mono_tls13_v1') return;
+  if (value !== 'legacy' && value !== 'secure_mono_tls13_v1' && value !== 'secure_mono_tls13_300s_v1') return;
   readGeneration++; polling = false; profileBusy.value = true; profileError.value = '';
   try {
     const next = await props.api.selectAndroidMicrophoneProfile(value, settings.revision);
@@ -97,12 +99,15 @@ onUnmounted(() => { disposed = true; readGeneration++; if (timer) clearInterval(
       <label>麦克风传输配置
         <select :value="microphoneSettings.captureProfile" :disabled="!!busy || profileBusy" @change="selectProfile">
           <option value="legacy">Legacy：可信实验网络 UDP（明文）</option>
-          <option value="secure_mono_tls13_v1">实验性安全单声道：固定 TLS 1.3</option>
+          <option value="secure_mono_tls13_v1">实验性安全单声道：固定 TLS 1.3，最多 60 秒</option>
+          <option value="secure_mono_tls13_300s_v1">实验性安全单声道：固定 TLS 1.3，最多 5 分钟（300 秒）</option>
         </select>
       </label>
-      <p>切换会停止当前麦克风会话并取消共享，必须重新开始和授权。来源固定为系统默认麦克风；采集中来源变化会终止会话。</p>
-      <p v-if="microphoneSettings.captureProfile === 'secure_mono_tls13_v1'">实验性 48 kHz / S16LE / 单声道，单次最多 60 秒并受原始授权期限限制。必须保持应用可见。失败不会退回 UDP；不支持安全扬声器或安全双工。这里只表示具备尝试条件，不保证真机录音、低延迟或远端播放。Linux 生产启动器的端到端接入尚未完成。</p>
-      <p v-if="microphoneSettings.captureProfile === 'secure_mono_tls13_v1' && !microphoneSettings.permissionReady" role="status">系统录音或通知权限尚未授予。请先在 Android 应用权限中允许录音和通知；此配置不会自动弹出权限请求。</p>
+      <p>默认仍为 Legacy；不会自动升级为较长配置。切换会停止当前麦克风会话并取消共享，必须重新开始和授权。来源固定为系统默认麦克风；采集中来源变化会终止会话。</p>
+      <p v-if="microphoneSettings.captureProfile === 'secure_mono_tls13_v1'">此配置单次最多 60 秒。</p>
+      <p v-if="microphoneSettings.captureProfile === 'secure_mono_tls13_300s_v1'">此配置单次最多 5 分钟（300 秒），不是保证可录满 5 分钟。</p>
+      <p v-if="secureMicrophoneSelected">实验性 48 kHz / S16LE / 单声道。每次仍需独立的有限会话授权；原始授权或租约期限可能更短，协商也会占用时间。选择配置不表示正在传输，不会开始录音、延长授权或自动续期。必须保持应用可见。失败不会退回 UDP；不支持安全扬声器或安全双工。这里只表示具备尝试条件；合成测试不保证真机录音、低延迟、录满上限或远端播放。</p>
+      <p v-if="secureMicrophoneSelected && !microphoneSettings.permissionReady" role="status">系统录音或通知权限尚未授予。请先在 Android 应用权限中允许录音和通知；此配置不会自动弹出权限请求。</p>
       <p v-if="profileError" role="alert">{{ profileError }}</p>
     </div>
     <p v-if="!loaded && !readError" role="status">正在读取设备与使用状态…</p>
@@ -119,8 +124,8 @@ onUnmounted(() => { disposed = true; readGeneration++; if (timer) clearInterval(
       <p class="use-panel__status" :data-state="state(direction)?.status ?? 'idle'" role="status">{{ statusLabel(direction) }}<span v-if="errors[direction] || state(direction)?.error"> · {{ errors[direction] || state(direction)?.error }}</span></p>
       <p v-if="loaded && !readError && !candidates(direction).length && !running(direction)" class="use-panel__empty">还没有可用的设备。请先连接电脑，并确认它支持此项音频功能。</p>
       <p v-for="peer in unavailable(direction)" :key="peer.nodeId" class="use-panel__empty">{{ peer.displayName }}：{{ peer.reason }}</p>
-      <p v-if="direction === 'microphone-secure'">接收端必须明确支持此安全配置并独立授权。当前不提供 Windows 安全音频或 Linux 生产启动器的完整连接流程，不提供虚拟麦克风。</p>
-      <p v-else>{{ direction !== 'speaker' ? '首次录音仍需系统麦克风权限，接收端独立批准。Windows 可使用对应虚拟麦克风；Linux 当前仅支持指定目标播放，不提供虚拟麦克风。' : '在电脑应用中选择 CapyIO Speaker 输出；接收器准备完成不代表已经收到可听见的声音。' }}</p>
+      <p v-if="direction === 'microphone-secure'">接收端必须明确支持所选的同一安全配置并独立授权。Linux 有限会话入口可选择指定目标播放或虚拟麦克风；当前不提供 Windows 安全音频。不支持的接收端不能退回较短配置或 UDP。</p>
+      <p v-else>{{ direction !== 'speaker' ? '首次录音仍需系统麦克风权限，接收端独立批准。Windows 可使用对应虚拟麦克风；Linux 有限会话入口可选择指定目标播放或虚拟麦克风。' : '在电脑应用中选择 CapyIO Speaker 输出；接收器准备完成不代表已经收到可听见的声音。' }}</p>
     </article>
     </div>
 

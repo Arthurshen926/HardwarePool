@@ -39,8 +39,7 @@ pub extern "system" fn Java_dev_capyio_android_AndroidNativeCatalogRuntime_nativ
                             }
                         }
                     }
-                    if crate::audio_selection::select_secure_endpoint(&snapshot.local_node,true).is_ok()
-                        && crate::audio_selection::select_secure_endpoint(peer,false).is_ok() {
+                    if crate::audio_selection::select_secure_endpoints(&snapshot.local_node,peer).is_ok() {
                         directions.push("microphone-secure");
                     }
                     (!directions.is_empty() || !unavailable_directions.is_empty()).then(||serde_json::json!({"nodeId":peer.id.to_string(),"displayName":peer.display_name,"directions":directions,"unavailableDirections":unavailable_directions}))
@@ -102,7 +101,7 @@ pub extern "system" fn Java_dev_capyio_android_AndroidNativeCatalogRuntime_nativ
                     "shouldPrepare":live&&if secure{secure_job.is_some()}else{job.is_some()},
                     "shouldRun":live&&if secure{secure_job.is_some()&&matches!(route.state,RouteState::Starting|RouteState::Active)}else{host.audio_should_run(route.id,now)},"expiresAtMs":expires,
                     "error":snapshot.problems.iter().rev().find(|p|p.related_route==Some(route.id)).map(|p|format!("{}: {}",p.code,p.human_message)),
-                    "config":if secure{Some(crate::secure_audio_negotiation::config())}else{job.map(crate::audio_negotiation::legacy_audio_config)}}));
+                    "config":if secure{Some(crate::secure_audio_negotiation::config(route)?)}else{job.map(crate::audio_negotiation::legacy_audio_config)}}));
             }
             serde_json::to_vec(&output).map_err(|e|e.to_string())
         })();

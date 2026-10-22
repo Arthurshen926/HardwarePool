@@ -1818,5 +1818,7 @@ node name to the local network Sink. Reverse stereo remains separate work.
 opt-in five-minute secure mono descriptor for the Rust Source and Linux
 playback/virtual-microphone path. Existing secure mono remains capped at 60
 seconds. Only cumulative work scales; fixed queues, framing and rate limits do
-not. Android Java live capture rejects the new descriptor until separately
-integrated. No global lease-cap change, automatic renewal or phone claim follows.
+not. The separate [ADR 1564](adr/1564-android-five-minute-secure-microphone.md)
+adds explicit Android selection and live-capture binding for that same descriptor.
+Legacy remains the factory default, and the original secure choice still caps at
+60 seconds. No global lease-cap change, automatic renewal or phone claim follows.

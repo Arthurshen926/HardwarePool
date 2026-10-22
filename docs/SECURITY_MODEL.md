@@ -1731,3 +1731,9 @@ every deadline intersects original local consent, grants and leases. The existin
 global 300-second lease TTL stays unchanged. No rate, burst, queue, per-operation
 stall, renewal or fallback allowance grows. Android live capture rejects this
 new profile; only the production Rust Source and Linux path are integrated here.
+
+ADR 1564's Android five-minute capture preference is capability selection, not
+authority. Profile changes retire the prior pending/active generation before
+catalog publication. Permission-return callbacks and actual recorder callbacks
+cannot revive the previous profile; cleanup quarantine and the original finite
+consent/lease cap remain mandatory. A mismatch never falls back to UDP.

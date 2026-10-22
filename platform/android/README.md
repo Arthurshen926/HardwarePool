@@ -364,8 +364,11 @@ recording is added. The legacy Windows plaintext lab path remains separate.
 
 ## Experimental secure mono microphone binding (ADR 1560)
 
-The Android microphone settings now offer explicit
-`secure_mono_tls13_v1` opt-in; `legacy` remains the default. This changes the
+The Android microphone settings offer explicit
+`secure_mono_tls13_v1` (maximum 60 seconds) and, under ADR 1564,
+`secure_mono_tls13_300s_v1` (maximum 300 seconds); `legacy` remains the factory
+default. The latter advertises only `pcm-s16le-48000-mono-tls13-300s-v1`; it does
+not widen an existing session or change the earlier secure option. This changes the
 advertised format preference, not permission or consent. A new use still requires
 existing microphone permission, visible foreground ownership, a compatible
 selected peer Sink, authenticated control negotiation and a fresh finite Source
@@ -384,11 +387,17 @@ fallback or automatic retry. Failed recorder cleanup blocks another capture in
 that process rather than reporting a clean stop. Native TCP connect is bounded
 but cannot be interrupted before the connected socket's Stop handle exists.
 
-This is the Android binding slice only. The Linux production Node/console secure
-playback and virtual-microphone launcher is still a separate integration step;
-the existing nine secure tone graphs exercise reusable APIs, not that missing
-user workflow. No physical phone capture or Android JVM-to-ARM64 invocation is
-claimed by the fake AudioRecord, SDK compile or generated JNI export checks.
+The Linux paired Node/console now supports matching selected-target playback
+and owned virtual-microphone launchers, with independent synthetic TLS/PipeWire
+waveform and cleanup proofs. The long-profile gate additionally observes late
+tones after 60 seconds and near the original five-minute approval expiry. These
+fixtures feed synthetic PCM through production Rust; no physical phone capture
+or Android JVM-to-ARM64 invocation is claimed by fake AudioRecord tests, SDK
+compilation or generated JNI export checks. The requested maximum is not a
+promise of a full remaining duration after negotiation, and no renewal is added.
 Run `:node-contract:secureMonoCaptureContractTest`,
 `:app:secureAudioContractTest` and the mandatory hosted native job/TLS tests.
 See [ADR 1560](../../docs/adr/1560-android-secure-microphone-binding.md) for limits.
+
+See [ADR 1564](../../docs/adr/1564-android-five-minute-secure-microphone.md) for
+exact profile/revision binding and the limits of the Android five-minute option.

@@ -601,3 +601,9 @@ Old or unsupported peers reject the new descriptor rather than downgrade.
 The global Port-lease TTL limit remains 300,000 ms; no lease cycling or renewal
 is introduced. At most 30,000 fixed records are admitted, with unchanged 100 fps
 and four-record burst limits. Java/JNI live AudioRecord is not yet eligible.
+
+ADR 1564 enables the separately selected Android live capture for the existing
+300-second secure descriptor. It adds no wire protocol or lease renewal: catalog,
+Route and prepared sender must agree on the exact descriptor, and Java/JNI capture
+must agree with the current local profile and generation. The existing secure
+60-second descriptor and legacy default retain their original interpretation.

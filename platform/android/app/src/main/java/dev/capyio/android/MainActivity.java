@@ -86,7 +86,8 @@ public final class MainActivity extends Activity {
 
     private volatile AudioNodeService.NodeBinder binder;
     private AudioCapabilityKind pendingStart;
-    private long pendingMicrophoneRevision;
+    private final AndroidMicrophoneSettings.PendingPermission pendingAudioPermission =
+            new AndroidMicrophoneSettings.PendingPermission();
     private AudioNodeService.NodeBinder pendingAudioOwner;
     private boolean pendingCameraStart;
     private long pendingCameraSettingsRevision;
@@ -153,8 +154,12 @@ public final class MainActivity extends Activity {
 
         microphoneViews.start.setOnClickListener(view -> requestStart(
                 AudioCapabilityKind.MICROPHONE_SOURCE));
-        microphoneViews.stop.setOnClickListener(view ->
-                AudioNodeService.stopMicrophone(this));
+        microphoneViews.stop.setOnClickListener(view -> {
+            pendingStart = null;
+            pendingAudioOwner = null;
+            pendingAudioPermission.cancel();
+            AudioNodeService.stopMicrophone(this);
+        });
         speakerViews.start.setOnClickListener(view -> requestStart(
                 AudioCapabilityKind.SPEAKER_SINK));
         speakerViews.stop.setOnClickListener(view -> AudioNodeService.stopSpeaker(this));
@@ -342,10 +347,11 @@ public final class MainActivity extends Activity {
         pendingStart = null;
         AudioNodeService.NodeBinder owner = pendingAudioOwner;
         pendingAudioOwner = null;
+        AndroidMicrophoneSettings.Selection selection = pendingAudioPermission.finish();
         if (requested != null && requiredPermissionsGranted(requested)
                 && (requested != AudioCapabilityKind.MICROPHONE_SOURCE
-                    || (owner != null && binder == owner && owner.canStartLegacyMicrophone(pendingMicrophoneRevision)))) {
-            startCapability(requested, pendingMicrophoneRevision);
+                    || (owner != null && binder == owner && owner.canStartLegacyMicrophone(selection)))) {
+            startCapability(requested, selection == null ? -1 : selection.revision());
             renderPermissionState(null);
         } else {
             renderPermissionState(getString(R.string.permission_denied));
@@ -465,9 +471,18 @@ public final class MainActivity extends Activity {
 
     private void requestStart(AudioCapabilityKind kind) {
         AudioNodeService.NodeBinder owner = binder;
-        long revision = owner == null ? -1 : owner.microphoneSettingsRevision();
+        AndroidMicrophoneSettings.Selection selection = owner == null ? null : owner.microphoneSelection();
+        requestStart(kind, owner, selection);
+    }
+
+    private void requestStart(AudioCapabilityKind kind, AudioNodeService.NodeBinder owner,
+            AndroidMicrophoneSettings.Selection selection) {
+        // Do not replace a pending dialog's captured selection with a later
+        // request. Its callback can consume only its original generation.
+        if (pendingAudioPermission.awaiting()) return;
+        long revision = selection == null ? -1 : selection.revision();
         if (kind == AudioCapabilityKind.MICROPHONE_SOURCE
-                && (owner == null || !owner.canStartLegacyMicrophone(revision))) return;
+                && (owner == null || owner != binder || !owner.canStartLegacyMicrophone(selection))) return;
         List<String> missing = new ArrayList<>();
         if (kind == AudioCapabilityKind.MICROPHONE_SOURCE
                 && checkSelfPermission(Manifest.permission.RECORD_AUDIO)
@@ -480,9 +495,9 @@ public final class MainActivity extends Activity {
             missing.add(Manifest.permission.POST_NOTIFICATIONS);
         }
         if (!missing.isEmpty()) {
+            if (!pendingAudioPermission.begin(selection)) return;
             pendingStart = kind;
             pendingAudioOwner = owner;
-            pendingMicrophoneRevision = revision;
             requestPermissions(missing.toArray(new String[0]), REQUEST_AUDIO_PERMISSIONS);
             return;
         }
@@ -1295,20 +1310,22 @@ public final class MainActivity extends Activity {
                 if (audioCommand == null) {
                     return false;
                 }
+                AndroidMicrophoneSettings.Selection selection = current.microphoneSelection();
                 if (audioCommand.target() == AudioCapabilityKind.MICROPHONE_SOURCE
                         && audioCommand.operation() != AndroidAudioCommand.Operation.STOP
-                        && !current.canStartLegacyMicrophone(current.microphoneSettingsRevision())) return false;
+                        && !current.canStartLegacyMicrophone(selection)) return false;
                 handler.post(() -> {
                     if (audioCommand.operation() == AndroidAudioCommand.Operation.STOP) {
                         if (audioCommand.target() == AudioCapabilityKind.MICROPHONE_SOURCE) {
                             pendingStart = null;
                             pendingAudioOwner = null;
+                            pendingAudioPermission.cancel();
                             AudioNodeService.stopMicrophone(MainActivity.this);
                         } else {
                             AudioNodeService.stopSpeaker(MainActivity.this);
                         }
                     } else {
-                        requestStart(audioCommand.target());
+                        requestStart(audioCommand.target(), current, selection);
                     }
                 });
                 return true;

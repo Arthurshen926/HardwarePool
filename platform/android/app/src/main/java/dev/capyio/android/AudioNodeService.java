@@ -1176,10 +1176,19 @@ public final class AudioNodeService extends Service {
         public long microphoneSettingsRevision() {
             synchronized (AudioNodeService.this) { return microphoneSettings.revision(); }
         }
+        public AndroidMicrophoneSettings.Selection microphoneSelection() {
+            synchronized (AudioNodeService.this) { return microphoneSettings.selection(); }
+        }
         public boolean canStartLegacyMicrophone(long expectedRevision) {
             synchronized (AudioNodeService.this) {
-                return !microphoneSettings.secure() && !AndroidSecureMicrophoneCapture.hasUnreleasedCapture()
-                        && expectedRevision == microphoneSettings.revision();
+                return microphoneSettings.isCurrent(AndroidMicrophoneSettings.Profile.LEGACY, expectedRevision)
+                        && !AndroidSecureMicrophoneCapture.hasUnreleasedCapture();
+            }
+        }
+        public boolean canStartLegacyMicrophone(AndroidMicrophoneSettings.Selection expected) {
+            synchronized (AudioNodeService.this) {
+                return microphoneSettings.canStartLegacy(expected)
+                        && !AndroidSecureMicrophoneCapture.hasUnreleasedCapture();
             }
         }
 
