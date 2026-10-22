@@ -4,6 +4,7 @@
 //! Credential enrollment and persistence are deliberately caller-owned.
 
 pub mod audio;
+pub mod audio_stereo;
 pub mod camera;
 pub mod display;
 pub mod haptics;

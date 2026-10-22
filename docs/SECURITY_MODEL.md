@@ -1737,3 +1737,11 @@ authority. Profile changes retire the prior pending/active generation before
 catalog publication. Permission-return callbacks and actual recorder callbacks
 cannot revive the previous profile; cleanup quarantine and the original finite
 consent/lease cap remain mandatory. A mismatch never falls back to UDP.
+
+ADR 1565's reverse secure stereo APIs require fresh local consent, authenticated
+Start and exact original claims at both Ports before media setup. Current peer
+identity is bound independently of control client/server role; mono, stereo and
+legacy transports cannot substitute for each other. Fragment validation is
+atomic, queues are bounded, and no reconnect or renewal follows failure. Android
+JNI/AudioTrack advertisement and production launcher integration remain separate
+acceptance boundaries; sink acceptance is not proof of physical audibility.

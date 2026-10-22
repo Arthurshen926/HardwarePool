@@ -254,3 +254,101 @@ fn finite_profiles_are_exact_distinct_and_never_legacy_udp() {
         );
     }
 }
+
+#[test]
+fn secure_stereo_is_explicit_and_never_a_mono_profile_or_transport() {
+    let (mut route, mono) = fixture();
+    let stereo = SecureAudioDataOffer {
+        transport: SecureAudioTransport::Tls13MtlsStereoV1,
+        ..mono
+    };
+    // The old wire value keeps both old mono interpretations and no others.
+    for name in [SECURE_AUDIO_MONO_FORMAT, SECURE_AUDIO_MONO_300S_FORMAT] {
+        route.selected_format = Some(FormatDescriptor::new(name));
+        route.compatible_formats = vec![route.selected_format.clone().unwrap()];
+        assert!(mono.validate(&route).is_ok());
+        assert!(stereo.validate(&route).is_err());
+    }
+    route.selected_format = Some(FormatDescriptor::new(SECURE_AUDIO_STEREO_FORMAT));
+    route.compatible_formats = vec![route.selected_format.clone().unwrap()];
+    assert_eq!(
+        SecureAudioSessionProfile::from_descriptor(route.selected_format.as_ref().unwrap()),
+        None
+    );
+    assert!(mono.validate(&route).is_err());
+    assert!(stereo.validate(&route).is_ok());
+    let bytes =
+        encode_route_status_with_secure_audio_data(route.session_id, &route, stereo).unwrap();
+    let decoded = decode_route_status(&bytes).unwrap();
+    assert_eq!(decoded.secure_audio_data, Some(stereo));
+    assert_eq!(decoded.route.selected_format, route.selected_format);
+    let mut wire = decode_envelope(&bytes).unwrap();
+    let Some(v1::envelope::Payload::RouteStatus(status)) = wire.payload.as_mut() else {
+        panic!()
+    };
+    assert_eq!(status.secure_audio_data.as_ref().unwrap().transport, 2);
+    status.secure_audio_data.as_mut().unwrap().transport = 1;
+    assert!(decode_route_status(&wire.encode_to_vec()).is_err());
+    // No implicit downgrade to a trusted-LAN stereo endpoint.
+    let udp = NativeAudioDataOffer {
+        port: stereo.port,
+        stream_id: stereo.stream_id,
+        endpoint: NativeAudioEndpoint::Sink,
+        preset: NativeAudioPreset::PcmS16le48000Stereo,
+    };
+    assert!(encode_route_status_with_native_audio_data(route.session_id, &route, udp).is_err());
+    assert_eq!(
+        v1::SecureAudioDataOffer {
+            port: 1,
+            stream_id: "x".into(),
+            transport: 2,
+        }
+        .encode_to_vec(),
+        [8, 1, 18, 1, b'x', 24, 2]
+    );
+}
+
+#[test]
+fn secure_stereo_closed_descriptor_qos_and_offer_validation() {
+    let (mut route, mut offer) = fixture();
+    route.selected_format = Some(FormatDescriptor::new(SECURE_AUDIO_STEREO_FORMAT));
+    route.compatible_formats = vec![route.selected_format.clone().unwrap()];
+    offer.transport = SecureAudioTransport::Tls13MtlsStereoV1;
+    for case in 0..11 {
+        let mut bad = route.clone();
+        match case {
+            0 => {
+                bad.selected_format
+                    .as_mut()
+                    .unwrap()
+                    .parameters
+                    .insert("channels".into(), "2".into());
+            }
+            1 => bad.selected_format = Some(FormatDescriptor::new("pcm-s16le-48000-stereo")),
+            2 => {
+                bad.selected_format = Some(FormatDescriptor::new(
+                    "pcm-s16le-48000-stereo-tls13-300s-v1",
+                ))
+            }
+            3 => bad.selected_format = None,
+            4 => bad.selected_qos_mode = Some(QosMode::Basic),
+            5 => bad.selected_qos_mode = None,
+            6 => bad.epoch = 0,
+            7 => bad.epoch = i32::MAX as u64 + 1,
+            8 => bad.state = RouteState::Prepared,
+            9 => bad.authorization = AuthorizationState::Pending,
+            _ => bad.source.node_id = bad.sink.node_id,
+        }
+        assert!(offer.validate(&bad).is_err(), "case {case}");
+    }
+    let bytes =
+        encode_route_status_with_secure_audio_data(route.session_id, &route, offer).unwrap();
+    for bad_transport in [0, 1, 3, -1, i32::MAX] {
+        let mut wire = decode_envelope(&bytes).unwrap();
+        let Some(v1::envelope::Payload::RouteStatus(status)) = wire.payload.as_mut() else {
+            panic!()
+        };
+        status.secure_audio_data.as_mut().unwrap().transport = bad_transport;
+        assert!(decode_route_status(&wire.encode_to_vec()).is_err());
+    }
+}

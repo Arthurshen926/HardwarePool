@@ -1551,3 +1551,10 @@ blanket live-capture rejection with exact profile/settings/generation admission.
 Tests must retain rejection of unknown, mismatched or mutated profiles and the
 old 60-second maximum. Java fake recorder and permission tests are not physical
 phone evidence; SDK/ARM64/JNI and production AudioJob/TLS execution remain required.
+
+[ADR 1565](adr/1565-finite-reverse-secure-stereo-apis.md) requires pure atomic
+stereo-fragment/rate tests and mandatory actual TLS lifetime/identity/authority
+cases, with old mono/UDP tests retained. Independent PipeWire-generated stereo
+waveform analysis must distinguish left/right order and silence through the real
+Source and Rust Sink APIs, plus exact owned cleanup. These are reusable-API
+fixtures, not production Node/console or Android AudioTrack/device acceptance.

@@ -607,3 +607,11 @@ ADR 1564 enables the separately selected Android live capture for the existing
 Route and prepared sender must agree on the exact descriptor, and Java/JNI capture
 must agree with the current local profile and generation. The existing secure
 60-second descriptor and legacy default retain their original interpretation.
+
+### Finite reverse stereo secure API profile
+
+[ADR 1565](adr/1565-finite-reverse-secure-stereo-apis.md) adds an explicit stereo
+TLS transport discriminator and descriptor without changing mono or UDP framing.
+One dedicated TLS record atomically contains two canonical CPYA fragments
+(1200 + 928 encoded bytes) for one 1920-byte stereo block. It is a 60-second
+reusable API contract, not a newly advertised Android speaker or launcher mode.

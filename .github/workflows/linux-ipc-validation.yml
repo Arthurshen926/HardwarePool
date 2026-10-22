@@ -128,6 +128,81 @@ jobs:
         run: |
           set -euo pipefail
           cat > "$RUNNER_TEMP/required-ipc-tests.txt" <<'TESTS'
+          audio_stereo::tests::every_binding_field_is_exact_and_ack_is_directional
+          audio_stereo::tests::malformed_lengths_and_partial_records_are_rejected
+          audio_stereo::tests::protocol_requires_exact_alpn_and_tls13
+          audio_stereo::tests::oversized_prefix_is_rejected_without_reading_payload
+          audio_stereo::tests::grant_deadline_is_finite_and_excludes_expired_grants
+          audio_stereo::hosted_contract_tests::pure_stereo_framing_alpn_magic_and_mono_contract_are_distinct
+          audio_stereo::hosted_contract_tests::ipc_stereo_actual_tls_preserves_channels_then_replay_is_terminal
+          audio_stereo::hosted_contract_tests::ipc_stereo_and_mono_alpn_cannot_cross_even_with_same_identity_and_binding
+          audio_stereo::hosted_contract_tests::ipc_stereo_invalid_record_length_and_partial_pair_close_without_payload_admission
+          audio_stereo::hosted_writer_tests::ipc_stereo_audio_blocked_writer_preserves_absolute_deadline_and_is_terminal
+          audio_stereo::hosted_writer_tests::ipc_stereo_audio_registered_stop_interrupts_actual_pending_tls_handshake
+          audio_stereo::hosted_writer_tests::ipc_stereo_audio_stop_at_registration_sends_no_tls_or_binding_bytes
+          audio_stereo::hosted_writer_tests::ipc_stereo_audio_stop_interrupts_verified_saturated_tls_writer
+          audio_stereo::tests::accepted_binding_closes_listener_and_partial_record_expires_at_grant
+          audio_stereo::tests::certificate_pins_are_checked_on_both_data_endpoints
+          audio_stereo::tests::control_and_route_alpn_cannot_be_confused
+          audio_stereo::tests::dedicated_tls_roundtrip_and_stop_interrupts_blocked_read
+          audio_stereo::tests::expired_channel_fails_closed_without_more_payload
+          audio_stereo::tests::ipc_accept_operation_deadline_bounds_partial_handshake
+          audio_stereo::tests::ipc_operation_deadline_does_not_shorten_media_lifetime
+          audio_stereo::tests::ipc_record_operation_deadline_is_absolute_and_terminal
+          audio_stereo::tests::listener_cancellation_precedes_and_interrupts_handshake
+          audio_stereo::tests::local_deadline_caps_handshake_without_changing_wire_grant
+          audio_stereo::tests::local_record_deadline_can_only_shorten
+          audio_stereo::tests::plaintext_peer_is_rejected
+          audio_stereo::tests::slow_partial_handshake_cannot_outlive_grant
+          audio_stereo::tests::valid_certificate_cannot_substitute_a_different_route_or_epoch
+          ipc_secure_stereo_receipt_is_separate_one_shot_and_cannot_be_taken_by_mono
+          ipc_secure_stereo_changed_receipt_is_consumed_without_mono_fallback
+          ipc_bounded_lease_reply_excludes_expired_dispatch_and_preserves_correlation
+          secure_stereo::tests::secure_stereo_roundtrip_preserves_exact_contiguous_packets
+          secure_stereo::tests::secure_stereo_rejects_every_noncanonical_header_before_payload_admission
+          secure_stereo::tests::secure_stereo_rejects_replay_gap_discontinuity_and_changed_timestamp
+          secure_stereo::tests::secure_stereo_sender_is_terminal_on_the_same_invalid_input
+          secure_stereo::tests::secure_stereo_binding_and_all_timeline_overflows_fail_closed
+          secure_stereo::tests::secure_stereo_rate_bounds_burst_and_capped_accrual
+          secure_stereo::tests::secure_stereo_rate_uses_exact_10ms_cadence_and_total_ceiling
+          secure_stereo::tests::secure_stereo_rate_lifetime_regression_and_overflow_are_terminal
+          secure_stereo::tests::secure_stereo_pair_is_atomic_and_keeps_datagram_and_mono_bounds
+          secure_stereo_is_explicit_and_never_a_mono_profile_or_transport
+          secure_stereo_closed_descriptor_qos_and_offer_validation
+          secure_stereo_receiver::tests::pure::original_route_session_profile_qos_and_both_control_roles_are_exact
+          secure_stereo_receiver::tests::pure::original_sink_claim_cannot_be_replaced_released_or_extended
+          secure_stereo_receiver::tests::pure::source_response_matches_one_exact_request_claim_and_finite_expiry
+          secure_stereo_receiver::tests::pure::exact_capability_adapter_and_catalog_are_pinned
+          secure_stereo_receiver::tests::pure::consent_time_is_not_refreshed_by_negotiation_or_long_duration
+          secure_stereo_receiver::tests::pure::every_partial_write_is_frame_aligned_and_retains_absolute_budget
+          secure_stereo_receiver::tests::pure::zero_backpressure_and_interrupted_writes_have_bounded_attempts
+          secure_stereo_receiver::tests::pure::slow_or_failed_completion_cannot_be_counted_as_accepted
+          secure_stereo_receiver::tests::pure::stop_handle_is_terminal_before_transport_registration
+          secure_stereo_receiver::tests::hosted::actual_tls_crossed_claim_orders_and_both_control_roles_preserve_stereo
+          secure_stereo_receiver::tests::hosted::partial_write_rechecks_lease_before_every_continuation
+          secure_stereo_receiver::tests::hosted::stop_during_write_is_rechecked_before_success_and_next_record
+          secure_stereo_receiver::tests::hosted::duplicate_start_and_acquire_are_terminal_without_renewal
+          secure_stereo_receiver::tests::hosted::missing_start_no_listener_and_stop_releases_partial_claim
+          secure_stereo_receiver::tests::hosted::malformed_second_fragment_and_replay_are_terminal
+          secure_stereo_receiver::tests::hosted::stop_interrupts_accept_and_pending_read_without_reconnect
+          secure_stereo_receiver::tests::hosted::control_eof_and_zero_sink_backpressure_are_terminal
+          secure_stereo_receiver::tests::hosted::authenticated_start_cannot_publish_before_both_original_claims
+          secure_stereo_receiver::tests::hosted::authenticated_response_replay_is_rejected_without_replacing_claim
+          secure_stereo_receiver::tests::hosted::stop_interrupts_partial_tls_handshake
+          secure_stereo_receiver::tests::hosted::queued_record_never_refreshes_its_original_permit_deadline
+          secure_audio_negotiation::tests::stereo_reusable_api_is_not_an_android_live_or_legacy_handoff
+          secure_capture::tests::pure_stereo_source_consent_requires_explicit_target_and_60s_profile
+          secure_capture::tests::pure_stereo_source_freezes_route_profile_generation_qos_and_control_roles
+          secure_capture::tests::pure_stereo_source_owned_start_is_the_only_admitted_route_transition
+          secure_capture::tests::pure_stereo_source_claim_cannot_be_acquired_twice_renewed_released_or_replaced
+          secure_capture::tests::pure_stereo_sink_claim_rejects_wrong_request_fields_renewal_and_expiry
+          secure_capture::tests::pure_stereo_source_catalog_pins_metadata_and_adapter
+          secure_capture::tests::pure_stereo_source_lease_headroom_never_renews_original_clock
+          secure_capture::tests::pure_stereo_source_stop_before_registration_is_latched
+          secure_stereo_receiver::tests::pure::pcm_enable_requires_bound_unused_gate_and_original_unexpired_cap
+          secure_stereo_receiver::tests::hosted::delayed_first_enable_does_not_refresh_original_authority
+          secure_stereo_receiver::tests::hosted::enable_is_one_shot_rejects_before_bound_and_after_original_expiry
+          secure_stereo_receiver::tests::hosted::no_enable_keeps_control_stop_and_original_finite_expiry_supervised
           secure_audio_has_distinct_tag_exact_format_and_actual_port
           secure_audio_rejects_unknown_transport_port_stream_and_every_mixed_offer
           secure_audio_rejects_nonexact_format_qos_state_and_grant
@@ -189,6 +264,7 @@ jobs:
           secure::tests::secure_audio_target_is_explicit_finite_and_never_default
           secure::tests::secure_audio_terminal_observation_is_not_replaced_after_cleanup
           secure::tests::secure_audio_failed_terminal_clock_cannot_gain_postcleanup_timestamp
+          pure_secure_stereo_terminal_deadline_has_no_early_tolerance
           pure_secure_audio_expiry_requires_exact_negotiated_deadline
           pure_secure_audio_control_endpoint_requires_actual_bound_port
           payload::tests::parser_consumes_exact_fixture_and_validates_receipt
@@ -783,6 +859,31 @@ jobs:
             count=$((count + 1))
           done
           test "$count" -eq 9
+      - name: Require reverse pinned TLS stereo APIs and independent PipeWire capture
+        run: |
+          set -euo pipefail
+          python3 -m unittest discover -s scripts -p test_pipewire_secure_stereo.py -v
+          cargo test --locked -p capyio-node --test linux_secure_stereo --no-run --message-format=json \
+            > "$RUNNER_TEMP/secure-stereo-build.jsonl"
+          fixture="$(python3 - "$RUNNER_TEMP/secure-stereo-build.jsonl" <<'PYFIXTURE'
+          import json, sys
+          items = [json.loads(line) for line in open(sys.argv[1])]
+          matches = [item['executable'] for item in items if item.get('reason') == 'compiler-artifact' and item.get('target', {}).get('name') == 'linux_secure_stereo' and item.get('executable')]
+          assert len(matches) == 1
+          print(matches[0])
+          PYFIXTURE
+          )"
+          "$fixture" --list | tee "$RUNNER_TEMP/secure-stereo-tests.txt"
+          grep -Fx 'hosted_secure_stereo_linux_capture_android_sink: test' "$RUNNER_TEMP/secure-stereo-tests.txt"
+          count=0
+          for scenario in waveform stop source_revoke sink_revoke control_eof media_eof expiry backpressure partial_write; do
+            timeout --signal=TERM --kill-after=15s 75s python3 scripts/run_pipewire_secure_stereo.py \
+              --hosted-pipewire-secure-stereo --fixture "$fixture" --scenario "$scenario" \
+              2>&1 | tee "$RUNNER_TEMP/secure-stereo-$scenario.txt"
+            grep -Fx "capyio_pipewire_secure_stereo=passed scenario=$scenario pinned_tls=true independent_consent=true exact_claims=true stereo=true actual_rust_apis=true simulated_sink=true cleanup=true" "$RUNNER_TEMP/secure-stereo-$scenario.txt"
+            count=$((count + 1))
+          done
+          test "$count" -eq 9
       - name: Require actual secure playback terminal Node and private PipeWire proof
         run: |
           set -euo pipefail
@@ -834,6 +935,13 @@ jobs:
         with:
           name: finite-secure-audio-evidence
           path: ${{ runner.temp }}/secure-audio-*.txt
+          if-no-files-found: ignore
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: finite-secure-stereo-api-evidence
+          path: ${{ runner.temp }}/secure-stereo-*.txt
           if-no-files-found: ignore
 
   linux-native-camera:

@@ -7,8 +7,8 @@ mod camera_offer;
 mod secure_audio_offer;
 pub use codec::encode_route_status_with_secure_audio_data;
 pub use secure_audio_offer::{
-    SECURE_AUDIO_MONO_300S_FORMAT, SECURE_AUDIO_MONO_FORMAT, SecureAudioDataOffer,
-    SecureAudioSessionProfile, SecureAudioTransport,
+    SECURE_AUDIO_MONO_300S_FORMAT, SECURE_AUDIO_MONO_FORMAT, SECURE_AUDIO_STEREO_FORMAT,
+    SecureAudioDataOffer, SecureAudioSessionProfile, SecureAudioTransport,
 };
 mod display_settings;
 pub use camera_offer::{CameraDataOffer, SecureCameraDataOffer, SecureCameraTransport};

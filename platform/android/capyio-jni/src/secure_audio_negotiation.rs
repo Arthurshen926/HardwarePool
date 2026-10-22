@@ -2,8 +2,8 @@
 use crate::AndroidCatalogRuntimeV1;
 use capyio_core::*;
 use capyio_protocol::{
-    SECURE_AUDIO_MONO_300S_FORMAT, SECURE_AUDIO_MONO_FORMAT, SecureAudioSessionProfile,
-    ValidatedRouteStatus,
+    SECURE_AUDIO_MONO_300S_FORMAT, SECURE_AUDIO_MONO_FORMAT, SECURE_AUDIO_STEREO_FORMAT,
+    SecureAudioSessionProfile, ValidatedRouteStatus,
 };
 
 #[cfg(any(target_os = "android", test))]
@@ -26,7 +26,7 @@ pub(crate) fn proposed(route: &Route) -> bool {
     let secure = |format: &FormatDescriptor| {
         matches!(
             format.id.as_str(),
-            SECURE_AUDIO_MONO_FORMAT | SECURE_AUDIO_MONO_300S_FORMAT
+            SECURE_AUDIO_MONO_FORMAT | SECURE_AUDIO_MONO_300S_FORMAT | SECURE_AUDIO_STEREO_FORMAT
         )
     };
     route.selected_format.as_ref().is_some_and(secure)
@@ -205,6 +205,23 @@ mod tests {
             haptics_data: None,
         }
     }
+    #[test]
+    fn stereo_reusable_api_is_not_an_android_live_or_legacy_handoff() {
+        let (host, id) = fixture();
+        let mut route = host.runtime.route(id).unwrap().clone();
+        route.compatible_formats = vec![FormatDescriptor::new(SECURE_AUDIO_STEREO_FORMAT)];
+        route.selected_format = route.compatible_formats.first().cloned();
+        assert!(
+            proposed(&route),
+            "secure stereo must not fall through to legacy UDP"
+        );
+        assert!(!selected(&route), "mono live profile must not widen");
+        assert!(live_profile(&route).is_err());
+        assert!(require_live_profile(&route).is_err());
+        assert!(config(&route).is_err());
+        assert_eq!(direction(&route, "speaker"), "speaker");
+    }
+
     #[test]
     fn shared_rust_negotiation_accepts_only_advertised_long_profile_and_pins_selection() {
         let json = include_str!("../../fixtures/android-core-catalog-v1.json")

@@ -17,6 +17,8 @@ thiserror.workspace = true
 uuid.workspace = true
 
 [dev-dependencies]
+capyio-audio = { path = "../capyio-audio" }
+capyio-native-audio-lan = { path = "../../adapters/native-audio-lan" }
 capyio-control-host = { path = "../capyio-control-host" }
 capyio-runtime = { path = "../capyio-runtime" }
 capyio-testkit = { path = "../capyio-testkit" }

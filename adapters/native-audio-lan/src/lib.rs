@@ -14,10 +14,16 @@ mod microphone_launch;
 mod reassembly;
 mod route_binding;
 mod secure_mono;
+mod secure_stereo;
 mod supervisor;
 pub use secure_mono::{
     SECURE_MONO_PCM_PAYLOAD_BYTES, SECURE_MONO_PCM_RECORD_BYTES, SECURE_MONO_PCM_SAMPLES,
     SecureMonoPcmAdmission, SecureMonoPcmRateBudget,
+};
+
+pub use secure_stereo::{
+    SECURE_STEREO_PCM_PAYLOAD_BYTES, SECURE_STEREO_PCM_RECORD_BYTES, SECURE_STEREO_PCM_SAMPLES,
+    SecureStereoPcmAdmission, SecureStereoPcmRateBudget,
 };
 
 use capyio_audio::{

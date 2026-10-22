@@ -456,9 +456,11 @@ dependencies = [
 name = "capyio-control-tls"
 version = "0.1.0"
 dependencies = [
+ "capyio-audio",
  "capyio-control-credentials",
  "capyio-control-host",
  "capyio-core",
+ "capyio-native-audio-lan",
  "capyio-pairing",
  "capyio-protocol",
  "capyio-runtime",

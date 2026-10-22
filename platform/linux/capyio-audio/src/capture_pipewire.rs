@@ -21,6 +21,11 @@ pub struct PipeWireCapture {
 }
 
 impl PipeWireCapture {
+    /// The exact owned helper, for lifecycle diagnostics only.
+    pub fn pid(&self) -> u32 {
+        self.child.id()
+    }
+
     pub fn open(target: &str) -> io::Result<Self> {
         Self::open_checked(&CaptureEndpoint::SelectedSource(target.into()), &mut || {
             Ok(())

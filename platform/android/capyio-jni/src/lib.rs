@@ -52,6 +52,7 @@ pub mod camera_sender;
 mod control_exchange;
 mod display_catalog;
 mod secure_audio_negotiation;
+pub mod secure_stereo_receiver;
 mod touchpad_consent;
 pub use control_exchange::{
     authenticate_android_control_dial, exchange_accepted_android_catalog,

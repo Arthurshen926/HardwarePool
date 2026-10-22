@@ -1822,3 +1822,12 @@ not. The separate [ADR 1564](adr/1564-android-five-minute-secure-microphone.md)
 adds explicit Android selection and live-capture binding for that same descriptor.
 Legacy remains the factory default, and the original secure choice still caps at
 60 seconds. No global lease-cap change, automatic renewal or phone claim follows.
+
+### Reverse secure stereo API boundary
+
+ADR 1565 introduces separate finite stereo transport/admission and reusable Linux
+capture Source/Android Rust Sink owners. The existing legacy playback adapters
+and mono secure profiles remain separate. Android Java/JNI speaker publication
+and Node/console stereo secure launch modes are not enabled by this API slice;
+future integration must retain bounded PCM ownership and exact current-session
+consent, profile, generation and both original leases.

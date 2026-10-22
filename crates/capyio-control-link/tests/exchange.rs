@@ -1298,3 +1298,235 @@ fn ipc_secure_audio_received_source_owned_offer_closes_control_link() {
             .is_err()
     );
 }
+
+#[test]
+fn ipc_secure_stereo_receipt_is_separate_one_shot_and_cannot_be_taken_by_mono() {
+    use capyio_protocol::{SECURE_AUDIO_STEREO_FORMAT, SecureAudioTransport};
+    let (mut sink, mut source, _, _) = connected_pair();
+    let (mut route, mut offer) = secure_audio_fixture(&sink, &source);
+    route.selected_format = Some(capyio_core::FormatDescriptor::new(
+        SECURE_AUDIO_STEREO_FORMAT,
+    ));
+    route.compatible_formats = vec![route.selected_format.clone().unwrap()];
+    offer.transport = SecureAudioTransport::Tls13MtlsStereoV1;
+    let deadline = || std::time::Instant::now() + Duration::from_secs(2);
+    assert!(
+        sink.send_secure_audio_data_offer_until(&route, offer, 1, deadline())
+            .is_err()
+    );
+    assert!(
+        source
+            .send_secure_stereo_audio_data_offer_until(&route, offer, 1, deadline())
+            .is_err()
+    );
+    sink.send_secure_stereo_audio_data_offer_until(&route, offer, 1, deadline())
+        .unwrap();
+    let ReceivedControlMessage::RouteStatus(status) =
+        source.receive_control_message_until(deadline()).unwrap()
+    else {
+        panic!()
+    };
+    assert_eq!(status.secure_audio_data, Some(offer));
+    assert!(
+        source
+            .take_received_secure_audio_offer(&route, offer)
+            .is_err()
+    );
+    // Neither the received stereo token nor a caller-relabelled mono token can
+    // make the mono API consume a valid stereo receipt.
+    let mut relabelled = offer;
+    relabelled.transport = SecureAudioTransport::Tls13MtlsV1;
+    let mut mono_route = route.clone();
+    mono_route.selected_format = Some(capyio_core::FormatDescriptor::new(
+        capyio_protocol::SECURE_AUDIO_MONO_FORMAT,
+    ));
+    mono_route.compatible_formats = vec![mono_route.selected_format.clone().unwrap()];
+    assert!(
+        source
+            .take_received_secure_audio_offer(&mono_route, relabelled)
+            .is_err()
+    );
+    source
+        .take_received_secure_stereo_audio_offer(&route, offer)
+        .unwrap();
+    assert!(
+        source
+            .take_received_secure_stereo_audio_offer(&route, offer)
+            .is_err()
+    );
+    sink.send_secure_stereo_audio_data_offer_until(&route, offer, 1, deadline())
+        .unwrap();
+    assert!(source.receive_control_message_until(deadline()).is_err());
+    assert!(
+        source
+            .take_received_secure_stereo_audio_offer(&route, offer)
+            .is_err()
+    );
+}
+
+#[test]
+fn ipc_secure_stereo_changed_receipt_is_consumed_without_mono_fallback() {
+    for case in 0..6 {
+        let (mut sink, mut source, _, _) = connected_pair();
+        let (mut route, mut offer) = secure_audio_fixture(&sink, &source);
+        route.selected_format = Some(capyio_core::FormatDescriptor::new(
+            capyio_protocol::SECURE_AUDIO_STEREO_FORMAT,
+        ));
+        route.compatible_formats = vec![route.selected_format.clone().unwrap()];
+        offer.transport = capyio_protocol::SecureAudioTransport::Tls13MtlsStereoV1;
+        let deadline = || std::time::Instant::now() + Duration::from_secs(2);
+        sink.send_secure_stereo_audio_data_offer_until(&route, offer, 1, deadline())
+            .unwrap();
+        source.receive_control_message_until(deadline()).unwrap();
+        let mut bad = route.clone();
+        let mut bad_offer = offer;
+        match case {
+            0 => bad.epoch += 1,
+            1 => bad.source.port_id = capyio_core::PortId::new(),
+            2 => bad.sink.port_id = capyio_core::PortId::new(),
+            3 => bad_offer.port += 1,
+            4 => bad_offer.stream_id = capyio_core::StreamId::new(),
+            _ => bad
+                .compatible_formats
+                .push(capyio_core::FormatDescriptor::new("other")),
+        }
+        assert!(
+            source
+                .take_received_secure_stereo_audio_offer(&bad, bad_offer)
+                .is_err()
+        );
+        assert!(
+            source
+                .take_received_secure_stereo_audio_offer(&route, offer)
+                .is_err()
+        );
+    }
+}
+
+#[test]
+fn ipc_bounded_lease_reply_excludes_expired_dispatch_and_preserves_correlation() {
+    let (mut windows_link, mut android_link, mut windows, mut android) = connected_pair();
+    let android_node = android.snapshot().local_node;
+    let windows_node = windows.snapshot().local_node;
+    let (source_capability, source_port) = android_node
+        .capabilities
+        .values()
+        .flat_map(|capability| {
+            capability
+                .ports
+                .values()
+                .map(move |port| (capability.id, port))
+        })
+        .find(|(_, port)| {
+            port.direction == PortDirection::Source && port.profile.name == "capyio.audio.frames"
+        })
+        .unwrap();
+    let (sink_capability, sink_port) = windows_node
+        .capabilities
+        .values()
+        .flat_map(|capability| {
+            capability
+                .ports
+                .values()
+                .map(move |port| (capability.id, port))
+        })
+        .find(|(_, port)| {
+            port.direction == PortDirection::Sink
+                && port.profile == source_port.profile
+                && port
+                    .formats
+                    .iter()
+                    .any(|format| source_port.formats.contains(format))
+        })
+        .unwrap();
+    let source = PortRef {
+        node_id: android_node.id,
+        capability_id: source_capability,
+        port_id: source_port.id,
+    };
+    let sink = PortRef {
+        node_id: windows_node.id,
+        capability_id: sink_capability,
+        port_id: sink_port.id,
+    };
+    let route_id = windows
+        .create_route(
+            windows_link.session_id(),
+            source,
+            sink,
+            RouteBackend::CapyDataPlane,
+        )
+        .unwrap();
+    windows_link
+        .send_route_status(windows.route(route_id).unwrap())
+        .unwrap();
+
+    let proposal = match android_link.receive_control_message().unwrap() {
+        ReceivedControlMessage::RouteStatus(status) => status,
+        _ => panic!("expected Route proposal"),
+    };
+    let accepted = android_link
+        .apply_route_status(&mut android, &proposal, true)
+        .unwrap();
+    android_link.send_route_status(&accepted).unwrap();
+    let accepted = match windows_link.receive_control_message().unwrap() {
+        ReceivedControlMessage::RouteStatus(status) => status,
+        _ => panic!("expected Route authorization"),
+    };
+    windows_link
+        .apply_route_status(&mut windows, &accepted, true)
+        .unwrap();
+
+    let deadline = || std::time::Instant::now() + Duration::from_secs(2);
+    assert!(android.route_port_lease_claim(route_id, source).is_none());
+    windows_link
+        .send_port_lease_request_until(
+            route_id,
+            source,
+            PortLeaseAction::Acquire,
+            MIN_PORT_LEASE_TTL_MS,
+            deadline(),
+        )
+        .unwrap();
+    let ReceivedControlMessage::PortLeaseRequest(request) = android_link
+        .receive_control_message_until(deadline())
+        .unwrap()
+    else {
+        panic!()
+    };
+    assert!(
+        android_link
+            .answer_port_lease_request_until(&mut android, request, 1000, std::time::Instant::now())
+            .is_err()
+    );
+    // Expired dispatch must not acquire a claim or issue a response. A separate
+    // request here tests the API, not an owner retry after partial mutation.
+    assert!(android.route_port_lease_claim(route_id, source).is_none());
+    let request_id = windows_link
+        .send_port_lease_request_until(
+            route_id,
+            source,
+            PortLeaseAction::Acquire,
+            MIN_PORT_LEASE_TTL_MS,
+            deadline(),
+        )
+        .unwrap();
+    let ReceivedControlMessage::PortLeaseRequest(request) = android_link
+        .receive_control_message_until(deadline())
+        .unwrap()
+    else {
+        panic!()
+    };
+    android_link
+        .answer_port_lease_request_until(&mut android, request, 1000, deadline())
+        .unwrap();
+    let ReceivedControlMessage::PortLeaseResponse(response) = windows_link
+        .receive_control_message_until(deadline())
+        .unwrap()
+    else {
+        panic!()
+    };
+    assert_eq!(response.request_message_id, request_id);
+    assert_eq!(response.outcome, PortLeaseOutcome::Acquired);
+    assert!(android.route_port_lease_claim(route_id, source).is_some());
+}

@@ -778,6 +778,33 @@ impl CatalogControlLink {
         now_ms: u64,
         deadline: Instant,
     ) -> Result<(), CatalogLinkError> {
+        if offer.transport != capyio_protocol::SecureAudioTransport::Tls13MtlsV1 {
+            return Err(CatalogLinkError::InvalidPeerRoute);
+        }
+        self.send_secure_audio_offer_until(route, offer, now_ms, deadline)
+    }
+
+    /// Stereo-only counterpart. The old mono endpoint API cannot send this offer.
+    pub fn send_secure_stereo_audio_data_offer_until(
+        &mut self,
+        route: &Route,
+        offer: capyio_protocol::SecureAudioDataOffer,
+        now_ms: u64,
+        deadline: Instant,
+    ) -> Result<(), CatalogLinkError> {
+        if offer.transport != capyio_protocol::SecureAudioTransport::Tls13MtlsStereoV1 {
+            return Err(CatalogLinkError::InvalidPeerRoute);
+        }
+        self.send_secure_audio_offer_until(route, offer, now_ms, deadline)
+    }
+
+    fn send_secure_audio_offer_until(
+        &mut self,
+        route: &Route,
+        offer: capyio_protocol::SecureAudioDataOffer,
+        now_ms: u64,
+        deadline: Instant,
+    ) -> Result<(), CatalogLinkError> {
         if route.session_id != self.binding.session_id
             || route.sink.node_id != self.local_node_id
             || route.source.node_id != self.peer_node_id
@@ -805,6 +832,42 @@ impl CatalogControlLink {
         route: &Route,
         offer: capyio_protocol::SecureAudioDataOffer,
     ) -> Result<(), CatalogLinkError> {
+        self.take_received_audio_offer_for_transport(
+            route,
+            offer,
+            capyio_protocol::SecureAudioTransport::Tls13MtlsV1,
+        )
+    }
+
+    /// Consume only the separate stereo receipt; mono callers cannot take it.
+    pub fn take_received_secure_stereo_audio_offer(
+        &mut self,
+        route: &Route,
+        offer: capyio_protocol::SecureAudioDataOffer,
+    ) -> Result<(), CatalogLinkError> {
+        self.take_received_audio_offer_for_transport(
+            route,
+            offer,
+            capyio_protocol::SecureAudioTransport::Tls13MtlsStereoV1,
+        )
+    }
+
+    fn take_received_audio_offer_for_transport(
+        &mut self,
+        route: &Route,
+        offer: capyio_protocol::SecureAudioDataOffer,
+        transport: capyio_protocol::SecureAudioTransport,
+    ) -> Result<(), CatalogLinkError> {
+        // Reject the wrong API before taking even a mismatched receipt. After
+        // this discriminator check, all same-transport attempts stay one-shot.
+        if offer.transport != transport
+            || self
+                .received_secure_audio_offer
+                .as_ref()
+                .is_some_and(|(_, original)| original.transport != transport)
+        {
+            return Err(CatalogLinkError::InvalidPeerRoute);
+        }
         let received = self.received_secure_audio_offer.take();
         if self.channel.is_none() {
             return Err(CatalogLinkError::Closed);
@@ -901,6 +964,28 @@ impl CatalogControlLink {
             .host
             .handle_port_lease_request(runtime, &received.bytes, now_ms)?;
         self.send_bytes(&response)
+    }
+
+    /// Answer one authenticated lease request under the original operation deadline.
+    /// Callers still decide whether the request action is allowed before dispatch;
+    /// this method does not broaden Acquire/Renew/Release authority.
+    pub fn answer_port_lease_request_until(
+        &mut self,
+        runtime: &mut NodeRuntime,
+        received: ReceivedPortLeaseRequest,
+        now_ms: u64,
+        deadline: Instant,
+    ) -> Result<(), CatalogLinkError> {
+        if received.instance_id != self.instance_id || received.binding != self.binding {
+            return Err(CatalogLinkError::BindingMismatch);
+        }
+        if Instant::now() >= deadline {
+            return Err(ControlTlsError::ChannelFailed.into());
+        }
+        let response = self
+            .host
+            .handle_port_lease_request(runtime, &received.bytes, now_ms)?;
+        self.send_bytes_until(&response, deadline)
     }
 
     /// Mirrors a peer Route proposal/status into this Runtime. A new proposal

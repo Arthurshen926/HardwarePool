@@ -88,11 +88,14 @@ message SecureCameraDataOffer {
   SecureCameraTransport transport = 3;
 }
 
-// Receiver-only secure mono PCM offer. No host, plaintext fallback or media bytes.
+// Receiver-only secure PCM offer. No host, plaintext fallback or media bytes.
 // Exact secure format/QoS opt-in is carried by the enclosing Route.
 enum SecureAudioTransport {
   SECURE_AUDIO_TRANSPORT_UNSPECIFIED = 0;
+  // Frozen mono framing (both explicitly selected finite mono profiles).
   SECURE_AUDIO_TRANSPORT_TLS13_MTLS_V1 = 1;
+  // Separate 60-second stereo framing and dedicated TLS ALPN/binding.
+  SECURE_AUDIO_TRANSPORT_TLS13_MTLS_STEREO_V1 = 2;
 }
 message SecureAudioDataOffer {
   uint32 port = 1;

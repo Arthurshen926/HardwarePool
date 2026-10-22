@@ -60,7 +60,9 @@ impl NativeAudioDataOffer {
         if route.selected_format.as_ref().is_some_and(|format| {
             matches!(
                 format.id.as_str(),
-                crate::SECURE_AUDIO_MONO_FORMAT | crate::SECURE_AUDIO_MONO_300S_FORMAT
+                crate::SECURE_AUDIO_MONO_FORMAT
+                    | crate::SECURE_AUDIO_MONO_300S_FORMAT
+                    | crate::SECURE_AUDIO_STEREO_FORMAT
             )
         }) || self.port == 0
             || self.stream_id.as_uuid().is_nil()

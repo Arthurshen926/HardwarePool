@@ -12,7 +12,11 @@ pub const SECURE_AUDIO_MONO_FORMAT: &str = "pcm-s16le-48000-mono-tls13-v1";
 /// Separately negotiated finite five-minute profile. It does not alter v1 limits.
 pub const SECURE_AUDIO_MONO_300S_FORMAT: &str = "pcm-s16le-48000-mono-tls13-300s-v1";
 
-/// Immutable authenticated Route selection, never inferred from lease duration.
+/// Separate finite 60-second stereo contract. Never interpreted by the mono
+/// session-profile enum; empty parameters and transport value 2 are mandatory.
+pub const SECURE_AUDIO_STEREO_FORMAT: &str = "pcm-s16le-48000-stereo-tls13-v1";
+
+/// Immutable authenticated mono Route selection, never inferred from lease duration.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum SecureAudioSessionProfile {
     Finite60sV1,
@@ -48,7 +52,10 @@ impl SecureAudioSessionProfile {
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum SecureAudioTransport {
+    /// Exact mono framing, with either explicitly selected mono session profile.
     Tls13MtlsV1,
+    /// Separate ALPN/binding and two-fragment stereo record; finite 60 seconds.
+    Tls13MtlsStereoV1,
 }
 
 /// The Sink's actual listening port. Peer IP is derived only from the
@@ -69,18 +76,24 @@ impl SecureAudioDataOffer {
             || route.source.node_id == route.sink.node_id
             || route.profile != ProfileId::audio_frames_v1()
             || route.backend != RouteBackend::AdapterManaged
-            || route
+            || !route
                 .selected_format
                 .as_ref()
-                .and_then(SecureAudioSessionProfile::from_descriptor)
-                .is_none()
+                .is_some_and(|format| match self.transport {
+                    SecureAudioTransport::Tls13MtlsV1 => {
+                        SecureAudioSessionProfile::from_descriptor(format).is_some()
+                    }
+                    SecureAudioTransport::Tls13MtlsStereoV1 => {
+                        format.id == SECURE_AUDIO_STEREO_FORMAT && format.parameters.is_empty()
+                    }
+                })
             || route.selected_qos_mode != Some(QosMode::Interactive)
             || !matches!(route.state, RouteState::Starting | RouteState::Active)
             || !matches!(route.authorization, AuthorizationState::Authorized {
                 expires_at_ms: Some(expiry) } if (1..=9_007_199_254_740_991).contains(&expiry))
         {
             return Err(ProtocolError::InvalidRouteControl(
-                "invalid secure mono audio Route, format, QoS or endpoint",
+                "invalid secure audio transport, Route, format, QoS or endpoint",
             ));
         }
         Ok(())
@@ -92,6 +105,7 @@ impl SecureAudioDataOffer {
             stream_id: self.stream_id.to_string(),
             transport: match self.transport {
                 SecureAudioTransport::Tls13MtlsV1 => 1,
+                SecureAudioTransport::Tls13MtlsStereoV1 => 2,
             },
         }
     }
@@ -102,6 +116,7 @@ impl SecureAudioDataOffer {
     ) -> Result<Self, ProtocolError> {
         let transport = match wire.transport {
             1 => SecureAudioTransport::Tls13MtlsV1,
+            2 => SecureAudioTransport::Tls13MtlsStereoV1,
             _ => {
                 return Err(ProtocolError::InvalidRouteControl(
                     "unsupported secure audio transport",

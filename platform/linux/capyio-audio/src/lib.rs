@@ -41,6 +41,14 @@ mod secure;
 #[cfg(target_os = "linux")]
 pub use secure::{SecurePlaybackAdmission, SecurePlaybackEvent, SecurePlaybackOwner};
 
+#[cfg(target_os = "linux")]
+mod secure_capture;
+#[cfg(target_os = "linux")]
+pub use secure_capture::{
+    SecureStereoSourceAdmission, SecureStereoSourceEvent, SecureStereoSourceOwner,
+    SecureStereoSourceStopHandle,
+};
+
 pub const PCM_PACKET_BYTES: usize = 960;
 pub const MAX_STALL: Duration = Duration::from_millis(250);
 
