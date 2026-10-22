@@ -2,6 +2,9 @@ use super::*;
 use capyio_control_tls::ControlTlsBinding;
 
 fn pending() -> (NodeRuntime, RouteId) {
+    pending_profile(SecureAudioSessionProfile::Finite60sV1)
+}
+fn pending_profile(profile: SecureAudioSessionProfile) -> (NodeRuntime, RouteId) {
     let mut android = capyio_testkit::android_node();
     let mut sink = capyio_testkit::windows_node();
     for node in [&mut android, &mut sink] {
@@ -24,7 +27,7 @@ fn pending() -> (NodeRuntime, RouteId) {
         .find(|c| c.class == CapabilityClass::Microphone)
         .unwrap();
     let port = cap.ports.values_mut().next().unwrap();
-    port.formats = vec![FormatDescriptor::new(SECURE_AUDIO_MONO_FORMAT)];
+    port.formats = vec![profile.descriptor()];
     port.qos_modes.insert(QosMode::Interactive);
     let source = PortRef {
         node_id: android.id,
@@ -56,21 +59,24 @@ fn pending() -> (NodeRuntime, RouteId) {
 }
 
 fn ready() -> (NodeRuntime, RouteId, PinnedSourceAuthority) {
-    let (mut runtime, id) = pending();
+    ready_profile(SecureAudioSessionProfile::Finite60sV1, 2000)
+}
+fn ready_profile(
+    profile: SecureAudioSessionProfile,
+    deadline: u64,
+) -> (NodeRuntime, RouteId, PinnedSourceAuthority) {
+    let (mut runtime, id) = pending_profile(profile);
     let mut consent = AudioSourceConsent::default();
     consent.enqueue(&mut runtime, id, 100).unwrap();
-    consent.resolve(&mut runtime, id, true, 101, 3000).unwrap();
+    consent
+        .resolve(&mut runtime, id, true, 101, deadline + 1000)
+        .unwrap();
     let source = runtime.route(id).unwrap().source;
     runtime
-        .acquire_route_port_lease(id, source, 2000, 102)
+        .acquire_route_port_lease(id, source, deadline, 102)
         .unwrap();
     runtime
-        .prepare_route(
-            id,
-            Some(FormatDescriptor::new(SECURE_AUDIO_MONO_FORMAT)),
-            QosMode::Interactive,
-            103,
-        )
+        .prepare_route(id, Some(profile.descriptor()), QosMode::Interactive, 103)
         .unwrap();
     runtime.begin_route_start(id, 104).unwrap();
     let route = runtime.route(id).unwrap();
@@ -213,7 +219,8 @@ fn stop_session_loss_and_catalog_unavailability_fail_closed() {
 #[test]
 fn original_clock_includes_handshake_and_never_ceil_extends_or_refreshes() {
     let origin = Instant::now();
-    let mut short = AuthorityClock::new(1000, 1001, origin).unwrap();
+    let mut short =
+        AuthorityClock::new(1000, 1001, origin, SecureAudioSessionProfile::Finite60sV1).unwrap();
     short
         .check(1000, origin + Duration::from_micros(999))
         .unwrap();
@@ -222,20 +229,28 @@ fn original_clock_includes_handshake_and_never_ceil_extends_or_refreshes() {
             .check(1000, origin + Duration::from_millis(1))
             .is_err()
     );
-    assert!(AuthorityClock::new(1000, 1000, origin).is_err());
     assert!(
-        AuthorityClock::new(1000, 2000, origin)
+        AuthorityClock::new(1000, 1000, origin, SecureAudioSessionProfile::Finite60sV1).is_err()
+    );
+    assert!(
+        AuthorityClock::new(1000, 2000, origin, SecureAudioSessionProfile::Finite60sV1)
             .unwrap()
             .check(999, origin)
             .is_err()
     );
     assert!(
-        AuthorityClock::new(1000, 2000, origin)
+        AuthorityClock::new(1000, 2000, origin, SecureAudioSessionProfile::Finite60sV1)
             .unwrap()
             .check(1000, origin - Duration::from_nanos(1))
             .is_err()
     );
-    let mut capped = AuthorityClock::new(1000, 500_000, origin).unwrap();
+    let mut capped = AuthorityClock::new(
+        1000,
+        500_000,
+        origin,
+        SecureAudioSessionProfile::Finite60sV1,
+    )
+    .unwrap();
     assert_eq!(capped.deadline, origin + Duration::from_secs(60));
     capped
         .check(1000, origin + Duration::from_secs(59))
@@ -245,7 +260,8 @@ fn original_clock_includes_handshake_and_never_ceil_extends_or_refreshes() {
             .check(1000, origin + Duration::from_secs(60))
             .is_err()
     );
-    let mut wall_expiry = AuthorityClock::new(1000, 2000, origin).unwrap();
+    let mut wall_expiry =
+        AuthorityClock::new(1000, 2000, origin, SecureAudioSessionProfile::Finite60sV1).unwrap();
     assert!(wall_expiry.check(2000, origin).is_err());
 }
 
@@ -319,4 +335,80 @@ fn source_settings_permission_contract_and_adapter_revision_are_pinned() {
         runtime.replace_local_catalog(node).unwrap();
         assert!(authority.check(&runtime, 106).is_err());
     }
+}
+
+#[test]
+fn long_profile_is_exact_pinned_and_does_not_renew_original_authority() {
+    let (mut runtime, id, authority) =
+        ready_profile(SecureAudioSessionProfile::Finite300sV1, 299_000);
+    assert_eq!(authority.profile, SecureAudioSessionProfile::Finite300sV1);
+    authority.check(&runtime, 61_000).unwrap();
+    authority.check(&runtime, 298_999).unwrap();
+    assert!(authority.check(&runtime, 299_000).is_err());
+    let mut changed = runtime.route(id).unwrap().clone();
+    changed.selected_format = Some(SecureAudioSessionProfile::Finite60sV1.descriptor());
+    assert!(authority.check_route(&changed, 61_000).is_err());
+    let source = runtime.route(id).unwrap().source;
+    runtime
+        .acquire_route_port_lease(id, source, 299_500, 61_000)
+        .unwrap();
+    assert!(authority.check(&runtime, 61_001).is_err());
+}
+
+#[test]
+fn explicit_long_clock_has_300s_ceiling_and_delayed_preparation_cannot_reset_it() {
+    let origin = Instant::now();
+    let profile = SecureAudioSessionProfile::Finite300sV1;
+    let mut clock = AuthorityClock::new(1000, 500_000, origin, profile).unwrap();
+    assert_eq!(clock.deadline, origin + Duration::from_secs(300));
+    assert_eq!(clock.wall_deadline, 301_000);
+    clock
+        .check(61_001, origin + Duration::from_secs(60))
+        .unwrap();
+    let mut prepared_clone = clock.clone();
+    prepared_clone
+        .check(300_999, origin + Duration::from_millis(299_999))
+        .unwrap();
+    assert!(
+        prepared_clone
+            .check(301_000, origin + Duration::from_secs(300))
+            .is_err()
+    );
+    assert_eq!(prepared_clone.deadline, clock.deadline);
+    let original_lease = AuthorityClock::new(1000, 299_000, origin, profile).unwrap();
+    assert_eq!(original_lease.wall_deadline, 299_000);
+    let mut old = AuthorityClock::new(
+        1000,
+        500_000,
+        origin,
+        SecureAudioSessionProfile::Finite60sV1,
+    )
+    .unwrap();
+    assert!(old.check(61_001, origin + Duration::from_secs(60)).is_err());
+}
+
+#[test]
+fn long_source_catalog_and_full_lease_narrowing_are_pinned() {
+    for expiry in [150_000, 299_500] {
+        let (mut runtime, id, authority) =
+            ready_profile(SecureAudioSessionProfile::Finite300sV1, 299_000);
+        let source = runtime.route(id).unwrap().source;
+        runtime
+            .acquire_route_port_lease(id, source, expiry, 61_000)
+            .unwrap();
+        assert!(authority.check(&runtime, 61_001).is_err());
+    }
+    let (mut runtime, id, authority) =
+        ready_profile(SecureAudioSessionProfile::Finite300sV1, 299_000);
+    let source = runtime.route(id).unwrap().source;
+    let mut node = runtime.snapshot().local_node;
+    node.capabilities
+        .get_mut(&source.capability_id)
+        .unwrap()
+        .ports
+        .get_mut(&source.port_id)
+        .unwrap()
+        .formats = vec![SecureAudioSessionProfile::Finite60sV1.descriptor()];
+    runtime.replace_local_catalog(node).unwrap();
+    assert!(authority.check(&runtime, 61_000).is_err());
 }

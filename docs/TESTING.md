@@ -1529,3 +1529,16 @@ profiles for secure virtual microphone, additional to the eleven selected-target
 profiles. The independent recorder links exact owned Audio/Source ports and checks
 waveform/removal, not a null-sink monitor standing in for that source. Pure guards
 reject target overrides and incorrect Sink-derived names; all old gates remain.
+
+## Explicit five-minute secure mono acceptance
+
+ADR 1563 retains every old gate and adds separate long-only hosted profiles.
+An actual PTY controller, fixed Node, private fake keyring and production Rust
+Source must deliver independently recorded late PCM after 60 seconds for physical
+playback Stop, and near the end of a 300-second virtual-microphone approval for
+exact original-lease expiry. Initial waveform or final counters cannot substitute
+for late-window signal evidence. Verify original Route/epoch/helper/leases,
+post-terminal silence and owned cleanup. Separate long-only deadlines and bounded
+recording windows do not relax prior short-test timeouts. Pure tests preserve
+old 60-second rejection, total-work/burst caps, checked arithmetic, no renewal and
+Android live-capture rejection. This is not hours or physical phone acceptance.

@@ -466,12 +466,16 @@ impl AndroidCatalogRuntimeV1 {
                 secure_source_authority(&self.runtime, route, now)
                     .ok_or("secure audio Source authority absent")?;
                 if route.state == RouteState::Draft {
+                    let [descriptor] = route.compatible_formats.as_slice() else {
+                        return Err("secure audio requires one exact selected profile".into());
+                    };
+                    capyio_protocol::SecureAudioSessionProfile::from_descriptor(descriptor)
+                        .ok_or("unsupported secure audio profile")?;
+                    let descriptor = descriptor.clone();
                     self.runtime
                         .prepare_route(
                             command.route_id,
-                            Some(FormatDescriptor::new(
-                                capyio_protocol::SECURE_AUDIO_MONO_FORMAT,
-                            )),
+                            Some(descriptor),
                             QosMode::Interactive,
                             now,
                         )

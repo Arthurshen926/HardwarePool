@@ -9,6 +9,43 @@ use crate::ProtocolError;
 /// Empty parameters are part of this closed first-version contract.
 pub const SECURE_AUDIO_MONO_FORMAT: &str = "pcm-s16le-48000-mono-tls13-v1";
 
+/// Separately negotiated finite five-minute profile. It does not alter v1 limits.
+pub const SECURE_AUDIO_MONO_300S_FORMAT: &str = "pcm-s16le-48000-mono-tls13-300s-v1";
+
+/// Immutable authenticated Route selection, never inferred from lease duration.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum SecureAudioSessionProfile {
+    Finite60sV1,
+    Finite300sV1,
+}
+impl SecureAudioSessionProfile {
+    pub const fn format_name(self) -> &'static str {
+        match self {
+            Self::Finite60sV1 => SECURE_AUDIO_MONO_FORMAT,
+            Self::Finite300sV1 => SECURE_AUDIO_MONO_300S_FORMAT,
+        }
+    }
+    pub fn descriptor(self) -> FormatDescriptor {
+        FormatDescriptor::new(self.format_name())
+    }
+    pub fn from_descriptor(format: &FormatDescriptor) -> Option<Self> {
+        if !format.parameters.is_empty() {
+            return None;
+        }
+        match format.id.as_str() {
+            SECURE_AUDIO_MONO_FORMAT => Some(Self::Finite60sV1),
+            SECURE_AUDIO_MONO_300S_FORMAT => Some(Self::Finite300sV1),
+            _ => None,
+        }
+    }
+    pub const fn max_duration(self) -> std::time::Duration {
+        std::time::Duration::from_secs(match self {
+            Self::Finite60sV1 => 60,
+            Self::Finite300sV1 => 300,
+        })
+    }
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum SecureAudioTransport {
     Tls13MtlsV1,
@@ -32,7 +69,11 @@ impl SecureAudioDataOffer {
             || route.source.node_id == route.sink.node_id
             || route.profile != ProfileId::audio_frames_v1()
             || route.backend != RouteBackend::AdapterManaged
-            || route.selected_format != Some(FormatDescriptor::new(SECURE_AUDIO_MONO_FORMAT))
+            || route
+                .selected_format
+                .as_ref()
+                .and_then(SecureAudioSessionProfile::from_descriptor)
+                .is_none()
             || route.selected_qos_mode != Some(QosMode::Interactive)
             || !matches!(route.state, RouteState::Starting | RouteState::Active)
             || !matches!(route.authorization, AuthorizationState::Authorized {

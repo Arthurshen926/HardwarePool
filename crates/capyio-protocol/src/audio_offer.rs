@@ -57,11 +57,12 @@ impl NativeAudioDataOffer {
     }
 
     pub(crate) fn validate(self, route: &Route) -> Result<(), ProtocolError> {
-        if route
-            .selected_format
-            .as_ref()
-            .is_some_and(|format| format.id == crate::SECURE_AUDIO_MONO_FORMAT)
-            || self.port == 0
+        if route.selected_format.as_ref().is_some_and(|format| {
+            matches!(
+                format.id.as_str(),
+                crate::SECURE_AUDIO_MONO_FORMAT | crate::SECURE_AUDIO_MONO_300S_FORMAT
+            )
+        }) || self.port == 0
             || self.stream_id.as_uuid().is_nil()
             || route.epoch == 0
             || route.epoch > i32::MAX as u64

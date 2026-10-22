@@ -71,6 +71,7 @@ pub extern "system" fn Java_dev_capyio_android_AndroidNativeCatalogRuntime_nativ
             } else if action=="active" || action=="failed" || action=="busy" {
                 let id:RouteId=id.parse().map_err(|_|"invalid audio Route")?;
                 let route=host.runtime.route(id).map_err(|e|e.to_string())?;
+                if action=="active" { crate::secure_audio_negotiation::require_live_profile(route)?; }
                 if action=="active" && route.state==RouteState::Starting && authority(host,route,now).is_some()
                     && (!crate::secure_audio_negotiation::proposed(route) || secure_audio::streaming_for_route(catalog_handle(handle)?,id)) {
                     host.runtime.activate_route(id).map_err(|e|e.to_string())?;host.audio_status_pending.insert(id);
@@ -85,6 +86,7 @@ pub extern "system" fn Java_dev_capyio_android_AndroidNativeCatalogRuntime_nativ
             let mut output=Vec::new();
             for route in &snapshot.routes {
                 let Some((_,legacy_direction))=local_port(host,route)else{continue};
+                crate::secure_audio_negotiation::require_live_profile(route)?;
                 let secure=crate::secure_audio_negotiation::proposed(route);
                 let direction=crate::secure_audio_negotiation::direction(route,legacy_direction);
                 let secure_job=host.secure_audio_uses.get(&route.id);

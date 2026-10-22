@@ -1813,3 +1813,10 @@ with actual write counters rather than fabricated audible/Active state.
 [ADR 1562](adr/1562-linux-secure-virtual-microphone.md) adds the owned Audio/Source
 virtual microphone, forbidding caller target overrides and binding the exact
 node name to the local network Sink. Reverse stereo remains separate work.
+
+[ADR 1563](adr/1563-explicit-five-minute-secure-mono-profile.md) adds an exact
+opt-in five-minute secure mono descriptor for the Rust Source and Linux
+playback/virtual-microphone path. Existing secure mono remains capped at 60
+seconds. Only cumulative work scales; fixed queues, framing and rate limits do
+not. Android Java live capture rejects the new descriptor until separately
+integrated. No global lease-cap change, automatic renewal or phone claim follows.

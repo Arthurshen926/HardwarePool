@@ -16,7 +16,7 @@ use capyio_core::{
 use capyio_native_audio_lan::{SecureMonoPcmAdmission, SecureMonoPcmRateBudget};
 use capyio_protocol::{
     PortLeaseAction, PortLeaseOutcome, RouteCommandAction, SecureAudioDataOffer,
-    SecureAudioTransport,
+    SecureAudioSessionProfile, SecureAudioTransport,
 };
 use capyio_runtime::{NodeRuntime, PortLeaseClaim};
 use std::{
@@ -51,7 +51,7 @@ pub struct SecurePlaybackAdmission {
     pub route_id: RouteId,
     pub stream_id: StreamId,
     pub local_address: IpAddr,
-    /// Whole seconds in 1..=60; all negotiation consumes this same budget.
+    /// Whole seconds within the explicitly selected profile; old constructors cap at 60.
     pub lifetime: Duration,
     pub pipewire_target: String,
 }
@@ -165,6 +165,7 @@ pub struct SecurePlaybackOwner {
     source_request: MessageId,
     source_request_deadline: Instant,
     source_expiry: Option<u64>,
+    source_claim: Option<capyio_protocol::ValidatedPortLeaseResponse>,
     started: Instant,
     end: Instant,
     last_wall: u64,
@@ -240,12 +241,35 @@ impl SecurePlaybackOwner {
     /// Explicit mode with the caller's original consent deadline. Neither mode
     /// selection nor a completed binding grants authority or renews any lease.
     pub fn new_until_with_mode(
+        runtime: NodeRuntime,
+        link: CatalogControlLink,
+        identity: ControlTlsServerIdentity,
+        admission: SecurePlaybackAdmission,
+        original_end: Instant,
+        endpoint_mode: EndpointMode,
+    ) -> io::Result<Self> {
+        Self::new_until_with_profile(
+            runtime,
+            link,
+            identity,
+            admission,
+            original_end,
+            endpoint_mode,
+            SecureAudioSessionProfile::Finite60sV1,
+        )
+    }
+
+    /// Explicit profile selection. Duration never implies the five-minute profile.
+    /// The original consent deadline and exact authenticated Route remain immutable.
+    #[allow(clippy::too_many_arguments)]
+    pub fn new_until_with_profile(
         mut runtime: NodeRuntime,
         mut link: CatalogControlLink,
         identity: ControlTlsServerIdentity,
         admission: SecurePlaybackAdmission,
         original_end: Instant,
         endpoint_mode: EndpointMode,
+        profile: SecureAudioSessionProfile,
     ) -> io::Result<Self> {
         let started = Instant::now();
         if original_end <= started {
@@ -253,7 +277,8 @@ impl SecurePlaybackOwner {
         }
         let now = now_ms()?;
         let original = runtime.route(admission.route_id).map_err(error)?.clone();
-        validate_mode_target(&admission, endpoint_mode, &original)?;
+        validate_mode_target_profile(&admission, endpoint_mode, &original, profile)?;
+        validate_profile_route(&original, profile)?;
         let sink_claim = *runtime
             .route_port_lease_claim(original.id, original.sink)
             .ok_or_else(|| error("secure playback requires an existing local Sink lease"))?;
@@ -278,7 +303,15 @@ impl SecurePlaybackOwner {
         let media = media_binding(&original, admission.stream_id)?;
         let admission_check = SecureMonoPcmAdmission::new(media.clone()).map_err(error)?;
         let pump = PlaybackPump::with_binding(admission.lifetime, media)?;
-        let rate = SecureMonoPcmRateBudget::new(admission.lifetime).map_err(error)?;
+        let rate = match profile {
+            SecureAudioSessionProfile::Finite60sV1 => {
+                SecureMonoPcmRateBudget::new(admission.lifetime)
+            }
+            SecureAudioSessionProfile::Finite300sV1 => {
+                SecureMonoPcmRateBudget::new_finite_300s(admission.lifetime)
+            }
+        }
+        .map_err(error)?;
         let authority_ms = expiry(&original)?.min(sink_claim.expires_at_ms);
         let end = consent_end(
             started,
@@ -312,6 +345,7 @@ impl SecurePlaybackOwner {
             source_request,
             source_request_deadline: deadline,
             source_expiry: None,
+            source_claim: None,
             started,
             end,
             last_wall: now,
@@ -395,6 +429,7 @@ impl SecurePlaybackOwner {
                 }
                 let expiry =
                     validate_source_response(&self.original, self.source_request, response, now)?;
+                self.source_claim = Some(response);
                 self.source_expiry = Some(expiry);
                 // Convert the peer's absolute expiry exactly once. Subsequent
                 // wall-clock movement cannot extend the original monotonic end.
@@ -495,7 +530,9 @@ impl SecurePlaybackOwner {
             original: &self.original,
             expected: self.admission.expected,
             sink_claim: &self.sink_claim,
-            source_expiry: self.source_expiry.unwrap_or(0),
+            source_claim: self
+                .source_claim
+                .ok_or_else(|| error("secure audio Source claim absent"))?,
             end: self.end,
             last_wall: &mut self.last_wall,
         };
@@ -515,6 +552,19 @@ impl SecurePlaybackOwner {
             return Err(error(
                 "secure audio authority or operation deadline elapsed",
             ));
+        }
+        if let Some(claim) = self.source_claim {
+            if Some(validate_source_response(
+                &self.original,
+                self.source_request,
+                claim,
+                now,
+            )?) != self.source_expiry
+            {
+                return Err(error("secure audio original Source claim changed"));
+            }
+        } else if self.source_expiry.is_some() {
+            return Err(error("secure audio original Source claim absent"));
         }
         validate_authority(
             &self.runtime,
@@ -723,14 +773,20 @@ struct GuardedSink<'a, S> {
     original: &'a Route,
     expected: ControlTlsBinding,
     sink_claim: &'a PortLeaseClaim,
-    source_expiry: u64,
+    source_claim: capyio_protocol::ValidatedPortLeaseResponse,
     end: Instant,
     last_wall: &'a mut u64,
 }
 impl<S: PcmPlaybackSink> GuardedSink<'_, S> {
     fn check(&mut self) -> io::Result<()> {
         let now = now_ms()?;
-        if now < *self.last_wall || now >= self.source_expiry || Instant::now() >= self.end {
+        let source_expiry = validate_source_response(
+            self.original,
+            self.source_claim.request_message_id,
+            self.source_claim,
+            now,
+        )?;
+        if now < *self.last_wall || now >= source_expiry || Instant::now() >= self.end {
             return Err(error("secure audio authority elapsed before PCM write"));
         }
         validate_authority(
@@ -746,7 +802,7 @@ impl<S: PcmPlaybackSink> GuardedSink<'_, S> {
         // before the nonblocking helper operation rather than using stale time.
         let fresh = now_ms()?;
         if fresh < now
-            || fresh >= self.source_expiry
+            || fresh >= source_expiry
             || fresh >= self.sink_claim.expires_at_ms
             || fresh >= expiry(self.original)?
             || Instant::now() >= self.end
@@ -775,10 +831,24 @@ fn expiry(route: &Route) -> io::Result<u64> {
         _ => Err(error("finite local secure audio consent required")),
     }
 }
+fn validate_profile_route(route: &Route, profile: SecureAudioSessionProfile) -> io::Result<()> {
+    if route.selected_format.as_ref() != Some(&profile.descriptor()) {
+        return Err(error(
+            "secure audio Route does not match explicit session profile",
+        ));
+    }
+    Ok(())
+}
 fn validate_target(admission: &SecurePlaybackAdmission) -> io::Result<()> {
+    validate_target_profile(admission, SecureAudioSessionProfile::Finite60sV1)
+}
+fn validate_target_profile(
+    admission: &SecurePlaybackAdmission,
+    profile: SecureAudioSessionProfile,
+) -> io::Result<()> {
     crate::validate_endpoint_target(EndpointMode::Playback, &admission.pipewire_target)
         .map_err(error)?;
-    if !(Duration::from_secs(1)..=Duration::from_secs(60)).contains(&admission.lifetime)
+    if !(Duration::from_secs(1)..=profile.max_duration()).contains(&admission.lifetime)
         || admission.lifetime.subsec_nanos() != 0
         || admission.local_address.is_unspecified()
         || admission.local_address.is_multicast()
@@ -791,12 +861,26 @@ fn validate_target(admission: &SecurePlaybackAdmission) -> io::Result<()> {
     Ok(())
 }
 /// Pure validation before any lease request, listener or helper can be created.
+#[cfg(test)]
 fn validate_mode_target(
     admission: &SecurePlaybackAdmission,
     mode: EndpointMode,
     original: &Route,
 ) -> io::Result<()> {
-    validate_target(admission)?;
+    validate_mode_target_profile(
+        admission,
+        mode,
+        original,
+        SecureAudioSessionProfile::Finite60sV1,
+    )
+}
+fn validate_mode_target_profile(
+    admission: &SecurePlaybackAdmission,
+    mode: EndpointMode,
+    original: &Route,
+    profile: SecureAudioSessionProfile,
+) -> io::Result<()> {
+    validate_target_profile(admission, profile)?;
     match mode {
         EndpointMode::Playback => Ok(()),
         EndpointMode::VirtualMicrophone => {
@@ -937,6 +1021,14 @@ fn validate_authority(
             || !available(port.availability)
             || port.direction != direction
             || port.profile != route.profile
+            || (route
+                .selected_format
+                .as_ref()
+                .and_then(SecureAudioSessionProfile::from_descriptor)
+                == Some(SecureAudioSessionProfile::Finite300sV1)
+                && (port.formats != [SecureAudioSessionProfile::Finite300sV1.descriptor()]
+                    || port.qos_modes
+                        != std::collections::BTreeSet::from([capyio_core::QosMode::Interactive])))
             || !route
                 .selected_format
                 .as_ref()
@@ -1000,7 +1092,28 @@ mod tests {
     };
     use capyio_runtime::PortLeasePolicy;
 
+    fn test_source_claim(
+        route: &Route,
+        expiry: u64,
+    ) -> capyio_protocol::ValidatedPortLeaseResponse {
+        capyio_protocol::ValidatedPortLeaseResponse {
+            message_id: MessageId::new(),
+            request_message_id: MessageId::new(),
+            session_id: route.session_id,
+            route_id: route.id,
+            port: route.source,
+            outcome: PortLeaseOutcome::Acquired,
+            expires_at_ms: Some(expiry),
+        }
+    }
+
     fn fixture_at(now: u64) -> (NodeRuntime, Route, ControlTlsBinding, PortLeaseClaim) {
+        fixture_profile(now, SecureAudioSessionProfile::Finite60sV1)
+    }
+    fn fixture_profile(
+        now: u64,
+        profile: SecureAudioSessionProfile,
+    ) -> (NodeRuntime, Route, ControlTlsBinding, PortLeaseClaim) {
         let lab = capyio_testkit::DemoLab::new().unwrap();
         let original = lab
             .runtime
@@ -1011,7 +1124,7 @@ mod tests {
         let mut local = snapshot.local_node;
         local.platform = Platform::Linux;
         let mut peer = snapshot.peers[0].clone();
-        let format = FormatDescriptor::new(capyio_protocol::SECURE_AUDIO_MONO_FORMAT);
+        let format = profile.descriptor();
         for node in [&mut local, &mut peer] {
             for adapter in node.adapter_instances.values_mut() {
                 adapter
@@ -1025,7 +1138,7 @@ mod tests {
                     port.interoperability_mode = InteroperabilityMode::AdapterManaged;
                     if port.profile == original.profile {
                         port.formats = vec![format.clone()];
-                        port.qos_modes.insert(QosMode::Interactive);
+                        port.qos_modes = std::collections::BTreeSet::from([QosMode::Interactive]);
                     }
                 }
             }
@@ -1198,6 +1311,107 @@ mod tests {
         });
         assert!(validate_status(&route, &status).is_err());
     }
+    #[test]
+    fn secure_audio_old_profile_retains_catalog_containment_but_not_route_mutation() {
+        let (mut runtime, route, binding, claim) = fixture();
+        let mut peer = runtime.snapshot().peers[0].clone();
+        let port = peer
+            .capabilities
+            .get_mut(&route.source.capability_id)
+            .unwrap()
+            .ports
+            .get_mut(&route.source.port_id)
+            .unwrap();
+        port.formats
+            .push(SecureAudioSessionProfile::Finite300sV1.descriptor());
+        port.qos_modes.insert(QosMode::Basic);
+        runtime.accept_peer_catalog(route.session_id, peer).unwrap();
+        validate_authority(&runtime, &route, binding, &claim, 1001, false).unwrap();
+        let mut changed = route.clone();
+        changed.selected_format = Some(SecureAudioSessionProfile::Finite300sV1.descriptor());
+        assert!(validate_authority(&runtime, &changed, binding, &claim, 1001, false).is_err());
+        assert!(validate_profile_route(&changed, SecureAudioSessionProfile::Finite60sV1).is_err());
+    }
+
+    #[test]
+    fn secure_audio_long_profile_requires_singleton_catalog() {
+        let (mut runtime, route, binding, claim) =
+            fixture_profile(1000, SecureAudioSessionProfile::Finite300sV1);
+        let mut peer = runtime.snapshot().peers[0].clone();
+        let port = peer
+            .capabilities
+            .get_mut(&route.source.capability_id)
+            .unwrap()
+            .ports
+            .get_mut(&route.source.port_id)
+            .unwrap();
+        port.formats
+            .push(SecureAudioSessionProfile::Finite60sV1.descriptor());
+        port.qos_modes.insert(QosMode::Basic);
+        runtime.accept_peer_catalog(route.session_id, peer).unwrap();
+        assert!(validate_authority(&runtime, &route, binding, &claim, 1001, false).is_err());
+    }
+
+    #[test]
+    fn secure_audio_long_catalog_and_route_are_immutable() {
+        let (mut runtime, route, binding, claim) =
+            fixture_profile(1000, SecureAudioSessionProfile::Finite300sV1);
+        validate_profile_route(&route, SecureAudioSessionProfile::Finite300sV1).unwrap();
+        validate_authority(&runtime, &route, binding, &claim, 1001, false).unwrap();
+        let mut peer = runtime.snapshot().peers[0].clone();
+        peer.capabilities
+            .get_mut(&route.source.capability_id)
+            .unwrap()
+            .ports
+            .get_mut(&route.source.port_id)
+            .unwrap()
+            .formats = vec![SecureAudioSessionProfile::Finite60sV1.descriptor()];
+        runtime.accept_peer_catalog(route.session_id, peer).unwrap();
+        assert!(validate_authority(&runtime, &route, binding, &claim, 1001, false).is_err());
+    }
+
+    #[test]
+    fn secure_audio_explicit_profile_boundaries_never_infer_from_duration() {
+        let (_, mut route, expected, _) = fixture();
+        let mut admission = SecurePlaybackAdmission {
+            expected,
+            route_id: route.id,
+            stream_id: StreamId::new(),
+            local_address: "127.0.0.1".parse().unwrap(),
+            lifetime: Duration::from_secs(60),
+            pipewire_target: "explicit.test".into(),
+        };
+        validate_target(&admission).unwrap();
+        for seconds in [61, 300] {
+            admission.lifetime = Duration::from_secs(seconds);
+            assert!(validate_target(&admission).is_err());
+            validate_target_profile(&admission, SecureAudioSessionProfile::Finite300sV1).unwrap();
+        }
+        for lifetime in [
+            Duration::ZERO,
+            Duration::from_secs(301),
+            Duration::from_millis(1500),
+            Duration::MAX,
+        ] {
+            admission.lifetime = lifetime;
+            assert!(
+                validate_target_profile(&admission, SecureAudioSessionProfile::Finite300sV1)
+                    .is_err()
+            );
+        }
+        assert!(validate_profile_route(&route, SecureAudioSessionProfile::Finite300sV1).is_err());
+        route.selected_format = Some(SecureAudioSessionProfile::Finite300sV1.descriptor());
+        validate_profile_route(&route, SecureAudioSessionProfile::Finite300sV1).unwrap();
+        assert!(validate_profile_route(&route, SecureAudioSessionProfile::Finite60sV1).is_err());
+        route
+            .selected_format
+            .as_mut()
+            .unwrap()
+            .parameters
+            .insert("duration".into(), "300".into());
+        assert!(validate_profile_route(&route, SecureAudioSessionProfile::Finite300sV1).is_err());
+    }
+
     #[test]
     fn secure_audio_target_is_explicit_finite_and_never_default() {
         let (_, route, expected, _) = fixture();
@@ -1412,7 +1626,7 @@ mod tests {
                 original: &route,
                 expected,
                 sink_claim: &claim,
-                source_expiry: now + 5000,
+                source_claim: test_source_claim(&route, now + 5000),
                 end,
                 last_wall: &mut last_wall,
             };
@@ -1429,7 +1643,7 @@ mod tests {
             original: &route,
             expected,
             sink_claim: &claim,
-            source_expiry: now + 5000,
+            source_claim: test_source_claim(&route, now + 5000),
             end,
             last_wall: &mut last_wall,
         };
@@ -1453,7 +1667,7 @@ mod tests {
             original: &route,
             expected,
             sink_claim: &claim,
-            source_expiry: now + 5000,
+            source_claim: test_source_claim(&route, now + 5000),
             end: Instant::now(),
             last_wall: &mut last_wall,
         };

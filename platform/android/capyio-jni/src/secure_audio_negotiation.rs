@@ -1,7 +1,10 @@
 //! Exact secure-mono control policy; no UDP endpoint or Java credential handoff.
 use crate::AndroidCatalogRuntimeV1;
 use capyio_core::*;
-use capyio_protocol::{SECURE_AUDIO_MONO_FORMAT, ValidatedRouteStatus};
+use capyio_protocol::{
+    SECURE_AUDIO_MONO_300S_FORMAT, SECURE_AUDIO_MONO_FORMAT, SecureAudioSessionProfile,
+    ValidatedRouteStatus,
+};
 
 #[cfg(any(target_os = "android", test))]
 #[derive(Clone, Debug)]
@@ -12,12 +15,35 @@ pub(crate) struct SecureAudioUse {
 }
 
 pub(crate) fn selected(route: &Route) -> bool {
-    route.selected_format == Some(FormatDescriptor::new(SECURE_AUDIO_MONO_FORMAT))
+    route
+        .selected_format
+        .as_ref()
+        .and_then(SecureAudioSessionProfile::from_descriptor)
+        .is_some()
 }
 pub(crate) fn proposed(route: &Route) -> bool {
-    selected(route)
-        || (route.selected_format.is_none()
-            && route.compatible_formats == [FormatDescriptor::new(SECURE_AUDIO_MONO_FORMAT)])
+    let secure = |format: &FormatDescriptor| {
+        matches!(
+            format.id.as_str(),
+            SECURE_AUDIO_MONO_FORMAT | SECURE_AUDIO_MONO_300S_FORMAT
+        )
+    };
+    route.selected_format.as_ref().is_some_and(secure)
+        || (route.selected_format.is_none() && route.compatible_formats.iter().any(secure))
+}
+
+/// Java AudioRecord has only the original finite profile. Recognize new secure
+/// IDs before any legacy dispatch, but never prepare or activate them here.
+#[cfg(any(target_os = "android", test))]
+pub(crate) fn require_live_profile(route: &Route) -> Result<(), String> {
+    if proposed(route)
+        && !(route.selected_format == Some(FormatDescriptor::new(SECURE_AUDIO_MONO_FORMAT))
+            || (route.selected_format.is_none()
+                && route.compatible_formats == [FormatDescriptor::new(SECURE_AUDIO_MONO_FORMAT)]))
+    {
+        return Err("Android live AudioRecord does not support this secure audio profile".into());
+    }
+    Ok(())
 }
 pub(crate) fn direction<'a>(route: &Route, legacy: &'a str) -> &'a str {
     if legacy == "microphone" && proposed(route) {
@@ -47,15 +73,17 @@ pub(crate) fn apply_selection(
     if !selected(peer) {
         return Ok(());
     }
+    let descriptor = peer
+        .selected_format
+        .clone()
+        .ok_or("secure audio profile absent")?;
     let local = host
         .runtime
         .route(peer.id)
         .map_err(|e| e.to_string())?
         .clone();
     if !crate::audio_negotiation::microphone_source(&host.runtime, &local)
-        || !local
-            .compatible_formats
-            .contains(&FormatDescriptor::new(SECURE_AUDIO_MONO_FORMAT))
+        || !local.compatible_formats.contains(&descriptor)
         || peer.selected_qos_mode != Some(QosMode::Interactive)
         || peer.authorization != local.authorization
         || peer.source != local.source
@@ -75,12 +103,12 @@ pub(crate) fn apply_selection(
         host.runtime
             .prepare_route(
                 local.id,
-                Some(FormatDescriptor::new(SECURE_AUDIO_MONO_FORMAT)),
+                Some(descriptor.clone()),
                 QosMode::Interactive,
                 now,
             )
             .map_err(|e| e.to_string())?;
-    } else if !selected(&local) || peer.epoch != local.epoch {
+    } else if local.selected_format != Some(descriptor) || peer.epoch != local.epoch {
         return Err("secure audio selection requires the current prepared generation".into());
     }
     Ok(())
@@ -163,6 +191,87 @@ mod tests {
             haptics_data: None,
         }
     }
+    #[test]
+    fn shared_rust_negotiation_accepts_only_advertised_long_profile_and_pins_selection() {
+        let json = include_str!("../../fixtures/android-core-catalog-v1.json")
+            .replace("pcm-s16le-48000-mono", SECURE_AUDIO_MONO_300S_FORMAT);
+        let mut host = AndroidCatalogRuntimeV1::new(&json).unwrap();
+        let local = host.snapshot().local_node;
+        let capability = local
+            .capabilities
+            .values()
+            .find(|c| c.class == CapabilityClass::Microphone)
+            .unwrap();
+        let port = capability
+            .ports
+            .values()
+            .find(|p| p.direction == PortDirection::Source)
+            .unwrap();
+        let source = PortRef {
+            node_id: local.id,
+            capability_id: capability.id,
+            port_id: port.id,
+        };
+        let mut peer = local.clone();
+        peer.id = NodeId::new();
+        let cap = peer.capabilities.get_mut(&source.capability_id).unwrap();
+        cap.class = CapabilityClass::Speaker;
+        cap.ports.get_mut(&source.port_id).unwrap().direction = PortDirection::Sink;
+        let sink = PortRef {
+            node_id: peer.id,
+            ..source
+        };
+        host.runtime.register_peer(peer.clone(), true).unwrap();
+        let session = host.runtime.open_session(peer.id).unwrap();
+        // Synthetic Rust Source opts in; the Java catalog/selector still cannot.
+        assert!(crate::audio_selection::select_secure_endpoint(&local, true).is_err());
+        let id = host
+            .runtime
+            .create_route(session, source, sink, RouteBackend::AdapterManaged)
+            .unwrap();
+        host.enqueue_touchpad_request(id, 100).unwrap();
+        host.resolve_touchpad_request(id, true, 101).unwrap();
+        host.runtime
+            .acquire_route_port_lease(id, source, 299_000, 102)
+            .unwrap();
+        let mut status = selected_status(host.runtime.route(id).unwrap());
+        assert!(apply_selection(&mut host, &status, 103).is_err());
+        status.route.selected_format = Some(SecureAudioSessionProfile::Finite300sV1.descriptor());
+        apply_selection(&mut host, &status, 103).unwrap();
+        let prepared = host.runtime.route(id).unwrap().clone();
+        assert!(selected(&prepared));
+        assert!(require_live_profile(&prepared).is_err());
+        apply_selection(&mut host, &status, 104).unwrap();
+        assert_eq!(host.runtime.route(id).unwrap(), &prepared);
+        status.route.selected_format = Some(SecureAudioSessionProfile::Finite60sV1.descriptor());
+        assert!(apply_selection(&mut host, &status, 105).is_err());
+        assert_eq!(host.runtime.route(id).unwrap(), &prepared);
+    }
+
+    #[test]
+    fn jni_live_capture_rejects_long_profile_before_preparation_without_udp_fallback() {
+        let (host, id) = fixture();
+        let mut route = host.runtime.route(id).unwrap().clone();
+        require_live_profile(&route).unwrap();
+        route.compatible_formats = vec![SecureAudioSessionProfile::Finite300sV1.descriptor()];
+        assert!(proposed(&route));
+        assert_eq!(direction(&route, "microphone"), "microphone-secure");
+        assert!(require_live_profile(&route).is_err());
+        route.selected_format = route.compatible_formats.first().cloned();
+        assert!(selected(&route));
+        assert!(require_live_profile(&route).is_err());
+        route
+            .selected_format
+            .as_mut()
+            .unwrap()
+            .parameters
+            .insert("duration".into(), "60".into());
+        assert!(proposed(&route));
+        assert!(!selected(&route));
+        assert!(require_live_profile(&route).is_err());
+        assert!(host.secure_audio_uses.is_empty());
+    }
+
     #[test]
     fn secure_dto_is_separate_and_contains_no_endpoint_or_authority() {
         let config = config();

@@ -164,9 +164,21 @@ impl SecureMonoPcmRateBudget {
     const BURST_NANOS: u64 = Self::FRAME_NANOS * 4;
 
     pub fn new(lifetime: std::time::Duration) -> Result<Self, NativeLanError> {
-        if lifetime.is_zero() || lifetime > std::time::Duration::from_secs(60) {
+        Self::with_limit(lifetime, std::time::Duration::from_secs(60))
+    }
+
+    /// Explicit opt-in; owners must bind this to the authenticated 300s profile.
+    pub fn new_finite_300s(lifetime: std::time::Duration) -> Result<Self, NativeLanError> {
+        Self::with_limit(lifetime, std::time::Duration::from_secs(300))
+    }
+
+    fn with_limit(
+        lifetime: std::time::Duration,
+        limit: std::time::Duration,
+    ) -> Result<Self, NativeLanError> {
+        if lifetime.is_zero() || lifetime > limit {
             return Err(NativeLanError::InvalidConfiguration(
-                "secure mono lifetime must be in (0,60s]",
+                "secure mono lifetime exceeds the explicitly selected finite policy",
             ));
         }
         let nanos = u64::try_from(lifetime.as_nanos())
@@ -383,6 +395,47 @@ mod tests {
         let mut first = packet(&binding, 0);
         first.source_timestamp_micros = u64::MAX - 10000;
         assert!(receiver.admit_record(&raw(&binding, &first)).is_ok());
+    }
+
+    #[test]
+    fn finite_300s_budget_is_explicit_and_preserves_burst_total_and_expiry() {
+        assert!(SecureMonoPcmRateBudget::new(Duration::from_secs(300)).is_err());
+        for invalid in [
+            Duration::ZERO,
+            Duration::MAX,
+            Duration::from_secs(300) + Duration::from_nanos(1),
+        ] {
+            assert!(SecureMonoPcmRateBudget::new_finite_300s(invalid).is_err());
+        }
+        let mut rate = SecureMonoPcmRateBudget::new_finite_300s(Duration::from_secs(300)).unwrap();
+        for n in 0..30_000 {
+            rate.admit(Duration::from_millis(n * 10)).unwrap();
+        }
+        assert_eq!(rate.admitted, 30_000);
+        assert_eq!(
+            rate.admitted
+                .checked_mul(SECURE_MONO_PCM_PAYLOAD_BYTES as u64),
+            Some(28_800_000)
+        );
+        assert_eq!(
+            rate.admitted
+                .checked_mul(SECURE_MONO_PCM_RECORD_BYTES as u64),
+            Some(31_920_000)
+        );
+        // Before time expiry, the 30,001st record independently exhausts work.
+        assert!(rate.admit(Duration::from_millis(299_999)).is_err());
+        assert!(rate.terminal());
+        assert!(rate.admit(Duration::ZERO).is_err());
+        let mut rate = SecureMonoPcmRateBudget::new_finite_300s(Duration::from_secs(300)).unwrap();
+        for _ in 0..4 {
+            rate.admit(Duration::from_secs(61)).unwrap();
+        }
+        assert!(rate.admit(Duration::from_secs(61)).is_err());
+        let mut rate = SecureMonoPcmRateBudget::new_finite_300s(Duration::from_secs(300)).unwrap();
+        assert!(rate.admit(Duration::from_secs(300)).is_err());
+        let mut rate = SecureMonoPcmRateBudget::new_finite_300s(Duration::from_secs(300)).unwrap();
+        rate.admit(Duration::from_secs(61)).unwrap();
+        assert!(rate.admit(Duration::from_secs(60)).is_err());
     }
 
     #[test]

@@ -206,3 +206,51 @@ fn secure_audio_cannot_enter_legacy_udp_or_silently_downgrade() {
         [8, 1, 18, 1, b'x', 24, 2, 32, 1, 40, 1]
     );
 }
+
+#[test]
+fn finite_profiles_are_exact_distinct_and_never_legacy_udp() {
+    use std::time::Duration;
+    for (profile, seconds) in [
+        (SecureAudioSessionProfile::Finite60sV1, 60),
+        (SecureAudioSessionProfile::Finite300sV1, 300),
+    ] {
+        assert_eq!(profile.max_duration(), Duration::from_secs(seconds));
+        assert_eq!(
+            SecureAudioSessionProfile::from_descriptor(&profile.descriptor()),
+            Some(profile)
+        );
+        let (mut route, offer) = fixture();
+        route.selected_format = Some(profile.descriptor());
+        route.compatible_formats = vec![profile.descriptor()];
+        let encoded =
+            encode_route_status_with_secure_audio_data(route.session_id, &route, offer).unwrap();
+        let decoded = decode_route_status(&encoded).unwrap();
+        assert_eq!(decoded.route.selected_format, Some(profile.descriptor()));
+        assert_eq!(decoded.secure_audio_data, Some(offer));
+        let udp = NativeAudioDataOffer {
+            port: offer.port,
+            stream_id: offer.stream_id,
+            endpoint: NativeAudioEndpoint::Sink,
+            preset: NativeAudioPreset::PcmS16le48000Mono,
+        };
+        assert!(encode_route_status_with_native_audio_data(route.session_id, &route, udp).is_err());
+        let mut malformed = profile.descriptor();
+        malformed
+            .parameters
+            .insert("duration".into(), seconds.to_string());
+        assert_eq!(SecureAudioSessionProfile::from_descriptor(&malformed), None);
+        route.selected_format = Some(malformed);
+        assert!(offer.validate(&route).is_err());
+        assert!(encode_route_status_with_native_audio_data(route.session_id, &route, udp).is_err());
+    }
+    for unknown in [
+        "pcm-s16le-48000-mono",
+        "pcm-s16le-48000-mono-tls13-301s-v1",
+        "",
+    ] {
+        assert_eq!(
+            SecureAudioSessionProfile::from_descriptor(&FormatDescriptor::new(unknown)),
+            None
+        );
+    }
+}

@@ -587,3 +587,22 @@ Synthetic acceptance exercises the actual terminal, Node and production Rust
 sender with private fake backend/graph fixtures. It does not run a physical phone,
 real user keyring or actual speaker. Android SDK/JNI compilation and fake recorder
 contracts are separate evidence, not a physical end-to-end claim.
+
+### Explicit five-minute secure mono profile
+
+ADR 1563 adds a separate selection, not a larger default. To prepare it, use
+`--media-security pinned_tls13_mono_300s_v1` and an explicit whole-second duration
+in 1–300, with the same playback or virtual-microphone target rules above. Only
+a Source advertising exactly `pcm-s16le-48000-mono-tls13-300s-v1` is eligible.
+The old secure selection still rejects durations above 60 seconds. No fallback
+or implicit profile substitution is permitted. Export remains nonsecret and
+does not authorize Start; fresh per-session and counterpart consent are required.
+
+The requested duration is an upper bound. Negotiation consumes it, and original
+grants/leases may shorten it; existing Source negotiation headroom also remains.
+Stop, revocation, EOF and exact expiry end the same generation without renewal.
+At most 30,000 records are admitted while rate and memory queues remain fixed.
+This slice supports the production Rust Source and Linux launcher, not Android
+Java AudioRecord: that live path explicitly rejects the new profile until its
+separate opt-in integration. Hosted synthetic five-minute and late-waveform
+evidence does not establish hours-long stability or physical phone compatibility.

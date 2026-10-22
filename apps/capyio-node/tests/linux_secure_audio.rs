@@ -979,3 +979,7 @@ fn drain(reader: &mut impl std::io::Read, bytes: &mut Vec<u8>) {
         assert!(bytes.len() <= 1_048_576);
     }
 }
+
+#[cfg(feature = "paired-store")]
+#[path = "support/secure_console_long.rs"]
+mod secure_console_long;

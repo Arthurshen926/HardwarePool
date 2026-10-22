@@ -24,12 +24,45 @@ pub(super) enum MediaSecurity {
     #[serde(rename = "pinned_tls13_mono_v1")]
     #[value(name = "pinned_tls13_mono_v1")]
     Secure,
+    #[serde(rename = "pinned_tls13_mono_300s_v1")]
+    #[value(name = "pinned_tls13_mono_300s_v1")]
+    Secure300,
 }
 impl MediaSecurity {
+    pub(super) fn is_secure(self) -> bool {
+        self != Self::Legacy
+    }
+
+    pub(super) fn max_duration_secs(self) -> u64 {
+        match self {
+            Self::Secure => 60,
+            Self::Legacy | Self::Secure300 => 300,
+        }
+    }
+
+    pub(super) fn secure_format(self) -> Option<&'static str> {
+        match self {
+            Self::Legacy => None,
+            Self::Secure => Some(capyio_protocol::SECURE_AUDIO_MONO_FORMAT),
+            Self::Secure300 => Some(capyio_protocol::SECURE_AUDIO_MONO_300S_FORMAT),
+        }
+    }
+
+    pub(super) fn warning(self) -> &'static str {
+        match self {
+            Self::Legacy => WARNING,
+            Self::Secure => SECURE_WARNING,
+            Self::Secure300 => {
+                "Experimental pinned TLS 1.3 mono media; explicit 300-second profile, one finite session at most 300 seconds. No automatic downgrade or renewal.\r\nAuthenticated PCM writes do not prove audibility or application consumption; the Route remains Starting.\r\nAndroid live microphone support is not available for this profile.\r\n"
+            }
+        }
+    }
+
     pub(super) fn name(self) -> &'static str {
         match self {
             Self::Legacy => SECURITY,
             Self::Secure => "pinned_tls13_mono_v1",
+            Self::Secure300 => "pinned_tls13_mono_300s_v1",
         }
     }
 }
@@ -213,11 +246,9 @@ impl Config {
     }
 
     fn format(&self) -> &'static str {
-        if self.media_security == MediaSecurity::Secure {
-            capyio_protocol::SECURE_AUDIO_MONO_FORMAT
-        } else {
-            self.direction.format()
-        }
+        self.media_security
+            .secure_format()
+            .unwrap_or_else(|| self.direction.format())
     }
 
     fn validate(&self, local: NodeId, peer: NodeId) -> io::Result<()> {
@@ -227,12 +258,12 @@ impl Config {
         if listen.port() == 0 {
             listen.set_port(1);
         }
-        let secure = self.media_security == MediaSecurity::Secure;
+        let secure = self.media_security.is_secure();
         let mut media = self.media;
         if secure {
             if !matches!(self.endpoint_mode, Mode::Playback | Mode::VirtualMicrophone)
                 || self.media.port() != 0
-                || self.duration_secs > 60
+                || self.duration_secs > self.media_security.max_duration_secs()
             {
                 return Err(invalid());
             }
@@ -270,7 +301,7 @@ impl Config {
         match self.direction {
             Direction::Playback => {
                 value["source"] = json!(self.remote);
-                if self.media_security == MediaSecurity::Secure {
+                if self.media_security.is_secure() {
                     value["media_security"] = json!(self.media_security);
                 }
                 value["endpoint_mode"] = json!(self.endpoint_mode);
@@ -562,8 +593,10 @@ impl Event {
                     "packets_sent",
                 ];
                 if value.get("media_security").is_some() {
-                    if value["media_security"] != "pinned_tls13_mono_v1"
-                        || !value["bytes_written"].is_u64()
+                    if !matches!(
+                        value["media_security"].as_str(),
+                        Some("pinned_tls13_mono_v1" | "pinned_tls13_mono_300s_v1")
+                    ) || !value["bytes_written"].is_u64()
                     {
                         return Err(invalid());
                     }
@@ -635,8 +668,16 @@ impl Session {
         if self.finished.is_some() {
             return Err(invalid());
         }
+        // Immutable per-profile cumulative work is independent of elapsed time.
+        let max_packets = config.duration_secs.checked_mul(100).ok_or_else(invalid)?;
+        let max_bytes = max_packets.checked_mul(960).ok_or_else(invalid)?;
+        if config.media_security.is_secure()
+            && !(1..=config.media_security.max_duration_secs()).contains(&config.duration_secs)
+        {
+            return Err(invalid());
+        }
         if let Event::Stopped(value) | Event::Failed(value) = event
-            && config.media_security != MediaSecurity::Secure
+            && !config.media_security.is_secure()
             && (value.terminal_observed_at_ms.is_some() || value.packets_written.is_some())
         {
             return Err(invalid());
@@ -646,12 +687,12 @@ impl Session {
             && (!self.offered
                 || packets < self.packets
                 || bytes < self.bytes
-                || packets > config.duration_secs * 100
-                || bytes > config.duration_secs * 100 * 960
+                || packets > max_packets
+                || bytes > max_bytes
                 || !packets
                     .checked_mul(960)
                     .is_some_and(|complete| bytes >= complete && bytes - complete < 960)
-                || value.packets_dropped_busy.unwrap_or(0) > config.duration_secs * 100)
+                || value.packets_dropped_busy.unwrap_or(0) > max_packets)
         {
             return Err(invalid());
         }
@@ -699,13 +740,13 @@ impl Session {
                     {
                         return Err(invalid());
                     }
-                    MediaSecurity::Secure => {
+                    MediaSecurity::Secure | MediaSecurity::Secure300 => {
                         let bytes = value.bytes_written.ok_or_else(invalid)?;
-                        if value.media_security != Some(MediaSecurity::Secure)
+                        if value.media_security != Some(config.media_security)
                             || value.state != RouteState::Starting
                             || bytes < self.bytes
-                            || value.packets_written > config.duration_secs * 100
-                            || bytes > config.duration_secs * 100 * 960
+                            || value.packets_written > max_packets
+                            || bytes > max_bytes
                             || !value
                                 .packets_written
                                 .checked_mul(960)
@@ -780,11 +821,7 @@ impl Session {
             config.format(),
             config.media_security.name()
         ));
-        result.push_str(if config.media_security == MediaSecurity::Secure {
-            SECURE_WARNING
-        } else {
-            WARNING
-        });
+        result.push_str(config.media_security.warning());
         result
     }
 }
@@ -1060,6 +1097,117 @@ mod tests {
         value
     }
 
+    fn all_secure_configs() -> Vec<Value> {
+        [MediaSecurity::Secure, MediaSecurity::Secure300]
+            .into_iter()
+            .flat_map(|security| {
+                [secure_config_json(), secure_virtual_config_json()].map(|mut value| {
+                    value["media_security"] = json!(security);
+                    value
+                })
+            })
+            .collect()
+    }
+
+    #[test]
+    fn pure_secure_300_profile_duration_boundaries_and_closed_selection() {
+        use clap::ValueEnum;
+        assert_eq!(
+            MediaSecurity::from_str("pinned_tls13_mono_300s_v1", false).unwrap(),
+            MediaSecurity::Secure300
+        );
+        assert_eq!(MediaSecurity::default(), MediaSecurity::Legacy);
+        for mut value in all_secure_configs() {
+            let security: MediaSecurity =
+                serde_json::from_value(value["media_security"].clone()).unwrap();
+            for seconds in [0, 1, 60, 61, 299, 300, 301, u64::MAX] {
+                value["duration_secs"] = json!(seconds);
+                assert_eq!(
+                    parse_config(&value).is_ok(),
+                    (1..=security.max_duration_secs()).contains(&seconds)
+                );
+            }
+            value["duration_secs"] = json!(1.5);
+            assert!(parse_config(&value).is_err());
+        }
+        let mut legacy = config_json();
+        legacy["duration_secs"] = json!(300);
+        assert_eq!(
+            parse_config(&legacy).unwrap().media_security,
+            MediaSecurity::Legacy
+        );
+        for mode in ["stereo_capture", "virtual_speaker"] {
+            let mut value = secure_config_json();
+            value["media_security"] = json!(MediaSecurity::Secure300);
+            value["endpoint_mode"] = json!(mode);
+            assert!(parse_config(&value).is_err());
+        }
+    }
+
+    #[test]
+    fn pure_secure_300_checked_counters_and_cross_profile_rejection() {
+        let mut value = secure_virtual_config_json();
+        value["media_security"] = json!(MediaSecurity::Secure300);
+        value["duration_secs"] = json!(300);
+        let mut config = parse_config(&value).unwrap();
+        assert_eq!(
+            config.format(),
+            capyio_protocol::SECURE_AUDIO_MONO_300S_FORMAT
+        );
+        assert!(
+            Session::default()
+                .summary(&config)
+                .contains("at most 300 seconds")
+        );
+        let approved = approval(&config);
+        for (field, replacement) in [
+            ("media_security", json!(MediaSecurity::Secure)),
+            ("format", json!(capyio_protocol::SECURE_AUDIO_MONO_FORMAT)),
+            ("duration_secs", json!(60)),
+        ] {
+            let mut bad = approval_json(&config);
+            bad[field] = replacement;
+            let Event::Approval(bad) = Event::parse(bad).unwrap() else {
+                panic!()
+            };
+            assert!(bad.validate(&config).is_err());
+        }
+        let status = json!({"version":1,"event":"status","route_id":approved.route_id,"state":"starting",
+            "packets_written":30000,"packets_sent":0,"bytes_written":28800000,"media_security":"pinned_tls13_mono_300s_v1"});
+        let mut session = Session {
+            approval: Some(approved),
+            approved: true,
+            offered: true,
+            ..Session::default()
+        };
+        session
+            .accept(&Event::parse(status.clone()).unwrap(), &config)
+            .unwrap();
+        for (field, replacement) in [
+            ("packets_written", json!(30001)),
+            ("bytes_written", json!(28800001)),
+            ("packets_written", json!(u64::MAX)),
+            ("bytes_written", json!(u64::MAX)),
+            ("state", json!("active")),
+            ("media_security", json!(MediaSecurity::Secure)),
+        ] {
+            let mut bad = status.clone();
+            bad[field] = replacement;
+            assert!(
+                session
+                    .accept(&Event::parse(bad).unwrap(), &config)
+                    .is_err()
+            );
+            assert_eq!((session.packets, session.bytes), (30000, 28800000));
+        }
+        config.duration_secs = u64::MAX;
+        assert!(
+            session
+                .accept(&Event::parse(status).unwrap(), &config)
+                .is_err()
+        );
+    }
+
     #[test]
     fn pure_secure_virtual_config_requires_owned_endpoint_without_target() {
         let value = secure_virtual_config_json();
@@ -1272,7 +1420,7 @@ mod tests {
 
     #[test]
     fn pure_secure_consent_requires_fresh_exact_request_route_peer() {
-        for value in [secure_config_json(), secure_virtual_config_json()] {
+        for value in all_secure_configs() {
             let config = parse_config(&value).unwrap();
             let current = approval(&config);
             let correct = current.expected();
@@ -1310,7 +1458,7 @@ mod tests {
 
     #[test]
     fn pure_secure_approval_profile_and_status_are_immutable() {
-        for value in [secure_config_json(), secure_virtual_config_json()] {
+        for value in all_secure_configs() {
             let config = parse_config(&value).unwrap();
             let original = approval_json(&config);
             for (key, replacement) in [
@@ -1336,7 +1484,7 @@ mod tests {
                 ..Session::default()
             };
             let status = json!({"version":1,"event":"status","route_id":route,"state":"starting",
-                "packets_written":3,"packets_sent":0,"bytes_written":2880,"media_security":"pinned_tls13_mono_v1"});
+                "packets_written":3,"packets_sent":0,"bytes_written":2880,"media_security":config.media_security});
             session
                 .accept(&Event::parse(status.clone()).unwrap(), &config)
                 .unwrap();

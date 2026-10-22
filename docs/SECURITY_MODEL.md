@@ -1722,3 +1722,12 @@ local Sink-derived identity. No system default or application consumption is
 claimed. Legacy UDP and reverse stereo retain their separate limits.
 No unattended service, new permission, renewable grant or physical-device claim
 is introduced. Plain PCM remains at authorized local audio boundaries.
+
+[ADR 1563](adr/1563-explicit-five-minute-secure-mono-profile.md) permits a distinct
+explicit secure mono profile with requested duration at most 300 seconds. It
+cannot be inferred from a larger grant or relabeled old profile. Exact
+authenticated catalog/Route/profile and original full lease claims remain pinned;
+every deadline intersects original local consent, grants and leases. The existing
+global 300-second lease TTL stays unchanged. No rate, burst, queue, per-operation
+stall, renewal or fallback allowance grows. Android live capture rejects this
+new profile; only the production Rust Source and Linux path are integrated here.

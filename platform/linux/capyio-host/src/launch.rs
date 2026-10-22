@@ -67,12 +67,23 @@ enum MediaSecurity {
     TrustedLabUdp,
     #[serde(rename = "pinned_tls13_mono_v1")]
     PinnedTls13MonoV1,
+    #[serde(rename = "pinned_tls13_mono_300s_v1")]
+    PinnedTls13Mono300sV1,
 }
 impl MediaSecurity {
+    fn profile(self) -> Option<capyio_protocol::SecureAudioSessionProfile> {
+        use capyio_protocol::SecureAudioSessionProfile::*;
+        match self {
+            Self::TrustedLabUdp => None,
+            Self::PinnedTls13MonoV1 => Some(Finite60sV1),
+            Self::PinnedTls13Mono300sV1 => Some(Finite300sV1),
+        }
+    }
     fn name(self) -> &'static str {
         match self {
             Self::TrustedLabUdp => "unauthenticated_udp_trusted_lab_only",
             Self::PinnedTls13MonoV1 => "pinned_tls13_mono_v1",
+            Self::PinnedTls13Mono300sV1 => "pinned_tls13_mono_300s_v1",
         }
     }
 }
@@ -191,13 +202,19 @@ impl LaunchConfig {
             listen.set_port(1);
         }
         let mut media = value.media;
-        if value.media_security == MediaSecurity::PinnedTls13MonoV1 {
+        if value.media_security.profile().is_some() {
             if !matches!(
                 value.endpoint_mode,
                 EndpointMode::Playback | EndpointMode::VirtualMicrophone
             ) || value.proposal_mode != ProposalMode::LinuxLed
                 || media.port() != 0
-                || !(1..=60).contains(&value.duration_secs)
+                || !(1..=value
+                    .media_security
+                    .profile()
+                    .ok_or_else(fail)?
+                    .max_duration()
+                    .as_secs())
+                    .contains(&value.duration_secs)
                 || (value.endpoint_mode == EndpointMode::Playback
                     && value.target.as_deref().is_none_or(|target| {
                         target.eq_ignore_ascii_case("auto")
@@ -360,6 +377,7 @@ fn launch(io: &mut LauncherIo, capture: bool, source: CredentialSource) -> io::R
                 admission,
                 end,
                 config.endpoint_mode,
+                config.media_security,
             );
         }
         PreparedPlayback::Legacy(route_id, admission) => (route_id, admission),
@@ -402,20 +420,31 @@ enum PreparedPlayback {
 }
 
 fn validate_credential_source(config: &LaunchConfig, source: &CredentialSource) -> io::Result<()> {
-    if config.media_security == MediaSecurity::PinnedTls13MonoV1
-        && matches!(source, CredentialSource::PrivatePipe)
+    if config.media_security.profile().is_some() && matches!(source, CredentialSource::PrivatePipe)
     {
         return Err(fail());
     }
     Ok(())
 }
 
+#[cfg(test)]
 fn validate_secure_source(runtime: &NodeRuntime, reference: PortRef) -> io::Result<()> {
+    validate_secure_source_profile(
+        runtime,
+        reference,
+        capyio_protocol::SecureAudioSessionProfile::Finite60sV1,
+    )
+}
+fn validate_secure_source_profile(
+    runtime: &NodeRuntime,
+    reference: PortRef,
+    profile: capyio_protocol::SecureAudioSessionProfile,
+) -> io::Result<()> {
     validate_remote_endpoint(
         runtime,
         reference,
         PortDirection::Source,
-        capyio_protocol::SECURE_AUDIO_MONO_FORMAT,
+        profile.format_name(),
     )?;
     let snapshot = runtime.snapshot();
     let node = snapshot
@@ -430,10 +459,7 @@ fn validate_secure_source(runtime: &NodeRuntime, reference: PortRef) -> io::Resu
     let port = sanitized(node.port(reference.capability_id, reference.port_id))?;
     if node.online_state != OnlineState::Online
         || capability.availability != Availability::Available
-        || port.formats
-            != [FormatDescriptor::new(
-                capyio_protocol::SECURE_AUDIO_MONO_FORMAT,
-            )]
+        || port.formats != [FormatDescriptor::new(profile.format_name())]
         || port.qos_modes != BTreeSet::from([QosMode::Interactive])
         || port.interoperability_mode != InteroperabilityMode::AdapterManaged
     {
@@ -450,13 +476,27 @@ fn secure_status(
     if route.state != RouteState::Starting || metrics.packets_sent != 0 {
         return Err(fail());
     }
+    let security = match route
+        .selected_format
+        .as_ref()
+        .and_then(capyio_protocol::SecureAudioSessionProfile::from_descriptor)
+    {
+        Some(capyio_protocol::SecureAudioSessionProfile::Finite60sV1) => {
+            MediaSecurity::PinnedTls13MonoV1
+        }
+        Some(capyio_protocol::SecureAudioSessionProfile::Finite300sV1) => {
+            MediaSecurity::PinnedTls13Mono300sV1
+        }
+        None => return Err(fail()),
+    };
     Ok(
         json!({"version":1,"event":"status","route_id":route.id,"state":route.state,
         "packets_written":metrics.packets_written,"packets_sent":0,
-        "bytes_written":metrics.bytes_written,"media_security":"pinned_tls13_mono_v1"}),
+        "bytes_written":metrics.bytes_written,"media_security":security.name()}),
     )
 }
 
+#[allow(clippy::too_many_arguments)]
 fn run_secure(
     io: &mut LauncherIo,
     runtime: NodeRuntime,
@@ -465,15 +505,17 @@ fn run_secure(
     admission: SecurePlaybackAdmission,
     end: Instant,
     endpoint_mode: EndpointMode,
+    security: MediaSecurity,
 ) -> io::Result<()> {
     let route_id = admission.route_id;
-    let mut owner = sanitized(SecurePlaybackOwner::new_until_with_mode(
+    let mut owner = sanitized(SecurePlaybackOwner::new_until_with_profile(
         runtime,
         link,
         identity,
         admission,
         end,
         endpoint_mode,
+        security.profile().ok_or_else(fail)?,
     ))?;
     let outcome = (|| -> io::Result<()> {
         io.send_json(
@@ -605,8 +647,12 @@ fn prepare(
                     RouteBackend::AdapterManaged,
                 ))?
             } else {
-                if config.media_security == MediaSecurity::PinnedTls13MonoV1 {
-                    validate_secure_source(runtime, config.source)?;
+                if config.media_security.profile().is_some() {
+                    validate_secure_source_profile(
+                        runtime,
+                        config.source,
+                        config.media_security.profile().ok_or_else(fail)?,
+                    )?;
                     sanitized(runtime.create_route(
                         link.session_id(),
                         config.source,
@@ -631,8 +677,8 @@ fn prepare(
     } else {
         (config.source, sink)
     };
-    let format = if config.media_security == MediaSecurity::PinnedTls13MonoV1 {
-        capyio_protocol::SECURE_AUDIO_MONO_FORMAT
+    let format = if let Some(profile) = config.media_security.profile() {
+        profile.format_name()
     } else if capture {
         "pcm-s16le-48000-stereo"
     } else {
@@ -722,10 +768,14 @@ fn prepare(
     let Some(expiry) = expiry else {
         return Ok(None);
     };
-    if config.media_security == MediaSecurity::PinnedTls13MonoV1 {
+    if config.media_security.profile().is_some() {
         let now = now_ms()?;
         check(negotiation_deadline)?;
-        validate_secure_source(runtime, config.source)?;
+        validate_secure_source_profile(
+            runtime,
+            config.source,
+            config.media_security.profile().ok_or_else(fail)?,
+        )?;
         sanitized(runtime.set_local_port_lease_policy(sink, PortLeasePolicy::Exclusive))?;
         sanitized(runtime.acquire_route_port_lease(route_id, sink, expiry, now))?;
         sanitized(runtime.prepare_route(
@@ -1148,12 +1198,11 @@ fn validate_route_remote(runtime: &NodeRuntime, remote: PortRef) -> io::Result<(
         return Err(fail());
     }
     if route.source == remote {
-        if route.compatible_formats
-            == [FormatDescriptor::new(
-                capyio_protocol::SECURE_AUDIO_MONO_FORMAT,
-            )]
+        if let [format] = route.compatible_formats.as_slice()
+            && let Some(profile) =
+                capyio_protocol::SecureAudioSessionProfile::from_descriptor(format)
         {
-            validate_secure_source(runtime, remote)
+            validate_secure_source_profile(runtime, remote, profile)
         } else {
             validate_source(runtime, remote)
         }
@@ -1226,7 +1275,7 @@ fn local_runtime_profile(
     endpoint: EndpointMode,
     security: MediaSecurity,
 ) -> io::Result<(NodeRuntime, PortRef)> {
-    if security == MediaSecurity::PinnedTls13MonoV1
+    if security.profile().is_some()
         && (!matches!(
             endpoint,
             EndpointMode::Playback | EndpointMode::VirtualMicrophone
@@ -1300,8 +1349,8 @@ fn local_runtime_profile(
         profile: ProfileId::audio_frames_v1(),
         schema_id: None,
         formats: vec![FormatDescriptor::new(
-            if security == MediaSecurity::PinnedTls13MonoV1 {
-                capyio_protocol::SECURE_AUDIO_MONO_FORMAT
+            if let Some(profile) = security.profile() {
+                profile.format_name()
             } else if capture {
                 "pcm-s16le-48000-stereo"
             } else {
@@ -2012,6 +2061,49 @@ mod secure_launch_tests {
         json!({"version":1,"node_id":NodeId::new(),"source":PortRef{node_id:NodeId::new(),capability_id:CapabilityId::new(),port_id:PortId::new()},"listen":"127.0.0.1:0","media":"127.0.0.1:0","target":"explicit.test","duration_secs":10,"media_security":"pinned_tls13_mono_v1"})
     }
     #[test]
+    fn secure_long_profile_is_explicit_finite_and_exact() {
+        for mode in [EndpointMode::Playback, EndpointMode::VirtualMicrophone] {
+            let mut value = config();
+            value["media_security"] = json!("pinned_tls13_mono_300s_v1");
+            value["endpoint_mode"] = json!(mode.name());
+            if mode == EndpointMode::VirtualMicrophone {
+                value.as_object_mut().unwrap().remove("target");
+            }
+            for seconds in [1, 60, 61, 300] {
+                value["duration_secs"] = json!(seconds);
+                let parsed = LaunchConfig::parse(&serde_json::to_vec(&value).unwrap()).unwrap();
+                assert_eq!(parsed.media_security, MediaSecurity::PinnedTls13Mono300sV1);
+                assert!(
+                    validate_credential_source(&parsed, &CredentialSource::PrivatePipe).is_err()
+                );
+                let (runtime, sink) = local_runtime_profile(
+                    parsed.node_id,
+                    ProposalMode::LinuxLed,
+                    mode,
+                    parsed.media_security,
+                )
+                .unwrap();
+                let snapshot = runtime.snapshot();
+                let port = snapshot
+                    .local_node
+                    .port(sink.capability_id, sink.port_id)
+                    .unwrap();
+                assert_eq!(
+                    port.formats,
+                    [capyio_protocol::SecureAudioSessionProfile::Finite300sV1.descriptor()]
+                );
+            }
+            for seconds in [0, 301, u64::MAX] {
+                value["duration_secs"] = json!(seconds);
+                assert!(LaunchConfig::parse(&serde_json::to_vec(&value).unwrap()).is_err());
+            }
+            value["duration_secs"] = json!(61);
+            value["media_security"] = json!("pinned_tls13_mono_v1");
+            assert!(LaunchConfig::parse(&serde_json::to_vec(&value).unwrap()).is_err());
+        }
+    }
+
+    #[test]
     fn secure_config_is_explicit_closed_finite_and_requires_paired_store() {
         let value = config();
         let parsed = LaunchConfig::parse(&serde_json::to_vec(&value).unwrap()).unwrap();
@@ -2229,6 +2321,8 @@ mod secure_launch_tests {
         };
         assert!(secure_status(&route, metrics).is_err());
         route.state = RouteState::Starting;
+        route.selected_format =
+            Some(capyio_protocol::SecureAudioSessionProfile::Finite60sV1.descriptor());
         let status = secure_status(&route, metrics).unwrap();
         assert_eq!(status["packets_written"], 2);
         assert_eq!(status["bytes_written"], 2000);

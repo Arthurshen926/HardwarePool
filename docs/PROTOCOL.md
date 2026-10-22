@@ -589,3 +589,15 @@ fit the full portrait image into the landscape canvas with black sidebars; no
 front mirroring or live display-rotation tracking is implied. Eligibility and
 hosted synthetic GPU evidence are not physical-device compatibility. Legacy
 remains default; settings changes cannot extend a grant or start capture.
+
+### Explicit five-minute secure mono profile
+
+[ADR 1563](adr/1563-explicit-five-minute-secure-mono-profile.md) adds the distinct
+empty-parameter `pcm-s16le-48000-mono-tls13-300s-v1` descriptor. The existing
+`pcm-s16le-48000-mono-tls13-v1` keeps its 60-second semantics. Both use the same
+CPYA and pinned TLS framing; the exact profile is selected in the authenticated
+catalog/Route and remains immutable alongside the original binding and leases.
+Old or unsupported peers reject the new descriptor rather than downgrade.
+The global Port-lease TTL limit remains 300,000 ms; no lease cycling or renewal
+is introduced. At most 30,000 fixed records are admitted, with unchanged 100 fps
+and four-record burst limits. Java/JNI live AudioRecord is not yet eligible.

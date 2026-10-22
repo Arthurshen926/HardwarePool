@@ -15,6 +15,7 @@ public final class AndroidSecureAudioContractTest {
         startupRollsBackEveryFailure();
         settingsAreExplicitAndClosed();
         secureLaunchIsExactAndImmutable();
+        fiveMinuteProfileIsUnsupportedBeforeCapture();
         transportNeverFallsBack();
         catalogPublishesOnlySelectedEligibility();
         staleLifecycleCompletionCannotReactivate();
@@ -119,6 +120,26 @@ public final class AndroidSecureAudioContractTest {
         check(!launch.equals(AndroidSecureAudioLaunch.admit(config(), PEER, SESSION, ROUTE, "microphone-secure", 1000)));
         check(!launch.equals(AndroidSecureAudioLaunch.admit(config(), ROUTE, PEER, SESSION, "microphone-secure", 1000)));
         check(!launch.equals(AndroidSecureAudioLaunch.admit(config(), ROUTE, SESSION, PEER, "microphone-secure", 1001)));
+    }
+    private static void fiveMinuteProfileIsUnsupportedBeforeCapture() {
+        String format = "pcm-s16le-48000-mono-tls13-300s-v1";
+        Map<String,Object> longConfig = config();
+        longConfig.put("format", format);
+        // Even a long, otherwise valid grant must not opt Java AudioRecord in.
+        rejects(() -> AndroidSecureAudioLaunch.admit(longConfig, ROUTE, SESSION, PEER,
+                "microphone-secure", 300_000));
+        Map<String,Object> longTransport = config();
+        longTransport.put("transport", "pinned-tls13-mono-300s-v1");
+        rejects(() -> admit(longTransport));
+        for (String selector : List.of("secure_mono_tls13_300s_v1", "pinned_tls13_mono_300s_v1", format)) {
+            rejects(() -> AndroidMicrophoneSettings.parse(selector));
+        }
+        rejects(() -> AndroidAudioRouteTransport.requireLegacy(1, "legacy-udp-v1", format, "microphone"));
+        AndroidMicrophoneSettings settings = new AndroidMicrophoneSettings();
+        settings.select(AndroidMicrophoneSettings.Profile.SECURE_MONO_TLS13_V1);
+        check(!settings.advertisedFormats().contains(format));
+        check(!AndroidCoreCatalogJson.encode(catalog(settings, true, HardwarePresence.PRESENT),
+                "test", "test").contains(format));
     }
     private static void transportNeverFallsBack() {
         AndroidAudioRouteTransport.requireLegacy(1, "legacy-udp-v1", "pcm-s16le-48000-mono", "microphone");

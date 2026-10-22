@@ -144,13 +144,13 @@ pub(super) fn validate_export_options(output: &Path, options: &ExportOptions) ->
                 && (ip.is_private() || ip.is_loopback() || overlay)
                 && octets[3] != 255
         };
-        let secure = options.media_security == media::MediaSecurity::Secure;
+        let secure = options.media_security.is_secure();
         if secure {
             if !matches!(
                 options.kind,
                 ExportKind::Playback | ExportKind::VirtualMicrophone
             ) || media.port() != 0
-                || options.duration_secs > 60
+                || options.duration_secs > options.media_security.max_duration_secs()
             {
                 return Err(invalid());
             }
@@ -256,7 +256,7 @@ fn build_manifest(
     }] = remote;
     if options.kind.audio() {
         value["media"] = json!(options.media);
-        if options.media_security == media::MediaSecurity::Secure {
+        if options.media_security.is_secure() {
             value["media_security"] = json!(options.media_security);
         }
         value["target"] = json!(options.target);
@@ -333,12 +333,12 @@ pub(super) fn prepare(
     options: &ExportOptions,
 ) -> io::Result<()> {
     validate_export_options(output, options)?;
-    let limits = if options.media_security == media::MediaSecurity::Secure {
+    let limits = if options.media_security.is_secure() {
         format!(
             "Catalog snapshot may already be stale; later launch revalidates it.\r\nExport is not resource authorization: no Routes, grants, leases, media or devices are created.\r\nSaving does not Start a {} session; fresh independent consent is required.\r\n{}Format: {}; media security: {}.\r\n",
             options.kind.name(),
-            media::SECURE_WARNING,
-            capyio_protocol::SECURE_AUDIO_MONO_FORMAT,
+            options.media_security.warning(),
+            options.media_security.secure_format().ok_or_else(invalid)?,
             options.media_security.name()
         )
     } else {
@@ -978,6 +978,38 @@ mod tests {
         check_option_parity(&virtual_mic, false);
         selected.duration_secs = 61;
         check_option_parity(&selected, false);
+    }
+
+    #[test]
+    fn pure_secure_300_export_is_explicit_non_authorizing_and_bounded() {
+        for kind in EXPORT_KINDS {
+            let mut selected = options(kind);
+            selected.media_security = media::MediaSecurity::Secure300;
+            selected.media = Some("127.0.0.1:0".parse().unwrap());
+            for duration in [0, 1, 60, 61, 300, 301, u64::MAX] {
+                selected.duration_secs = duration;
+                let supported =
+                    matches!(kind, ExportKind::Playback | ExportKind::VirtualMicrophone)
+                        && (1..=300).contains(&duration);
+                check_option_parity(&selected, supported);
+                if supported {
+                    let manifest: Value =
+                        serde_json::from_slice(&built(&selected).unwrap()).unwrap();
+                    assert_eq!(manifest["media_security"], "pinned_tls13_mono_300s_v1");
+                    assert_eq!(manifest["duration_secs"], duration);
+                    for field in [
+                        "approval",
+                        "grant",
+                        "lease",
+                        "route_id",
+                        "session_id",
+                        "credentials",
+                    ] {
+                        assert!(manifest.get(field).is_none());
+                    }
+                }
+            }
+        }
     }
 
     fn built(options: &ExportOptions) -> io::Result<Vec<u8>> {

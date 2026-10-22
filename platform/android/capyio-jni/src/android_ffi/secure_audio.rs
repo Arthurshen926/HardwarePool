@@ -74,6 +74,9 @@ pub(super) fn cache_offer(
     identity: (capyio_control_tls::ControlTlsClientIdentity, String),
     now: u64,
 ) -> Result<(), String> {
+    crate::secure_audio_negotiation::require_live_profile(
+        host.runtime.route(route).map_err(|e| e.to_string())?,
+    )?;
     // The authenticated receipt is consumed exactly once, before admission.
     let prepared = PreparedAudioSender::new(
         &host.runtime,
@@ -170,6 +173,7 @@ pub(super) fn reconcile(runtime: &capyio_runtime::NodeRuntime) {
             runtime.route(job.binding.route_id).is_ok_and(|r| {
                 crate::audio_sender::source_authority(runtime, r, now).is_some()
                     && crate::secure_audio_negotiation::selected(r)
+                    && crate::secure_audio_negotiation::require_live_profile(r).is_ok()
                     && capyio_control_tls::audio::AudioTlsBinding::from_route(
                         job.binding.session,
                         r,
@@ -190,7 +194,11 @@ fn start(runtime: u64, route: RouteId) -> Result<u64, String> {
         let registry = catalog_runtimes()
             .lock()
             .map_err(|_| "Runtime registry poisoned")?;
-        reconcile(&registry.get(&runtime).ok_or("Runtime absent")?.runtime);
+        let host = registry.get(&runtime).ok_or("Runtime absent")?;
+        crate::secure_audio_negotiation::require_live_profile(
+            host.runtime.route(route).map_err(|e| e.to_string())?,
+        )?;
+        reconcile(&host.runtime);
     }
     let existing = jobs()
         .lock()

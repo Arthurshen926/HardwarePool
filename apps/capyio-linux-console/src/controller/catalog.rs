@@ -272,7 +272,7 @@ impl Catalog {
         kind: ExportKind,
         security: media::MediaSecurity,
     ) -> io::Result<Vec<Candidate>> {
-        if security == media::MediaSecurity::Secure
+        if security.is_secure()
             && !matches!(kind, ExportKind::Playback | ExportKind::VirtualMicrophone)
         {
             return Err(invalid());
@@ -305,11 +305,7 @@ impl Catalog {
                 CompatibilityReason::TouchpadNeedsLocalSelection,
             ),
         };
-        let format = if security == media::MediaSecurity::Secure {
-            capyio_protocol::SECURE_AUDIO_MONO_FORMAT
-        } else {
-            format
-        };
+        let format = security.secure_format().unwrap_or(format);
         self.ports
             .iter()
             .filter_map(|event| match event {
@@ -325,8 +321,7 @@ impl Catalog {
                             CompatibilityStatus::NeedsLocalSelection
                         )
                         && port.compatibility.reason == reason
-                        && (security != media::MediaSecurity::Secure
-                            || port.formats.len() == 1)
+                        && (!security.is_secure() || port.formats.len() == 1)
                         && port.formats.iter().any(|candidate| {
                             candidate.id == format && candidate.parameters.is_empty()
                         }) =>
@@ -1014,6 +1009,52 @@ mod tests {
                 assert!(
                     catalog
                         .security_candidates(kind, media::MediaSecurity::Secure)
+                        .is_err()
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn pure_secure_300_candidates_require_exact_singleton_empty_parameter_source() {
+        let long = capyio_protocol::SECURE_AUDIO_MONO_300S_FORMAT;
+        for (formats, expected) in [
+            (json!([{"id":long,"parameters":{}}]), 1),
+            (json!([{"id":long,"parameters":{"duration":"300"}}]), 0),
+            (
+                json!([{"id":capyio_protocol::SECURE_AUDIO_MONO_FORMAT,"parameters":{}}]),
+                0,
+            ),
+            (
+                json!([{"id":long,"parameters":{}},{"id":capyio_protocol::SECURE_AUDIO_MONO_FORMAT,"parameters":{}}]),
+                0,
+            ),
+            (json!([{"id":"unknown-secure-profile","parameters":{}}]), 0),
+        ] {
+            let mut catalog = Catalog::new(peer());
+            accept(&mut catalog, begin(1)).unwrap();
+            let mut port = export_port(ExportKind::Playback);
+            port["formats"] = formats;
+            accept(&mut catalog, port).unwrap();
+            accept(&mut catalog, complete(1)).unwrap();
+            for kind in [ExportKind::Playback, ExportKind::VirtualMicrophone] {
+                assert_eq!(
+                    catalog
+                        .security_candidates(kind, media::MediaSecurity::Secure300)
+                        .unwrap()
+                        .len(),
+                    expected
+                );
+            }
+            for kind in [
+                ExportKind::Capture,
+                ExportKind::VirtualSpeaker,
+                ExportKind::Camera,
+                ExportKind::Touchpad,
+            ] {
+                assert!(
+                    catalog
+                        .security_candidates(kind, media::MediaSecurity::Secure300)
                         .is_err()
                 );
             }

@@ -398,10 +398,7 @@ fn launcher_hint(
     if !port.formats.contains(&FormatDescriptor::new(format))
         && !(port.profile == ProfileId::audio_frames_v1()
             && port.direction == PortDirection::Source
-            && port.formats
-                == [FormatDescriptor::new(
-                    capyio_protocol::SECURE_AUDIO_MONO_FORMAT,
-                )]
+            && matches!(port.formats.as_slice(), [format] if capyio_protocol::SecureAudioSessionProfile::from_descriptor(format).is_some())
             && port.qos_modes.len() == 1)
     {
         return unsupported("format_not_supported");
@@ -673,30 +670,33 @@ mod tests {
 
     #[test]
     fn secure_audio_source_hint_requires_exact_profile_without_legacy_format() {
-        let mut peer = peer(1);
-        let capability_id = *peer.capabilities.keys().next().unwrap();
-        let capability = peer.capabilities.get_mut(&capability_id).unwrap();
-        let port = capability.ports.values_mut().next().unwrap();
-        port.formats = vec![FormatDescriptor::new(
-            capyio_protocol::SECURE_AUDIO_MONO_FORMAT,
-        )];
-        let capability = &peer.capabilities[&capability_id];
-        assert_eq!(
-            launcher_hint(&peer, capability, capability.ports.values().next().unwrap()),
-            (
-                "needs_local_selection",
-                "audio_playback_needs_local_selection"
-            )
-        );
-        let capability = peer.capabilities.get_mut(&capability_id).unwrap();
-        capability.ports.values_mut().next().unwrap().formats[0]
-            .parameters
-            .insert("unknown".into(), "required".into());
-        let capability = &peer.capabilities[&capability_id];
-        assert_eq!(
-            launcher_hint(&peer, capability, capability.ports.values().next().unwrap()),
-            ("not_supported", "format_not_supported")
-        );
+        for profile in [
+            capyio_protocol::SecureAudioSessionProfile::Finite60sV1,
+            capyio_protocol::SecureAudioSessionProfile::Finite300sV1,
+        ] {
+            let mut peer = peer(1);
+            let capability_id = *peer.capabilities.keys().next().unwrap();
+            let capability = peer.capabilities.get_mut(&capability_id).unwrap();
+            let port = capability.ports.values_mut().next().unwrap();
+            port.formats = vec![profile.descriptor()];
+            let capability = &peer.capabilities[&capability_id];
+            assert_eq!(
+                launcher_hint(&peer, capability, capability.ports.values().next().unwrap()),
+                (
+                    "needs_local_selection",
+                    "audio_playback_needs_local_selection"
+                )
+            );
+            let capability = peer.capabilities.get_mut(&capability_id).unwrap();
+            capability.ports.values_mut().next().unwrap().formats[0]
+                .parameters
+                .insert("unknown".into(), "required".into());
+            let capability = &peer.capabilities[&capability_id];
+            assert_eq!(
+                launcher_hint(&peer, capability, capability.ports.values().next().unwrap()),
+                ("not_supported", "format_not_supported")
+            );
+        }
     }
 
     #[test]

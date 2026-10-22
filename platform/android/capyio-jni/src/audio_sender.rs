@@ -13,11 +13,10 @@ use capyio_control_tls::{
 use capyio_core::*;
 use capyio_native_audio_lan::{SecureMonoPcmAdmission, SecureMonoPcmRateBudget};
 use capyio_pairing::PairedPeerDirectory;
-use capyio_protocol::{SECURE_AUDIO_MONO_FORMAT, SecureAudioDataOffer};
+use capyio_protocol::{SecureAudioDataOffer, SecureAudioSessionProfile};
 use capyio_runtime::{NodeRuntime, PortLeaseClaim};
 use std::time::{Duration, Instant};
 
-const MAX_LIFETIME: Duration = Duration::from_secs(60);
 const IO_BUDGET: Duration = Duration::from_millis(250);
 
 /// Reuses the real Android audio grant/lease policy, not the camera policy.
@@ -70,12 +69,18 @@ fn require_microphone(runtime: &NodeRuntime, id: RouteId) -> Result<(), String> 
 struct PinnedSourceAuthority {
     binding: AudioTlsBinding,
     source_lease: PortLeaseClaim,
+    profile: SecureAudioSessionProfile,
     source_catalog: CapabilityDescriptor,
     source_adapter: AdapterInstanceDescriptor,
 }
 impl PinnedSourceAuthority {
     fn new(runtime: &NodeRuntime, binding: AudioTlsBinding, now: u64) -> Result<Self, String> {
         let route = runtime.route(binding.route_id).map_err(|e| e.to_string())?;
+        let profile = route
+            .selected_format
+            .as_ref()
+            .and_then(SecureAudioSessionProfile::from_descriptor)
+            .ok_or("secure audio exact profile absent")?;
         let source_lease = *runtime
             .route_port_lease_claim(route.id, route.source)
             .ok_or("audio Source lease absent")?;
@@ -93,6 +98,7 @@ impl PinnedSourceAuthority {
         let this = Self {
             binding,
             source_lease,
+            profile,
             source_catalog,
             source_adapter,
         };
@@ -101,7 +107,7 @@ impl PinnedSourceAuthority {
     }
 
     fn check_route(&self, route: &Route, now: u64) -> Result<(), String> {
-        if route.selected_format != Some(FormatDescriptor::new(SECURE_AUDIO_MONO_FORMAT))
+        if route.selected_format != Some(self.profile.descriptor())
             || route.selected_qos_mode != Some(QosMode::Interactive)
             || AudioTlsBinding::from_route(self.binding.session, route, self.binding.stream_id, now)
                 .map_err(|e| e.to_string())?
@@ -149,9 +155,7 @@ impl PinnedSourceAuthority {
             .ports
             .get(&route.source.port_id)
             .ok_or("Source port absent")?;
-        if !port
-            .formats
-            .contains(&FormatDescriptor::new(SECURE_AUDIO_MONO_FORMAT))
+        if !port.formats.contains(&self.profile.descriptor())
             || !port.qos_modes.contains(&QosMode::Interactive)
             || port.interoperability_mode != InteroperabilityMode::AdapterManaged
         {
@@ -172,12 +176,17 @@ struct AuthorityClock {
     last_instant: Instant,
 }
 impl AuthorityClock {
-    fn new(now: u64, lease_deadline: u64, origin: Instant) -> Result<Self, String> {
+    fn new(
+        now: u64,
+        lease_deadline: u64,
+        origin: Instant,
+        profile: SecureAudioSessionProfile,
+    ) -> Result<Self, String> {
         let remaining = lease_deadline
             .checked_sub(now)
             .filter(|n| *n > 0)
             .ok_or("audio Source lease expired")?;
-        let lifetime = Duration::from_millis(remaining).min(MAX_LIFETIME);
+        let lifetime = Duration::from_millis(remaining).min(profile.max_duration());
         Ok(Self {
             origin,
             deadline: origin
@@ -279,7 +288,12 @@ impl PreparedAudioSender {
         let binding = AudioTlsBinding::from_route(link.tls_binding(), route, offer.stream_id, now)
             .map_err(|e| e.to_string())?;
         let authority = PinnedSourceAuthority::new(runtime, binding, now)?;
-        let clock = AuthorityClock::new(now, authority.source_lease.expires_at_ms, origin)?;
+        let clock = AuthorityClock::new(
+            now,
+            authority.source_lease.expires_at_ms,
+            origin,
+            authority.profile,
+        )?;
         Ok(Self {
             address: std::net::SocketAddr::new(
                 link.authenticated_peer_addr()
@@ -314,9 +328,14 @@ impl PreparedAudioSender {
     ) -> Result<SecureAudioSender, String> {
         self.clock.check(wall_time_ms()?, Instant::now())?;
         let binding = self.binding();
-        let rate =
-            SecureMonoPcmRateBudget::new(self.clock.deadline.duration_since(self.clock.origin))
-                .map_err(|e| e.to_string())?;
+        let lifetime = self.clock.deadline.duration_since(self.clock.origin);
+        let rate = match self.authority.profile {
+            SecureAudioSessionProfile::Finite60sV1 => SecureMonoPcmRateBudget::new(lifetime),
+            SecureAudioSessionProfile::Finite300sV1 => {
+                SecureMonoPcmRateBudget::new_finite_300s(lifetime)
+            }
+        }
+        .map_err(|e| e.to_string())?;
         let records = SecureMonoPcmAdmission::new(AudioMediaStreamBinding {
             session_id: binding.session.session_id,
             route_id: binding.route_id,
