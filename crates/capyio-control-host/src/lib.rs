@@ -540,6 +540,50 @@ mod tests {
     }
 
     #[test]
+    fn sink_only_catalog_publishes_with_empty_source_selection_and_rejects_sink_selection() {
+        let mut node = android_node();
+        let sink = node
+            .capabilities
+            .values()
+            .find(|capability| {
+                !capability.ports.is_empty()
+                    && capability
+                        .ports
+                        .values()
+                        .all(|port| port.direction == PortDirection::Sink)
+            })
+            .expect("Sink-only Capability")
+            .id;
+        // Match the reverse-stereo fixture's Sink-only catalog. Source-sharing
+        // selection must stay empty even though this endpoint is published.
+        node.capabilities.retain(|id, _| *id == sink);
+        for adapter in node.adapter_instances.values_mut() {
+            adapter.owned_capabilities.retain(|id| *id == sink);
+        }
+        node.validate().expect("valid Sink-only local catalog");
+        let session = SessionId::new();
+        let selected_sources = BTreeSet::new();
+        let published = project_publication_catalog(&node, &selected_sources)
+            .expect("Sink publication needs no Source selection");
+        assert_eq!(published, node);
+        let bytes = encode_publication_catalog(session, &node, &selected_sources)
+            .expect("encode visible Sink-only catalog");
+        let decoded = decode_catalog_snapshot(&bytes).expect("decode visible Sink-only catalog");
+        assert_eq!(decoded.session_id, session);
+        assert_eq!(decoded.node, node);
+
+        let incorrect_source_selection = BTreeSet::from([sink]);
+        assert!(matches!(
+            project_publication_catalog(&node, &incorrect_source_selection),
+            Err(PublicationError::NotSourceCapability(id)) if id == sink
+        ));
+        assert!(matches!(
+            encode_publication_catalog(session, &node, &incorrect_source_selection),
+            Err(PublicationError::NotSourceCapability(id)) if id == sink
+        ));
+    }
+
+    #[test]
     fn encoded_publication_catalog_round_trips_with_session_binding() {
         let lab = DemoLab::new().expect("demo lab");
         let node = windows_node();

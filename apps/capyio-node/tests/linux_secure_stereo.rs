@@ -545,8 +545,10 @@ fn hosted_secure_stereo_linux_capture_android_sink() {
         "Synthetic Linux".into(),
     )
     .unwrap();
+    // This argument selects Source publication, not every local endpoint.
+    // Sink-only capabilities remain visible without any Source selection.
     let catalog = sink_link
-        .prepare_catalog(&sink_runtime, &BTreeSet::from([sink.capability_id]))
+        .prepare_catalog(&sink_runtime, &BTreeSet::new())
         .unwrap();
     sink_link.send_catalog(catalog).unwrap();
     let catalog = sink_link.receive_catalog().unwrap();

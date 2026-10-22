@@ -124,6 +124,13 @@ jobs:
           grep -F 'test result: ok. 10 passed; 0 failed; 0 ignored;' "$RUNNER_TEMP/pairing-welcome-results.txt"
       - name: Build repository mock adapters
         run: cargo build --locked -p capyio-mock-source -p capyio-mock-sink
+      - name: Require Sink publication without Source-sharing selection
+        run: |
+          set -euo pipefail
+          cargo test --locked -p capyio-control-host --lib tests::sink_only_catalog_publishes_with_empty_source_selection_and_rejects_sink_selection -- --exact --test-threads=1 \
+            2>&1 | tee "$RUNNER_TEMP/stereo-sink-publication-result.txt"
+          grep -Fx 'test tests::sink_only_catalog_publishes_with_empty_source_selection_and_rejects_sink_selection ... ok' "$RUNNER_TEMP/stereo-sink-publication-result.txt"
+          grep -F 'test result: ok. 1 passed; 0 failed; 0 ignored;' "$RUNNER_TEMP/stereo-sink-publication-result.txt"
       - name: Require finite IPC regression tests
         run: |
           set -euo pipefail
