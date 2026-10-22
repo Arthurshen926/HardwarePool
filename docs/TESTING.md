@@ -1475,3 +1475,24 @@ activation and owned helper/graph cleanup. No physical audio hardware, user
 PipeWire server, real pairing credential or Android AudioRecord is used. Existing
 UDP, console and camera suites remain separate and unchanged. Compile/list-only
 evidence does not count as executing the wire or graph acceptance cases.
+
+### Android secure microphone application binding
+
+[ADR 1560](adr/1560-android-secure-microphone-binding.md) requires the separate
+`SecureMonoCaptureSessionContractTest` fake-recorder suite and
+`AndroidSecureAudioContractTest` closed-settings/DTO/catalog suite. They cover
+actual-format rejection, permission and generation loss, partial/zero/invalid
+reads, bounded queue/stall behavior, route changes and cleanup ownership. A fake
+recorder is not physical AudioRecord execution. Production Android source must
+also compile against the existing SDK, and `javac -h` declarations must match the
+cross-built ARM64 JNI export inventory. This inventory is not an invocation or
+full argument-ABI test.
+
+Hosted native job tests must execute actual pinned TLS with synthetic PCM and
+the production generation/queue owner, including cancellation before readiness,
+revocation, stale callbacks, immutable original leases and reaping. Separate
+transport tests establish real write backpressure before testing Stop, and
+register Stop before or during an actual TLS handshake. They must not be counted
+as passed from a test-list or compilation. Existing nine independent PipeWire
+API graphs, legacy audio and other media gates remain mandatory. The Linux
+production launcher/console secure branch is not part of this slice.

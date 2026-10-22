@@ -52,6 +52,27 @@ pub(crate) fn select_endpoint(
     direction: AudioDirection,
     local: bool,
 ) -> Result<PortRef, &'static str> {
+    select_endpoint_format(node, direction, local, &direction.format())
+}
+
+pub(crate) fn select_secure_endpoint(
+    node: &NodeDescriptor,
+    local: bool,
+) -> Result<PortRef, &'static str> {
+    select_endpoint_format(
+        node,
+        AudioDirection::Microphone,
+        local,
+        &FormatDescriptor::new(capyio_protocol::SECURE_AUDIO_MONO_FORMAT),
+    )
+}
+
+fn select_endpoint_format(
+    node: &NodeDescriptor,
+    direction: AudioDirection,
+    local: bool,
+    format: &FormatDescriptor,
+) -> Result<PortRef, &'static str> {
     if node.online_state != OnlineState::Online {
         return Err("audio node is offline");
     }
@@ -101,7 +122,7 @@ pub(crate) fn select_endpoint(
         .filter(|(_, port)| {
             port.direction == expected
                 && port.profile == ProfileId::audio_frames_v1()
-                && port.formats.contains(&direction.format())
+                && port.formats.contains(format)
                 && port.qos_modes.contains(&QosMode::Interactive)
                 && port.interoperability_mode == InteroperabilityMode::AdapterManaged
                 && usable(port.availability)

@@ -66,8 +66,18 @@ tasks.register('capabilityLifecycleContractTest', JavaExec) {
     enableAssertions = true
 }
 
+tasks.register('secureMonoCaptureContractTest', JavaExec) {
+    group = 'verification'
+    description = 'Runs synthetic secure mono capture lifecycle contracts without AudioRecord.'
+    dependsOn tasks.named('compileContractTest')
+    classpath = files(contractTestOutput)
+    mainClass = 'dev.capyio.android.contract.SecureMonoCaptureSessionContractTest'
+    enableAssertions = true
+}
+
 tasks.named('check') {
     dependsOn tasks.named('contractTest'), tasks.named('nativeLanContractTest'),
             tasks.named('capabilityCatalogContractTest'),
-            tasks.named('capabilityLifecycleContractTest')
+            tasks.named('capabilityLifecycleContractTest'),
+            tasks.named('secureMonoCaptureContractTest')
 }

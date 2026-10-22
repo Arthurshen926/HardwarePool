@@ -146,6 +146,9 @@ jobs:
           audio::tests::ipc_operation_deadline_does_not_shorten_media_lifetime
           audio::tests::ipc_record_operation_deadline_is_absolute_and_terminal
           audio::hosted_writer_tests::ipc_audio_blocked_writer_preserves_absolute_deadline_and_is_terminal
+          audio::hosted_writer_tests::ipc_audio_stop_at_registration_sends_no_tls_or_binding_bytes
+          audio::hosted_writer_tests::ipc_audio_registered_stop_interrupts_actual_pending_tls_handshake
+          audio::hosted_writer_tests::ipc_audio_stop_interrupts_verified_saturated_tls_writer
           secure_mono::tests::secure_mono_roundtrip_preserves_exact_contiguous_packets
           secure_mono::tests::secure_mono_rejects_every_noncanonical_header_before_payload_admission
           secure_mono::tests::secure_mono_rejects_replay_gap_discontinuity_and_changed_timestamp
@@ -153,6 +156,19 @@ jobs:
           secure_mono::tests::secure_mono_rate_bounds_burst_and_capped_accrual
           secure_mono::tests::secure_mono_rate_uses_exact_10ms_cadence_and_total_ceiling
           secure_mono::tests::secure_mono_rate_lifetime_regression_and_overflow_are_terminal
+          audio_job::tests::hosted::production_control_negotiation_requires_consent_lease_selection_start_and_offer
+          audio_job::tests::hosted::stale_preparation_after_lease_loss_never_attempts_media_connect
+          audio_job::tests::hosted::stop_interrupts_pending_real_tls_handshake_without_ready_resurrection
+          audio_job::tests::hosted::stop_after_tls_connect_before_ready_cannot_publish_stale_success
+          audio_job::tests::hosted::fake_capture_delivers_canonical_pcm_then_stop_releases_transport
+          audio_job::tests::hosted::revoke_after_real_pcm_closes_media_and_prevents_next_capture
+          audio_job::tests::hosted::authenticated_source_renew_request_is_denied_and_terminates_production_owner
+          audio_job::tests::hosted::replacement_lease_or_grant_is_terminal_not_a_renewal
+          audio_job::tests::hosted::control_owner_session_loss_invalidates_ready_without_capture
+          audio_job::tests::hosted::original_lease_expiry_finishes_worker_without_capture_or_poll_renewal
+          audio_job::tests::hosted::queue_overflow_during_inflight_snapshot_closes_actual_tls_terminally
+          audio_job::tests::hosted::revoke_in_post_write_snapshot_never_publishes_streaming_success
+          audio_job::tests::hosted::stop_during_post_write_snapshot_cannot_resurrect_streaming
           audio_sender::tests::actual_microphone_consent_never_mints_a_source_lease
           audio_sender::tests::explicit_denial_and_camera_substitution_cannot_authorize_audio
           audio_sender::tests::original_grant_and_source_lease_cannot_be_renewed_or_narrowed
@@ -408,12 +424,12 @@ jobs:
           runtime: node@24
           cache: true
           install: false
-      - name: Validate explicit Android camera profile UI
+      - name: Validate explicit Android finite media profile UI
         run: |
           set -euo pipefail
           timeout --signal=TERM --kill-after=10s 180s pnpm install --frozen-lockfile --ignore-scripts
           pnpm --filter @capyio/desktop typecheck
-          node --test scripts/android_camera_settings_ui.test.mjs
+          node --test scripts/android_camera_settings_ui.test.mjs scripts/android_microphone_settings_ui.test.mjs
       - name: Require preinstalled pinned NDK and JDK
         run: |
           set -euo pipefail
@@ -458,7 +474,7 @@ jobs:
           test -d "$sdk/build-tools/36.0.0" || { echo 'Preinstalled build-tools 36.0.0 are required; no SDK install fallback.' >&2; exit 1; }
           # Compile source/resources only, not APK assembly/signing or capture.
           # JNI is cross-compiled above; web assets do not affect Java types.
-          timeout --signal=TERM --kill-after=10s 600s bash platform/android/gradlew -p platform/android --no-daemon -Pandroid.builder.sdkDownload=false :app:compileDebugJavaWithJavac :app:capabilityCompositionTest :app:audioPeerContractTest -x syncSharedUi -x buildRustJni
+          timeout --signal=TERM --kill-after=10s 600s bash platform/android/gradlew -p platform/android --no-daemon -Pandroid.builder.sdkDownload=false :app:compileDebugJavaWithJavac :app:capabilityCompositionTest :app:audioPeerContractTest :app:secureAudioContractTest -x syncSharedUi -x buildRustJni
       - name: Check generated Java native names against Android exports
         run: |
           set -euo pipefail
@@ -468,7 +484,7 @@ jobs:
       - name: Run existing Java lifecycle and native LAN contracts
         run: |
           set -euo pipefail
-          for main in dev.capyio.android.contract.AudioNodeContractTest dev.capyio.android.contract.CapabilityCatalogContractTest dev.capyio.android.contract.CapabilityLifecycleContractTest dev.capyio.android.lan.NativeLanContractTest dev.capyio.android.lan.NativeLanEndpointConcurrencyTest io.capyio.camera.contract.CaptureStateMachineContractTest io.capyio.camera.contract.SecureAvcSenderContractTest io.capyio.camera.contract.FiniteCameraAvcValidatorContractTest io.capyio.camera.contract.FiniteCameraEligibilityContractTest io.capyio.camera.contract.FiniteCameraTransformContractTest; do
+          for main in dev.capyio.android.contract.SecureMonoCaptureSessionContractTest dev.capyio.android.contract.AudioNodeContractTest dev.capyio.android.contract.CapabilityCatalogContractTest dev.capyio.android.contract.CapabilityLifecycleContractTest dev.capyio.android.lan.NativeLanContractTest dev.capyio.android.lan.NativeLanEndpointConcurrencyTest io.capyio.camera.contract.CaptureStateMachineContractTest io.capyio.camera.contract.SecureAvcSenderContractTest io.capyio.camera.contract.FiniteCameraAvcValidatorContractTest io.capyio.camera.contract.FiniteCameraEligibilityContractTest io.capyio.camera.contract.FiniteCameraTransformContractTest; do
             timeout --signal=TERM --kill-after=10s 60s java -ea -Dcapyio.nativeLanFixture="$GITHUB_WORKSPACE/fixtures/audio/native_lan_v1_opus_single.hex" -cp "$RUNNER_TEMP/android-contract-classes" "$main"
           done
 

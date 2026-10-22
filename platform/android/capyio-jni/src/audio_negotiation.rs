@@ -347,6 +347,7 @@ impl AndroidCatalogRuntimeV1 {
         confirm: bool,
     ) -> Result<Route, String> {
         if status.native_audio_data.is_none()
+            && status.secure_audio_data.is_none()
             && route.state == RouteState::Draft
             && status.route.state == RouteState::Draft
             && let (
@@ -405,6 +406,7 @@ impl AndroidCatalogRuntimeV1 {
                 self.enqueue_touchpad_request(route.id, now)?;
             }
         }
+        crate::secure_audio_negotiation::apply_selection(self, status, now)?;
         if let Some(offer) = status.native_audio_data.as_deref() {
             receive_offer(
                 self,
@@ -457,7 +459,27 @@ impl AndroidCatalogRuntimeV1 {
             return Err("not a local audio Route".into());
         }
         if command.action == capyio_protocol::RouteCommandAction::Start {
-            self.require_audio_endpoint_prepared(command.route_id)?;
+            if crate::secure_audio_negotiation::proposed(route) {
+                if !microphone_source(&self.runtime, route) {
+                    return Err("secure audio supports microphone Source only".into());
+                }
+                secure_source_authority(&self.runtime, route, now)
+                    .ok_or("secure audio Source authority absent")?;
+                if route.state == RouteState::Draft {
+                    self.runtime
+                        .prepare_route(
+                            command.route_id,
+                            Some(FormatDescriptor::new(
+                                capyio_protocol::SECURE_AUDIO_MONO_FORMAT,
+                            )),
+                            QosMode::Interactive,
+                            now,
+                        )
+                        .map_err(|e| e.to_string())?;
+                }
+            } else {
+                self.require_audio_endpoint_prepared(command.route_id)?;
+            }
         }
         link.stage_route_command(&mut self.runtime, command, now)
             .map_err(|e| e.to_string())
@@ -481,7 +503,7 @@ impl AndroidCatalogRuntimeV1 {
     /// Local UI Stop cancels pending and authorized preparation as well as
     /// running audio. In particular, Draft is not a reason to ignore Stop.
     pub fn stop_audio_direction(&mut self, direction: &str) -> Result<(), String> {
-        if !matches!(direction, "microphone" | "speaker") {
+        if !matches!(direction, "microphone" | "microphone-secure" | "speaker") {
             return Err("unknown audio direction".into());
         }
         let ids: Vec<_> = self
@@ -489,7 +511,11 @@ impl AndroidCatalogRuntimeV1 {
             .snapshot()
             .routes
             .iter()
-            .filter(|route| local_port(self, route).is_some_and(|(_, value)| value == direction))
+            .filter(|route| {
+                local_port(self, route).is_some_and(|(_, value)| {
+                    crate::secure_audio_negotiation::direction(route, value) == direction
+                })
+            })
             .map(|route| route.id)
             .collect();
         for id in ids {
@@ -527,6 +553,16 @@ impl AndroidCatalogRuntimeV1 {
         now: u64,
     ) -> Result<(), String> {
         self.runtime.expire_port_leases(now);
+        let lease = request.request();
+        if lease.action == capyio_protocol::PortLeaseAction::Renew
+            && self
+                .runtime
+                .route(lease.route_id)
+                .is_ok_and(crate::secure_audio_negotiation::proposed)
+        {
+            // No renewal at any stage: terminate before generating the denial.
+            fail_message(self, lease.route_id, "安全音频是一次性有限会话，不支持续租")?;
+        }
         link.answer_port_lease_request(&mut self.runtime, request, now)
             .map_err(|e| e.to_string())
     }
@@ -549,6 +585,9 @@ impl AndroidCatalogRuntimeV1 {
     /// Explicit local user intent only: select the current advertised binding and
     /// queue a Pending Draft. This never grants the peer's Sink or starts media.
     pub fn begin_audio_use(&mut self, peer: NodeId, direction: &str) -> Result<Route, String> {
+        if direction == "microphone-secure" {
+            return self.begin_secure_audio_use(peer);
+        }
         let snapshot = self.runtime.snapshot();
         if snapshot.routes.iter().any(|route| {
             local_port(self, route).is_some_and(|(_, current)| current == direction)

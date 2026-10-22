@@ -345,7 +345,7 @@ macro_rules! route_tls {
             deadline: Instant,
             grant_deadline: Instant,
             #[cfg(test)]
-            observed_write_backpressure: AtomicBool,
+            observed_write_backpressure: Arc<AtomicBool>,
         }
         impl BoundedSocket {
             fn new(
@@ -364,7 +364,7 @@ macro_rules! route_tls {
                     deadline: (Instant::now() + timeout).min(grant_deadline),
                     grant_deadline,
                     #[cfg(test)]
-                    observed_write_backpressure: AtomicBool::new(false),
+                    observed_write_backpressure: Arc::new(AtomicBool::new(false)),
                 })
             }
             fn check(&self) -> std::io::Result<()> {
@@ -466,6 +466,30 @@ macro_rules! route_tls {
                 binding: $binding,
                 local_deadline: Instant,
             ) -> Result<Self, ControlTlsError> {
+                Self::connect_until_with_stop(
+                    endpoint,
+                    server_name,
+                    identity,
+                    binding,
+                    local_deadline,
+                    |_| {},
+                )
+            }
+
+            /// Register lifecycle shutdown before TLS or the binding exchange.
+            /// Registration does not renew the original connection/grant budget.
+            /// The preceding TCP connect remains bounded, but is not interrupted
+            /// by this handle. The callback must be short and must latch a Stop
+            /// that raced registration, rather than discard it before a handle
+            /// existed. An already stopped handle prevents any TLS handshake.
+            pub fn connect_until_with_stop(
+                endpoint: ControlTlsEndpoint,
+                server_name: &str,
+                identity: ControlTlsClientIdentity,
+                binding: $binding,
+                local_deadline: Instant,
+                stop_ready: impl FnOnce($stop),
+            ) -> Result<Self, ControlTlsError> {
                 endpoint.validate()?;
                 let connect_deadline = Instant::now() + endpoint.io_timeout;
                 binding.validate(now_ms()?)?;
@@ -495,6 +519,11 @@ macro_rules! route_tls {
                     Arc::new(AtomicBool::new(false)),
                 )?;
                 socket.deadline = socket.deadline.min(connect_deadline);
+                stop_ready($stop {
+                    socket: Some(socket.socket.try_clone()?),
+                    stopped: socket.stopped.clone(),
+                });
+                socket.check()?;
                 let mut stream = StreamOwned::new(ClientConnection::new(config, name)?, socket);
                 while stream.conn.is_handshaking() {
                     stream.conn.complete_io(&mut stream.sock)?;

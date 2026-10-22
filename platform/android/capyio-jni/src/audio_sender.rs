@@ -1,7 +1,7 @@
 //! Finite, Rust-owned Android microphone Source sender for synthetic mono PCM.
 //!
-//! This is not AudioRecord integration and does not advertise a secure platform
-//! capability. Call only on a media worker, never an audio callback. Credentials
+//! Capture integration supplies bounded PCM on a dedicated media worker, never
+//! from an audio callback. Explicit catalog opt-in is required. Credentials
 //! remain in Rust and the transport never reconnects or falls back to UDP.
 use capyio_audio::{AudioMediaStreamBinding, AudioStreamSpec};
 use capyio_control_credentials::ControlCredentialBundle;
@@ -66,9 +66,12 @@ fn require_microphone(runtime: &NodeRuntime, id: RouteId) -> Result<(), String> 
 
 /// Immutable original Source authority. Starting -> Active is allowed; a new
 /// epoch, renewed/narrowed lease or grant, changed selection or Session is not.
+#[derive(Clone)]
 struct PinnedSourceAuthority {
     binding: AudioTlsBinding,
     source_lease: PortLeaseClaim,
+    source_catalog: CapabilityDescriptor,
+    source_adapter: AdapterInstanceDescriptor,
 }
 impl PinnedSourceAuthority {
     fn new(runtime: &NodeRuntime, binding: AudioTlsBinding, now: u64) -> Result<Self, String> {
@@ -76,9 +79,22 @@ impl PinnedSourceAuthority {
         let source_lease = *runtime
             .route_port_lease_claim(route.id, route.source)
             .ok_or("audio Source lease absent")?;
+        let node = runtime.snapshot().local_node;
+        let source_catalog = node
+            .capabilities
+            .get(&route.source.capability_id)
+            .ok_or("audio Source catalog absent")?
+            .clone();
+        let source_adapter = node
+            .adapter_instances
+            .get(&source_catalog.adapter_instance_id)
+            .ok_or("audio Source adapter absent")?
+            .clone();
         let this = Self {
             binding,
             source_lease,
+            source_catalog,
+            source_adapter,
         };
         this.check(runtime, now)?;
         Ok(this)
@@ -105,11 +121,34 @@ impl PinnedSourceAuthority {
             return Err("secure audio original Source lease changed".into());
         }
         let node = runtime.snapshot().local_node;
-        let port = node
+        let mut capability = node
             .capabilities
             .get(&route.source.capability_id)
-            .and_then(|cap| cap.ports.get(&route.source.port_id))
-            .ok_or("secure audio Source catalog disappeared")?;
+            .ok_or("secure audio Source catalog disappeared")?
+            .clone();
+        // Available -> Busy is the owned Android capture transition, not a
+        // changed source. Every other source/permission/format field is pinned.
+        capability.availability = self.source_catalog.availability;
+        let port = capability
+            .ports
+            .get_mut(&route.source.port_id)
+            .ok_or("secure audio Source port disappeared")?;
+        port.availability = self
+            .source_catalog
+            .ports
+            .get(&route.source.port_id)
+            .ok_or("original Source port absent")?
+            .availability;
+        if capability != self.source_catalog
+            || node.adapter_instances.get(&capability.adapter_instance_id)
+                != Some(&self.source_adapter)
+        {
+            return Err("secure audio Source catalog or adapter changed".into());
+        }
+        let port = capability
+            .ports
+            .get(&route.source.port_id)
+            .ok_or("Source port absent")?;
         if !port
             .formats
             .contains(&FormatDescriptor::new(SECURE_AUDIO_MONO_FORMAT))
@@ -124,6 +163,7 @@ impl PinnedSourceAuthority {
 
 /// Independent wall and monotonic deadlines anchored before credential parsing
 /// and TCP/TLS admission. Neither retries, timestamps nor packets renew them.
+#[derive(Clone)]
 struct AuthorityClock {
     origin: Instant,
     deadline: Instant,
@@ -177,6 +217,137 @@ pub struct SecureAudioSender {
     clock: AuthorityClock,
     terminal: bool,
 }
+/// Native-only immutable preparation, anchored before parsing or network work.
+/// Consuming the authenticated receipt is one-shot even when later work fails.
+#[derive(Clone)]
+pub(crate) struct PreparedAudioSender {
+    address: std::net::SocketAddr,
+    identity: ControlTlsClientIdentity,
+    server_name: String,
+    authority: PinnedSourceAuthority,
+    clock: AuthorityClock,
+}
+impl PreparedAudioSender {
+    #[cfg(any(target_os = "android", test))]
+    pub(crate) fn new(
+        runtime: &NodeRuntime,
+        link: &mut CatalogControlLink,
+        route_id: RouteId,
+        offer: SecureAudioDataOffer,
+        identity: ControlTlsClientIdentity,
+        server_name: String,
+        now: u64,
+    ) -> Result<Self, String> {
+        let origin = Instant::now();
+        let route = runtime.route(route_id).map_err(|e| e.to_string())?;
+        link.take_received_secure_audio_offer(route, offer)
+            .map_err(|e| e.to_string())?;
+        Self::from_received(
+            runtime,
+            link,
+            route_id,
+            offer,
+            identity,
+            server_name,
+            now,
+            origin,
+        )
+    }
+    #[allow(clippy::too_many_arguments)]
+    fn from_received(
+        runtime: &NodeRuntime,
+        link: &CatalogControlLink,
+        route_id: RouteId,
+        offer: SecureAudioDataOffer,
+        identity: ControlTlsClientIdentity,
+        server_name: String,
+        now: u64,
+        origin: Instant,
+    ) -> Result<Self, String> {
+        let now = now.max(wall_time_ms()?);
+        let route = runtime.route(route_id).map_err(|e| e.to_string())?;
+        source_authority(runtime, route, now).ok_or("audio Source consent or lease absent")?;
+        offer.validate(route).map_err(|e| e.to_string())?;
+        if link.peer_node_id() != route.sink.node_id
+            || link
+                .authenticated_peer_certificate()
+                .map_err(|e| e.to_string())?
+                != identity.expected_peer_certificate
+        {
+            return Err("audio control peer or pinned certificate differs from Sink".into());
+        }
+        let binding = AudioTlsBinding::from_route(link.tls_binding(), route, offer.stream_id, now)
+            .map_err(|e| e.to_string())?;
+        let authority = PinnedSourceAuthority::new(runtime, binding, now)?;
+        let clock = AuthorityClock::new(now, authority.source_lease.expires_at_ms, origin)?;
+        Ok(Self {
+            address: std::net::SocketAddr::new(
+                link.authenticated_peer_addr()
+                    .map_err(|e| e.to_string())?
+                    .ip(),
+                offer.port,
+            ),
+            identity,
+            server_name,
+            authority,
+            clock,
+        })
+    }
+    pub(crate) fn binding(&self) -> AudioTlsBinding {
+        self.authority.binding
+    }
+    #[cfg(any(target_os = "android", test))]
+    pub(crate) fn lease_deadline(&self) -> u64 {
+        self.authority.source_lease.expires_at_ms
+    }
+    #[cfg(any(target_os = "android", test))]
+    pub(crate) fn validate_snapshot(&self, runtime: &NodeRuntime, now: u64) -> Result<(), String> {
+        self.clock.clone().check(now, Instant::now())?;
+        self.authority.check(runtime, now)
+    }
+    pub(crate) fn connect(self) -> Result<SecureAudioSender, String> {
+        self.connect_with_stop(|_| {})
+    }
+    pub(crate) fn connect_with_stop(
+        mut self,
+        stop_ready: impl FnOnce(AudioTlsStopHandle),
+    ) -> Result<SecureAudioSender, String> {
+        self.clock.check(wall_time_ms()?, Instant::now())?;
+        let binding = self.binding();
+        let rate =
+            SecureMonoPcmRateBudget::new(self.clock.deadline.duration_since(self.clock.origin))
+                .map_err(|e| e.to_string())?;
+        let records = SecureMonoPcmAdmission::new(AudioMediaStreamBinding {
+            session_id: binding.session.session_id,
+            route_id: binding.route_id,
+            stream_id: binding.stream_id,
+            stream_epoch: u32::try_from(binding.epoch).map_err(|_| "audio epoch overflow")?,
+            selected_spec: AudioStreamSpec::voice_interactive(),
+        })
+        .map_err(|e| e.to_string())?;
+        let channel = AudioTlsChannel::connect_until_with_stop(
+            ControlTlsEndpoint {
+                address: self.address,
+                io_timeout: IO_BUDGET,
+            },
+            &self.server_name,
+            self.identity,
+            binding,
+            self.clock.deadline,
+            stop_ready,
+        )
+        .map_err(|e| e.to_string())?;
+        self.clock.check(wall_time_ms()?, Instant::now())?;
+        Ok(SecureAudioSender {
+            channel,
+            records,
+            rate,
+            authority: self.authority,
+            clock: self.clock,
+            terminal: false,
+        })
+    }
+}
 impl SecureAudioSender {
     pub fn connect(
         runtime: &NodeRuntime,
@@ -190,71 +361,29 @@ impl SecureAudioSender {
         let origin = Instant::now();
         let now = now.max(wall_time_ms()?);
         let route = runtime.route(route_id).map_err(|e| e.to_string())?;
-        // Consume before any attempt. A failure cannot re-arm this control-link
-        // generation and caller-supplied structs are not authenticated receipts.
         link.take_received_secure_audio_offer(route, offer)
             .map_err(|e| e.to_string())?;
-        source_authority(runtime, route, now).ok_or("audio Source consent or lease absent")?;
-        offer.validate(route).map_err(|e| e.to_string())?;
-        if link.peer_node_id() != route.sink.node_id {
-            return Err("audio control peer differs from Sink".into());
-        }
-        let binding = AudioTlsBinding::from_route(link.tls_binding(), route, offer.stream_id, now)
-            .map_err(|e| e.to_string())?;
-        let authority = PinnedSourceAuthority::new(runtime, binding, now)?;
-        let clock = AuthorityClock::new(now, authority.source_lease.expires_at_ms, origin)?;
-        let rate = SecureMonoPcmRateBudget::new(clock.deadline.duration_since(origin))
-            .map_err(|e| e.to_string())?;
-        let records = SecureMonoPcmAdmission::new(AudioMediaStreamBinding {
-            session_id: route.session_id,
-            route_id,
-            stream_id: offer.stream_id,
-            stream_epoch: u32::try_from(route.epoch).map_err(|_| "audio epoch overflow")?,
-            selected_spec: AudioStreamSpec::voice_interactive(),
-        })
-        .map_err(|e| e.to_string())?;
         let directory = PairedPeerDirectory::decode_json(route.source.node_id, directory_json)
             .map_err(|e| e.to_string())?;
         let peer = directory
             .active_peers()
             .find(|peer| peer.node_id == route.sink.node_id)
             .ok_or("audio Sink is not actively paired")?;
-        if link
-            .authenticated_peer_certificate()
-            .map_err(|e| e.to_string())?
-            != peer.peer_certificate_sha256
-        {
-            return Err("audio paired certificate differs from authenticated control peer".into());
-        }
         let identity = ControlTlsClientIdentity::from_bundle(
             peer.peer_certificate_sha256,
             ControlCredentialBundle::decode(encoded_credential).map_err(|e| e.to_string())?,
         );
-        let address = std::net::SocketAddr::new(
-            link.authenticated_peer_addr()
-                .map_err(|e| e.to_string())?
-                .ip(),
-            offer.port,
-        );
-        let channel = AudioTlsChannel::connect_until(
-            ControlTlsEndpoint {
-                address,
-                io_timeout: IO_BUDGET,
-            },
-            &peer.server_name,
+        let mut sender = PreparedAudioSender::from_received(
+            runtime,
+            link,
+            route_id,
+            offer,
             identity,
-            binding,
-            clock.deadline,
-        )
-        .map_err(|e| e.to_string())?;
-        let mut sender = Self {
-            channel,
-            records,
-            rate,
-            authority,
-            clock,
-            terminal: false,
-        };
+            peer.server_name.clone(),
+            now,
+            origin,
+        )?
+        .connect()?;
         sender.check(runtime, wall_time_ms()?)?;
         Ok(sender)
     }

@@ -41,6 +41,8 @@ use capyio_runtime::{NodeRuntime, RuntimeError, RuntimeSnapshot};
 
 #[cfg(target_os = "android")]
 mod android_ffi;
+#[cfg(any(target_os = "android", test))]
+mod audio_job;
 mod audio_negotiation;
 mod audio_selection;
 pub mod audio_sender;
@@ -49,6 +51,7 @@ mod camera_job;
 pub mod camera_sender;
 mod control_exchange;
 mod display_catalog;
+mod secure_audio_negotiation;
 mod touchpad_consent;
 pub use control_exchange::{
     authenticate_android_control_dial, exchange_accepted_android_catalog,
@@ -495,6 +498,8 @@ struct AndroidCameraUse {
 pub struct AndroidCatalogRuntimeV1 {
     display_use: display_catalog::DisplayUse,
     audio_uses: BTreeMap<capyio_core::RouteId, AndroidAudioUse>,
+    #[cfg(any(target_os = "android", test))]
+    secure_audio_uses: BTreeMap<RouteId, secure_audio_negotiation::SecureAudioUse>,
     #[cfg(target_os = "android")]
     camera_use: Option<AndroidCameraUse>,
     audio_local_intent: BTreeSet<capyio_core::RouteId>,
@@ -688,6 +693,8 @@ impl AndroidCatalogRuntimeV1 {
             display_use: display_catalog::DisplayUse::default(),
             runtime: NodeRuntime::new(node)?,
             audio_uses: BTreeMap::new(),
+            #[cfg(any(target_os = "android", test))]
+            secure_audio_uses: BTreeMap::new(),
             #[cfg(target_os = "android")]
             camera_use: None,
             audio_local_intent: BTreeSet::new(),

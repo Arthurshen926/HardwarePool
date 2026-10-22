@@ -39,6 +39,7 @@ mod camera_use;
 mod controller_use;
 mod display_use;
 mod enrollment;
+mod secure_audio;
 mod secure_camera;
 mod secure_haptics;
 mod secure_touchpad;
@@ -751,6 +752,7 @@ pub extern "system" fn Java_dev_capyio_android_AndroidNativeControlListener_nati
                     runtime.runtime.expire_port_leases(now_ms);
                     runtime.expire_touchpad_requests(now_ms);
                     secure_camera::reconcile(&runtime.runtime);
+                    secure_audio::reconcile(&runtime.runtime);
                 }
                 let settings = catalog_runtimes()
                     .lock()
@@ -929,7 +931,7 @@ pub extern "system" fn Java_dev_capyio_android_AndroidNativeControlListener_nati
                                     })?;
                                 if status.route.profile == capyio_core::ProfileId::audio_frames_v1()
                                 {
-                                    runtime.receive_audio_route_status(
+                                    let route = runtime.receive_audio_route_status(
                                         link,
                                         &status,
                                         &owner
@@ -937,7 +939,20 @@ pub extern "system" fn Java_dev_capyio_android_AndroidNativeControlListener_nati
                                             .ok_or("authenticated peer absent")?
                                             .to_string(),
                                         now_ms,
-                                    )?
+                                    )?;
+                                    if let Some(offer) = status.secure_audio_data {
+                                        secure_audio::cache_offer(
+                                            runtime_handle,
+                                            runtime,
+                                            link,
+                                            route.id,
+                                            offer,
+                                            owner.listener.camera_identity(),
+                                            now_ms,
+                                        )?;
+                                    }
+                                    secure_audio::reconcile(&runtime.runtime);
+                                    route
                                 } else {
                                     let confirm =
                                         runtime.resource_requires_confirmation(&status.route);
@@ -1108,12 +1123,29 @@ pub extern "system" fn Java_dev_capyio_android_AndroidNativeControlListener_nati
                             if runtime.runtime.route(request.request().route_id).is_ok_and(
                                 |route| route.profile == capyio_core::ProfileId::audio_frames_v1(),
                             ) {
-                                runtime.answer_audio_port_lease(link, request, now_ms)
+                                let lease = request.request();
+                                // Release/Renew interrupts data before potentially blocked control I/O.
+                                if matches!(
+                                    lease.action,
+                                    capyio_protocol::PortLeaseAction::Release
+                                        | capyio_protocol::PortLeaseAction::Renew
+                                ) {
+                                    secure_audio::stop_runtime(
+                                        runtime_handle,
+                                        Some(lease.route_id),
+                                    );
+                                }
+                                secure_audio::reconcile(&runtime.runtime);
+                                let response =
+                                    runtime.answer_audio_port_lease(link, request, now_ms);
+                                secure_audio::reconcile(&runtime.runtime);
+                                response
                             } else {
                                 runtime.runtime.expire_port_leases(now_ms);
                                 // Expiry/release must close camera media before a
                                 // potentially backpressured control response.
                                 secure_camera::reconcile(&runtime.runtime);
+                                secure_audio::reconcile(&runtime.runtime);
                                 let lease = request.request();
                                 if lease.action == capyio_protocol::PortLeaseAction::Release
                                     && runtime.runtime.route(lease.route_id).is_ok_and(|route| {
@@ -1137,6 +1169,7 @@ pub extern "system" fn Java_dev_capyio_android_AndroidNativeControlListener_nati
                                     )
                                     .map_err(|error| error.to_string());
                                 secure_camera::reconcile(&runtime.runtime);
+                                secure_audio::reconcile(&runtime.runtime);
                                 response
                             }
                         }
@@ -1220,6 +1253,7 @@ pub extern "system" fn Java_dev_capyio_android_AndroidNativeControlListener_nati
                                         .map_err(|error| error.to_string())?
                                 };
                                 secure_camera::reconcile(&runtime.runtime);
+                                secure_audio::reconcile(&runtime.runtime);
                                 (route, touchpad, haptics, gamepad)
                             };
                             if gamepad
@@ -1301,6 +1335,7 @@ pub extern "system" fn Java_dev_capyio_android_AndroidNativeControlListener_nati
                 secure_touchpad::stop_runtime(runtime_handle, None);
                 secure_haptics::stop_runtime(runtime_handle, None);
                 secure_camera::stop_runtime(runtime_handle, None);
+                secure_audio::stop_runtime(runtime_handle, None);
                 if let Some(link) = owner.link.as_mut()
                     && let Some(runtime) = catalog_runtimes()
                         .lock()
@@ -1318,10 +1353,16 @@ pub extern "system" fn Java_dev_capyio_android_AndroidNativeControlListener_nati
             Ok(match result {
                 Ok(Ok(connected)) => connected,
                 Ok(Err(error)) => {
+                    if let Ok(runtime) = catalog_handle(runtime_handle) {
+                        secure_audio::stop_runtime(runtime, None);
+                    }
                     throw(env, "java/lang/IllegalStateException", error);
                     false
                 }
                 Err(_) => {
+                    if let Ok(runtime) = catalog_handle(runtime_handle) {
+                        secure_audio::stop_runtime(runtime, None);
+                    }
                     throw(
                         env,
                         "java/lang/IllegalStateException",
@@ -1361,6 +1402,7 @@ pub extern "system" fn Java_dev_capyio_android_AndroidNativeControlListener_nati
                 secure_touchpad::stop_runtime(runtime_handle, None);
                 secure_haptics::stop_runtime(runtime_handle, None);
                 secure_camera::stop_runtime(runtime_handle, None);
+                secure_audio::stop_runtime(runtime_handle, None);
                 let link = owner.link.take();
                 owner.runtime_handle = None;
                 owner.published_catalog_revision = 0;
@@ -1411,6 +1453,7 @@ pub extern "system" fn Java_dev_capyio_android_AndroidNativeControlListener_nati
                 secure_touchpad::stop_runtime(runtime_handle, None);
                 secure_haptics::stop_runtime(runtime_handle, None);
                 secure_camera::stop_runtime(runtime_handle, None);
+                secure_audio::stop_runtime(runtime_handle, None);
                 if let Some(link) = owner.link.as_mut() {
                     if let Some(runtime) = catalog_runtimes()
                         .lock()
@@ -1644,6 +1687,7 @@ pub extern "system" fn Java_dev_capyio_android_AndroidNativeCatalogRuntime_nativ
                         .map_err(|error| error.to_string())?;
                     if let Some(host) = runtimes.get(&handle) {
                         secure_camera::reconcile(&host.runtime);
+                        secure_audio::reconcile(&host.runtime);
                     }
                 }
                 // The control worker notices the new Runtime revision on its
@@ -1853,7 +1897,9 @@ pub extern "system" fn Java_dev_capyio_android_AndroidNativeCatalogRuntime_nativ
                     .lock()
                     .map_err(|_| "native Runtime registry poisoned")?;
                 let runtime = runtimes.get_mut(&handle).ok_or("unknown native Runtime")?;
-                runtime.resolve_touchpad_request(id, allow, now)
+                let result = runtime.resolve_touchpad_request(id, allow, now);
+                secure_audio::reconcile(&runtime.runtime);
+                result
             }));
             Ok(matches!(result, Ok(Ok(()))))
         })
@@ -1912,6 +1958,8 @@ pub extern "system" fn Java_dev_capyio_android_AndroidNativeCatalogRuntime_nativ
             let result = catch_unwind(AssertUnwindSafe(|| -> Result<(), String> {
                 let handle = catalog_handle(handle)?;
                 secure_camera::stop_runtime(handle, None);
+                secure_audio::stop_runtime(handle, None);
+                secure_audio::reap_finished(Some(handle));
                 let removed = catalog_runtimes()
                     .lock()
                     .map_err(|_| "native catalog Runtime registry is poisoned".to_owned())?

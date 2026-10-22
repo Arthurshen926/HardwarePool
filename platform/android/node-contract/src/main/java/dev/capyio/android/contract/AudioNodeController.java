@@ -92,6 +92,16 @@ public final class AudioNodeController {
         return true;
     }
 
+    /** A failed cleanup is not a successful Stop. The owner must retain resource quarantine. */
+    public synchronized boolean failStop(AudioCapabilityKind kind, long generation, String problemCode) {
+        validateProblemCode(problemCode);
+        Slot slot = slot(kind);
+        if (slot.generation != generation || slot.state != AudioCapabilityState.STOPPING) return false;
+        slot.state = AudioCapabilityState.FAILED;
+        slot.problemCode = problemCode;
+        return true;
+    }
+
     public synchronized void addFrames(
             AudioCapabilityKind kind,
             long generation,

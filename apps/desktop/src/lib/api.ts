@@ -1,3 +1,4 @@
+import { parseAndroidMicrophoneSettings } from "./android-microphone-settings";
 import { parseAndroidCameraSettings } from "./android-camera-settings";
 import { invoke } from "@tauri-apps/api/core";
 
@@ -33,6 +34,8 @@ declare global {
       getControllerPeersJson?(): string;
       getAudioPeersJson?(): string;
       getAudioUsesJson?(): string;
+      getMicrophoneSettingsJson?(): string;
+      selectMicrophoneProfile?(profile: string, expectedRevision: number): boolean;
       getCameraPeersJson?(): string;
       getCameraUseJson?(): string;
       startCameraUse?(peerNodeId: string): boolean;
@@ -92,6 +95,18 @@ class AndroidNodeCapyIOApi implements CapyIOApi {
   }
   async getAudioPeers(): ReturnType<CapyIOApi['getAudioPeers']> { return JSON.parse(window.CapyIOAndroid?.getAudioPeersJson?.() ?? '[]'); }
   async getAudioUses(): ReturnType<CapyIOApi['getAudioUses']> { return JSON.parse(window.CapyIOAndroid?.getAudioUsesJson?.() ?? '[]'); }
+  async getAndroidMicrophoneSettings(): ReturnType<CapyIOApi['getAndroidMicrophoneSettings']> {
+    const value = JSON.parse(window.CapyIOAndroid?.getMicrophoneSettingsJson?.() ?? 'null');
+    return value === null ? null : parseAndroidMicrophoneSettings(value);
+  }
+  async selectAndroidMicrophoneProfile(profile: import('./types').UiAndroidMicrophoneSettings['captureProfile'], expectedRevision: number) {
+    if (window.CapyIOAndroid?.selectMicrophoneProfile?.(profile, expectedRevision) !== true) {
+      throw new Error('麦克风设置未被接受，请重新读取状态。切换不会授权录音或退回 UDP。');
+    }
+    const settings = await this.getAndroidMicrophoneSettings();
+    if (!settings) throw new Error('麦克风设置暂不可用。');
+    return settings;
+  }
   async startAudioUse(peerNodeId: string, direction: import('./types').AudioUseDirection): Promise<void> {
     if (window.CapyIOAndroid?.startAudioUse?.(peerNodeId, direction) !== true) throw new Error('音频申请未被接受，请检查节点连接、资源发布和应用版本。');
   }
@@ -503,6 +518,8 @@ class TauriCapyIOApi implements CapyIOApi {
   async stopCameraUse(): Promise<void> { throw new Error('Windows 请在远程资源中停止具体相机。'); }
   async getAudioPeers(): ReturnType<CapyIOApi['getAudioPeers']> { return []; }
   async getAudioUses(): ReturnType<CapyIOApi['getAudioUses']> { return []; }
+  async getAndroidMicrophoneSettings() { return null; }
+  async selectAndroidMicrophoneProfile(): Promise<import('./types').UiAndroidMicrophoneSettings> { throw new Error('当前平台不配置 Android 麦克风。'); }
   async startAudioUse(): Promise<void> { throw new Error('Windows 请在远程资源中选择具体麦克风或扬声器。'); }
   async stopAudioUse(): Promise<void> { throw new Error('Windows 请在远程资源中停止具体音频资源。'); }
   async getControllerPeers(): ReturnType<CapyIOApi['getControllerPeers']> { return []; } // Windows uses its complete Runtime snapshot.

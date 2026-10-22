@@ -485,7 +485,15 @@ export interface UiCameraUse {
   status: 'idle' | 'awaiting_consent' | 'starting' | 'active' | 'stopping' | 'failed';
   error?: string | null;
 }
-export type AudioUseDirection = 'microphone' | 'speaker';
+export interface UiAndroidMicrophoneSettings {
+  schemaVersion: 1;
+  revision: number;
+  captureProfile: 'legacy' | 'secure_mono_tls13_v1';
+  source: 'system_default';
+  eligibility: 'not_requested' | 'eligible' | 'unavailable';
+  permissionReady: boolean;
+}
+export type AudioUseDirection = 'microphone' | 'microphone-secure' | 'speaker';
 export interface UiAudioPeer { nodeId: string; displayName: string; directions: AudioUseDirection[]; unavailableDirections?: { direction: AudioUseDirection; reason: string }[]; }
 export interface UiAudioUse {
   peerNodeId: string;
@@ -509,6 +517,8 @@ export interface CapyIOApi {
   stopCameraUse(): Promise<void>;
   getAudioPeers(): Promise<UiAudioPeer[]>;
   getAudioUses(): Promise<UiAudioUse[]>;
+  getAndroidMicrophoneSettings(): Promise<UiAndroidMicrophoneSettings | null>;
+  selectAndroidMicrophoneProfile(profile: UiAndroidMicrophoneSettings['captureProfile'], expectedRevision: number): Promise<UiAndroidMicrophoneSettings>;
   startAudioUse(peerNodeId: string, direction: AudioUseDirection): Promise<void>;
   stopAudioUse(direction: AudioUseDirection): Promise<void>;
   getControllerPeers(): Promise<UiControllerPeer[]>;

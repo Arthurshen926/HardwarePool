@@ -18,6 +18,7 @@ pub extern "system" fn Java_dev_capyio_android_AndroidNativeCatalogRuntime_nativ
 ) -> jbyteArray {
     env.with_env(|env|->jni::errors::Result<_>{
         let result=(||->Result<Vec<u8>,String>{
+            secure_audio::reap_finished(Some(catalog_handle(handle)?));
             let action=string(env,action)?;let id=string(env,id)?;let peer=string(env,peer)?;let direction=string(env,direction)?;
             let mut registry=catalog_runtimes().lock().map_err(|_|"Runtime registry poisoned")?;
             let host=registry.get_mut(&catalog_handle(handle)?).ok_or("unknown Runtime")?;
@@ -30,16 +31,28 @@ pub extern "system" fn Java_dev_capyio_android_AndroidNativeCatalogRuntime_nativ
                     let mut unavailable_directions = Vec::new();
                     for direction in [AudioDirection::Microphone, AudioDirection::Speaker] {
                         if let Ok(endpoint) = select_endpoint(peer, direction, false) {
-                            if supports_inbound_draft(peer, endpoint, direction) {
+                            if supports_inbound_draft(peer, endpoint, direction)
+                                && select_endpoint(&snapshot.local_node, direction, true).is_ok() {
                                 directions.push(direction.name());
                             } else {
                                 unavailable_directions.push(serde_json::json!({"direction":direction.name(),"reason":ADMISSION_UNSUPPORTED}));
                             }
                         }
                     }
+                    if crate::audio_selection::select_secure_endpoint(&snapshot.local_node,true).is_ok()
+                        && crate::audio_selection::select_secure_endpoint(peer,false).is_ok() {
+                        directions.push("microphone-secure");
+                    }
                     (!directions.is_empty() || !unavailable_directions.is_empty()).then(||serde_json::json!({"nodeId":peer.id.to_string(),"displayName":peer.display_name,"directions":directions,"unavailableDirections":unavailable_directions}))
                 }).collect();
                 return serde_json::to_vec(&peers).map_err(|e|e.to_string());
+            }
+            secure_audio::reconcile(&host.runtime);
+            let secure_ids:Vec<_>=host.secure_audio_uses.keys().copied().collect();
+            for id in secure_ids {
+                if (secure_audio::failed_for_route(catalog_handle(handle)?,id)
+                    || host.secure_audio_uses.get(&id).is_some_and(|job|job.terminal==Some(crate::audio_job::FAILED)))
+                    && host.runtime.route(id).is_ok_and(|r|matches!(r.state,RouteState::Starting|RouteState::Active)) { fail(host,id)?; }
             }
             let running:Vec<_>=host.audio_uses.keys().copied().collect();
             for id in running {
@@ -58,29 +71,36 @@ pub extern "system" fn Java_dev_capyio_android_AndroidNativeCatalogRuntime_nativ
             } else if action=="active" || action=="failed" || action=="busy" {
                 let id:RouteId=id.parse().map_err(|_|"invalid audio Route")?;
                 let route=host.runtime.route(id).map_err(|e|e.to_string())?;
-                if action=="active" && route.state==RouteState::Starting && authority(host,route,now).is_some() {
+                if action=="active" && route.state==RouteState::Starting && authority(host,route,now).is_some()
+                    && (!crate::secure_audio_negotiation::proposed(route) || secure_audio::streaming_for_route(catalog_handle(handle)?,id)) {
                     host.runtime.activate_route(id).map_err(|e|e.to_string())?;host.audio_status_pending.insert(id);
                 } else if action=="busy" && matches!(route.state,RouteState::Draft|RouteState::Prepared|RouteState::Starting|RouteState::Active){fail_message(host,id,"本机音频正由另一项使用（可能是旧版高级入口）占用。请先停止原会话，再从跨设备音频开始；不会自动接管或停止已有音频。")?;}
                 else if action=="failed" && matches!(route.state,RouteState::Draft|RouteState::Prepared|RouteState::Starting|RouteState::Active){fail(host,id)?;}
             } else if action=="stop" {
+                if direction=="microphone-secure" { secure_audio::stop_runtime(catalog_handle(handle)?,None); }
                 host.stop_audio_direction(&direction)?;
             }
+            secure_audio::reconcile(&host.runtime);
             let snapshot=host.runtime.snapshot();
             let mut output=Vec::new();
             for route in &snapshot.routes {
-                let Some((_,direction))=local_port(host,route)else{continue};
+                let Some((_,legacy_direction))=local_port(host,route)else{continue};
+                let secure=crate::secure_audio_negotiation::proposed(route);
+                let direction=crate::secure_audio_negotiation::direction(route,legacy_direction);
+                let secure_job=host.secure_audio_uses.get(&route.id);
                 let expires=authority(host,route,now);
                 let job=host.audio_uses.get(&route.id);
                 let live=expires.is_some() && !matches!(route.state,RouteState::Stopped|RouteState::Failed|RouteState::Offline) && route.authorization!=AuthorizationState::Denied
                     && job.is_none_or(|job|!matches!(route.state,RouteState::Starting|RouteState::Active)||route.epoch==job.peer_route.epoch);
-                output.push(serde_json::json!({"routeId":route.id.to_string(),"sessionId":route.session_id.to_string(),"peerNodeId":if direction=="microphone"{route.sink.node_id}else{route.source.node_id}.to_string(),"direction":direction,
+                output.push(serde_json::json!({"routeId":route.id.to_string(),"sessionId":route.session_id.to_string(),"peerNodeId":if legacy_direction=="microphone"{route.sink.node_id}else{route.source.node_id}.to_string(),"direction":direction,
                     "status":if route.authorization==AuthorizationState::Denied{"idle"}else{match route.state{RouteState::Draft=>if route.authorization==AuthorizationState::Pending{"awaiting_consent"}else{"starting"},RouteState::Prepared|RouteState::Starting=>"starting",RouteState::Active=>"active",RouteState::Stopping=>"stopping",RouteState::Stopped=>"idle",_=>"failed"}},
-                    "endpointPrepared":job.is_some_and(|job|job.local_port.is_some()),
+                    "endpointPrepared":if secure{secure_job.is_some()}else{job.is_some_and(|job|job.local_port.is_some())},
                     "waitingMedia":direction=="speaker"&&route.state==RouteState::Starting,
                     "message":if direction=="speaker"&&route.state==RouteState::Starting{Some("扬声器已就绪，等待对端发送音频；尚未收到媒体帧")}else{None},
-                    "shouldPrepare":live&&job.is_some(),"shouldRun":live&&host.audio_should_run(route.id,now),"expiresAtMs":expires,
+                    "shouldPrepare":live&&if secure{secure_job.is_some()}else{job.is_some()},
+                    "shouldRun":live&&if secure{secure_job.is_some()&&matches!(route.state,RouteState::Starting|RouteState::Active)}else{host.audio_should_run(route.id,now)},"expiresAtMs":expires,
                     "error":snapshot.problems.iter().rev().find(|p|p.related_route==Some(route.id)).map(|p|format!("{}: {}",p.code,p.human_message)),
-                    "config":job.map(crate::audio_negotiation::legacy_audio_config)}));
+                    "config":if secure{Some(crate::secure_audio_negotiation::config())}else{job.map(crate::audio_negotiation::legacy_audio_config)}}));
             }
             serde_json::to_vec(&output).map_err(|e|e.to_string())
         })();

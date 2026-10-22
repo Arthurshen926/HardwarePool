@@ -81,6 +81,11 @@ that crate or Profile-specific descriptors rather than dominating Core.
 It retains mono 48 kHz S16LE/10 ms semantics but requires the dedicated pinned
 TLS data offer and strict contiguous timeline. It is not interchangeable with
 the trusted-lab UDP format or a generic StandardPort interoperability claim.
+Android secure microphone opt-in is specified by
+[ADR 1560](adr/1560-android-secure-microphone-binding.md). It advertises eligibility
+for this exact mono Source format only; actual capture validation and finite
+per-use consent remain mandatory. It does not advertise secure speaker capture
+or modify the legacy mono/stereo formats.
 
 ## Video specialization
 

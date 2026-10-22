@@ -67,6 +67,7 @@ public final class MainActivity extends Activity {
         @Override
         public void onServiceConnected(ComponentName name, IBinder service) {
             binder = (AudioNodeService.NodeBinder) service;
+            binder.setMicrophoneUiVisible(uiInputActive);
             binder.setStateListener(MainActivity.this::scheduleRefresh);
             scheduleRefresh(0);
         }
@@ -85,6 +86,8 @@ public final class MainActivity extends Activity {
 
     private volatile AudioNodeService.NodeBinder binder;
     private AudioCapabilityKind pendingStart;
+    private long pendingMicrophoneRevision;
+    private AudioNodeService.NodeBinder pendingAudioOwner;
     private boolean pendingCameraStart;
     private long pendingCameraSettingsRevision;
     private AudioNodeService.NodeBinder pendingCameraOwner;
@@ -259,6 +262,8 @@ public final class MainActivity extends Activity {
     protected void onResume() {
         super.onResume();
         uiInputActive = true;
+        AudioNodeService.NodeBinder current = binder;
+        if (current != null) current.setMicrophoneUiVisible(true);
     }
 
     @Override
@@ -266,6 +271,7 @@ public final class MainActivity extends Activity {
         uiInputActive = false;
         AudioNodeService.NodeBinder current = binder;
         if (current != null) {
+            current.setMicrophoneUiVisible(false);
             current.releaseUiInputs();
         }
         super.onPause();
@@ -334,8 +340,12 @@ public final class MainActivity extends Activity {
         }
         AudioCapabilityKind requested = pendingStart;
         pendingStart = null;
-        if (requested != null && requiredPermissionsGranted(requested)) {
-            startCapability(requested);
+        AudioNodeService.NodeBinder owner = pendingAudioOwner;
+        pendingAudioOwner = null;
+        if (requested != null && requiredPermissionsGranted(requested)
+                && (requested != AudioCapabilityKind.MICROPHONE_SOURCE
+                    || (owner != null && binder == owner && owner.canStartLegacyMicrophone(pendingMicrophoneRevision)))) {
+            startCapability(requested, pendingMicrophoneRevision);
             renderPermissionState(null);
         } else {
             renderPermissionState(getString(R.string.permission_denied));
@@ -454,6 +464,10 @@ public final class MainActivity extends Activity {
     }
 
     private void requestStart(AudioCapabilityKind kind) {
+        AudioNodeService.NodeBinder owner = binder;
+        long revision = owner == null ? -1 : owner.microphoneSettingsRevision();
+        if (kind == AudioCapabilityKind.MICROPHONE_SOURCE
+                && (owner == null || !owner.canStartLegacyMicrophone(revision))) return;
         List<String> missing = new ArrayList<>();
         if (kind == AudioCapabilityKind.MICROPHONE_SOURCE
                 && checkSelfPermission(Manifest.permission.RECORD_AUDIO)
@@ -467,10 +481,12 @@ public final class MainActivity extends Activity {
         }
         if (!missing.isEmpty()) {
             pendingStart = kind;
+            pendingAudioOwner = owner;
+            pendingMicrophoneRevision = revision;
             requestPermissions(missing.toArray(new String[0]), REQUEST_AUDIO_PERMISSIONS);
             return;
         }
-        startCapability(kind);
+        startCapability(kind, revision);
     }
 
     private boolean requiredPermissionsGranted(AudioCapabilityKind kind) {
@@ -540,9 +556,11 @@ public final class MainActivity extends Activity {
         }
     }
 
-    private void startCapability(AudioCapabilityKind kind) {
+    private void startCapability(AudioCapabilityKind kind, long revision) {
         if (kind == AudioCapabilityKind.MICROPHONE_SOURCE) {
-            AudioNodeService.startMicrophone(this);
+            AudioNodeService.NodeBinder current = binder;
+            if (current == null || !current.canStartLegacyMicrophone(revision)) return;
+            AudioNodeService.startMicrophone(this, revision);
         } else {
             AudioNodeService.startSpeaker(this);
         }
@@ -834,6 +852,15 @@ public final class MainActivity extends Activity {
         public boolean startCameraUse(String peer) {AudioNodeService.NodeBinder current=binder;return current!=null&&current.startCameraUse(peer);}
         @JavascriptInterface
         public boolean stopCameraUse() {AudioNodeService.NodeBinder current=binder;return current!=null&&current.stopCameraUse();}
+        @JavascriptInterface
+        public String getMicrophoneSettingsJson() { AudioNodeService.NodeBinder current=binder;return current==null?"null":current.getMicrophoneSettingsJson(); }
+        @JavascriptInterface
+        public boolean selectMicrophoneProfile(String profile, long expectedRevision) {
+            AudioNodeService.NodeBinder current = binder;
+            boolean accepted = current != null && current.selectMicrophoneProfile(profile, expectedRevision);
+            if (accepted) dispatchSharedUiState();
+            return accepted;
+        }
         @JavascriptInterface
         public String getAudioUsesJson() { AudioNodeService.NodeBinder current=binder;return current==null?"[]":current.getAudioUsesJson(); }
         @JavascriptInterface
@@ -1268,9 +1295,14 @@ public final class MainActivity extends Activity {
                 if (audioCommand == null) {
                     return false;
                 }
+                if (audioCommand.target() == AudioCapabilityKind.MICROPHONE_SOURCE
+                        && audioCommand.operation() != AndroidAudioCommand.Operation.STOP
+                        && !current.canStartLegacyMicrophone(current.microphoneSettingsRevision())) return false;
                 handler.post(() -> {
                     if (audioCommand.operation() == AndroidAudioCommand.Operation.STOP) {
                         if (audioCommand.target() == AudioCapabilityKind.MICROPHONE_SOURCE) {
+                            pendingStart = null;
+                            pendingAudioOwner = null;
                             AudioNodeService.stopMicrophone(MainActivity.this);
                         } else {
                             AudioNodeService.stopSpeaker(MainActivity.this);

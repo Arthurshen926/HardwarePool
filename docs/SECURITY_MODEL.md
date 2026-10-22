@@ -1694,3 +1694,16 @@ secure/unknown transport before opening UDP; physical capture and production
 console secure-audio integration are outside this API-only slice. Traffic timing
 and endpoint metadata remain observable, and TLS/TCP head-of-line blocking is
 not a low-latency guarantee.
+
+[ADR 1560](adr/1560-android-secure-microphone-binding.md) adds an explicit Android
+secure microphone branch, not an exception to the legacy DTO rejection. Its
+closed schema never exposes credentials or a caller-chosen data endpoint to
+Java. Only a native one-shot generation can admit fixed PCM frames after the
+authenticated binding ACK. Stop is latched before registration, interrupts TLS
+and writes once their socket exists, and cannot be undone by a late completion.
+The preceding TCP connect retains its original bounded deadline. Existing
+permission and visible lifecycle checks remain required; actual capture format
+and routed-device identity must be checked before publication and during use.
+Queue exhaustion and capture/transport stalls terminate without UDP fallback.
+This does not claim physical-device compatibility or a production Linux secure
+audio launcher, and does not introduce any new permission or renewable grant.

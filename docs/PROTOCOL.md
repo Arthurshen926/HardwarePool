@@ -125,6 +125,15 @@ offers, changed selections and replay fail closed without UDP fallback. The
 first implementation is a Rust sender/owner API with synthetic graph acceptance,
 not an Android AudioRecord or console secure-audio advertisement.
 
+[ADR 1560](adr/1560-android-secure-microphone-binding.md) adds explicit Android
+secure microphone opt-in using this same offer and format, without another wire
+version or transport. Eligibility advertisement is not capture verification.
+JNI packetization uses a relative sample-clock timeline: each complete 480-sample
+frame advances sequence by one, sample index by 480 and timestamp by 10,000 us.
+These timestamps do not claim absolute device capture time or A/V synchronization
+and cannot extend authority. Legacy UDP and secure mono remain distinct choices;
+no format/offer fallback is permitted within existing consent.
+
 Minor 4 appends optional
 `RouteStatus.native_audio_data` at field 3 (ADR 1494). This metadata names a
 nonzero port, Stream UUID and Source/Sink endpoint, with explicit mono

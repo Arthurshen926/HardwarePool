@@ -1795,3 +1795,11 @@ canonical packet admission, monotonic pacing, bounded queues and original
 non-renewable deadlines apply at both ends. Real-time callbacks own no sockets.
 This slice proves reusable APIs with synthetic PCM, not Android AudioRecord,
 Windows secure audio or production console integration.
+
+[ADR 1560](adr/1560-android-secure-microphone-binding.md) subsequently binds the
+Android microphone Source to a bounded Rust-owned JNI job behind explicit
+secure-mono opt-in. The capture worker waits for authenticated readiness and
+hands complete fixed PCM frames to nonblocking native admission; it owns no
+network socket. Profile, permission, device-route or generation changes cancel
+the use rather than renew it. Linux Node/console secure launching is a separate
+next integration, and physical phone capture remains unverified.

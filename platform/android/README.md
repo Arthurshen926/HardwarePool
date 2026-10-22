@@ -361,3 +361,34 @@ one-shot initial lease and receiver Starting/Active reporting caveats above
 remain, as does the unproven revoke-inside-blocked-write boundary. No permission,
 foreground-service declaration, enrollment, credential creation or actual-device
 recording is added. The legacy Windows plaintext lab path remains separate.
+
+## Experimental secure mono microphone binding (ADR 1560)
+
+The Android microphone settings now offer explicit
+`secure_mono_tls13_v1` opt-in; `legacy` remains the default. This changes the
+advertised format preference, not permission or consent. A new use still requires
+existing microphone permission, visible foreground ownership, a compatible
+selected peer Sink, authenticated control negotiation and a fresh finite Source
+lease. The secure direction is `microphone-secure`; a secure/unknown DTO is never
+passed to the legacy DatagramSocket adapter. Switching the profile stops and
+invalidates existing microphone work before publishing the new catalog.
+
+The secure capture path waits for Rust's authenticated media binding before
+opening AudioRecord, requires actual mono 48 kHz PCM16, pins the initially routed
+input, and copies only complete 480-sample records into a two-slot native queue.
+Socket work stays on the native owner thread. Source streaming status requires a
+successful authenticated media write, not merely capture/enqueue; it still does
+not prove receiver playback. Stop, permission/routing loss, stale generation,
+queue exhaustion and original grant/lease expiry terminate the use without UDP
+fallback or automatic retry. Failed recorder cleanup blocks another capture in
+that process rather than reporting a clean stop. Native TCP connect is bounded
+but cannot be interrupted before the connected socket's Stop handle exists.
+
+This is the Android binding slice only. The Linux production Node/console secure
+playback and virtual-microphone launcher is still a separate integration step;
+the existing nine secure tone graphs exercise reusable APIs, not that missing
+user workflow. No physical phone capture or Android JVM-to-ARM64 invocation is
+claimed by the fake AudioRecord, SDK compile or generated JNI export checks.
+Run `:node-contract:secureMonoCaptureContractTest`,
+`:app:secureAudioContractTest` and the mandatory hosted native job/TLS tests.
+See [ADR 1560](../../docs/adr/1560-android-secure-microphone-binding.md) for limits.

@@ -85,6 +85,32 @@ public final class AndroidNativeCatalogRuntime implements AutoCloseable, io.capy
         if (current != 0) nativeCameraSecureStop(current, generation);
     }
 
+    long audioSecureStart(String routeId) {
+        long current = handle;
+        return current == 0 ? 0 : nativeAudioSecureStart(current, routeId);
+    }
+
+    int audioSecureState(long generation) {
+        long current = handle;
+        return current == 0 ? 3 : nativeAudioSecureState(current, generation);
+    }
+
+    boolean audioSecureRecord(long generation, byte[] record) {
+        long current = handle;
+        return current != 0 && record != null && record.length == 960
+                && nativeAudioSecureRecord(current, generation, record);
+    }
+
+    void audioSecureStop(long generation) {
+        long current = handle;
+        if (current != 0) nativeAudioSecureStop(current, generation);
+    }
+
+    private static native long nativeAudioSecureStart(long runtime, String routeId);
+    private static native int nativeAudioSecureState(long runtime, long generation);
+    private static native boolean nativeAudioSecureRecord(long runtime, long generation, byte[] record);
+    private static native void nativeAudioSecureStop(long runtime, long generation);
+
     private static native long nativeCameraSecureStart(long runtime, String routeId);
     private static native int nativeCameraSecureState(long runtime, long generation);
     private static native boolean nativeCameraSecureRecord(long runtime, long generation, byte[] record);

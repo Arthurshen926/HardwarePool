@@ -288,3 +288,35 @@ fn owned_busy_is_not_new_authority_and_catalog_selection_cannot_change() {
         assert!(authority.check(&runtime, 106).is_err());
     }
 }
+
+#[test]
+fn source_settings_permission_contract_and_adapter_revision_are_pinned() {
+    for change in [
+        (|node: &mut NodeDescriptor, source: PortRef| {
+            node.capabilities
+                .get_mut(&source.capability_id)
+                .unwrap()
+                .ports
+                .get_mut(&source.port_id)
+                .unwrap()
+                .clock_domain = Some("changed-capture-source".into());
+        }) as fn(&mut NodeDescriptor, PortRef),
+        |node, source| {
+            node.capabilities
+                .get_mut(&source.capability_id)
+                .unwrap()
+                .permission_requirement = PermissionRequirement::None;
+        },
+        |node, source| {
+            let id = node.capabilities[&source.capability_id].adapter_instance_id;
+            node.adapter_instances.get_mut(&id).unwrap().version = "changed".into();
+        },
+    ] {
+        let (mut runtime, id, authority) = ready();
+        let source = runtime.route(id).unwrap().source;
+        let mut node = runtime.snapshot().local_node;
+        change(&mut node, source);
+        runtime.replace_local_catalog(node).unwrap();
+        assert!(authority.check(&runtime, 106).is_err());
+    }
+}

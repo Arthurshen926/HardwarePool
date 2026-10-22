@@ -59,7 +59,7 @@ final class MicrophoneSourceAdapter implements AudioPlatformAdapter {
 
     @Override
     public synchronized void start(long generation) {
-        if (worker != null) {
+        if (worker != null || AndroidSecureMicrophoneCapture.hasUnreleasedCapture()) {
             listener.onFailed(generation, PROBLEM_BUSY);
             return;
         }
@@ -81,7 +81,7 @@ final class MicrophoneSourceAdapter implements AudioPlatformAdapter {
     }
 
     synchronized boolean configure(NativeLanMicrophoneSessionConfig next, Runnable persist) {
-        if (worker != null || running.get()) return false;
+        if (worker != null || running.get() || AndroidSecureMicrophoneCapture.hasUnreleasedCapture()) return false;
         persist.run();
         if (reservedRouteSocket != null) reservedRouteSocket.close();
         reservedRouteSocket = null;
@@ -101,7 +101,8 @@ final class MicrophoneSourceAdapter implements AudioPlatformAdapter {
 
     synchronized boolean configureRoute(NativeLanMicrophoneSessionConfig next,
             NativeLanRouteGuard guard, java.net.DatagramSocket socket) {
-        if (worker != null || running.get() || next == null || guard == null || guard == routeGuard
+        if (worker != null || running.get() || AndroidSecureMicrophoneCapture.hasUnreleasedCapture()
+                || next == null || guard == null || guard == routeGuard
                 || !guard.isLive() || !next.binding.matches(guard.route.binding)) return false;
         if (routeGuard != null) routeGuard.revoke();
         config = next;
