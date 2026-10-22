@@ -80,7 +80,7 @@ pub extern "system" fn Java_dev_capyio_android_AndroidNativeCatalogRuntime_nativ
                     "message":if direction=="speaker"&&route.state==RouteState::Starting{Some("扬声器已就绪，等待对端发送音频；尚未收到媒体帧")}else{None},
                     "shouldPrepare":live&&job.is_some(),"shouldRun":live&&host.audio_should_run(route.id,now),"expiresAtMs":expires,
                     "error":snapshot.problems.iter().rev().find(|p|p.related_route==Some(route.id)).map(|p|format!("{}: {}",p.code,p.human_message)),
-                    "config":job.map(|job|serde_json::json!({"host":job.peer_address,"peerPort":job.offer.port,"streamId":job.offer.stream_id.to_string(),"epoch":job.peer_route.epoch}))}));
+                    "config":job.map(crate::audio_negotiation::legacy_audio_config)}));
             }
             serde_json::to_vec(&output).map_err(|e|e.to_string())
         })();

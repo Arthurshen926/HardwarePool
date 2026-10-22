@@ -76,6 +76,12 @@ direction-neutral selected specification and Session/Route/Stream/epoch media
 binding; concrete network framing remains transport-owned. Audio types live in
 that crate or Profile-specific descriptors rather than dominating Core.
 
+[ADR 1559](adr/1559-finite-secure-mono-audio.md) adds an explicit AdapterManaged
+`pcm-s16le-48000-mono-tls13-v1` format with empty parameters and Interactive QoS.
+It retains mono 48 kHz S16LE/10 ms semantics but requires the dedicated pinned
+TLS data offer and strict contiguous timeline. It is not interchangeable with
+the trusted-lab UDP format or a generic StandardPort interoperability claim.
+
 ## Video specialization
 
 Decoded packed-raw video, exact candidate selection, frame metadata and camera

@@ -35,6 +35,7 @@ capyio-control-link = { path = "../../crates/capyio-control-link" }
 capyio-control-tls = { path = "../../crates/capyio-control-tls" }
 capyio-pairing = { path = "../../crates/capyio-pairing" }
 capyio-native-audio-lan = { path = "../../adapters/native-audio-lan" }
+capyio-linux-audio = { path = "../../platform/linux/capyio-audio" }
 rcgen = { version = "=0.14.5", default-features = false, features = ["ring"] }
 rustix = { version = "=1.1.4", default-features = false, features = ["fs", "pipe", "std"] }
 capyio-vcamdroid-adapter = { path = "../../adapters/vcamdroid" }

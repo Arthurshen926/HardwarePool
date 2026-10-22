@@ -224,7 +224,18 @@ macro_rules! route_tls {
             }
 
             pub fn try_accept(&self) -> Result<Option<$channel>, ControlTlsError> {
+                self.try_accept_until(Instant::now() + self.timeout)
+            }
+
+            /// Cap accept plus handshake without shortening the media lifetime.
+            pub fn try_accept_until(
+                &self,
+                operation_deadline: Instant,
+            ) -> Result<Option<$channel>, ControlTlsError> {
                 self.binding.validate(now_ms()?)?;
+                if Instant::now() >= operation_deadline {
+                    return Err(ControlTlsError::ChannelFailed);
+                }
                 if self.stopped.load(Ordering::Acquire) || Instant::now() >= self.local_deadline {
                     return Err(ControlTlsError::ChannelFailed);
                 }
@@ -242,12 +253,13 @@ macro_rules! route_tls {
                     }
                     Err(error) => return Err(error.into()),
                 };
-                let socket = BoundedSocket::new(
+                let mut socket = BoundedSocket::new(
                     socket,
                     self.timeout,
                     grant_deadline(self.binding.expires_at_ms)?.min(self.local_deadline),
                     self.stopped.clone(),
                 )?;
+                socket.deadline = socket.deadline.min(operation_deadline);
                 let connection = ServerConnection::new(self.config.clone())?;
                 let mut stream = StreamOwned::new(connection, socket);
                 while stream.conn.is_handshaking() {
@@ -265,7 +277,7 @@ macro_rules! route_tls {
                 stream.flush()?;
                 stream.sock.check()?;
                 self.binding.validate(now_ms()?)?;
-                // Camera admits exactly one connection; legacy listeners remain reusable.
+                // One-shot media transports close after one ACK; legacy listeners remain reusable.
                 if $one_shot {
                     drop(listener.take());
                 }
@@ -289,12 +301,14 @@ macro_rules! route_tls {
                     Self::Dialed(stream) => &stream.sock,
                 }
             }
-            fn begin_record(&mut self) {
+            fn begin_record_until(&mut self, deadline: Instant) {
                 let socket = match self {
                     Self::Accepted(stream) => &mut stream.sock,
                     Self::Dialed(stream) => &mut stream.sock,
                 };
-                socket.deadline = (Instant::now() + socket.timeout).min(socket.grant_deadline);
+                socket.deadline = (Instant::now() + socket.timeout)
+                    .min(socket.grant_deadline)
+                    .min(deadline);
             }
         }
         impl Read for DataIo {
@@ -330,6 +344,8 @@ macro_rules! route_tls {
             timeout: Duration,
             deadline: Instant,
             grant_deadline: Instant,
+            #[cfg(test)]
+            observed_write_backpressure: AtomicBool,
         }
         impl BoundedSocket {
             fn new(
@@ -347,6 +363,8 @@ macro_rules! route_tls {
                     timeout,
                     deadline: (Instant::now() + timeout).min(grant_deadline),
                     grant_deadline,
+                    #[cfg(test)]
+                    observed_write_backpressure: AtomicBool::new(false),
                 })
             }
             fn check(&self) -> std::io::Result<()> {
@@ -390,6 +408,9 @@ macro_rules! route_tls {
                     self.check()?;
                     match self.socket.write(bytes) {
                         Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {
+                            #[cfg(test)]
+                            self.observed_write_backpressure
+                                .store(true, Ordering::Release);
                             std::thread::sleep(Duration::from_millis(2))
                         }
                         result => return result,
@@ -446,6 +467,7 @@ macro_rules! route_tls {
                 local_deadline: Instant,
             ) -> Result<Self, ControlTlsError> {
                 endpoint.validate()?;
+                let connect_deadline = Instant::now() + endpoint.io_timeout;
                 binding.validate(now_ms()?)?;
                 if server_name.is_empty() || server_name.len() > 253 {
                     return Err(ControlTlsError::InvalidEndpoint);
@@ -456,7 +478,9 @@ macro_rules! route_tls {
                 let mut config = build_client_config(identity)?;
                 Arc::make_mut(&mut config).alpn_protocols = vec![$alpn_name.to_vec()];
                 let grant_deadline = grant_deadline(binding.expires_at_ms)?.min(local_deadline);
-                let remaining = grant_deadline.saturating_duration_since(Instant::now());
+                let remaining = grant_deadline
+                    .min(connect_deadline)
+                    .saturating_duration_since(Instant::now());
                 if remaining.is_zero() {
                     return Err(ControlTlsError::UnauthorizedBinding);
                 }
@@ -464,12 +488,13 @@ macro_rules! route_tls {
                     &endpoint.address,
                     endpoint.io_timeout.min(remaining),
                 )?;
-                let socket = BoundedSocket::new(
+                let mut socket = BoundedSocket::new(
                     socket,
                     endpoint.io_timeout,
                     grant_deadline,
                     Arc::new(AtomicBool::new(false)),
                 )?;
+                socket.deadline = socket.deadline.min(connect_deadline);
                 let mut stream = StreamOwned::new(ClientConnection::new(config, name)?, socket);
                 while stream.conn.is_handshaking() {
                     stream.conn.complete_io(&mut stream.sock)?;
@@ -535,15 +560,26 @@ macro_rules! route_tls {
             }
 
             pub fn send_record(&mut self, bytes: &[u8]) -> Result<(), ControlTlsError> {
+                self.send_record_until(bytes, Instant::now() + self.io.socket().timeout)
+            }
+
+            /// One absolute record budget; cannot extend the original local authority.
+            pub fn send_record_until(
+                &mut self,
+                bytes: &[u8],
+                deadline: Instant,
+            ) -> Result<(), ControlTlsError> {
                 self.preflight()?;
                 if !($min..=$max_name).contains(&bytes.len()) {
                     return Err(ControlTlsError::RecordTooLarge);
                 }
-                self.io.begin_record();
+                self.io.begin_record_until(deadline);
                 let result = (|| {
+                    self.io.socket().check()?;
                     self.io.write_all(&(bytes.len() as $length).to_be_bytes())?;
                     self.io.write_all(bytes)?;
-                    self.io.flush()
+                    self.io.flush()?;
+                    self.io.socket().check()
                 })();
                 if result.is_err() {
                     self.close();
@@ -553,9 +589,24 @@ macro_rules! route_tls {
             }
 
             pub fn receive_record(&mut self) -> Result<Vec<u8>, ControlTlsError> {
+                self.receive_record_until(Instant::now() + self.io.socket().timeout)
+            }
+
+            /// The budget starts at the caller, including worker dispatch delay.
+            pub fn receive_record_until(
+                &mut self,
+                deadline: Instant,
+            ) -> Result<Vec<u8>, ControlTlsError> {
                 self.preflight()?;
-                self.io.begin_record();
-                let result = read_record(&mut self.io);
+                self.io.begin_record_until(deadline);
+                let result = (|| {
+                    self.io.socket().check()?;
+                    let bytes = read_record(&mut self.io)?;
+                    // rustls may satisfy Read entirely from buffered plaintext.
+                    // Check the operation budget even when no socket call occurred.
+                    self.io.socket().check()?;
+                    Ok::<_, ControlTlsError>(bytes)
+                })();
                 if result.is_err() {
                     self.close();
                 }
@@ -1055,6 +1106,90 @@ macro_rules! route_tls {
                     let mut channel = connect(address, client.clone(), expected).unwrap();
                     assert_eq!(channel.receive_record().unwrap(), vec![1; $min]);
                 }
+                worker.join().unwrap();
+            }
+
+            // Hosted-only: real synthetic loopback TLS, never a restricted local check.
+            #[test]
+            fn ipc_accept_operation_deadline_bounds_partial_handshake() {
+                let expected = binding();
+                let (identity, _) = crate::tests::test_identities();
+                let server = server(identity, expected);
+                let _socket = TcpStream::connect(server.local_addr().unwrap()).unwrap();
+                let before = Instant::now();
+                assert!(
+                    server
+                        .try_accept_until(before + Duration::from_millis(60))
+                        .is_err()
+                );
+                assert!(before.elapsed() < Duration::from_secs(1));
+            }
+
+            #[test]
+            fn ipc_operation_deadline_does_not_shorten_media_lifetime() {
+                let expected = binding();
+                let (identity, client) = crate::tests::test_identities();
+                let server = server(identity, expected);
+                let address = server.local_addr().unwrap();
+                let worker = thread::spawn(move || {
+                    let operation_end = Instant::now() + Duration::from_millis(500);
+                    let mut channel = loop {
+                        if let Some(channel) = server.try_accept_until(operation_end).unwrap() {
+                            break channel;
+                        }
+                        thread::sleep(Duration::from_millis(2));
+                    };
+                    channel
+                        .send_record_until(&[1; $min], Instant::now() + Duration::from_millis(500))
+                        .unwrap();
+                    thread::sleep(Duration::from_millis(600));
+                    channel
+                        .send_record_until(&[2; $min], Instant::now() + Duration::from_millis(500))
+                        .unwrap();
+                });
+                let mut channel = connect(address, client, expected).unwrap();
+                assert_eq!(
+                    channel
+                        .receive_record_until(Instant::now() + Duration::from_secs(1))
+                        .unwrap(),
+                    vec![1; $min]
+                );
+                assert_eq!(
+                    channel
+                        .receive_record_until(Instant::now() + Duration::from_secs(1))
+                        .unwrap(),
+                    vec![2; $min]
+                );
+                worker.join().unwrap();
+            }
+
+            #[test]
+            fn ipc_record_operation_deadline_is_absolute_and_terminal() {
+                let expected = binding();
+                let (identity, client) = crate::tests::test_identities();
+                let server = server(identity, expected);
+                let address = server.local_addr().unwrap();
+                let worker = thread::spawn(move || {
+                    let mut channel = accept(server).unwrap();
+                    let before = Instant::now();
+                    assert!(
+                        channel
+                            .receive_record_until(before + Duration::from_millis(60))
+                            .is_err()
+                    );
+                    assert!(before.elapsed() < Duration::from_secs(1));
+                    assert!(matches!(
+                        channel.receive_record(),
+                        Err(ControlTlsError::ChannelFailed)
+                    ));
+                });
+                let mut channel = connect(address, client, expected).unwrap();
+                channel
+                    .io
+                    .write_all(&($min as $length).to_be_bytes())
+                    .unwrap();
+                channel.io.write_all(&[1]).unwrap();
+                channel.io.flush().unwrap();
                 worker.join().unwrap();
             }
 

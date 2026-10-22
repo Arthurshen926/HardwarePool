@@ -1094,3 +1094,207 @@ fn authenticated_address_supports_both_roles_without_weakening_accepted_contract
         Err(CatalogLinkError::BindingMismatch)
     ));
 }
+
+// Hosted-only: these tests open actual synthetic loopback pinned TLS sockets.
+fn secure_audio_fixture(
+    sink: &CatalogControlLink,
+    source: &CatalogControlLink,
+) -> (capyio_core::Route, capyio_protocol::SecureAudioDataOffer) {
+    use capyio_core::{AuthorizationState, FormatDescriptor, ProfileId, QosMode, StreamId};
+    let lab = capyio_testkit::DemoLab::new().unwrap();
+    let mut route = lab
+        .runtime
+        .route(lab.routes.phone_microphone_to_windows)
+        .unwrap()
+        .clone();
+    route.session_id = sink.session_id();
+    route.source.node_id = sink.peer_node_id();
+    route.sink.node_id = source.peer_node_id();
+    route.profile = ProfileId::audio_frames_v1();
+    route.backend = RouteBackend::AdapterManaged;
+    route.selected_format = Some(FormatDescriptor::new(
+        capyio_protocol::SECURE_AUDIO_MONO_FORMAT,
+    ));
+    route.compatible_formats = vec![route.selected_format.clone().unwrap()];
+    route.compatible_qos_modes = [QosMode::Interactive].into_iter().collect();
+    route.selected_qos_mode = Some(QosMode::Interactive);
+    route.state = RouteState::Starting;
+    route.epoch = 3;
+    route.authorization = AuthorizationState::Authorized {
+        expires_at_ms: Some(5000),
+    };
+    (
+        route,
+        capyio_protocol::SecureAudioDataOffer {
+            port: 40211,
+            stream_id: StreamId::new(),
+            transport: capyio_protocol::SecureAudioTransport::Tls13MtlsV1,
+        },
+    )
+}
+
+#[test]
+fn ipc_secure_audio_offer_requires_exact_session_receiver_and_live_grant() {
+    use capyio_core::{AuthorizationState, FormatDescriptor, QosMode};
+    use std::time::Instant;
+    let (mut sink, mut source, _, _) = connected_pair();
+    let (route, offer) = secure_audio_fixture(&sink, &source);
+    let deadline = || Instant::now() + Duration::from_secs(2);
+    assert!(
+        source
+            .take_received_secure_audio_offer(&route, offer)
+            .is_err()
+    );
+    for case in 0..8 {
+        let mut bad = route.clone();
+        match case {
+            0 => bad.session_id = SessionId::new(),
+            1 => bad.sink.node_id = capyio_core::NodeId::new(),
+            2 => bad.source.node_id = capyio_core::NodeId::new(),
+            3 => {
+                bad.authorization = AuthorizationState::Authorized {
+                    expires_at_ms: Some(1),
+                }
+            }
+            4 => {
+                bad.authorization = AuthorizationState::Authorized {
+                    expires_at_ms: None,
+                }
+            }
+            5 => bad.selected_format = Some(FormatDescriptor::new("pcm-s16le-48000-mono")),
+            6 => bad.selected_qos_mode = Some(QosMode::Basic),
+            _ => bad
+                .selected_format
+                .as_mut()
+                .unwrap()
+                .parameters
+                .insert("extra".into(), "1".into())
+                .map(|_| ())
+                .unwrap_or(()),
+        }
+        assert!(
+            sink.send_secure_audio_data_offer_until(&bad, offer, 1, deadline())
+                .is_err(),
+            "case {case}"
+        );
+    }
+    assert!(
+        source
+            .send_secure_audio_data_offer_until(&route, offer, 1, deadline())
+            .is_err()
+    );
+    sink.send_secure_audio_data_offer_until(&route, offer, 1, deadline())
+        .unwrap();
+    let ReceivedControlMessage::RouteStatus(received) =
+        source.receive_control_message_until(deadline()).unwrap()
+    else {
+        panic!()
+    };
+    assert_eq!(received.secure_audio_data, Some(offer));
+    assert!(received.native_audio_data.is_none());
+    source
+        .take_received_secure_audio_offer(&route, offer)
+        .unwrap();
+    assert!(
+        source
+            .take_received_secure_audio_offer(&route, offer)
+            .is_err()
+    );
+    // A repeated authenticated offer cannot replenish consumed receipt authority.
+    sink.send_secure_audio_data_offer_until(&route, offer, 1, deadline())
+        .unwrap();
+    assert!(source.receive_control_message_until(deadline()).is_err());
+    assert!(
+        source
+            .take_received_secure_audio_offer(&route, offer)
+            .is_err()
+    );
+}
+
+#[test]
+fn ipc_secure_audio_receipt_rejects_changed_binding_and_consumes_failed_attempt() {
+    use std::time::Instant;
+    for case in 0..7 {
+        let (mut sink, mut source, _, _) = connected_pair();
+        let (route, offer) = secure_audio_fixture(&sink, &source);
+        let deadline = || Instant::now() + Duration::from_secs(2);
+        sink.send_secure_audio_data_offer_until(&route, offer, 1, deadline())
+            .unwrap();
+        source.receive_control_message_until(deadline()).unwrap();
+        let mut bad = route.clone();
+        let mut bad_offer = offer;
+        match case {
+            0 => bad.epoch += 1,
+            1 => bad.source.port_id = capyio_core::PortId::new(),
+            2 => bad.sink.capability_id = capyio_core::CapabilityId::new(),
+            3 => {
+                bad.authorization = capyio_core::AuthorizationState::Authorized {
+                    expires_at_ms: Some(4999),
+                }
+            }
+            4 => bad_offer.port += 1,
+            5 => bad_offer.stream_id = capyio_core::StreamId::new(),
+            _ => bad
+                .compatible_formats
+                .push(capyio_core::FormatDescriptor::new("other")),
+        }
+        assert!(
+            source
+                .take_received_secure_audio_offer(&bad, bad_offer)
+                .is_err()
+        );
+        assert!(
+            source
+                .take_received_secure_audio_offer(&route, offer)
+                .is_err()
+        );
+    }
+}
+
+#[test]
+fn ipc_secure_audio_received_source_owned_offer_closes_control_link() {
+    let (mut server, mut client, _, _) = connected_raw_pair();
+    let lab = capyio_testkit::DemoLab::new().unwrap();
+    let mut route = lab
+        .runtime
+        .route(lab.routes.phone_microphone_to_windows)
+        .unwrap()
+        .clone();
+    route.session_id = server.session_id();
+    // The raw authenticated client is Source, so it cannot advertise the Sink.
+    route.source.node_id = server.peer_node_id();
+    route.sink.node_id = server.tls_binding().server_node_id;
+    route.backend = RouteBackend::AdapterManaged;
+    route.state = RouteState::Starting;
+    route.epoch = 1;
+    route.authorization = capyio_core::AuthorizationState::Authorized {
+        expires_at_ms: Some(5000),
+    };
+    route.selected_format = Some(capyio_core::FormatDescriptor::new(
+        capyio_protocol::SECURE_AUDIO_MONO_FORMAT,
+    ));
+    route.compatible_formats = vec![route.selected_format.clone().unwrap()];
+    route.selected_qos_mode = Some(capyio_core::QosMode::Interactive);
+    route.compatible_qos_modes = [capyio_core::QosMode::Interactive].into_iter().collect();
+    let offer = capyio_protocol::SecureAudioDataOffer {
+        port: 40211,
+        stream_id: capyio_core::StreamId::new(),
+        transport: capyio_protocol::SecureAudioTransport::Tls13MtlsV1,
+    };
+    client
+        .send_envelope(
+            &capyio_protocol::encode_route_status_with_secure_audio_data(
+                route.session_id,
+                &route,
+                offer,
+            )
+            .unwrap(),
+        )
+        .unwrap();
+    assert!(server.receive_control_message().is_err());
+    assert!(
+        server
+            .take_received_secure_audio_offer(&route, offer)
+            .is_err()
+    );
+}

@@ -2,6 +2,7 @@ use crate::AndroidCatalogRuntimeV1;
 use capyio_control_link::CatalogControlLink;
 use capyio_core::*;
 use capyio_protocol::{NativeAudioDataOffer, NativeAudioEndpoint, NativeAudioPreset};
+use capyio_runtime::NodeRuntime;
 
 pub(crate) fn local_port(
     host: &AndroidCatalogRuntimeV1,
@@ -25,8 +26,15 @@ pub(crate) fn local_port(
     None
 }
 
-pub(crate) fn authority(host: &AndroidCatalogRuntimeV1, route: &Route, now: u64) -> Option<u64> {
-    let (port, _) = local_port(host, route)?;
+// The finite grant/lease test shared with the existing Android audio lifecycle.
+// Keep the legacy policy unchanged; the secure Source adds exact local identity,
+// availability and binding checks below rather than changing legacy admission.
+fn finite_audio_authority(
+    runtime: &NodeRuntime,
+    route: &Route,
+    port: PortRef,
+    now: u64,
+) -> Option<u64> {
     let AuthorizationState::Authorized {
         expires_at_ms: Some(expiry),
     } = route.authorization
@@ -34,15 +42,84 @@ pub(crate) fn authority(host: &AndroidCatalogRuntimeV1, route: &Route, now: u64)
         return None;
     };
     (expiry > now
-        && host
-            .runtime
+        && runtime
             .session(route.session_id)
             .is_ok_and(|s| s.state == SessionState::Ready)
-        && host
-            .runtime
+        && runtime
             .route_port_lease_claim(route.id, port)
             .is_some_and(|lease| lease.expires_at_ms > now))
     .then_some(expiry)
+}
+
+pub(crate) fn authority(host: &AndroidCatalogRuntimeV1, route: &Route, now: u64) -> Option<u64> {
+    let (port, _) = local_port(host, route)?;
+    finite_audio_authority(&host.runtime, route, port, now)
+}
+
+pub(crate) fn microphone_source(runtime: &NodeRuntime, route: &Route) -> bool {
+    let local = runtime.snapshot().local_node;
+    local.platform == Platform::Android
+        && route.source.node_id == local.id
+        && route.profile == ProfileId::audio_frames_v1()
+        && local
+            .capabilities
+            .get(&route.source.capability_id)
+            .is_some_and(|cap| {
+                cap.class == CapabilityClass::Microphone
+                    && cap.ports.get(&route.source.port_id).is_some_and(|port| {
+                        port.direction == PortDirection::Source && port.profile == route.profile
+                    })
+            })
+}
+
+pub(crate) fn secure_source_authority(
+    runtime: &NodeRuntime,
+    route: &Route,
+    now: u64,
+) -> Option<u64> {
+    if !microphone_source(runtime, route) {
+        return None;
+    }
+    let expiry = finite_audio_authority(runtime, route, route.source, now)?;
+    let local = runtime.snapshot().local_node;
+    let cap = local.capabilities.get(&route.source.capability_id)?;
+    let port = cap.ports.get(&route.source.port_id)?;
+    let session = runtime.session(route.session_id).ok()?;
+    let lease = runtime.route_port_lease_claim(route.id, route.source)?;
+    let available_to_owner = |availability| {
+        availability == Availability::Available
+            || (availability == Availability::Busy
+                && matches!(route.state, RouteState::Starting | RouteState::Active))
+    };
+    (available_to_owner(cap.availability)
+        && available_to_owner(port.availability)
+        && session.local_node_id == local.id
+        && session.remote_node_id == route.sink.node_id
+        && lease.session_id == route.session_id
+        && lease.route_id == route.id
+        && lease.port == route.source
+        && lease.expires_at_ms <= expiry)
+        .then_some(expiry)
+}
+
+#[cfg(any(target_os = "android", test))]
+pub(crate) const LEGACY_AUDIO_DTO_VERSION: u32 = 1;
+#[cfg(any(target_os = "android", test))]
+pub(crate) const LEGACY_AUDIO_TRANSPORT: &str = "legacy-udp-v1";
+
+/// Only a legacy NativeAudioDataOffer can enter this DTO. Secure offers have a
+/// distinct Rust type and no conversion into the Java DatagramSocket boundary.
+#[cfg(any(target_os = "android", test))]
+pub(crate) fn legacy_audio_config(job: &crate::AndroidAudioUse) -> serde_json::Value {
+    serde_json::json!({
+        "schemaVersion": LEGACY_AUDIO_DTO_VERSION,
+        "transport": LEGACY_AUDIO_TRANSPORT,
+        "format": job.offer.preset.format_name(),
+        "host": job.peer_address,
+        "peerPort": job.offer.port,
+        "streamId": job.offer.stream_id.to_string(),
+        "epoch": job.peer_route.epoch,
+    })
 }
 
 pub(crate) fn receive_offer(
@@ -53,6 +130,17 @@ pub(crate) fn receive_offer(
     now: u64,
 ) -> Result<(), String> {
     let local = host.runtime.route(peer.id).map_err(|e| e.to_string())?;
+    for selected in [
+        peer.selected_format.as_ref(),
+        local.selected_format.as_ref(),
+    ]
+    .into_iter()
+    .flatten()
+    {
+        if selected != &FormatDescriptor::new(offer.preset.format_name()) {
+            return Err("legacy audio offer cannot carry a secure or unknown format".into());
+        }
+    }
     let (_, direction) = local_port(host, local).ok_or("audio offer is not for local hardware")?;
     if authority(host, local, now).is_none()
         || local.authorization != peer.authorization
@@ -553,6 +641,7 @@ mod tests {
             native_audio_data: None,
             camera_data: None,
             secure_camera_data: None,
+            secure_audio_data: None,
         }
     }
 
@@ -647,12 +736,32 @@ mod tests {
         host.runtime
             .acquire_route_port_lease(id, peer.source, 2000, 102)
             .unwrap();
+        for format in [
+            FormatDescriptor::new(capyio_protocol::SECURE_AUDIO_MONO_FORMAT),
+            FormatDescriptor::new("unknown-audio-v1"),
+            {
+                let mut format = FormatDescriptor::new(offer.preset.format_name());
+                format.parameters.insert("transport".into(), "tls13".into());
+                format
+            },
+        ] {
+            let mut wrong = peer.clone();
+            wrong.selected_format = Some(format);
+            assert!(receive_offer(&mut host, &wrong, offer, "127.0.0.1".into(), 103).is_err());
+            assert!(host.audio_uses.is_empty());
+        }
         receive_offer(&mut host, &peer, offer, "127.0.0.1".into(), 103).unwrap();
         host.prepare_audio_endpoint(id, 43211).unwrap();
         let job = host.audio_uses.get(&id).unwrap();
         assert_eq!(job.offer.stream_id, offer.stream_id);
         assert_eq!(job.peer_route.epoch, 1);
         assert_eq!(job.local_port, Some(43211));
+        let config = legacy_audio_config(job);
+        assert_eq!(config["schemaVersion"], 1);
+        assert_eq!(config["transport"], "legacy-udp-v1");
+        assert_eq!(config["format"], "pcm-s16le-48000-mono");
+        assert_eq!(config["peerPort"], 43210);
+
         assert!(!host.audio_should_run(id, 103));
     }
 

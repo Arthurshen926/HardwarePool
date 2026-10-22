@@ -83,6 +83,11 @@ final class AndroidAudioUseModule {
                 if (!use.optBoolean("shouldPrepare")) continue;
                 String id=use.getString("routeId");
                 try {
+                org.json.JSONObject config=use.getJSONObject("config");
+                // This consumer owns only the legacy lab DatagramSocket path.
+                // Do not infer transport from a port or silently downgrade TLS.
+                AndroidAudioRouteTransport.requireLegacy(config.getInt("schemaVersion"),
+                        config.getString("transport"), config.getString("format"), use.getString("direction"));
                 boolean microphone="microphone".equals(use.getString("direction"));
                 AudioCapabilityKind kind=microphone?AudioCapabilityKind.MICROPHONE_SOURCE:AudioCapabilityKind.SPEAKER_SINK;
                 AudioRouteJob job=jobs.get(id);
@@ -91,7 +96,6 @@ final class AndroidAudioUseModule {
                     if (state.state()!=AudioCapabilityState.STOPPED && state.state()!=AudioCapabilityState.FAILED) {
                         runtime.audioUse("busy", id,"","",0); continue;
                     }
-                    org.json.JSONObject config=use.getJSONObject("config");
                     dev.capyio.android.lan.NativeLanRouteBinding binding=new dev.capyio.android.lan.NativeLanRouteBinding(
                             java.util.UUID.fromString(use.getString("sessionId")), java.util.UUID.fromString(id),
                             java.util.UUID.fromString(config.getString("streamId")), config.getLong("epoch"), use.getLong("expiresAtMs"),System.currentTimeMillis());

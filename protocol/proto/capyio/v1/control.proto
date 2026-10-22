@@ -67,6 +67,7 @@ message RouteStatus {
   optional HapticsDataOffer haptics_data = 4;
   optional CameraDataOffer camera_data = 5;
   optional SecureCameraDataOffer secure_camera_data = 6;
+  optional SecureAudioDataOffer secure_audio_data = 7;
 }
 
 // Explicit controlled-lab CAVC receiver; Route carries epoch and finite grant.
@@ -85,6 +86,18 @@ message SecureCameraDataOffer {
   uint32 port = 1;
   string stream_id = 2;
   SecureCameraTransport transport = 3;
+}
+
+// Receiver-only secure mono PCM offer. No host, plaintext fallback or media bytes.
+// Exact secure format/QoS opt-in is carried by the enclosing Route.
+enum SecureAudioTransport {
+  SECURE_AUDIO_TRANSPORT_UNSPECIFIED = 0;
+  SECURE_AUDIO_TRANSPORT_TLS13_MTLS_V1 = 1;
+}
+message SecureAudioDataOffer {
+  uint32 port = 1;
+  string stream_id = 2;
+  SecureAudioTransport transport = 3;
 }
 
 // Display negotiation contract (ADR 1505). No video payload.

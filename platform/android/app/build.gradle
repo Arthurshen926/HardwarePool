@@ -249,6 +249,7 @@ tasks.register('compileCapabilityCompositionTest', JavaCompile) {
     source file('src/main/java/dev/capyio/android/AndroidCapabilityCommand.java')
     source file('src/main/java/dev/capyio/android/AndroidAudioCommand.java')
     source file('src/main/java/dev/capyio/android/AndroidAudioPeer.java')
+    source file('src/main/java/dev/capyio/android/AndroidAudioRouteTransport.java')
     source file('../capyio-display-android/display-app/src/main/java/dev/capyio/display/app/DisplayPrerequisites.java')
     source file('../capyio-display-android/display-app/src/main/java/dev/capyio/display/app/DisplayProvisioningProperties.java')
     source file('../capyio-display-android/display-app/src/main/java/dev/capyio/display/app/DisplayProvisioningBundleInstaller.java')

@@ -4,6 +4,11 @@
 
 mod audio_offer;
 mod camera_offer;
+mod secure_audio_offer;
+pub use codec::encode_route_status_with_secure_audio_data;
+pub use secure_audio_offer::{
+    SECURE_AUDIO_MONO_FORMAT, SecureAudioDataOffer, SecureAudioTransport,
+};
 mod display_settings;
 pub use camera_offer::{CameraDataOffer, SecureCameraDataOffer, SecureCameraTransport};
 pub use codec::{
@@ -43,4 +48,4 @@ pub use codec::{TouchpadDataOffer, encode_route_status_with_touchpad_data};
 pub use error::ProtocolError;
 
 pub const PROTOCOL_MAJOR: u32 = 1;
-pub const PROTOCOL_MINOR: u32 = 7;
+pub const PROTOCOL_MINOR: u32 = 8;

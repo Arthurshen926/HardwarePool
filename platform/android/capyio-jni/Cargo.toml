@@ -10,6 +10,9 @@ license.workspace = true
 crate-type = ["cdylib", "rlib"]
 
 [dependencies]
+# Reuse the existing portable mono packet contract; no codec, platform or crypto dependency.
+capyio-audio = { path = "../../../crates/capyio-audio" }
+capyio-native-audio-lan = { path = "../../../adapters/native-audio-lan" }
 # Reuse the reviewed, transport-free bounded CAVC parser; no new third-party dependency.
 capyio-vcamdroid-adapter = { path = "../../../adapters/vcamdroid" }
 capyio-protocol = { path = "../../../crates/capyio-protocol" }

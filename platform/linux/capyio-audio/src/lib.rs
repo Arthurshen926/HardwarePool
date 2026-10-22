@@ -1,4 +1,5 @@
 //! Explicit trusted-lab PCM playback, virtual microphone or selected stereo capture.
+//! A separate finite pinned-TLS mono playback owner is available on Linux.
 //! No mode performs pairing or opens resources on import.
 use std::{io, net::SocketAddrV4, time::Duration};
 
@@ -34,6 +35,11 @@ mod capture_pipewire;
 pub use capture_pipewire::PipeWireCapture;
 #[cfg(target_os = "linux")]
 mod capture_route;
+
+#[cfg(target_os = "linux")]
+mod secure;
+#[cfg(target_os = "linux")]
+pub use secure::{SecurePlaybackAdmission, SecurePlaybackEvent, SecurePlaybackOwner};
 
 pub const PCM_PACKET_BYTES: usize = 960;
 pub const MAX_STALL: Duration = Duration::from_millis(250);
@@ -390,6 +396,11 @@ impl PlaybackPump {
             }
             Err(error) => Err(error),
         }
+    }
+
+    #[cfg(target_os = "linux")]
+    pub(crate) fn has_pending_pcm(&self) -> bool {
+        self.pending_since.is_some()
     }
 
     pub const fn metrics(&self) -> PlaybackMetrics {

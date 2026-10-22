@@ -377,6 +377,7 @@ name = "capyio-android-jni"
 version = "0.1.0"
 dependencies = [
  "capyio-android-host",
+ "capyio-audio",
  "capyio-control-credentials",
  "capyio-control-link",
  "capyio-control-tls",
@@ -385,6 +386,7 @@ dependencies = [
  "capyio-discovery-udp",
  "capyio-enrollment",
  "capyio-input",
+ "capyio-native-audio-lan",
  "capyio-pairing",
  "capyio-protocol",
  "capyio-remote-touchpad-adapter",
@@ -809,6 +811,7 @@ dependencies = [
  "capyio-data-plane",
  "capyio-enrollment",
  "capyio-input",
+ "capyio-linux-audio",
  "capyio-linux-host",
  "capyio-linux-pairing-store",
  "capyio-linux-touchpad",

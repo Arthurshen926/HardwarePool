@@ -45,6 +45,11 @@ impl PipeWirePlayback {
         })
     }
 
+    /// Owned helper PID for supervision and independent graph diagnostics.
+    pub fn pid(&self) -> u32 {
+        self.child.id()
+    }
+
     /// EOF first, then kill only our child if it does not exit. Both waits are
     /// polling with a deadline, not a potentially unbounded `Child::wait`.
     /// An unkillable OS process is reported as cleanup failure, not success.

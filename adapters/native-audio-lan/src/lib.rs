@@ -13,7 +13,12 @@ mod lab;
 mod microphone_launch;
 mod reassembly;
 mod route_binding;
+mod secure_mono;
 mod supervisor;
+pub use secure_mono::{
+    SECURE_MONO_PCM_PAYLOAD_BYTES, SECURE_MONO_PCM_RECORD_BYTES, SECURE_MONO_PCM_SAMPLES,
+    SecureMonoPcmAdmission, SecureMonoPcmRateBudget,
+};
 
 use capyio_audio::{
     AudioTransportBackendContract, AudioTransportEncodingSupport, AudioTransportInteroperability,

@@ -41,6 +41,8 @@ pub struct CatalogControlLink {
     local_node_id: NodeId,
     peer_node_id: NodeId,
     host: PeerCatalogControlHost,
+    received_secure_audio_offer: Option<(Route, capyio_protocol::SecureAudioDataOffer)>,
+    secure_audio_offer_seen: bool,
 }
 
 /// One bounded, publication-filtered snapshot. A host must serialize publication
@@ -128,6 +130,17 @@ impl CatalogControlLink {
             Channel::Dialed(channel) => channel.peer_addr().map_err(Into::into),
         }
     }
+    /// Pin of the exact authenticated control peer, not a caller-supplied Node ID.
+    pub fn authenticated_peer_certificate(
+        &self,
+    ) -> Result<capyio_control_tls::CertificateFingerprint, CatalogLinkError> {
+        match self.channel.as_ref().ok_or(CatalogLinkError::Closed)? {
+            Channel::Accepted(channel) => {
+                channel.peer_certificate_fingerprint().map_err(Into::into)
+            }
+            Channel::Dialed(channel) => channel.peer_certificate_fingerprint().map_err(Into::into),
+        }
+    }
     /// Address of the authenticated accepted peer. Dialed links deliberately do
     /// not satisfy the server-side Linux playback owner contract.
     pub fn accepted_peer_addr(&self) -> Result<std::net::SocketAddr, CatalogLinkError> {
@@ -202,6 +215,8 @@ impl CatalogControlLink {
             local_node_id: local,
             peer_node_id: peer,
             host: PeerCatalogControlHost::new(AdmittedPeerBinding::new(binding.session_id, peer)),
+            received_secure_audio_offer: None,
+            secure_audio_offer_seen: false,
         }
     }
 
@@ -517,6 +532,27 @@ impl CatalogControlLink {
                 {
                     return Err(CatalogLinkError::InvalidPeerRoute);
                 }
+                if let Some(offer) = status.secure_audio_data {
+                    if status.session_id != self.binding.session_id
+                        || status.route.sink.node_id != self.peer_node_id
+                        || status.route.source.node_id != self.local_node_id
+                        || self.secure_audio_offer_seen
+                    {
+                        self.close();
+                        return Err(CatalogLinkError::InvalidPeerRoute);
+                    }
+                    // One bounded authenticated receipt per connection, never replenished
+                    // by a replay after a failed or completed one-shot media generation.
+                    self.secure_audio_offer_seen = true;
+                    self.received_secure_audio_offer = Some((status.route.clone(), offer));
+                } else if self
+                    .received_secure_audio_offer
+                    .as_ref()
+                    .is_some_and(|(route, _)| route.id == status.route.id)
+                {
+                    // Any subsequent status invalidates unconsumed preparation.
+                    self.received_secure_audio_offer = None;
+                }
                 ReceivedControlMessage::RouteStatus(Box::new(status))
             }
             Some(v1::envelope::Payload::PortLeaseRequest(_)) => {
@@ -732,6 +768,69 @@ impl CatalogControlLink {
             )?,
             deadline,
         )
+    }
+
+    /// Send only the local Sink's exact secure mono endpoint on this Session.
+    pub fn send_secure_audio_data_offer_until(
+        &mut self,
+        route: &Route,
+        offer: capyio_protocol::SecureAudioDataOffer,
+        now_ms: u64,
+        deadline: Instant,
+    ) -> Result<(), CatalogLinkError> {
+        if route.session_id != self.binding.session_id
+            || route.sink.node_id != self.local_node_id
+            || route.source.node_id != self.peer_node_id
+            || !matches!(route.authorization, AuthorizationState::Authorized { expires_at_ms: Some(expiry) } if expiry > now_ms)
+        {
+            return Err(CatalogLinkError::InvalidPeerRoute);
+        }
+        self.send_bytes_until(
+            &capyio_protocol::encode_route_status_with_secure_audio_data(
+                self.binding.session_id,
+                route,
+                offer,
+            )?,
+            deadline,
+        )
+    }
+
+    /// Consume proof that this exact endpoint came from the authenticated Sink.
+    /// This is not consent or a lease. A caller must independently freeze the
+    /// selected AudioStreamSpec and recheck live Runtime authority before I/O.
+    /// Even a failed preparation consumes the receipt; repeated wire offers are
+    /// rejected, so a second secure generation requires a fresh control link.
+    pub fn take_received_secure_audio_offer(
+        &mut self,
+        route: &Route,
+        offer: capyio_protocol::SecureAudioDataOffer,
+    ) -> Result<(), CatalogLinkError> {
+        let received = self.received_secure_audio_offer.take();
+        if self.channel.is_none() {
+            return Err(CatalogLinkError::Closed);
+        }
+        offer.validate(route)?;
+        let Some((original, received_offer)) = received else {
+            return Err(CatalogLinkError::InvalidPeerRoute);
+        };
+        if received_offer != offer
+            || route.id != original.id
+            || route.session_id != original.session_id
+            || route.session_id != self.binding.session_id
+            || route.source != original.source
+            || route.sink != original.sink
+            || route.profile != original.profile
+            || route.backend != original.backend
+            || route.epoch != original.epoch
+            || route.authorization != original.authorization
+            || route.selected_format != original.selected_format
+            || route.selected_qos_mode != original.selected_qos_mode
+            || route.compatible_formats != original.compatible_formats
+            || route.compatible_qos_modes != original.compatible_qos_modes
+        {
+            return Err(CatalogLinkError::InvalidPeerRoute);
+        }
+        Ok(())
     }
 
     pub fn send_route_command(
@@ -1066,6 +1165,7 @@ impl CatalogControlLink {
     }
 
     pub fn close(&mut self) {
+        self.received_secure_audio_offer = None;
         self.channel.take();
     }
 

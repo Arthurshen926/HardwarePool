@@ -1784,3 +1784,14 @@ fit the full portrait image into the landscape canvas with black sidebars; no
 front mirroring or live display-rotation tracking is implied. Eligibility and
 hosted synthetic GPU evidence are not physical-device compatibility. Legacy
 remains default; settings changes cannot extend a grant or start capture.
+
+### Finite secure mono audio API
+
+[ADR 1559](adr/1559-finite-secure-mono-audio.md) separates an explicit mono
+TLS data offer from legacy UDP. The Rust Source consumes a one-shot authenticated
+receipt and paired credentials; the Linux owner requires independent local
+consent and both finite leases before binding an owned PipeWire helper. Strict
+canonical packet admission, monotonic pacing, bounded queues and original
+non-renewable deadlines apply at both ends. Real-time callbacks own no sockets.
+This slice proves reusable APIs with synthetic PCM, not Android AudioRecord,
+Windows secure audio or production console integration.

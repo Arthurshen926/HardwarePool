@@ -194,6 +194,11 @@ status and error protocol; failed or Starting status is not Active.
   changes, automatic application routing or PulseAudio/ALSA compatibility are
   promised. Both directions still use unauthenticated, unencrypted trusted-lab
   UDP for media; pinned TLS/control approval does not encrypt audio packets.
+  [ADR 1559](adr/1559-finite-secure-mono-audio.md) separately adds a reusable
+  finite Rust secure-mono sender/playback-owner API and isolated synthetic
+  PipeWire acceptance. It is not yet connected to these console/Node launchers
+  or Android AudioRecord, so it does not remove their trusted-lab warning or
+  make an existing manifest select encrypted media.
 - Camera: explicit Android Source to owned native Video/Source, canonical
   1280×720 at 30 fps NV12 BT.709 limited output from rotation-zero Annex B AVC;
   finite ingress is capped independently at 60 seconds, 32 MiB and 120 frames,

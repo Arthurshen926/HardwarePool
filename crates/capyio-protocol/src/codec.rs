@@ -65,6 +65,7 @@ pub struct ValidatedRouteStatus {
     pub native_audio_data: Option<Box<crate::NativeAudioDataOffer>>,
     pub camera_data: Option<crate::CameraDataOffer>,
     pub secure_camera_data: Option<crate::SecureCameraDataOffer>,
+    pub secure_audio_data: Option<crate::SecureAudioDataOffer>,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -370,7 +371,11 @@ pub fn encode_route_status_with_touchpad_data(
     route: &capyio_core::Route,
     touchpad_data: Option<TouchpadDataOffer>,
 ) -> Result<Vec<u8>, ProtocolError> {
-    encode_route_status_data(session_id, route, touchpad_data, None, None, None, None)
+    encode_route_status_data(
+        session_id,
+        route,
+        touchpad_data.map(RouteDataOffer::Touchpad),
+    )
 }
 
 pub fn encode_route_status_with_haptics_data(
@@ -378,7 +383,7 @@ pub fn encode_route_status_with_haptics_data(
     route: &capyio_core::Route,
     offer: HapticsDataOffer,
 ) -> Result<Vec<u8>, ProtocolError> {
-    encode_route_status_data(session_id, route, None, None, Some(offer), None, None)
+    encode_route_status_data(session_id, route, Some(RouteDataOffer::Haptics(offer)))
 }
 
 pub fn encode_route_status_with_native_audio_data(
@@ -386,7 +391,7 @@ pub fn encode_route_status_with_native_audio_data(
     route: &capyio_core::Route,
     offer: crate::NativeAudioDataOffer,
 ) -> Result<Vec<u8>, ProtocolError> {
-    encode_route_status_data(session_id, route, None, Some(offer), None, None, None)
+    encode_route_status_data(session_id, route, Some(RouteDataOffer::NativeAudio(offer)))
 }
 
 pub fn encode_route_status_with_camera_data(
@@ -394,7 +399,7 @@ pub fn encode_route_status_with_camera_data(
     route: &capyio_core::Route,
     offer: crate::CameraDataOffer,
 ) -> Result<Vec<u8>, ProtocolError> {
-    encode_route_status_data(session_id, route, None, None, None, Some(offer), None)
+    encode_route_status_data(session_id, route, Some(RouteDataOffer::Camera(offer)))
 }
 
 pub fn encode_route_status_with_secure_camera_data(
@@ -402,59 +407,81 @@ pub fn encode_route_status_with_secure_camera_data(
     route: &capyio_core::Route,
     offer: crate::SecureCameraDataOffer,
 ) -> Result<Vec<u8>, ProtocolError> {
-    encode_route_status_data(session_id, route, None, None, None, None, Some(offer))
+    encode_route_status_data(session_id, route, Some(RouteDataOffer::SecureCamera(offer)))
+}
+
+pub fn encode_route_status_with_secure_audio_data(
+    session_id: SessionId,
+    route: &capyio_core::Route,
+    offer: crate::SecureAudioDataOffer,
+) -> Result<Vec<u8>, ProtocolError> {
+    encode_route_status_data(session_id, route, Some(RouteDataOffer::SecureAudio(offer)))
+}
+
+// Exclusive by construction: the encoder cannot produce mixed data offers.
+enum RouteDataOffer {
+    Touchpad(TouchpadDataOffer),
+    NativeAudio(crate::NativeAudioDataOffer),
+    Haptics(HapticsDataOffer),
+    Camera(crate::CameraDataOffer),
+    SecureCamera(crate::SecureCameraDataOffer),
+    SecureAudio(crate::SecureAudioDataOffer),
 }
 
 fn encode_route_status_data(
     session_id: SessionId,
     route: &capyio_core::Route,
-    touchpad_data: Option<TouchpadDataOffer>,
-    native_audio_data: Option<crate::NativeAudioDataOffer>,
-    haptics_data: Option<HapticsDataOffer>,
-    camera_data: Option<crate::CameraDataOffer>,
-    secure_camera_data: Option<crate::SecureCameraDataOffer>,
+    offer: Option<RouteDataOffer>,
 ) -> Result<Vec<u8>, ProtocolError> {
     if route.session_id != session_id {
         return Err(ProtocolError::InvalidRouteControl(
             "Route belongs to another Session",
         ));
     }
-    if let Some(offer) = touchpad_data {
-        offer.validate(route)?;
+    let mut status = v1::RouteStatus {
+        route: Some(route.try_into()?),
+        ..Default::default()
+    };
+    match offer {
+        Some(RouteDataOffer::Touchpad(offer)) => {
+            offer.validate(route)?;
+            status.touchpad_data = Some(v1::TouchpadDataOffer {
+                port: offer.port.into(),
+                stream_id: offer.stream_id.to_string(),
+            });
+        }
+        Some(RouteDataOffer::NativeAudio(offer)) => {
+            offer.validate(route)?;
+            status.native_audio_data = Some(offer.to_wire());
+        }
+        Some(RouteDataOffer::Haptics(offer)) => {
+            offer.validate(route)?;
+            status.haptics_data = Some(v1::HapticsDataOffer {
+                port: offer.port.into(),
+                stream_id: offer.stream_id.to_string(),
+            });
+        }
+        Some(RouteDataOffer::Camera(offer)) => {
+            offer.validate(route)?;
+            status.camera_data = Some(v1::CameraDataOffer {
+                port: offer.port.into(),
+                stream_id: offer.stream_id.to_string(),
+            });
+        }
+        Some(RouteDataOffer::SecureCamera(offer)) => {
+            offer.validate(route)?;
+            status.secure_camera_data = Some(offer.to_wire());
+        }
+        Some(RouteDataOffer::SecureAudio(offer)) => {
+            offer.validate(route)?;
+            status.secure_audio_data = Some(offer.to_wire());
+        }
+        None => {}
     }
-    if let Some(offer) = native_audio_data {
-        offer.validate(route)?;
-    }
-    if let Some(offer) = haptics_data {
-        offer.validate(route)?;
-    }
-    if let Some(offer) = camera_data {
-        offer.validate(route)?;
-    }
-    if let Some(offer) = secure_camera_data {
-        offer.validate(route)?;
-    }
-    let envelope = new_envelope(
+    encode_envelope_checked(&new_envelope(
         Some(session_id),
-        v1::envelope::Payload::RouteStatus(Box::new(v1::RouteStatus {
-            route: Some(route.try_into()?),
-            touchpad_data: touchpad_data.map(|offer| v1::TouchpadDataOffer {
-                port: u32::from(offer.port),
-                stream_id: offer.stream_id.to_string(),
-            }),
-            native_audio_data: native_audio_data.map(crate::NativeAudioDataOffer::to_wire),
-            secure_camera_data: secure_camera_data.map(crate::SecureCameraDataOffer::to_wire),
-            camera_data: camera_data.map(|offer| v1::CameraDataOffer {
-                port: u32::from(offer.port),
-                stream_id: offer.stream_id.to_string(),
-            }),
-            haptics_data: haptics_data.map(|offer| v1::HapticsDataOffer {
-                port: u32::from(offer.port),
-                stream_id: offer.stream_id.to_string(),
-            }),
-        })),
-    );
-    encode_envelope_checked(&envelope)
+        v1::envelope::Payload::RouteStatus(Box::new(status)),
+    ))
 }
 
 pub fn decode_route_status(bytes: &[u8]) -> Result<ValidatedRouteStatus, ProtocolError> {
@@ -483,6 +510,7 @@ pub fn decode_route_status(bytes: &[u8]) -> Result<ValidatedRouteStatus, Protoco
         status.haptics_data.is_some(),
         status.camera_data.is_some(),
         status.secure_camera_data.is_some(),
+        status.secure_audio_data.is_some(),
     ]
     .into_iter()
     .filter(|present| *present)
@@ -496,6 +524,10 @@ pub fn decode_route_status(bytes: &[u8]) -> Result<ValidatedRouteStatus, Protoco
     let native_audio_data = status
         .native_audio_data
         .map(|offer| crate::NativeAudioDataOffer::from_wire(offer, &route))
+        .transpose()?;
+    let secure_audio_data = status
+        .secure_audio_data
+        .map(|wire| crate::SecureAudioDataOffer::from_wire(wire, &route))
         .transpose()?;
     let secure_camera_data = status
         .secure_camera_data
@@ -555,6 +587,7 @@ pub fn decode_route_status(bytes: &[u8]) -> Result<ValidatedRouteStatus, Protoco
         native_audio_data: native_audio_data.map(Box::new),
         camera_data,
         secure_camera_data,
+        secure_audio_data,
     })
 }
 

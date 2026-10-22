@@ -1464,3 +1464,14 @@ fit the full portrait image into the landscape canvas with black sidebars; no
 front mirroring or live display-rotation tracking is implied. Eligibility and
 hosted synthetic GPU evidence are not physical-device compatibility. Legacy
 remains default; settings changes cannot extend a grant or start capture.
+
+### Finite secure mono audio
+
+[ADR 1559](adr/1559-finite-secure-mono-audio.md) requires pure offer/packet/rate
+boundary tests, actual pinned TLS wire tests, and a mandatory private PipeWire
+fixture using the production Rust sender and Linux owner. An independent monitor
+checks ordered sustained tone/silence/tone; lifecycle cases check denial before
+activation and owned helper/graph cleanup. No physical audio hardware, user
+PipeWire server, real pairing credential or Android AudioRecord is used. Existing
+UDP, console and camera suites remain separate and unchanged. Compile/list-only
+evidence does not count as executing the wire or graph acceptance cases.

@@ -3,6 +3,7 @@
 //! Mutually authenticated TLS 1.3 framing for CapyIO control Envelopes.
 //! Credential enrollment and persistence are deliberately caller-owned.
 
+pub mod audio;
 pub mod camera;
 pub mod display;
 pub mod haptics;
@@ -489,6 +490,17 @@ impl AuthenticatedControlClientChannel {
         self.binding
     }
 
+    /// Exact leaf authenticated during this live pinned mutual-TLS handshake.
+    pub fn peer_certificate_fingerprint(&self) -> Result<CertificateFingerprint, ControlTlsError> {
+        self.stream
+            .io
+            .conn
+            .peer_certificates()
+            .and_then(|chain| chain.first())
+            .and_then(|leaf| CertificateFingerprint::from_certificate_der(leaf.as_ref()))
+            .ok_or(ControlTlsError::PeerCertificateMismatch)
+    }
+
     pub fn send_envelope(&mut self, bytes: &[u8]) -> Result<(), ControlTlsError> {
         let result = self.stream.send(bytes);
         if self.stream.failed {
@@ -557,6 +569,17 @@ impl AuthenticatedControlServerChannel {
     #[must_use]
     pub const fn binding(&self) -> ControlTlsBinding {
         self.binding
+    }
+
+    /// Exact leaf authenticated during this live pinned mutual-TLS handshake.
+    pub fn peer_certificate_fingerprint(&self) -> Result<CertificateFingerprint, ControlTlsError> {
+        self.stream
+            .io
+            .conn
+            .peer_certificates()
+            .and_then(|chain| chain.first())
+            .and_then(|leaf| CertificateFingerprint::from_certificate_der(leaf.as_ref()))
+            .ok_or(ControlTlsError::PeerCertificateMismatch)
     }
 
     pub fn send_envelope(&mut self, bytes: &[u8]) -> Result<(), ControlTlsError> {

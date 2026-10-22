@@ -1680,3 +1680,17 @@ fit the full portrait image into the landscape canvas with black sidebars; no
 front mirroring or live display-rotation tracking is implied. Eligibility and
 hosted synthetic GPU evidence are not physical-device compatibility. Legacy
 remains default; settings changes cannot extend a grant or start capture.
+
+### Finite secure mono audio
+
+[ADR 1559](adr/1559-finite-secure-mono-audio.md) adds a distinct pinned TLS 1.3
+mono audio path, never a fallback flag on trusted-lab UDP. The exact selected
+format, paired leaves, Session/Route/Source/Sink/Stream/epoch, original grant and
+leases are immutable. A consumed offer, malformed/replayed record, generation
+change, stall or expiry cannot restart the connection. Both ends enforce bounded
+packet admission and monotonic pacing independently. Encryption does not confer
+resource consent or prove audibility. The legacy Java DTO explicitly rejects
+secure/unknown transport before opening UDP; physical capture and production
+console secure-audio integration are outside this API-only slice. Traffic timing
+and endpoint metadata remain observable, and TLS/TCP head-of-line blocking is
+not a low-latency guarantee.

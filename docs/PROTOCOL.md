@@ -100,7 +100,7 @@ implementation. Minor evolution appends optional fields. Removed field numbers
 are reserved forever within v1. Profile and Adapter-control versions negotiate
 independently.
 
-Envelope constants are now `1.7`. Minor 6 adds `DisplaySessionControl` at field
+Envelope constants are now `1.8`. Minor 6 adds `DisplaySessionControl` at field
 64; reserved fields are unchanged. Minor 5 adds `ControllerReceiverOffer` at
 Envelope field 61 (the reserved 48–60 range is unchanged). An authenticated
 Session transports the adapter-managed receiver host, UDP port and random token.
@@ -112,6 +112,18 @@ Android only configures its destination and still requires local hardware Start.
 Session closure clears that destination. This is compatibility configuration,
 not Route authorization/lease negotiation or encrypted UDP; use is limited to
 the existing trusted-lab/Tailscale path and requires updated apps on both peers.
+
+Minor 8 appends optional `RouteStatus.secure_audio_data` at field 7
+([ADR 1559](adr/1559-finite-secure-mono-audio.md)). This receiver-only offer
+requires the exact empty-parameter `pcm-s16le-48000-mono-tls13-v1` selection and
+Interactive QoS. It is mutually exclusive with all other data offers. The
+dedicated pinned TLS 1.3 channel uses `capyio-audio/1`, `CPYAUD01` Route binding,
+and u16 framing of exactly one 1,064-byte canonical mono CPYA packet per record.
+Original consent, leases, generation and finite deadlines remain independent
+requirements; receipt of an offer is not permission. Unknown transport, mixed
+offers, changed selections and replay fail closed without UDP fallback. The
+first implementation is a Rust sender/owner API with synthetic graph acceptance,
+not an Android AudioRecord or console secure-audio advertisement.
 
 Minor 4 appends optional
 `RouteStatus.native_audio_data` at field 3 (ADR 1494). This metadata names a

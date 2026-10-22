@@ -43,6 +43,7 @@ use capyio_runtime::{NodeRuntime, RuntimeError, RuntimeSnapshot};
 mod android_ffi;
 mod audio_negotiation;
 mod audio_selection;
+pub mod audio_sender;
 #[cfg(any(target_os = "android", test))]
 mod camera_job;
 pub mod camera_sender;
