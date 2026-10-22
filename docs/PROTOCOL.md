@@ -134,6 +134,12 @@ These timestamps do not claim absolute device capture time or A/V synchronizatio
 and cannot extend authority. Legacy UDP and secure mono remain distinct choices;
 no format/offer fallback is permitted within existing consent.
 
+[ADR 1561](adr/1561-linux-secure-playback-launcher.md) selects the same profile
+from Linux's explicit paired-store playback manifest and terminal controller.
+Its `media_security: pinned_tls13_mono_v1` is a local launcher discriminator,
+not a new wire version, offer or encryption negotiation. Legacy omission retains
+UDP; unsupported endpoint modes and mixed selections reject without fallback.
+
 Minor 4 appends optional
 `RouteStatus.native_audio_data` at field 3 (ADR 1494). This metadata names a
 nonzero port, Stream UUID and Source/Sink endpoint, with explicit mono

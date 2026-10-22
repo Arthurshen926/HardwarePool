@@ -82,6 +82,7 @@ impl ExportKind {
 #[derive(Clone, Debug)]
 pub(super) struct ExportOptions {
     pub(super) kind: ExportKind,
+    pub(super) media_security: media::MediaSecurity,
     pub(super) listen: SocketAddr,
     pub(super) media: Option<SocketAddr>,
     pub(super) target: Option<String>,
@@ -127,7 +128,7 @@ pub(super) fn validate_export_options(output: &Path, options: &ExportOptions) ->
         return Err(invalid());
     };
     if options.kind.audio() {
-        let Some(SocketAddr::V4(media)) = options.media else {
+        let Some(SocketAddr::V4(mut media)) = options.media else {
             return Err(invalid());
         };
         // Match the existing audio parser/Host policy, including its port-1
@@ -143,11 +144,21 @@ pub(super) fn validate_export_options(output: &Path, options: &ExportOptions) ->
                 && (ip.is_private() || ip.is_loopback() || overlay)
                 && octets[3] != 255
         };
+        let secure = options.media_security == media::MediaSecurity::Secure;
+        if secure {
+            if options.kind != ExportKind::Playback
+                || media.port() != 0
+                || options.duration_secs > 60
+            {
+                return Err(invalid());
+            }
+            media.set_port(1);
+        }
         if !(1..=300).contains(&options.duration_secs)
             || listen.ip() != media.ip()
             || !lab_address(listen)
             || !lab_address(media)
-            || listen == media
+            || (!secure && listen == media)
         {
             return Err(invalid());
         }
@@ -170,7 +181,8 @@ pub(super) fn validate_export_options(output: &Path, options: &ExportOptions) ->
         }
     } else {
         let ip = listen.ip();
-        if options.media.is_some()
+        if options.media_security != media::MediaSecurity::Legacy
+            || options.media.is_some()
             || options.target.is_some()
             || !(3..=60).contains(&options.duration_secs)
             || !(ip.is_loopback() || ip.is_private() || ip.is_link_local())
@@ -191,6 +203,7 @@ fn validate_options(output: &Path, listen: SocketAddr, duration_secs: u64) -> io
 pub(super) fn camera_options(listen: SocketAddr, duration_secs: u64) -> ExportOptions {
     ExportOptions {
         kind: ExportKind::Camera,
+        media_security: media::MediaSecurity::Legacy,
         listen,
         media: None,
         target: None,
@@ -241,6 +254,9 @@ fn build_manifest(
     }] = remote;
     if options.kind.audio() {
         value["media"] = json!(options.media);
+        if options.media_security == media::MediaSecurity::Secure {
+            value["media_security"] = json!(options.media_security);
+        }
         value["target"] = json!(options.target);
         value["endpoint_mode"] = json!(match options.kind {
             ExportKind::Playback => "playback",
@@ -315,7 +331,16 @@ pub(super) fn prepare(
     options: &ExportOptions,
 ) -> io::Result<()> {
     validate_export_options(output, options)?;
-    let limits = options.kind.limits();
+    let limits = if options.media_security == media::MediaSecurity::Secure {
+        format!(
+            "Catalog snapshot may already be stale; later launch revalidates it.\r\nExport is not resource authorization: no Routes, grants, leases, media or devices are created.\r\nSaving does not Start playback; fresh independent consent is required.\r\n{}Format: {}; media security: {}.\r\n",
+            media::SECURE_WARNING,
+            capyio_protocol::SECURE_AUDIO_MONO_FORMAT,
+            options.media_security.name()
+        )
+    } else {
+        options.kind.limits()
+    };
     let label = options.kind.label();
     let name = options.kind.name();
     let display_deadline = Instant::now() + Duration::from_secs(2);
@@ -906,12 +931,34 @@ mod tests {
     fn options(kind: ExportKind) -> ExportOptions {
         ExportOptions {
             kind,
+            media_security: media::MediaSecurity::Legacy,
             listen: "127.0.0.1:0".parse().unwrap(),
             media: kind.audio().then(|| "127.0.0.1:43198".parse().unwrap()),
             target: matches!(kind, ExportKind::Playback | ExportKind::Capture)
                 .then(|| "synthetic.target".into()),
             duration_secs: 7,
         }
+    }
+
+    #[test]
+    fn pure_secure_export_roundtrip_and_mode_rejections() {
+        let mut selected = options(ExportKind::Playback);
+        selected.media_security = media::MediaSecurity::Secure;
+        selected.media = Some("127.0.0.1:0".parse().unwrap());
+        check_option_parity(&selected, true);
+        let manifest: Value = serde_json::from_slice(&built(&selected).unwrap()).unwrap();
+        assert_eq!(manifest["media_security"], "pinned_tls13_mono_v1");
+        for kind in [
+            ExportKind::VirtualMicrophone,
+            ExportKind::Capture,
+            ExportKind::VirtualSpeaker,
+        ] {
+            let mut bad = selected.clone();
+            bad.kind = kind;
+            check_option_parity(&bad, false);
+        }
+        selected.duration_secs = 61;
+        check_option_parity(&selected, false);
     }
 
     fn built(options: &ExportOptions) -> io::Result<Vec<u8>> {

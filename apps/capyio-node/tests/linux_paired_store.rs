@@ -552,3 +552,55 @@ fn ipc_paired_store_audio_rejects_mixed_bootstrap_without_keyring_access() {
         }
     }
 }
+
+#[test]
+fn ipc_paired_store_secure_playback_rejects_unsupported_modes_and_mixed_credentials() {
+    for case in [
+        "virtual_microphone",
+        "incoming_draft",
+        "fixed_media_port",
+        "private_pipe",
+        "mixed_store",
+    ] {
+        let fixture = Fixture::new();
+        let mut config = fixture.audio_config("linux-playback");
+        config["media_security"] = json!("pinned_tls13_mono_v1");
+        config["media"] = json!("127.0.0.1:0");
+        match case {
+            "virtual_microphone" => {
+                config["endpoint_mode"] = json!("virtual_microphone");
+                config.as_object_mut().unwrap().remove("target");
+            }
+            "incoming_draft" => config["proposal_mode"] = json!("incoming_draft"),
+            "fixed_media_port" => config["media"] = json!("127.0.0.1:40211"),
+            "private_pipe" | "mixed_store" => {}
+            _ => unreachable!(),
+        }
+        let args = if case == "private_pipe" {
+            vec!["linux-playback".into(), "--trusted-lab".into()]
+        } else {
+            fixture.args("linux-playback")
+        };
+        let mut process = Process::start(&args);
+        let config = serde_json::to_vec(&config).unwrap();
+        let selected_store = serde_json::to_vec(&marker()).unwrap();
+        let credential_frame = if matches!(case, "private_pipe" | "mixed_store") {
+            fixture.directory.as_slice()
+        } else {
+            selected_store.as_slice()
+        };
+        // Atomic complete frames, stdin deliberately kept open: early rejection
+        // cannot be explained by EOF, missing credentials, or a fixture EPIPE.
+        process.frames(&[&config, credential_frame, &fixture.bundle]);
+        process.event("failed");
+        process.no_helper();
+        assert!(!process.finish().success(), "secure guard: {case}");
+        assert!(!String::from_utf8_lossy(&process.out).contains("listening"));
+        fixture.no_leak(&process);
+        let state = fixture.service.state.lock().unwrap();
+        assert_eq!(state.sessions, 0, "{case}: before Secret Service session");
+        assert_eq!(state.collection_property_reads, 0);
+        assert_eq!(state.reads, 0);
+        assert_eq!(state.forbidden, 0);
+    }
+}

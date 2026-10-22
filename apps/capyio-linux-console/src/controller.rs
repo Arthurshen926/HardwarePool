@@ -151,6 +151,12 @@ enum Action {
         duration_secs: u64,
         #[arg(long, value_enum)]
         mode: ExportAudioMode,
+        #[arg(
+            long,
+            value_enum,
+            default_value = "unauthenticated_udp_trusted_lab_only"
+        )]
+        media_security: media::MediaSecurity,
         #[arg(long)]
         target: Option<String>,
     },
@@ -999,6 +1005,7 @@ pub fn run() -> io::Result<()> {
             media,
             duration_secs,
             mode,
+            media_security,
             target,
         } => {
             return catalog::run_prepare(
@@ -1008,6 +1015,7 @@ pub fn run() -> io::Result<()> {
                 output,
                 &catalog_export::ExportOptions {
                     kind: mode.kind(),
+                    media_security: *media_security,
                     listen: *listen,
                     media: Some(*media),
                     target: target.clone(),
@@ -1029,6 +1037,7 @@ pub fn run() -> io::Result<()> {
                 output,
                 &catalog_export::ExportOptions {
                     kind: catalog_export::ExportKind::Touchpad,
+                    media_security: media::MediaSecurity::Legacy,
                     listen: *listen,
                     media: None,
                     target: None,

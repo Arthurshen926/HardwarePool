@@ -1496,3 +1496,30 @@ register Stop before or during an actual TLS handshake. They must not be counted
 as passed from a test-list or compilation. Existing nine independent PipeWire
 API graphs, legacy audio and other media gates remain mandatory. The Linux
 production launcher/console secure branch is not part of this slice.
+
+
+### Linux secure playback launcher and terminal
+
+[ADR 1561](adr/1561-linux-secure-playback-launcher.md) requires a distinct actual
+PTY controller → fixed sibling Node → isolated fake Secret Service → pinned TLS
+→ private PipeWire graph proof. The Source uses the production Rust secure sender
+with synthetic PCM, not a physical Android recorder. Pure tests must reject
+unknown/mixed profiles, secure virtual/reverse modes, incorrect exact format,
+nonzero data allocation port, stale consent and fabricated Active status.
+
+Hosted positive evidence independently measures ordered tone/silence/tone and
+owned helper/graph cleanup, rather than treating successful writes as audibility.
+Negative cases require no helper before fresh approval and bounded cleanup on
+Stop, peer loss, revocation and original lease expiry. Expiry observation must
+precede reaping so cleanup latency cannot hide premature failure. The old nine
+secure-owner graphs, all legacy media and Android SDK/JNI/platform gates remain
+mandatory. Local compile/list results are not execution evidence for these tests.
+
+The secure console gate executes exactly eleven profiles: Stop with independent
+waveform readback, no approval, pretyped input, wrong request/Route/peer,
+Source revocation, exact expiry, control EOF, media EOF and local terminal EOF.
+The local EOF case has no relayed owner terminal record and must label its
+pre-EOF status snapshot instead of inventing final counters or a cause/time.
+A separate actual-Node private-backend guard rejects unsupported modes, fixed
+secure data port and mixed/private credential bootstrap before any backend read
+or listener. All these profiles are mandatory hosted execution, not silent skips.

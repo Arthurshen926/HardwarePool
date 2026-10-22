@@ -395,7 +395,15 @@ fn launcher_hint(
     } else {
         return unsupported("profile_not_supported");
     };
-    if !port.formats.contains(&FormatDescriptor::new(format)) {
+    if !port.formats.contains(&FormatDescriptor::new(format))
+        && !(port.profile == ProfileId::audio_frames_v1()
+            && port.direction == PortDirection::Source
+            && port.formats
+                == [FormatDescriptor::new(
+                    capyio_protocol::SECURE_AUDIO_MONO_FORMAT,
+                )]
+            && port.qos_modes.len() == 1)
+    {
         return unsupported("format_not_supported");
     }
     ("needs_local_selection", reason)
@@ -661,6 +669,34 @@ mod tests {
             );
         }
         assert_ne!(display_text("\\n").unwrap(), display_text("\n").unwrap());
+    }
+
+    #[test]
+    fn secure_audio_source_hint_requires_exact_profile_without_legacy_format() {
+        let mut peer = peer(1);
+        let capability_id = *peer.capabilities.keys().next().unwrap();
+        let capability = peer.capabilities.get_mut(&capability_id).unwrap();
+        let port = capability.ports.values_mut().next().unwrap();
+        port.formats = vec![FormatDescriptor::new(
+            capyio_protocol::SECURE_AUDIO_MONO_FORMAT,
+        )];
+        let capability = &peer.capabilities[&capability_id];
+        assert_eq!(
+            launcher_hint(&peer, capability, capability.ports.values().next().unwrap()),
+            (
+                "needs_local_selection",
+                "audio_playback_needs_local_selection"
+            )
+        );
+        let capability = peer.capabilities.get_mut(&capability_id).unwrap();
+        capability.ports.values_mut().next().unwrap().formats[0]
+            .parameters
+            .insert("unknown".into(), "required".into());
+        let capability = &peer.capabilities[&capability_id];
+        assert_eq!(
+            launcher_hint(&peer, capability, capability.ports.values().next().unwrap()),
+            ("not_supported", "format_not_supported")
+        );
     }
 
     #[test]

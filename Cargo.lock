@@ -680,6 +680,7 @@ dependencies = [
  "capyio-core",
  "capyio-linux-pairing-store",
  "capyio-pairing",
+ "capyio-protocol",
  "clap",
  "libc",
  "serde",

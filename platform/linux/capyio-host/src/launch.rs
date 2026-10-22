@@ -10,6 +10,7 @@ use capyio_control_tls::{
 use capyio_core::*;
 use capyio_linux_audio::{
     AuthenticatedPlaybackOwner, EndpointMode, PlaybackAdmission, PlaybackConfig, PlaybackTarget,
+    SecurePlaybackAdmission, SecurePlaybackEvent, SecurePlaybackOwner,
 };
 use capyio_pairing::PairedPeerDirectory;
 use capyio_protocol::{
@@ -59,6 +60,23 @@ enum ProposalMode {
     IncomingDraft,
 }
 
+#[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq)]
+enum MediaSecurity {
+    #[default]
+    #[serde(rename = "unauthenticated_udp_trusted_lab_only")]
+    TrustedLabUdp,
+    #[serde(rename = "pinned_tls13_mono_v1")]
+    PinnedTls13MonoV1,
+}
+impl MediaSecurity {
+    fn name(self) -> &'static str {
+        match self {
+            Self::TrustedLabUdp => "unauthenticated_udp_trusted_lab_only",
+            Self::PinnedTls13MonoV1 => "pinned_tls13_mono_v1",
+        }
+    }
+}
+
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct LaunchConfig {
@@ -74,6 +92,8 @@ struct LaunchConfig {
     duration_secs: u64,
     #[serde(default)]
     proposal_mode: ProposalMode,
+    #[serde(default)]
+    media_security: MediaSecurity,
 }
 /// Separate explicit CLI schema: the configured remote endpoint is a Sink.
 #[derive(Deserialize)]
@@ -170,10 +190,25 @@ impl LaunchConfig {
         if listen.port() == 0 {
             listen.set_port(1);
         }
+        let mut media = value.media;
+        if value.media_security == MediaSecurity::PinnedTls13MonoV1 {
+            if value.endpoint_mode != EndpointMode::Playback
+                || value.proposal_mode != ProposalMode::LinuxLed
+                || media.port() != 0
+                || !(1..=60).contains(&value.duration_secs)
+                || value.target.as_deref().is_none_or(|target| {
+                    target.eq_ignore_ascii_case("auto") || target.eq_ignore_ascii_case("default")
+                })
+            {
+                return Err(fail());
+            }
+            // Reuse address/target validation without binding the reserved data port.
+            media.set_port(if listen.port() == 1 { 2 } else { 1 });
+        }
         sanitized(PlaybackConfig::parse(&[
             "--trusted-lab".into(),
             listen.to_string(),
-            value.media.to_string(),
+            media.to_string(),
             value.duration_secs.to_string(),
             value
                 .target
@@ -232,7 +267,11 @@ pub fn run_trusted_lab_capture_paired_store_stdio(
 fn run_stdio(capture: bool, source: CredentialSource) -> io::Result<()> {
     let mut io = sanitized(LauncherIo::stdio())?;
     let result = launch(&mut io, capture, source);
-    if result.is_err() {
+    if result.as_ref().err().is_some_and(|error| {
+        !error
+            .get_ref()
+            .is_some_and(|inner| inner.is::<SecureTerminalReported>())
+    }) {
         // Do not echo parser/TLS/runtime errors or secrets even on malformed input.
         let _ = io.send_json(
             &json!({"version":1,"event":"failed"}),
@@ -250,6 +289,7 @@ fn launch(io: &mut LauncherIo, capture: bool, source: CredentialSource) -> io::R
     } else {
         LaunchConfig::parse(bytes.as_slice())?
     };
+    validate_credential_source(&config, &source)?;
     let (directory, credentials) = launcher_credentials(
         io,
         config.node_id,
@@ -258,14 +298,18 @@ fn launch(io: &mut LauncherIo, capture: bool, source: CredentialSource) -> io::R
         source,
     )?;
     let peer = directory.active_peers().next().ok_or_else(fail)?;
-    let (mut runtime, sink) =
-        local_runtime_endpoint(config.node_id, config.proposal_mode, config.endpoint_mode)?;
+    let (mut runtime, sink) = local_runtime_profile(
+        config.node_id,
+        config.proposal_mode,
+        config.endpoint_mode,
+        config.media_security,
+    )?;
     let expectation = sanitized(ControlTlsNodeBinding::new(config.node_id, peer.node_id))?;
     let listener = sanitized(TcpListener::bind(config.listen))?;
     let identity = ControlTlsServerIdentity::from_bundle(peer.peer_certificate_sha256, credentials);
     let server = sanitized(AuthenticatedControlServer::from_listener_fresh_session(
         listener,
-        identity,
+        identity.clone(),
         expectation,
         Duration::from_secs(1),
     ))?;
@@ -291,7 +335,7 @@ fn launch(io: &mut LauncherIo, capture: bool, source: CredentialSource) -> io::R
     ))?;
     // All failures from here reconcile the exact authenticated Session.
     let prepared = prepare(io, &config, &mut runtime, &mut link, sink);
-    let (route_id, admission) = match prepared {
+    let prepared = match prepared {
         Ok(Some(value)) => value,
         Ok(None) => {
             let _ = link.close_and_reconcile(&mut runtime);
@@ -301,6 +345,16 @@ fn launch(io: &mut LauncherIo, capture: bool, source: CredentialSource) -> io::R
             let _ = link.close_and_reconcile(&mut runtime);
             return Err(fail());
         }
+    };
+    let (route_id, admission) = match prepared {
+        PreparedPlayback::Secure {
+            route_id,
+            admission,
+            end,
+        } => {
+            return run_secure(io, runtime, link, identity, route_id, admission, end);
+        }
+        PreparedPlayback::Legacy(route_id, admission) => (route_id, admission),
     };
     let owner = sanitized(AuthenticatedPlaybackOwner::from_admitted_link_trusted_lab(
         runtime,
@@ -331,6 +385,142 @@ fn launch(io: &mut LauncherIo, capture: bool, source: CredentialSource) -> io::R
     sanitized(outcome)?;
     stopped(io)
 }
+enum PreparedPlayback {
+    Legacy(RouteId, PlaybackAdmission),
+    Secure {
+        route_id: RouteId,
+        admission: SecurePlaybackAdmission,
+        end: Instant,
+    },
+}
+
+fn validate_credential_source(config: &LaunchConfig, source: &CredentialSource) -> io::Result<()> {
+    if config.media_security == MediaSecurity::PinnedTls13MonoV1
+        && matches!(source, CredentialSource::PrivatePipe)
+    {
+        return Err(fail());
+    }
+    Ok(())
+}
+
+fn validate_secure_source(runtime: &NodeRuntime, reference: PortRef) -> io::Result<()> {
+    validate_remote_endpoint(
+        runtime,
+        reference,
+        PortDirection::Source,
+        capyio_protocol::SECURE_AUDIO_MONO_FORMAT,
+    )?;
+    let snapshot = runtime.snapshot();
+    let node = snapshot
+        .peers
+        .iter()
+        .find(|node| node.id == reference.node_id)
+        .ok_or_else(fail)?;
+    let capability = node
+        .capabilities
+        .get(&reference.capability_id)
+        .ok_or_else(fail)?;
+    let port = sanitized(node.port(reference.capability_id, reference.port_id))?;
+    if node.online_state != OnlineState::Online
+        || capability.availability != Availability::Available
+        || port.formats
+            != [FormatDescriptor::new(
+                capyio_protocol::SECURE_AUDIO_MONO_FORMAT,
+            )]
+        || port.qos_modes != BTreeSet::from([QosMode::Interactive])
+        || port.interoperability_mode != InteroperabilityMode::AdapterManaged
+    {
+        return Err(fail());
+    }
+    Ok(())
+}
+
+fn secure_status(
+    route: &Route,
+    metrics: capyio_linux_audio::PlaybackMetrics,
+) -> io::Result<serde_json::Value> {
+    // Helper writes are not audible consumption or proof of an Active Route.
+    if route.state != RouteState::Starting || metrics.packets_sent != 0 {
+        return Err(fail());
+    }
+    Ok(
+        json!({"version":1,"event":"status","route_id":route.id,"state":route.state,
+        "packets_written":metrics.packets_written,"packets_sent":0,
+        "bytes_written":metrics.bytes_written,"media_security":"pinned_tls13_mono_v1"}),
+    )
+}
+
+fn run_secure(
+    io: &mut LauncherIo,
+    runtime: NodeRuntime,
+    link: CatalogControlLink,
+    identity: ControlTlsServerIdentity,
+    route_id: RouteId,
+    admission: SecurePlaybackAdmission,
+    end: Instant,
+) -> io::Result<()> {
+    let mut owner = sanitized(SecurePlaybackOwner::new_until(
+        runtime, link, identity, admission, end,
+    ))?;
+    let outcome = (|| -> io::Result<()> {
+        io.send_json(
+            &json!({"version":1,"event":"awaiting_peer_offer","route_id":route_id}),
+            Instant::now() + Duration::from_secs(1),
+        )?;
+        loop {
+            check(end)?;
+            if let Some(bytes) = io.poll_frame(LOCAL_FRAME)? {
+                let command = LocalCommand::parse(bytes.as_slice())?;
+                if command.simple("stop") {
+                    break;
+                }
+                if !command.simple("status") {
+                    return Err(fail());
+                }
+                let status =
+                    secure_status(sanitized(owner.runtime().route(route_id))?, owner.metrics())?;
+                io.send_json(&status, end.min(Instant::now() + Duration::from_secs(1)))?;
+            }
+            if sanitized(owner.poll())? == Some(SecurePlaybackEvent::Stopped) {
+                break;
+            }
+            thread::sleep(Duration::from_millis(2));
+        }
+        Ok(())
+    })();
+    let cleanup = sanitized(if outcome.is_err() {
+        owner.stop_after_failure()
+    } else {
+        owner.stop()
+    });
+    let failed = outcome.is_err() || cleanup.is_err();
+    let mut event = json!({"version":1,"event":if failed { "failed" } else { "stopped" }});
+    event["terminal_cause"] = json!(owner.terminal_cause().unwrap_or("failure"));
+    let metrics = owner.metrics();
+    event["packets_written"] = json!(metrics.packets_written);
+    event["bytes_written"] = json!(metrics.bytes_written);
+    event["packets_dropped_busy"] = json!(metrics.packets_dropped_busy);
+    if let Some(observed) = owner.terminal_observed_at_ms() {
+        event["terminal_observed_at_ms"] = json!(observed);
+    }
+    io.send_json(&event, Instant::now() + Duration::from_secs(1))?;
+    if failed {
+        Err(io::Error::other(SecureTerminalReported))
+    } else {
+        Ok(())
+    }
+}
+
+// Avoid emitting a second generic failure after the owner's terminal evidence.
+#[derive(Debug)]
+struct SecureTerminalReported;
+impl std::fmt::Display for SecureTerminalReported {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str("Linux lab playback launch failed")
+    }
+}
+impl std::error::Error for SecureTerminalReported {}
+
 fn stopped(io: &mut LauncherIo) -> io::Result<()> {
     io.send_json(
         &json!({"version":1,"event":"stopped"}),
@@ -360,7 +550,7 @@ fn prepare(
     runtime: &mut NodeRuntime,
     link: &mut CatalogControlLink,
     sink: PortRef,
-) -> io::Result<Option<(RouteId, PlaybackAdmission)>> {
+) -> io::Result<Option<PreparedPlayback>> {
     let deadline = Instant::now() + CATALOG;
     loop {
         check(deadline)?;
@@ -402,7 +592,17 @@ fn prepare(
                     RouteBackend::AdapterManaged,
                 ))?
             } else {
-                prepare_selected_route(runtime, link.session_id(), config.source, sink)?
+                if config.media_security == MediaSecurity::PinnedTls13MonoV1 {
+                    validate_secure_source(runtime, config.source)?;
+                    sanitized(runtime.create_route(
+                        link.session_id(),
+                        config.source,
+                        sink,
+                        RouteBackend::AdapterManaged,
+                    ))?
+                } else {
+                    prepare_selected_route(runtime, link.session_id(), config.source, sink)?
+                }
             }
         }
         ProposalMode::IncomingDraft => {
@@ -418,7 +618,9 @@ fn prepare(
     } else {
         (config.source, sink)
     };
-    let format = if capture {
+    let format = if config.media_security == MediaSecurity::PinnedTls13MonoV1 {
+        capyio_protocol::SECURE_AUDIO_MONO_FORMAT
+    } else if capture {
         "pcm-s16le-48000-stereo"
     } else {
         "pcm-s16le-48000-mono"
@@ -428,7 +630,7 @@ fn prepare(
     io.send_json(&json!({"version":1,"event":"approval_required","request_id":request_id,"route_id":route_id,
         "session_id":link.session_id(),"source":route_source,"sink":route_sink,"target":config.target,
         "endpoint_mode":config.endpoint_mode.name(),"node_name":if matches!(config.endpoint_mode, EndpointMode::VirtualMicrophone | EndpointMode::VirtualSpeaker) { Some(config.output_target(sink)?) } else { None },
-        "format":format,"duration_secs":config.duration_secs,"approval_timeout_secs":CONSENT.as_secs(),"media_security":"unauthenticated_udp_trusted_lab_only"}), Instant::now() + Duration::from_secs(1))?;
+        "format":format,"duration_secs":config.duration_secs,"approval_timeout_secs":CONSENT.as_secs(),"media_security":config.media_security.name()}), Instant::now() + Duration::from_secs(1))?;
     loop {
         check(consent_deadline)?;
         if let Some(bytes) = io.poll_frame(LOCAL_FRAME)? {
@@ -476,14 +678,14 @@ fn prepare(
         thread::sleep(Duration::from_millis(2));
     }
     check(consent_deadline)?;
+    let approved_end = Instant::now() + Duration::from_secs(config.duration_secs);
     let approved_at = now_ms()?;
     let approved_expiry = approved_at
         .checked_add(config.duration_secs * 1000)
         .ok_or_else(fail)?;
     // Approval is route-specific and finite. Neither proposal mode grants the
     // remote microphone permission or acquires any lease before reciprocity.
-    let negotiation_deadline =
-        (Instant::now() + CONSENT).min(Instant::now() + Duration::from_secs(config.duration_secs));
+    let negotiation_deadline = (Instant::now() + CONSENT).min(approved_end);
     let expiry = match config.proposal_mode {
         ProposalMode::LinuxLed => negotiate_linux_led(
             io,
@@ -507,6 +709,32 @@ fn prepare(
     let Some(expiry) = expiry else {
         return Ok(None);
     };
+    if config.media_security == MediaSecurity::PinnedTls13MonoV1 {
+        let now = now_ms()?;
+        check(negotiation_deadline)?;
+        validate_secure_source(runtime, config.source)?;
+        sanitized(runtime.set_local_port_lease_policy(sink, PortLeasePolicy::Exclusive))?;
+        sanitized(runtime.acquire_route_port_lease(route_id, sink, expiry, now))?;
+        sanitized(runtime.prepare_route(
+            route_id,
+            Some(FormatDescriptor::new(format)),
+            QosMode::Interactive,
+            now,
+        ))?;
+        sanitized(runtime.begin_route_start(route_id, now))?;
+        return Ok(Some(PreparedPlayback::Secure {
+            route_id,
+            admission: SecurePlaybackAdmission {
+                expected: link.tls_binding(),
+                route_id,
+                stream_id: StreamId::new(),
+                local_address: (*config.media.ip()).into(),
+                lifetime: Duration::from_secs(config.duration_secs),
+                pipewire_target: config.output_target(sink)?,
+            },
+            end: approved_end,
+        }));
+    }
     // Same one-second transit headroom as the existing Windows lease flow.
     // Too little remaining lifetime fails closed rather than extending consent.
     let ttl = lease_ttl(expiry, now_ms()?)?;
@@ -564,7 +792,7 @@ fn prepare(
         now,
     ))?;
     sanitized(runtime.begin_route_start(route_id, now))?;
-    Ok(Some((
+    Ok(Some(PreparedPlayback::Legacy(
         route_id,
         PlaybackAdmission {
             expected: link.tls_binding(),
@@ -620,6 +848,7 @@ fn validate_pending_proposal(
         || status.native_audio_data.is_some()
         || status.touchpad_data.is_some()
         || status.haptics_data.is_some()
+        || status.secure_audio_data.is_some()
         || status.camera_data.is_some()
     {
         return Err(fail());
@@ -836,9 +1065,13 @@ fn validate_draft_peer(
         || peer.epoch != 0
         || peer.selected_format.is_some()
         || peer.selected_qos_mode.is_some()
+        || peer.compatible_formats != local.compatible_formats
+        || peer.compatible_qos_modes != local.compatible_qos_modes
+        || peer.diagnostic_ids != local.diagnostic_ids
         || status.native_audio_data.is_some()
         || status.touchpad_data.is_some()
         || status.haptics_data.is_some()
+        || status.secure_audio_data.is_some()
         || status.camera_data.is_some()
     {
         return Err(fail());
@@ -903,7 +1136,15 @@ fn validate_route_remote(runtime: &NodeRuntime, remote: PortRef) -> io::Result<(
         return Err(fail());
     }
     if route.source == remote {
-        validate_source(runtime, remote)
+        if route.compatible_formats
+            == [FormatDescriptor::new(
+                capyio_protocol::SECURE_AUDIO_MONO_FORMAT,
+            )]
+        {
+            validate_secure_source(runtime, remote)
+        } else {
+            validate_source(runtime, remote)
+        }
     } else {
         validate_remote_endpoint(
             runtime,
@@ -959,11 +1200,25 @@ fn local_runtime_mode(node_id: NodeId, mode: ProposalMode) -> io::Result<(NodeRu
     local_runtime_endpoint(node_id, mode, EndpointMode::Playback)
 }
 
+#[cfg(test)]
 fn local_runtime_endpoint(
     node_id: NodeId,
     mode: ProposalMode,
     endpoint: EndpointMode,
 ) -> io::Result<(NodeRuntime, PortRef)> {
+    local_runtime_profile(node_id, mode, endpoint, MediaSecurity::TrustedLabUdp)
+}
+fn local_runtime_profile(
+    node_id: NodeId,
+    mode: ProposalMode,
+    endpoint: EndpointMode,
+    security: MediaSecurity,
+) -> io::Result<(NodeRuntime, PortRef)> {
+    if security == MediaSecurity::PinnedTls13MonoV1
+        && (endpoint != EndpointMode::Playback || mode != ProposalMode::LinuxLed)
+    {
+        return Err(fail());
+    }
     if endpoint.capture() && mode != ProposalMode::LinuxLed {
         return Err(fail());
     }
@@ -1029,11 +1284,15 @@ fn local_runtime_endpoint(
         },
         profile: ProfileId::audio_frames_v1(),
         schema_id: None,
-        formats: vec![FormatDescriptor::new(if capture {
-            "pcm-s16le-48000-stereo"
-        } else {
-            "pcm-s16le-48000-mono"
-        })],
+        formats: vec![FormatDescriptor::new(
+            if security == MediaSecurity::PinnedTls13MonoV1 {
+                capyio_protocol::SECURE_AUDIO_MONO_FORMAT
+            } else if capture {
+                "pcm-s16le-48000-stereo"
+            } else {
+                "pcm-s16le-48000-mono"
+            },
+        )],
         qos_modes: BTreeSet::from([QosMode::Interactive]),
         clock_domain: None,
         availability: Availability::Available,
@@ -1729,3 +1988,167 @@ fn validate_selected_peer(directory: &PairedPeerDirectory, expected: NodeId) -> 
 pub use camera::run_camera_paired_store_stdio;
 #[cfg(feature = "paired-store")]
 pub use touchpad::run_touchpad_paired_store_stdio;
+
+#[cfg(test)]
+mod secure_launch_tests {
+    use super::*;
+
+    fn config() -> serde_json::Value {
+        json!({"version":1,"node_id":NodeId::new(),"source":PortRef{node_id:NodeId::new(),capability_id:CapabilityId::new(),port_id:PortId::new()},"listen":"127.0.0.1:0","media":"127.0.0.1:0","target":"explicit.test","duration_secs":10,"media_security":"pinned_tls13_mono_v1"})
+    }
+    #[test]
+    fn secure_config_is_explicit_closed_finite_and_requires_paired_store() {
+        let value = config();
+        let parsed = LaunchConfig::parse(&serde_json::to_vec(&value).unwrap()).unwrap();
+        assert_eq!(parsed.media_security, MediaSecurity::PinnedTls13MonoV1);
+        assert!(validate_credential_source(&parsed, &CredentialSource::PrivatePipe).is_err());
+        for (field, invalid) in [
+            ("media_security", json!("tls")),
+            (
+                "media_security",
+                json!([
+                    "pinned_tls13_mono_v1",
+                    "unauthenticated_udp_trusted_lab_only"
+                ]),
+            ),
+            ("media_security", json!(null)),
+            ("duration_secs", json!(0)),
+            ("duration_secs", json!(61)),
+            ("media", json!("127.0.0.1:40111")),
+            ("media", json!("0.0.0.0:0")),
+            ("proposal_mode", json!("incoming_draft")),
+            ("endpoint_mode", json!("virtual_microphone")),
+            ("endpoint_mode", json!("stereo_capture")),
+            ("target", json!("Default")),
+            ("target", json!("AUTO")),
+            ("target", json!(null)),
+        ] {
+            let mut invalid_config = value.clone();
+            invalid_config[field] = invalid;
+            assert!(
+                LaunchConfig::parse(&serde_json::to_vec(&invalid_config).unwrap()).is_err(),
+                "{field}"
+            );
+        }
+        let mut capture = value.clone();
+        capture["sink"] = capture["source"].clone();
+        capture.as_object_mut().unwrap().remove("source");
+        assert!(parse_capture(&serde_json::to_vec(&capture).unwrap()).is_err());
+        let mut legacy = value;
+        legacy.as_object_mut().unwrap().remove("media_security");
+        legacy["media"] = json!("127.0.0.1:40211");
+        legacy["duration_secs"] = json!(300);
+        let legacy = LaunchConfig::parse(&serde_json::to_vec(&legacy).unwrap()).unwrap();
+        assert_eq!(legacy.media_security, MediaSecurity::TrustedLabUdp);
+        validate_credential_source(&legacy, &CredentialSource::PrivatePipe).unwrap();
+    }
+
+    fn fixture() -> (NodeRuntime, PortRef, PortRef, SessionId) {
+        let (remote, source) = local_runtime_profile(
+            NodeId::new(),
+            ProposalMode::LinuxLed,
+            EndpointMode::Playback,
+            MediaSecurity::PinnedTls13MonoV1,
+        )
+        .unwrap();
+        let mut peer = remote.snapshot().local_node;
+        peer.capabilities
+            .get_mut(&source.capability_id)
+            .unwrap()
+            .ports
+            .get_mut(&source.port_id)
+            .unwrap()
+            .direction = PortDirection::Source;
+        let (mut runtime, sink) = local_runtime_profile(
+            NodeId::new(),
+            ProposalMode::LinuxLed,
+            EndpointMode::Playback,
+            MediaSecurity::PinnedTls13MonoV1,
+        )
+        .unwrap();
+        runtime.register_peer(peer, true).unwrap();
+        let session = runtime.open_session(source.node_id).unwrap();
+        (runtime, source, sink, session)
+    }
+    #[test]
+    fn secure_catalog_and_draft_are_exact_without_resource_authority() {
+        let (mut runtime, source, sink, session) = fixture();
+        validate_secure_source(&runtime, source).unwrap();
+        assert!(validate_source(&runtime, source).is_err());
+        let route_id = runtime
+            .create_route(session, source, sink, RouteBackend::AdapterManaged)
+            .unwrap();
+        let route = runtime.route(route_id).unwrap();
+        assert_eq!(
+            route.compatible_formats,
+            [FormatDescriptor::new(
+                capyio_protocol::SECURE_AUDIO_MONO_FORMAT
+            )]
+        );
+        assert_eq!(route.authorization, AuthorizationState::Pending);
+        assert_eq!(route.state, RouteState::Draft);
+        assert!(runtime.snapshot().port_leases.is_empty());
+        let status = capyio_protocol::decode_route_status(
+            &capyio_protocol::encode_route_status(session, route).unwrap(),
+        )
+        .unwrap();
+        validate_draft_peer(&runtime, route_id, &status).unwrap();
+        for change in 0..7 {
+            let mut wrong = status.clone();
+            match change {
+                0 => {
+                    wrong.route.compatible_formats =
+                        vec![FormatDescriptor::new("pcm-s16le-48000-mono")]
+                }
+                1 => wrong.route.compatible_qos_modes.clear(),
+                2 => wrong.route.source.port_id = PortId::new(),
+                3 => wrong.route.state = RouteState::Active,
+                4 => wrong.route.epoch = 1,
+                5 => wrong.session_id = SessionId::new(),
+                _ => {
+                    wrong.secure_audio_data = Some(capyio_protocol::SecureAudioDataOffer {
+                        port: 1234,
+                        stream_id: StreamId::new(),
+                        transport: capyio_protocol::SecureAudioTransport::Tls13MtlsV1,
+                    })
+                }
+            }
+            assert!(validate_draft_peer(&runtime, route_id, &wrong).is_err());
+        }
+        let snapshot = runtime.snapshot();
+        let mut peer = snapshot.peers[0].clone();
+        peer.capabilities
+            .get_mut(&source.capability_id)
+            .unwrap()
+            .ports
+            .get_mut(&source.port_id)
+            .unwrap()
+            .formats
+            .push(FormatDescriptor::new("pcm-s16le-48000-mono"));
+        let (mut other, _) = local_runtime(NodeId::new()).unwrap();
+        other.register_peer(peer, true).unwrap();
+        assert!(validate_secure_source(&other, source).is_err());
+    }
+    #[test]
+    fn secure_status_never_claims_active_or_substitutes_queued_for_written() {
+        let (mut runtime, source, sink, session) = fixture();
+        let route_id = runtime
+            .create_route(session, source, sink, RouteBackend::AdapterManaged)
+            .unwrap();
+        let mut route = runtime.route(route_id).unwrap().clone();
+        let metrics = capyio_linux_audio::PlaybackMetrics {
+            packets_queued: 7,
+            packets_written: 2,
+            bytes_written: 2000,
+            ..Default::default()
+        };
+        assert!(secure_status(&route, metrics).is_err());
+        route.state = RouteState::Starting;
+        let status = secure_status(&route, metrics).unwrap();
+        assert_eq!(status["packets_written"], 2);
+        assert_eq!(status["bytes_written"], 2000);
+        assert_eq!(status["state"], "starting");
+        route.state = RouteState::Active;
+        assert!(secure_status(&route, metrics).is_err());
+    }
+}

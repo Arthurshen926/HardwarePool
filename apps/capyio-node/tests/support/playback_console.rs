@@ -279,7 +279,6 @@ impl Console {
         String::from_utf8_lossy(&self.tty[self.event_cursor..]).contains(&prompt)
     }
 
-    #[cfg(feature = "touchpad-test-fixture")]
     #[allow(dead_code)]
     pub(super) fn status_prompt_seen(&self) -> bool {
         let text = String::from_utf8_lossy(&self.tty[self.event_cursor..]);
@@ -367,9 +366,21 @@ impl Console {
         assert!(text.contains(&format!(
             "Mode: {mode}; device: {device}; duration: {seconds} seconds\n"
         )));
-        assert!(text.contains(
-            "WARNING: plaintext unauthenticated UDP media; trusted isolated lab only.\n"
-        ));
+        if approval["media_security"] == "pinned_tls13_mono_v1" {
+            assert_eq!(mode, "playback");
+            assert!(seconds <= 60);
+            assert_eq!(
+                approval["format"],
+                capyio_protocol::SECURE_AUDIO_MONO_FORMAT
+            );
+            assert!(text.contains("Experimental pinned TLS 1.3 mono media; explicit target, one finite session at most 60 seconds. No automatic downgrade or renewal.\n"));
+            assert!(text.contains("Authenticated PCM writes do not prove audibility or application consumption; the Route remains Starting.\n"));
+            assert!(!text.contains("WARNING: plaintext unauthenticated UDP media"));
+        } else {
+            assert!(text.contains(
+                "WARNING: plaintext unauthenticated UDP media; trusted isolated lab only.\n"
+            ));
+        }
     }
 
     pub(super) fn send(&mut self, bytes: &[u8]) {

@@ -4,9 +4,9 @@ use crate::{
     EndpointMode, MAX_STALL, PcmPlaybackSink, PipeWirePlayback, PlaybackMetrics, PlaybackPump,
 };
 use capyio_audio::{AudioMediaStreamBinding, AudioStreamSpec};
-use capyio_control_link::{CatalogControlLink, ReceivedControlMessage};
+use capyio_control_link::{CatalogControlLink, CatalogLinkError, ReceivedControlMessage};
 use capyio_control_tls::{
-    ControlTlsBinding, ControlTlsServerIdentity,
+    ControlTlsBinding, ControlTlsError, ControlTlsServerIdentity,
     audio::{AudioTlsBinding, AudioTlsListener, AudioTlsStopHandle},
 };
 use capyio_core::{
@@ -75,8 +75,71 @@ enum DataEvent {
 struct TerminalObservation {
     recorded: bool,
     at_ms: Option<u64>,
+    cause: Option<TerminalCause>,
+}
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum TerminalCause {
+    Failure,
+    LocalStop,
+    PeerStop,
+    MediaClosed,
+    MediaTimeout,
+    MediaFailure,
+    ControlClosed,
+}
+impl TerminalCause {
+    fn name(self) -> &'static str {
+        match self {
+            Self::Failure => "failure",
+            Self::LocalStop => "local_stop",
+            Self::PeerStop => "peer_stop",
+            Self::MediaClosed => "media_closed",
+            Self::MediaTimeout => "media_timeout",
+            Self::MediaFailure => "media_failure",
+            Self::ControlClosed => "control_closed",
+        }
+    }
+}
+fn closed_kind(kind: io::ErrorKind) -> bool {
+    matches!(
+        kind,
+        io::ErrorKind::UnexpectedEof
+            | io::ErrorKind::ConnectionReset
+            | io::ErrorKind::ConnectionAborted
+    )
+}
+fn media_cause(reason: &io::Error) -> TerminalCause {
+    if closed_kind(reason.kind()) {
+        TerminalCause::MediaClosed
+    } else if matches!(
+        reason.kind(),
+        io::ErrorKind::TimedOut | io::ErrorKind::WouldBlock
+    ) {
+        TerminalCause::MediaTimeout
+    } else {
+        TerminalCause::MediaFailure
+    }
+}
+fn control_cause(reason: &CatalogLinkError) -> TerminalCause {
+    match reason {
+        CatalogLinkError::Closed => TerminalCause::ControlClosed,
+        CatalogLinkError::Transport(ControlTlsError::Io(reason)) if closed_kind(reason.kind()) => {
+            TerminalCause::ControlClosed
+        }
+        _ => TerminalCause::Failure,
+    }
+}
+fn media_error(reason: ControlTlsError) -> io::Error {
+    match reason {
+        ControlTlsError::Io(reason) => reason,
+        _ => error("secure audio TLS failure"),
+    }
 }
 impl TerminalObservation {
+    fn observe(&mut self, cause: TerminalCause) {
+        self.record(now_ms().ok());
+        self.cause.get_or_insert(cause);
+    }
     fn record(&mut self, at_ms: Option<u64>) {
         if !self.recorded {
             self.recorded = true;
@@ -124,12 +187,28 @@ impl SecurePlaybackOwner {
     /// The remote Source lease is requested on that actual control link; only
     /// its matching successful response permits opening a data listener.
     pub fn new(
+        runtime: NodeRuntime,
+        link: CatalogControlLink,
+        identity: ControlTlsServerIdentity,
+        admission: SecurePlaybackAdmission,
+    ) -> io::Result<Self> {
+        let original_end = admission_end(&admission)?;
+        Self::new_until(runtime, link, identity, admission, original_end)
+    }
+
+    /// Preserve a caller's original consent-time monotonic deadline across
+    /// catalog/grant negotiation. This can only shorten the owner's lifetime.
+    pub fn new_until(
         mut runtime: NodeRuntime,
         mut link: CatalogControlLink,
         identity: ControlTlsServerIdentity,
         admission: SecurePlaybackAdmission,
+        original_end: Instant,
     ) -> io::Result<Self> {
         let started = Instant::now();
+        if original_end <= started {
+            return Err(error("original secure playback consent elapsed"));
+        }
         let now = now_ms()?;
         let original = runtime.route(admission.route_id).map_err(error)?.clone();
         validate_target(&admission)?;
@@ -159,10 +238,12 @@ impl SecurePlaybackOwner {
         let pump = PlaybackPump::with_binding(admission.lifetime, media)?;
         let rate = SecureMonoPcmRateBudget::new(admission.lifetime).map_err(error)?;
         let authority_ms = expiry(&original)?.min(sink_claim.expires_at_ms);
-        let end = started
-            + admission
-                .lifetime
-                .min(Duration::from_millis(authority_ms - now));
+        let end = consent_end(
+            started,
+            admission.lifetime,
+            original_end,
+            authority_ms - now,
+        )?;
         let deadline = end.min(started + MAX_STALL);
         let ttl = source_lease_ttl(authority_ms, now, admission.lifetime)?;
         let source_request = match link.send_port_lease_request_until(
@@ -225,6 +306,10 @@ impl SecurePlaybackOwner {
     pub fn terminal_observed_at_ms(&self) -> Option<u64> {
         self.terminal_observation.at_ms
     }
+    /// Closed diagnostic vocabulary; never includes peer text or TLS details.
+    pub fn terminal_cause(&self) -> Option<&'static str> {
+        self.terminal_observation.cause.map(TerminalCause::name)
+    }
     pub fn listener_address(&self) -> Option<SocketAddr> {
         self.listener_address
     }
@@ -241,6 +326,7 @@ impl SecurePlaybackOwner {
     pub fn poll(&mut self) -> io::Result<Option<SecurePlaybackEvent>> {
         let result = self.poll_inner();
         if result.is_err() {
+            self.terminal_observation.observe(TerminalCause::Failure);
             // Do not replace the original failure with a cleanup error. An
             // uncompleted bounded join is retained for an explicit stop retry.
             let _ = self.stop();
@@ -250,11 +336,14 @@ impl SecurePlaybackOwner {
     fn poll_inner(&mut self) -> io::Result<Option<SecurePlaybackEvent>> {
         self.check(now_ms()?)?;
         let deadline = self.operation_deadline();
-        if let Some(message) = self
-            .link
-            .poll_control_message_until(deadline)
-            .map_err(error)?
-        {
+        let message = match self.link.poll_control_message_until(deadline) {
+            Ok(message) => message,
+            Err(reason) => {
+                self.terminal_observation.observe(control_cause(&reason));
+                return Err(error(reason));
+            }
+        };
+        if let Some(message) = message {
             if let ReceivedControlMessage::PortLeaseResponse(response) = message {
                 let now = now_ms()?;
                 self.check(now)?;
@@ -288,7 +377,10 @@ impl SecurePlaybackOwner {
             Some(Ok(event)) => Some(event),
         };
         let result = match event {
-            Some(DataEvent::Failed(reason)) => return Err(reason),
+            Some(DataEvent::Failed(reason)) => {
+                self.terminal_observation.observe(media_cause(&reason));
+                return Err(reason);
+            }
             Some(DataEvent::Bound) => {
                 self.check(now_ms()?)?;
                 if self.sink.is_some() {
@@ -473,7 +565,9 @@ impl SecurePlaybackOwner {
                             if Instant::now() >= deadline {
                                 return Err(error("secure audio read permit expired"));
                             }
-                            let bytes = channel.receive_record_until(deadline).map_err(error)?;
+                            let bytes = channel
+                                .receive_record_until(deadline)
+                                .map_err(media_error)?;
                             if tx.send(DataEvent::Record(bytes)).is_err() {
                                 return Ok(());
                             }
@@ -510,6 +604,7 @@ impl SecurePlaybackOwner {
                     && command.route_id == self.original.id
                     && command.action == RouteCommandAction::Stop =>
             {
+                self.terminal_observation.observe(TerminalCause::PeerStop);
                 return Ok(true);
             }
             ReceivedControlMessage::RouteStatus(status) => {
@@ -522,10 +617,15 @@ impl SecurePlaybackOwner {
     }
     /// Terminal, idempotent close. Disconnect network I/O and drop both bounded
     /// channels before bounded worker join; always retain legacy helper cleanup.
+    /// A caller failure is not mislabeled as a user Stop. Earlier causes win.
+    pub fn stop_after_failure(&mut self) -> io::Result<()> {
+        self.terminal_observation.observe(TerminalCause::Failure);
+        self.stop()
+    }
     pub fn stop(&mut self) -> io::Result<()> {
         // Record before *any* cleanup. poll errors, authenticated peer Stop and
         // local Stop all converge here; cleanup latency is not observation time.
-        self.terminal_observation.record(now_ms().ok());
+        self.terminal_observation.observe(TerminalCause::LocalStop);
         self.closed = true;
         if let Some(stop) = self.transport_stop.take() {
             stop.stop();
@@ -653,6 +753,30 @@ fn media_binding(route: &Route, stream_id: StreamId) -> io::Result<AudioMediaStr
         selected_spec: AudioStreamSpec::voice_interactive(),
     })
 }
+fn admission_end(admission: &SecurePlaybackAdmission) -> io::Result<Instant> {
+    validate_target(admission)?;
+    Instant::now()
+        .checked_add(admission.lifetime)
+        .ok_or_else(|| error("invalid secure playback lifetime"))
+}
+
+fn consent_end(
+    started: Instant,
+    lifetime: Duration,
+    original_end: Instant,
+    authority_ms: u64,
+) -> io::Result<Instant> {
+    let end = original_end.min(
+        started
+            .checked_add(lifetime.min(Duration::from_millis(authority_ms)))
+            .ok_or_else(|| error("invalid secure playback deadline"))?,
+    );
+    if end <= started {
+        return Err(error("original secure playback consent elapsed"));
+    }
+    Ok(end)
+}
+
 fn source_lease_ttl(deadline: u64, now: u64, lifetime: Duration) -> io::Result<u64> {
     deadline
         .checked_sub(now)
@@ -1039,10 +1163,12 @@ mod tests {
             Duration::from_millis(1500),
             Duration::from_secs(61),
             Duration::from_secs(300),
+            Duration::MAX,
         ] {
             let mut changed = admission.clone();
             changed.lifetime = lifetime;
             assert!(validate_target(&changed).is_err());
+            assert!(admission_end(&changed).is_err());
         }
         for address in ["0.0.0.0", "::", "224.0.0.1", "ff02::1"] {
             let mut changed = admission.clone();
@@ -1243,5 +1369,122 @@ mod tests {
         pump.flush(&mut sink, Duration::from_millis(200)).unwrap();
         assert!(pump.flush(&mut sink, MAX_STALL).is_err());
         assert_eq!(sink.writes, 1);
+    }
+}
+
+#[cfg(test)]
+mod consent_deadline_tests {
+    use super::*;
+    #[test]
+    fn secure_launcher_negotiation_never_refreshes_original_monotonic_consent() {
+        let consent = Instant::now();
+        let original_end = consent + Duration::from_secs(10);
+        let after_negotiation = consent + Duration::from_secs(7);
+        assert_eq!(
+            consent_end(
+                after_negotiation,
+                Duration::from_secs(10),
+                original_end,
+                10_000
+            )
+            .unwrap(),
+            original_end
+        );
+        assert_eq!(
+            consent_end(
+                after_negotiation,
+                Duration::from_secs(10),
+                original_end,
+                1_000
+            )
+            .unwrap(),
+            after_negotiation + Duration::from_secs(1)
+        );
+        assert!(consent_end(original_end, Duration::from_secs(10), original_end, 10_000).is_err());
+        assert!(consent_end(after_negotiation, Duration::from_secs(10), original_end, 0).is_err());
+    }
+}
+
+#[cfg(test)]
+mod terminal_cause_tests {
+    use super::*;
+
+    #[test]
+    fn media_terminal_classification_uses_typed_io_not_error_text() {
+        for (kind, expected) in [
+            (io::ErrorKind::UnexpectedEof, TerminalCause::MediaClosed),
+            (io::ErrorKind::ConnectionReset, TerminalCause::MediaClosed),
+            (io::ErrorKind::ConnectionAborted, TerminalCause::MediaClosed),
+            (io::ErrorKind::TimedOut, TerminalCause::MediaTimeout),
+            (io::ErrorKind::WouldBlock, TerminalCause::MediaTimeout),
+            (io::ErrorKind::BrokenPipe, TerminalCause::MediaFailure),
+            (io::ErrorKind::Other, TerminalCause::MediaFailure),
+            (io::ErrorKind::InvalidData, TerminalCause::MediaFailure),
+        ] {
+            let mapped = media_error(ControlTlsError::Io(io::Error::new(
+                kind,
+                "untrusted deadline EOF reset text",
+            )));
+            assert_eq!(mapped.kind(), kind);
+            assert_eq!(media_cause(&mapped), expected);
+        }
+        let tls = media_error(ControlTlsError::ChannelFailed);
+        assert_eq!(media_cause(&tls), TerminalCause::MediaFailure);
+    }
+
+    #[test]
+    fn control_terminal_classification_never_confuses_timeout_with_close() {
+        assert_eq!(
+            control_cause(&CatalogLinkError::Closed),
+            TerminalCause::ControlClosed
+        );
+        for kind in [
+            io::ErrorKind::UnexpectedEof,
+            io::ErrorKind::ConnectionReset,
+            io::ErrorKind::ConnectionAborted,
+            io::ErrorKind::TimedOut,
+            io::ErrorKind::WouldBlock,
+            io::ErrorKind::BrokenPipe,
+            io::ErrorKind::Other,
+        ] {
+            let reason = CatalogLinkError::Transport(ControlTlsError::Io(io::Error::new(
+                kind,
+                "EOF closed timeout",
+            )));
+            assert_eq!(
+                control_cause(&reason),
+                if closed_kind(kind) {
+                    TerminalCause::ControlClosed
+                } else {
+                    TerminalCause::Failure
+                }
+            );
+        }
+        assert_eq!(
+            control_cause(&CatalogLinkError::Transport(ControlTlsError::ChannelFailed)),
+            TerminalCause::Failure
+        );
+    }
+
+    #[test]
+    fn first_terminal_cause_and_clock_survive_cleanup_and_later_failures() {
+        for cause in [
+            TerminalCause::Failure,
+            TerminalCause::LocalStop,
+            TerminalCause::PeerStop,
+            TerminalCause::MediaClosed,
+            TerminalCause::MediaTimeout,
+            TerminalCause::MediaFailure,
+            TerminalCause::ControlClosed,
+        ] {
+            let mut observation = TerminalObservation::default();
+            // Model failed first clock read: later cleanup must not fill it in.
+            observation.record(None);
+            observation.observe(cause);
+            observation.observe(TerminalCause::Failure);
+            observation.observe(TerminalCause::LocalStop);
+            assert_eq!(observation.cause, Some(cause));
+            assert_eq!(observation.at_ms, None);
+        }
     }
 }

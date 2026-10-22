@@ -192,13 +192,13 @@ status and error protocol; failed or Starting status is not Active.
 - Microphone/playback: Android-compatible mono 48 kHz S16LE reaches explicit
   native playback or owned Audio/Source (`virtual_microphone`). No default-device
   changes, automatic application routing or PulseAudio/ALSA compatibility are
-  promised. Both directions still use unauthenticated, unencrypted trusted-lab
-  UDP for media; pinned TLS/control approval does not encrypt audio packets.
-  [ADR 1559](adr/1559-finite-secure-mono-audio.md) separately adds a reusable
-  finite Rust secure-mono sender/playback-owner API and isolated synthetic
-  PipeWire acceptance. It is not yet connected to these console/Node launchers
-  or Android AudioRecord, so it does not remove their trusted-lab warning or
-  make an existing manifest select encrypted media.
+  promised. Legacy defaults in both directions still use unauthenticated,
+  unencrypted trusted-lab UDP; pinned control TLS does not encrypt those packets.
+  Explicit secure mono **selected-target playback only** is described below in
+  [ADR 1561](adr/1561-linux-secure-playback-launcher.md), following the Android
+  secure microphone binding in ADR 1560. Existing manifests do not silently
+  upgrade. Secure virtual microphone, stereo capture and virtual speaker are not
+  provided by this increment.
 - Camera: explicit Android Source to owned native Video/Source, canonical
   1280×720 at 30 fps NV12 BT.709 limited output from rotation-zero Annex B AVC;
   finite ingress is capped independently at 60 seconds, 32 MiB and 120 frames,
@@ -531,3 +531,48 @@ fit the full portrait image into the landscape canvas with black sidebars; no
 front mirroring or live display-rotation tracking is implied. Eligibility and
 hosted synthetic GPU evidence are not physical-device compatibility. Legacy
 remains default; settings changes cannot extend a grant or start capture.
+
+
+## Explicit finite secure mono playback (ADR 1561)
+
+This is an opt-in paired-store path to an explicitly selected local PipeWire
+playback target. It is not encrypted reverse stereo, a virtual microphone,
+renewable streaming, or physical phone compatibility evidence. The paired-store
+staging profile, an already provisioned identity and exact active peer record,
+existing unlocked Secret Service collection, explicit bus address and local
+playback target remain prerequisites. There is no implicit unlock or setup.
+
+Use the existing authenticated catalog preparation command with the explicit
+security selection; replace the illustrative addresses, IDs and target:
+
+```sh
+./capyio-linux-console --pairing-node LOCAL_NODE_UUID --pairing-state /absolute/private/state --pairing-bus-address unix:path=/explicit/bus --pairing-collection /org/freedesktop/secrets/collection/EXISTING prepare-audio --peer PEER_NODE_UUID --endpoint 192.0.2.20:PORT --output /absolute/owned/new-secure-audio.json --listen 192.0.2.10:0 --media 192.0.2.10:0 --duration-secs 10 --mode playback --target EXPLICIT_LOCAL_TARGET --media-security pinned_tls13_mono_v1
+```
+
+Choose only an actual current secure mono Source, then make the separate fresh
+save decision. Export is read-only network inspection plus a create-new nonsecret
+file; it does not start media or grant resources. The result uses version 1,
+`media_security: pinned_tls13_mono_v1`, `endpoint_mode: playback`,
+`proposal_mode: linux_led`, an explicit target and a zero media port. Port zero
+requests an owned ephemeral TCP listener, not an advertised remote port. Secure
+mode has a 1–60-second upper bound, further shortened by original grants and
+leases. Unknown/mixed profiles, incoming-draft and other endpoint modes reject.
+Omitting `media_security` still selects the old plaintext trusted-lab mode.
+
+Later, invoke the same console `playback --config /absolute/owned/new-secure-audio.json
+--peer PEER_NODE_UUID` with the four explicit paired-store selectors. The launcher
+revalidates the snapshot and displays the exact secure format, peer, direction,
+target and duration. Only a fresh current session confirmation authorizes the
+local Sink; the Android secure microphone Source still needs independent consent,
+permission and visible lifecycle. Pairing or exporting does neither. Stop, EOF,
+revocation and expiry do not automatically retry, renew or fall back to UDP.
+
+The Node's historical `linux-playback --trusted-lab` flag remains an explicit
+experimental-operation opt-in, not a transport selector. Its private framing
+requires the paired-store marker for secure media, never a credential frame.
+The Route deliberately remains Starting with actual authenticated/helper-write
+counters; those counters and TLS readiness do not prove audible consumption.
+Synthetic acceptance exercises the actual terminal, Node and production Rust
+sender with private fake backend/graph fixtures. It does not run a physical phone,
+real user keyring or actual speaker. Android SDK/JNI compilation and fake recorder
+contracts are separate evidence, not a physical end-to-end claim.

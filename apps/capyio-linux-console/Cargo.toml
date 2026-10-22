@@ -17,6 +17,7 @@ touchpad-test-fixture = ["paired-store"]
 clap.workspace = true
 serde.workspace = true
 serde_json.workspace = true
+capyio-protocol = { path = "../../crates/capyio-protocol" }
 capyio-core = { path = "../../crates/capyio-core" }
 
 [target.'cfg(target_os = "linux")'.dependencies]

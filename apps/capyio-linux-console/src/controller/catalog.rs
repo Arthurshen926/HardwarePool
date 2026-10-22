@@ -262,7 +262,19 @@ impl Catalog {
         Ok(())
     }
 
+    #[cfg(test)]
     fn candidates(&self, kind: ExportKind) -> io::Result<Vec<Candidate>> {
+        self.security_candidates(kind, media::MediaSecurity::Legacy)
+    }
+
+    fn security_candidates(
+        &self,
+        kind: ExportKind,
+        security: media::MediaSecurity,
+    ) -> io::Result<Vec<Candidate>> {
+        if security == media::MediaSecurity::Secure && kind != ExportKind::Playback {
+            return Err(invalid());
+        }
         // No partial or subsequently rejected snapshot may become selectable.
         self.lines()?;
         let (direction, profile, format, reason) = match kind {
@@ -291,6 +303,11 @@ impl Catalog {
                 CompatibilityReason::TouchpadNeedsLocalSelection,
             ),
         };
+        let format = if security == media::MediaSecurity::Secure {
+            capyio_protocol::SECURE_AUDIO_MONO_FORMAT
+        } else {
+            format
+        };
         self.ports
             .iter()
             .filter_map(|event| match event {
@@ -306,6 +323,8 @@ impl Catalog {
                             CompatibilityStatus::NeedsLocalSelection
                         )
                         && port.compatibility.reason == reason
+                        && (security != media::MediaSecurity::Secure
+                            || port.formats.len() == 1)
                         && port.formats.iter().any(|candidate| {
                             candidate.id == format && candidate.parameters.is_empty()
                         }) =>
@@ -551,7 +570,7 @@ pub(super) fn run_prepare(
         deadline.min(Instant::now() + Duration::from_secs(1)),
     )?;
     let catalog = read_catalog(args, peer, endpoint, &mut tty, deadline)?;
-    let candidates = catalog.candidates(options.kind)?;
+    let candidates = catalog.security_candidates(options.kind, options.media_security)?;
     super::catalog_export::prepare(
         &mut tty,
         args.pairing_node,
@@ -955,6 +974,66 @@ mod tests {
         ExportKind::VirtualSpeaker,
         ExportKind::Touchpad,
     ];
+
+    #[test]
+    fn pure_secure_candidates_never_downgrade_or_select_parameterized_format() {
+        for (format, parameters, legacy_count, secure_count) in [
+            ("pcm-s16le-48000-mono", json!({}), 1, 0),
+            (capyio_protocol::SECURE_AUDIO_MONO_FORMAT, json!({}), 0, 1),
+            (
+                capyio_protocol::SECURE_AUDIO_MONO_FORMAT,
+                json!({"unknown":"required"}),
+                0,
+                0,
+            ),
+        ] {
+            let mut catalog = Catalog::new(peer());
+            accept(&mut catalog, begin(1)).unwrap();
+            let mut port = export_port(ExportKind::Playback);
+            port["formats"] = json!([{"id":format,"parameters":parameters}]);
+            accept(&mut catalog, port).unwrap();
+            accept(&mut catalog, complete(1)).unwrap();
+            assert_eq!(
+                catalog.candidates(ExportKind::Playback).unwrap().len(),
+                legacy_count
+            );
+            assert_eq!(
+                catalog
+                    .security_candidates(ExportKind::Playback, media::MediaSecurity::Secure)
+                    .unwrap()
+                    .len(),
+                secure_count
+            );
+            assert!(
+                catalog
+                    .security_candidates(
+                        ExportKind::VirtualMicrophone,
+                        media::MediaSecurity::Secure
+                    )
+                    .is_err()
+            );
+        }
+    }
+
+    #[test]
+    fn pure_secure_candidates_reject_mixed_format_publication() {
+        let mut catalog = Catalog::new(peer());
+        accept(&mut catalog, begin(1)).unwrap();
+        let mut port = export_port(ExportKind::Playback);
+        port["formats"] = json!([
+            {"id":"pcm-s16le-48000-mono","parameters":{}},
+            {"id":capyio_protocol::SECURE_AUDIO_MONO_FORMAT,"parameters":{}}
+        ]);
+        accept(&mut catalog, port).unwrap();
+        accept(&mut catalog, complete(1)).unwrap();
+        assert_eq!(catalog.candidates(ExportKind::Playback).unwrap().len(), 1);
+        assert!(
+            catalog
+                .security_candidates(ExportKind::Playback, media::MediaSecurity::Secure)
+                .unwrap()
+                .is_empty()
+        );
+    }
 
     #[test]
     fn pure_catalog_all_export_modes_require_complete_matching_rows() {

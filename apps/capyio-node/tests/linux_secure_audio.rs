@@ -1,9 +1,10 @@
 #![cfg(target_os = "linux")]
 //! Hosted synthetic acceptance of reusable Android Rust sender and Linux owner
-//! APIs. This is NOT capyio-node CLI, Java AudioRecord, physical-device, stored
-//! pairing, or keyring evidence. The Python harness owns a private PipeWire
-//! server, independently observes both consent barriers, links the exact owned
-//! pw-cat child, measures PCM, and verifies graph/process removal.
+//! APIs. The original nine-case gate is NOT CLI, stored-pairing or keyring
+//! evidence. The additive secure_console module separately drives the actual
+//! paired production console. Neither gate proves Java AudioRecord or physical
+//! devices. Their Python harnesses own private PipeWire servers, independently
+//! observe consent, link exact owned pw-cat children, and verify PCM/cleanup.
 use capyio_android_jni::audio_sender::{AudioSourceConsent, SecureAudioSender};
 use capyio_audio::{AudioMediaPacket, AudioMediaStreamBinding, AudioStreamSpec};
 use capyio_control_credentials::ControlCredentialBundle;
@@ -942,4 +943,35 @@ fn hosted_secure_audio_android_sender_graph() {
         "injected":scenario,"verified":scenario,"session_closed":true,"leases_released":true,"helper_reaped":true}),
     );
     wait_marker(&root, "stop_checked");
+}
+
+// Production console acceptance is additive: the nine reusable-API scenarios
+// above retain their exact protocol, deadlines, names and graph contract.
+#[cfg(feature = "paired-store")]
+#[path = "support/paired_store.rs"]
+mod paired_store;
+#[cfg(feature = "paired-store")]
+#[path = "support/playback_console.rs"]
+mod playback_console;
+#[cfg(feature = "paired-store")]
+#[path = "support/secure_console.rs"]
+mod secure_console;
+#[cfg(feature = "paired-store")]
+fn nonblocking(fd: impl std::os::fd::AsFd) {
+    let flags = rustix::fs::fcntl_getfl(&fd).unwrap();
+    rustix::fs::fcntl_setfl(fd, flags | rustix::fs::OFlags::NONBLOCK).unwrap();
+}
+#[cfg(feature = "paired-store")]
+fn drain(reader: &mut impl std::io::Read, bytes: &mut Vec<u8>) {
+    let mut buffer = [0; 4096];
+    loop {
+        match reader.read(&mut buffer) {
+            Ok(0) => break,
+            Ok(n) => bytes.extend_from_slice(&buffer[..n]),
+            Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => break,
+            Err(e) if e.kind() == std::io::ErrorKind::Interrupted => continue,
+            Err(e) => panic!("bounded console output: {e}"),
+        }
+        assert!(bytes.len() <= 1_048_576);
+    }
 }

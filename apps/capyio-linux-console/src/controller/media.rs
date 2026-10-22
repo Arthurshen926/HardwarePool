@@ -13,6 +13,27 @@ const SECURITY: &str = "unauthenticated_udp_trusted_lab_only";
 const WARNING: &str =
     "WARNING: plaintext unauthenticated UDP media; trusted isolated lab only.\r\n";
 
+pub(super) const SECURE_WARNING: &str = "Experimental pinned TLS 1.3 mono media; explicit target, one finite session at most 60 seconds. No automatic downgrade or renewal.\r\nAuthenticated PCM writes do not prove audibility or application consumption; the Route remains Starting.\r\n";
+
+#[derive(Clone, Copy, Debug, Default, Deserialize, Serialize, Eq, PartialEq, clap::ValueEnum)]
+pub(super) enum MediaSecurity {
+    #[default]
+    #[serde(rename = "unauthenticated_udp_trusted_lab_only")]
+    #[value(name = "unauthenticated_udp_trusted_lab_only")]
+    Legacy,
+    #[serde(rename = "pinned_tls13_mono_v1")]
+    #[value(name = "pinned_tls13_mono_v1")]
+    Secure,
+}
+impl MediaSecurity {
+    pub(super) fn name(self) -> &'static str {
+        match self {
+            Self::Legacy => SECURITY,
+            Self::Secure => "pinned_tls13_mono_v1",
+        }
+    }
+}
+
 #[derive(Clone, Copy, Debug, Deserialize, Serialize, Eq, PartialEq)]
 #[serde(deny_unknown_fields)]
 struct Port {
@@ -103,6 +124,8 @@ enum CaptureMode {
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct PlaybackConfig {
+    #[serde(default)]
+    media_security: MediaSecurity,
     version: u32,
     node_id: NodeId,
     source: Port,
@@ -134,6 +157,7 @@ struct CaptureConfig {
 
 #[derive(Debug)]
 struct Config {
+    media_security: MediaSecurity,
     direction: Direction,
     version: u32,
     node_id: NodeId,
@@ -157,6 +181,7 @@ impl Config {
                     version: value.version,
                     node_id: value.node_id,
                     remote: value.source,
+                    media_security: value.media_security,
                     listen: value.listen,
                     media: value.media,
                     target: value.target,
@@ -171,6 +196,7 @@ impl Config {
                     version: value.version,
                     node_id: value.node_id,
                     remote: value.sink,
+                    media_security: MediaSecurity::Legacy,
                     listen: value.listen,
                     media: value.media,
                     target: value.target,
@@ -186,12 +212,31 @@ impl Config {
         Ok(value)
     }
 
+    fn format(&self) -> &'static str {
+        if self.media_security == MediaSecurity::Secure {
+            capyio_protocol::SECURE_AUDIO_MONO_FORMAT
+        } else {
+            self.direction.format()
+        }
+    }
+
     fn validate(&self, local: NodeId, peer: NodeId) -> io::Result<()> {
         // Match the Host's concrete lab-address policy, including its port-1
         // placeholder when TCP listening requests an ephemeral port.
         let mut listen = self.listen;
         if listen.port() == 0 {
             listen.set_port(1);
+        }
+        let secure = self.media_security == MediaSecurity::Secure;
+        let mut media = self.media;
+        if secure {
+            if self.endpoint_mode != Mode::Playback
+                || self.media.port() != 0
+                || self.duration_secs > 60
+            {
+                return Err(invalid());
+            }
+            media.set_port(1);
         }
         if self.version != 1
             || self.node_id != local
@@ -203,8 +248,8 @@ impl Config {
             || self.endpoint_mode.direction() != self.direction
             || self.listen.ip() != self.media.ip()
             || !lab_address(listen)
-            || !lab_address(self.media)
-            || listen == self.media
+            || !lab_address(media)
+            || (!secure && listen == self.media)
             || !(1..=300).contains(&self.duration_secs)
         {
             return Err(invalid());
@@ -225,6 +270,9 @@ impl Config {
         match self.direction {
             Direction::Playback => {
                 value["source"] = json!(self.remote);
+                if self.media_security == MediaSecurity::Secure {
+                    value["media_security"] = json!(self.media_security);
+                }
                 value["endpoint_mode"] = json!(self.endpoint_mode);
                 value["proposal_mode"] = json!(Proposal::LinuxLed);
             }
@@ -367,10 +415,10 @@ impl Approval {
             || self.target != config.target
             || self.endpoint_mode != config.endpoint_mode
             || self.node_name != expected_name
-            || self.format != config.direction.format()
+            || self.format != config.format()
             || self.duration_secs != config.duration_secs
             || self.approval_timeout_secs != CONSENT.as_secs()
-            || self.media_security != SECURITY
+            || self.media_security != config.media_security.name()
         {
             return Err(invalid());
         }
@@ -425,12 +473,38 @@ struct RouteStatus {
     state: RouteState,
     packets_written: u64,
     packets_sent: u64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    bytes_written: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    media_security: Option<MediaSecurity>,
 }
+#[derive(Clone, Copy, Debug, Deserialize, Serialize)]
+#[serde(rename_all = "snake_case")]
+enum TerminalCause {
+    Failure,
+    LocalStop,
+    PeerStop,
+    MediaClosed,
+    MediaTimeout,
+    MediaFailure,
+    ControlClosed,
+}
+
 #[derive(Debug, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 struct SimpleEvent {
     version: u32,
     event: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    terminal_observed_at_ms: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    terminal_cause: Option<TerminalCause>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    packets_written: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    bytes_written: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    packets_dropped_busy: Option<u64>,
 }
 
 #[derive(Debug)]
@@ -478,9 +552,50 @@ impl Event {
             }
             "awaiting_peer_offer" => Ok(Self::AwaitingPeer(decode(value)?)),
             "status" if value.get("stage").is_some() => Ok(Self::Stage(decode(value)?)),
-            "status" => Ok(Self::Route(decode(value)?)),
-            "stopped" => Ok(Self::Stopped(decode(value)?)),
-            "failed" => Ok(Self::Failed(decode(value)?)),
+            "status" => {
+                let mut keys = vec![
+                    "version",
+                    "event",
+                    "route_id",
+                    "state",
+                    "packets_written",
+                    "packets_sent",
+                ];
+                if value.get("media_security").is_some() {
+                    if value["media_security"] != "pinned_tls13_mono_v1"
+                        || !value["bytes_written"].is_u64()
+                    {
+                        return Err(invalid());
+                    }
+                    keys.extend(["media_security", "bytes_written"]);
+                }
+                exact_keys(&value, &keys)?;
+                Ok(Self::Route(decode(value)?))
+            }
+            "stopped" | "failed" => {
+                let counters = ["packets_written", "bytes_written", "packets_dropped_busy"];
+                let has_counters = counters.iter().any(|key| value.get(key).is_some());
+                if has_counters != value.get("terminal_cause").is_some()
+                    || (has_counters && !value["terminal_cause"].is_string())
+                {
+                    return Err(invalid());
+                }
+                if counters.iter().any(|key| value.get(key).is_some())
+                    && !counters.iter().all(|key| value[key].is_u64())
+                {
+                    return Err(invalid());
+                }
+                if value.get("terminal_observed_at_ms").is_some()
+                    && !value["terminal_observed_at_ms"].is_u64()
+                {
+                    return Err(invalid());
+                }
+                if value["event"] == "stopped" {
+                    Ok(Self::Stopped(decode(value)?))
+                } else {
+                    Ok(Self::Failed(decode(value)?))
+                }
+            }
             _ => Err(invalid()),
         }
     }
@@ -513,10 +628,31 @@ struct Session {
     stopping: bool,
     finished: Option<Finished>,
     packets: u64,
+    bytes: u64,
 }
 impl Session {
     fn accept(&mut self, event: &Event, config: &Config) -> io::Result<()> {
         if self.finished.is_some() {
+            return Err(invalid());
+        }
+        if let Event::Stopped(value) | Event::Failed(value) = event
+            && config.media_security != MediaSecurity::Secure
+            && (value.terminal_observed_at_ms.is_some() || value.packets_written.is_some())
+        {
+            return Err(invalid());
+        }
+        if let Event::Stopped(value) | Event::Failed(value) = event
+            && let (Some(packets), Some(bytes)) = (value.packets_written, value.bytes_written)
+            && (!self.offered
+                || packets < self.packets
+                || bytes < self.bytes
+                || packets > config.duration_secs * 100
+                || bytes > config.duration_secs * 100 * 960
+                || !packets
+                    .checked_mul(960)
+                    .is_some_and(|complete| bytes >= complete && bytes - complete < 960)
+                || value.packets_dropped_busy.unwrap_or(0) > config.duration_secs * 100)
+        {
             return Err(invalid());
         }
         match event {
@@ -557,6 +693,29 @@ impl Session {
                 }
             }
             Event::Route(value) => {
+                match config.media_security {
+                    MediaSecurity::Legacy
+                        if value.bytes_written.is_some() || value.media_security.is_some() =>
+                    {
+                        return Err(invalid());
+                    }
+                    MediaSecurity::Secure => {
+                        let bytes = value.bytes_written.ok_or_else(invalid)?;
+                        if value.media_security != Some(MediaSecurity::Secure)
+                            || value.state != RouteState::Starting
+                            || bytes < self.bytes
+                            || value.packets_written > config.duration_secs * 100
+                            || bytes > config.duration_secs * 100 * 960
+                            || !value
+                                .packets_written
+                                .checked_mul(960)
+                                .is_some_and(|complete| bytes >= complete && bytes - complete < 960)
+                        {
+                            return Err(invalid());
+                        }
+                    }
+                    _ => {}
+                }
                 let (packets, opposite_packets) = match config.direction {
                     Direction::Playback => (value.packets_written, value.packets_sent),
                     Direction::Capture => (value.packets_sent, value.packets_written),
@@ -571,6 +730,7 @@ impl Session {
                     return Err(invalid());
                 }
                 self.packets = packets;
+                self.bytes = value.bytes_written.unwrap_or(0);
             }
             Event::Stopped(_) => {
                 if !self.stopping && !self.approved {
@@ -615,7 +775,16 @@ impl Session {
             device,
             config.duration_secs
         );
-        result.push_str(WARNING);
+        result.push_str(&format!(
+            "Format: {}; media security: {}\r\n",
+            config.format(),
+            config.media_security.name()
+        ));
+        result.push_str(if config.media_security == MediaSecurity::Secure {
+            SECURE_WARNING
+        } else {
+            WARNING
+        });
         result
     }
 }
@@ -868,13 +1037,236 @@ mod tests {
             "route_id":RouteId::new(),"session_id":SessionId::new(),"source":source,
             "sink":sink,"target":config.target,"endpoint_mode":config.endpoint_mode,
             "node_name":node_name,
-            "format":config.direction.format(),"duration_secs":config.duration_secs,"approval_timeout_secs":30,"media_security":SECURITY})
+            "format":config.format(),"duration_secs":config.duration_secs,"approval_timeout_secs":30,"media_security":config.media_security.name()})
     }
     fn approval(config: &Config) -> Approval {
         let Event::Approval(value) = Event::parse(approval_json(config)).unwrap() else {
             panic!("expected typed approval")
         };
         *value
+    }
+
+    fn secure_config_json() -> Value {
+        let mut value = config_json();
+        value["media_security"] = json!("pinned_tls13_mono_v1");
+        value["media"] = json!("127.0.0.1:0");
+        value
+    }
+
+    #[test]
+    fn pure_secure_config_is_explicit_finite_playback_only() {
+        let value = secure_config_json();
+        let config = parse_config(&value).unwrap();
+        assert_eq!(config.format(), capyio_protocol::SECURE_AUDIO_MONO_FORMAT);
+        assert_eq!(
+            parse_config(&config.wire()).unwrap().media_security,
+            MediaSecurity::Secure
+        );
+        for (key, replacement) in [
+            ("media_security", json!("tls13_mtls_v1")),
+            ("media_security", Value::Null),
+            ("media", json!("127.0.0.1:40231")),
+            ("endpoint_mode", json!("virtual_microphone")),
+            ("proposal_mode", json!("incoming_draft")),
+            ("duration_secs", json!(61)),
+            ("duration_secs", json!(0)),
+            ("target", Value::Null),
+            ("target", json!("default")),
+        ] {
+            let mut bad = value.clone();
+            bad[key] = replacement;
+            assert!(parse_config(&bad).is_err(), "{key}");
+        }
+        let mut capture = capture_config_json();
+        capture["media_security"] = json!("pinned_tls13_mono_v1");
+        assert!(parse_capture_config(&capture).is_err());
+        let summary = Session::default().summary(&config);
+        assert!(summary.contains("do not prove audibility"));
+        assert!(!summary.contains(WARNING));
+    }
+
+    #[test]
+    fn pure_secure_terminal_observation_is_numeric_and_never_legacy() {
+        let secure = parse_config(&secure_config_json()).unwrap();
+        let legacy = parse_config(&config_json()).unwrap();
+        let value = json!({"version":1,"event":"failed","terminal_observed_at_ms":123});
+        let event = Event::parse(value.clone()).unwrap();
+        assert!(Session::default().accept(&event, &legacy).is_err());
+        let mut final_counts = value.clone();
+        final_counts["packets_written"] = json!(2);
+        final_counts["bytes_written"] = json!(2000);
+        final_counts["packets_dropped_busy"] = json!(1);
+        final_counts["terminal_cause"] = json!("media_closed");
+        for cause in [
+            "failure",
+            "local_stop",
+            "peer_stop",
+            "media_closed",
+            "media_timeout",
+            "media_failure",
+            "control_closed",
+        ] {
+            let mut candidate = final_counts.clone();
+            candidate["terminal_cause"] = json!(cause);
+            assert!(Event::parse(candidate).is_ok());
+        }
+        for cause in [
+            Value::Null,
+            json!(1),
+            json!("raw error detail"),
+            json!("eof"),
+        ] {
+            let mut bad = final_counts.clone();
+            bad["terminal_cause"] = cause;
+            assert!(Event::parse(bad).is_err());
+        }
+        let mut missing_cause = final_counts.clone();
+        missing_cause
+            .as_object_mut()
+            .unwrap()
+            .remove("terminal_cause");
+        assert!(Event::parse(missing_cause).is_err());
+        let mut cause_without_counters = value.clone();
+        cause_without_counters["terminal_cause"] = json!("failure");
+        assert!(Event::parse(cause_without_counters).is_err());
+        for key in ["packets_written", "bytes_written", "packets_dropped_busy"] {
+            let mut bad = final_counts.clone();
+            bad.as_object_mut().unwrap().remove(key);
+            assert!(Event::parse(bad).is_err());
+            let mut bad = final_counts.clone();
+            bad[key] = Value::Null;
+            assert!(Event::parse(bad).is_err());
+        }
+        let counts = Event::parse(final_counts).unwrap();
+        let mut owned = Session {
+            approved: true,
+            offered: true,
+            ..Session::default()
+        };
+        owned.accept(&counts, &secure).unwrap();
+        assert!(Session::default().accept(&counts, &secure).is_err());
+        assert!(Session::default().accept(&counts, &legacy).is_err());
+        let mut session = Session::default();
+        session.accept(&event, &secure).unwrap();
+        assert!(session.accept(&event, &secure).is_err());
+        for invalid in [Value::Null, json!(-1), json!("123"), json!(1.5)] {
+            let mut bad = value.clone();
+            bad["terminal_observed_at_ms"] = invalid;
+            assert!(Event::parse(bad).is_err());
+        }
+        assert!(
+            Session::default()
+                .accept(
+                    &Event::parse(json!({"version":1,"event":"failed"})).unwrap(),
+                    &secure
+                )
+                .is_ok()
+        );
+    }
+
+    #[test]
+    fn pure_secure_consent_requires_fresh_exact_request_route_peer() {
+        let config = parse_config(&secure_config_json()).unwrap();
+        let current = approval(&config);
+        let correct = current.expected();
+        let stale = approval(&config).expected();
+        let mut session = Session {
+            listening: true,
+            approval: Some(current),
+            ..Session::default()
+        };
+        assert_eq!(
+            input_action(correct.as_bytes(), &session).unwrap(),
+            Input::Approve
+        );
+        assert!(input_action(stale.as_bytes(), &session).is_err());
+        assert!(input_action(format!("{correct} extra").as_bytes(), &session).is_err());
+        session.approved = true;
+        assert!(input_action(correct.as_bytes(), &session).is_err());
+        let text = serde_json::to_string(&secure_config_json()).unwrap();
+        let duplicate = text.replacen(
+            "{",
+            "{\"media_security\":\"unauthenticated_udp_trusted_lab_only\",",
+            1,
+        );
+        assert!(
+            Config::parse(
+                duplicate.as_bytes(),
+                config.node_id,
+                config.remote.node_id,
+                Direction::Playback
+            )
+            .is_err()
+        );
+    }
+
+    #[test]
+    fn pure_secure_approval_profile_and_status_are_immutable() {
+        let config = parse_config(&secure_config_json()).unwrap();
+        let original = approval_json(&config);
+        for (key, replacement) in [
+            ("format", json!("pcm-s16le-48000-mono")),
+            ("media_security", json!(SECURITY)),
+            ("target", json!("different.sink")),
+            ("duration_secs", json!(21)),
+        ] {
+            let mut bad = original.clone();
+            bad[key] = replacement;
+            let Event::Approval(bad) = Event::parse(bad).unwrap() else {
+                panic!()
+            };
+            assert!(bad.validate(&config).is_err());
+        }
+        let approved = approval(&config);
+        let route = approved.route_id;
+        let mut session = Session {
+            listening: true,
+            approval: Some(approved),
+            approved: true,
+            offered: true,
+            ..Session::default()
+        };
+        let status = json!({"version":1,"event":"status","route_id":route,"state":"starting",
+            "packets_written":3,"packets_sent":0,"bytes_written":2880,"media_security":"pinned_tls13_mono_v1"});
+        session
+            .accept(&Event::parse(status.clone()).unwrap(), &config)
+            .unwrap();
+        for (key, replacement) in [
+            ("state", json!("active")),
+            ("state", json!("draft")),
+            ("route_id", json!(RouteId::new())),
+            ("packets_sent", json!(1)),
+            ("packets_written", json!(2)),
+            ("bytes_written", json!(2879)),
+        ] {
+            let mut bad = status.clone();
+            bad[key] = replacement;
+            assert!(
+                session
+                    .accept(&Event::parse(bad).unwrap(), &config)
+                    .is_err(),
+                "{key}"
+            );
+            assert_eq!(session.packets, 3);
+            assert_eq!(session.bytes, 2880);
+        }
+        for key in ["bytes_written", "media_security"] {
+            let mut bad = status.clone();
+            bad.as_object_mut().unwrap().remove(key);
+            assert!(Event::parse(bad).is_err());
+        }
+        let mut partial = status.clone();
+        partial["bytes_written"] = json!(3000);
+        session
+            .accept(&Event::parse(partial).unwrap(), &config)
+            .unwrap();
+        assert_eq!(session.bytes, 3000);
+        let legacy = parse_config(&config_json()).unwrap();
+        assert!(
+            session
+                .accept(&Event::parse(status).unwrap(), &legacy)
+                .is_err()
+        );
     }
 
     #[test]

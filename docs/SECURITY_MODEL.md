@@ -1707,3 +1707,15 @@ and routed-device identity must be checked before publication and during use.
 Queue exhaustion and capture/transport stalls terminate without UDP fallback.
 This does not claim physical-device compatibility or a production Linux secure
 audio launcher, and does not introduce any new permission or renewable grant.
+
+
+[ADR 1561](adr/1561-linux-secure-playback-launcher.md) adds explicit paired-store
+Linux playback selection without weakening those boundaries. Secure mode requires
+its exact profile, explicit local target and original finite consent; the old
+private-credential launcher cannot select it. Catalog export is not authority
+and cannot downgrade a secure-only Source. A monotonic consent deadline survives
+control/TLS negotiation and is intersected with original grant/lease limits.
+Secure status remains Starting: received/written PCM is not verified audibility.
+Legacy UDP, virtual endpoints and reverse stereo retain their separate limits.
+No unattended service, new permission, renewable grant or physical-device claim
+is introduced. Plain PCM remains at authorized local audio boundaries.

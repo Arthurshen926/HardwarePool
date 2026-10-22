@@ -1801,5 +1801,13 @@ Android microphone Source to a bounded Rust-owned JNI job behind explicit
 secure-mono opt-in. The capture worker waits for authenticated readiness and
 hands complete fixed PCM frames to nonblocking native admission; it owns no
 network socket. Profile, permission, device-route or generation changes cancel
-the use rather than renew it. Linux Node/console secure launching is a separate
-next integration, and physical phone capture remains unverified.
+the use rather than renew it. Physical phone capture remains unverified.
+
+[ADR 1561](adr/1561-linux-secure-playback-launcher.md) then integrates the paired
+Linux Node/console for explicit selected-target playback only. The strict nonsecret
+manifest selects secure mono separately from legacy UDP; authenticated catalog
+export cannot downgrade a secure-only Source. Fresh local/counterpart consent
+and original finite leases remain prerequisites. The original monotonic consent
+end is carried into the owner across negotiation. The Route stays Starting,
+with actual write counters rather than fabricated audible/Active state. Virtual
+microphone and reverse stereo remain separate integration work.

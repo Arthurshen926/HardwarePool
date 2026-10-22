@@ -44,7 +44,7 @@ jobs:
       - name: Validate persisted pairing launcher boundary
         run: |
           cargo test --locked -p capyio-node --features paired-store --test linux_paired_store -- --list | tee "$RUNNER_TEMP/paired-launcher-tests.txt"
-          for test in ipc_paired_store_camera_and_touchpad_listen_without_grant_and_stop_cleanly ipc_paired_store_invalid_peer_or_backend_fails_before_listening_or_helper ipc_paired_store_rejects_legacy_credential_frames_in_selected_mode paired_store_cli_rejects_incomplete_selector_set_without_access ipc_paired_store_audio_loads_credentials_without_helpers_and_stops ipc_paired_store_audio_binding_and_backend_fail_before_listener ipc_paired_store_audio_rejects_mixed_bootstrap_without_keyring_access; do
+          for test in ipc_paired_store_camera_and_touchpad_listen_without_grant_and_stop_cleanly ipc_paired_store_invalid_peer_or_backend_fails_before_listening_or_helper ipc_paired_store_rejects_legacy_credential_frames_in_selected_mode paired_store_cli_rejects_incomplete_selector_set_without_access ipc_paired_store_audio_loads_credentials_without_helpers_and_stops ipc_paired_store_audio_binding_and_backend_fail_before_listener ipc_paired_store_audio_rejects_mixed_bootstrap_without_keyring_access ipc_paired_store_secure_playback_rejects_unsupported_modes_and_mixed_credentials; do
             grep -Fx "$test: test" "$RUNNER_TEMP/paired-launcher-tests.txt"
           done
           timeout --signal=TERM --kill-after=10s 600s cargo test --locked -p capyio-node --features paired-store --test linux_paired_store --test linux_camera --test linux_touchpad -- --test-threads=1
@@ -777,6 +777,39 @@ jobs:
             count=$((count + 1))
           done
           test "$count" -eq 9
+      - name: Require actual secure playback terminal Node and private PipeWire proof
+        run: |
+          set -euo pipefail
+          python3 -m unittest discover -s scripts -p test_pipewire_secure_console.py -v
+          cargo build --locked -p capyio-node -p capyio-linux-console --features capyio-node/paired-store,capyio-linux-console/paired-store
+          cargo test --locked -p capyio-node --features paired-store --test linux_secure_audio --no-run --message-format=json \
+            > "$RUNNER_TEMP/secure-console-build.jsonl"
+          fixture="$(python3 - "$RUNNER_TEMP/secure-console-build.jsonl" <<'PYFIXTURE'
+          import json, sys
+          items = [json.loads(line) for line in open(sys.argv[1])]
+          matches = [item['executable'] for item in items if item.get('reason') == 'compiler-artifact' and item.get('target', {}).get('name') == 'linux_secure_audio' and item.get('executable')]
+          assert len(matches) == 1
+          print(matches[0])
+          PYFIXTURE
+          )"
+          "$fixture" --list | tee "$RUNNER_TEMP/secure-console-tests.txt"
+          grep -Fx 'secure_console::hosted_secure_audio_console_graph: test' "$RUNNER_TEMP/secure-console-tests.txt"
+          count=0
+          for scenario in stop no_approval pretyped wrong_request wrong_route wrong_peer source_revoke expiry control_eof media_eof local_eof; do
+            timeout --signal=TERM --kill-after=15s 75s python3 scripts/run_pipewire_secure_console.py \
+              --hosted-private-secure-console --fixture "$fixture" --scenario "$scenario" \
+              | tee "$RUNNER_TEMP/secure-console-$scenario.txt"
+            grep -Fx "capyio_pipewire_secure_console=passed scenario=$scenario surface=production_console capture=synthetic real_graph=true owned_cleanup=true" "$RUNNER_TEMP/secure-console-$scenario.txt"
+            count=$((count + 1))
+          done
+          test "$count" -eq 11
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: finite-secure-playback-console-evidence
+          path: ${{ runner.temp }}/secure-console-*.txt
+          if-no-files-found: ignore
+
       - uses: actions/upload-artifact@v4
         if: always()
         with:
