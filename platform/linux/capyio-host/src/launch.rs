@@ -192,13 +192,17 @@ impl LaunchConfig {
         }
         let mut media = value.media;
         if value.media_security == MediaSecurity::PinnedTls13MonoV1 {
-            if value.endpoint_mode != EndpointMode::Playback
-                || value.proposal_mode != ProposalMode::LinuxLed
+            if !matches!(
+                value.endpoint_mode,
+                EndpointMode::Playback | EndpointMode::VirtualMicrophone
+            ) || value.proposal_mode != ProposalMode::LinuxLed
                 || media.port() != 0
                 || !(1..=60).contains(&value.duration_secs)
-                || value.target.as_deref().is_none_or(|target| {
-                    target.eq_ignore_ascii_case("auto") || target.eq_ignore_ascii_case("default")
-                })
+                || (value.endpoint_mode == EndpointMode::Playback
+                    && value.target.as_deref().is_none_or(|target| {
+                        target.eq_ignore_ascii_case("auto")
+                            || target.eq_ignore_ascii_case("default")
+                    }))
             {
                 return Err(fail());
             }
@@ -347,12 +351,16 @@ fn launch(io: &mut LauncherIo, capture: bool, source: CredentialSource) -> io::R
         }
     };
     let (route_id, admission) = match prepared {
-        PreparedPlayback::Secure {
-            route_id,
-            admission,
-            end,
-        } => {
-            return run_secure(io, runtime, link, identity, route_id, admission, end);
+        PreparedPlayback::Secure { admission, end } => {
+            return run_secure(
+                io,
+                runtime,
+                link,
+                identity,
+                admission,
+                end,
+                config.endpoint_mode,
+            );
         }
         PreparedPlayback::Legacy(route_id, admission) => (route_id, admission),
     };
@@ -388,7 +396,6 @@ fn launch(io: &mut LauncherIo, capture: bool, source: CredentialSource) -> io::R
 enum PreparedPlayback {
     Legacy(RouteId, PlaybackAdmission),
     Secure {
-        route_id: RouteId,
         admission: SecurePlaybackAdmission,
         end: Instant,
     },
@@ -455,12 +462,18 @@ fn run_secure(
     runtime: NodeRuntime,
     link: CatalogControlLink,
     identity: ControlTlsServerIdentity,
-    route_id: RouteId,
     admission: SecurePlaybackAdmission,
     end: Instant,
+    endpoint_mode: EndpointMode,
 ) -> io::Result<()> {
-    let mut owner = sanitized(SecurePlaybackOwner::new_until(
-        runtime, link, identity, admission, end,
+    let route_id = admission.route_id;
+    let mut owner = sanitized(SecurePlaybackOwner::new_until_with_mode(
+        runtime,
+        link,
+        identity,
+        admission,
+        end,
+        endpoint_mode,
     ))?;
     let outcome = (|| -> io::Result<()> {
         io.send_json(
@@ -723,7 +736,6 @@ fn prepare(
         ))?;
         sanitized(runtime.begin_route_start(route_id, now))?;
         return Ok(Some(PreparedPlayback::Secure {
-            route_id,
             admission: SecurePlaybackAdmission {
                 expected: link.tls_binding(),
                 route_id,
@@ -1215,7 +1227,10 @@ fn local_runtime_profile(
     security: MediaSecurity,
 ) -> io::Result<(NodeRuntime, PortRef)> {
     if security == MediaSecurity::PinnedTls13MonoV1
-        && (endpoint != EndpointMode::Playback || mode != ProposalMode::LinuxLed)
+        && (!matches!(
+            endpoint,
+            EndpointMode::Playback | EndpointMode::VirtualMicrophone
+        ) || mode != ProposalMode::LinuxLed)
     {
         return Err(fail());
     }
@@ -2041,6 +2056,76 @@ mod secure_launch_tests {
         let legacy = LaunchConfig::parse(&serde_json::to_vec(&legacy).unwrap()).unwrap();
         assert_eq!(legacy.media_security, MediaSecurity::TrustedLabUdp);
         validate_credential_source(&legacy, &CredentialSource::PrivatePipe).unwrap();
+    }
+
+    #[test]
+    fn secure_virtual_config_has_no_external_target_or_private_bootstrap() {
+        let mut value = config();
+        value["endpoint_mode"] = json!("virtual_microphone");
+        value.as_object_mut().unwrap().remove("target");
+        let parsed = LaunchConfig::parse(&serde_json::to_vec(&value).unwrap()).unwrap();
+        assert_eq!(parsed.endpoint_mode, EndpointMode::VirtualMicrophone);
+        assert!(parsed.target.is_none());
+        assert!(validate_credential_source(&parsed, &CredentialSource::PrivatePipe).is_err());
+        #[cfg(feature = "paired-store")]
+        validate_credential_source(
+            &parsed,
+            &CredentialSource::PairedStore(PairedStoreSelection {
+                local_node: parsed.node_id,
+                state_path: "/unused-pure-test".into(),
+                bus_address: "unix:path=/unused-pure-test".into(),
+                collection: "/unused-pure-test".into(),
+                peer: parsed.source.node_id,
+            }),
+        )
+        .unwrap();
+        let (runtime, sink) = local_runtime_profile(
+            parsed.node_id,
+            ProposalMode::LinuxLed,
+            parsed.endpoint_mode,
+            parsed.media_security,
+        )
+        .unwrap();
+        assert_eq!(
+            parsed.output_target(sink).unwrap(),
+            capyio_linux_audio::virtual_microphone_name(sink.port_id)
+        );
+        let snapshot = runtime.snapshot();
+        let port = &snapshot.local_node.capabilities[&sink.capability_id].ports[&sink.port_id];
+        assert_eq!(port.direction, PortDirection::Sink);
+        assert_eq!(
+            port.formats,
+            [FormatDescriptor::new(
+                capyio_protocol::SECURE_AUDIO_MONO_FORMAT
+            )]
+        );
+        assert!(snapshot.routes.is_empty());
+        assert!(snapshot.port_leases.is_empty());
+        for (field, invalid) in [
+            ("target", json!("physical.selected.target")),
+            (
+                "target",
+                json!(capyio_linux_audio::virtual_microphone_name(sink.port_id)),
+            ),
+            ("target", json!("capyio.virtual-microphone.malformed")),
+            ("target", json!("")),
+            ("endpoint_mode", json!("playback")),
+            ("endpoint_mode", json!("stereo_capture")),
+            ("endpoint_mode", json!("virtual_speaker")),
+            ("endpoint_mode", json!(null)),
+            ("duration_secs", json!(u64::MAX)),
+            ("duration_secs", json!(61)),
+            ("duration_secs", json!(0)),
+            ("media", json!("127.0.0.1:40111")),
+            ("proposal_mode", json!("incoming_draft")),
+        ] {
+            let mut changed = value.clone();
+            changed[field] = invalid;
+            assert!(
+                LaunchConfig::parse(&serde_json::to_vec(&changed).unwrap()).is_err(),
+                "{field}"
+            );
+        }
     }
 
     fn fixture() -> (NodeRuntime, PortRef, PortRef, SessionId) {

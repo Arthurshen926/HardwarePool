@@ -13,7 +13,7 @@ const SECURITY: &str = "unauthenticated_udp_trusted_lab_only";
 const WARNING: &str =
     "WARNING: plaintext unauthenticated UDP media; trusted isolated lab only.\r\n";
 
-pub(super) const SECURE_WARNING: &str = "Experimental pinned TLS 1.3 mono media; explicit target, one finite session at most 60 seconds. No automatic downgrade or renewal.\r\nAuthenticated PCM writes do not prove audibility or application consumption; the Route remains Starting.\r\n";
+pub(super) const SECURE_WARNING: &str = "Experimental pinned TLS 1.3 mono media; explicit endpoint, one finite session at most 60 seconds. No automatic downgrade or renewal.\r\nAuthenticated PCM writes do not prove audibility or application consumption; the Route remains Starting.\r\n";
 
 #[derive(Clone, Copy, Debug, Default, Deserialize, Serialize, Eq, PartialEq, clap::ValueEnum)]
 pub(super) enum MediaSecurity {
@@ -230,7 +230,7 @@ impl Config {
         let secure = self.media_security == MediaSecurity::Secure;
         let mut media = self.media;
         if secure {
-            if self.endpoint_mode != Mode::Playback
+            if !matches!(self.endpoint_mode, Mode::Playback | Mode::VirtualMicrophone)
                 || self.media.port() != 0
                 || self.duration_secs > 60
             {
@@ -1053,8 +1053,114 @@ mod tests {
         value
     }
 
+    fn secure_virtual_config_json() -> Value {
+        let mut value = secure_config_json();
+        value["endpoint_mode"] = json!("virtual_microphone");
+        value["target"] = Value::Null;
+        value
+    }
+
     #[test]
-    fn pure_secure_config_is_explicit_finite_playback_only() {
+    fn pure_secure_virtual_config_requires_owned_endpoint_without_target() {
+        let value = secure_virtual_config_json();
+        let config = parse_config(&value).unwrap();
+        assert_eq!(config.endpoint_mode, Mode::VirtualMicrophone);
+        assert_eq!(config.direction, Direction::Playback);
+        assert_eq!(config.format(), capyio_protocol::SECURE_AUDIO_MONO_FORMAT);
+        assert!(config.wire()["target"].is_null());
+        assert_eq!(
+            parse_config(&config.wire()).unwrap().endpoint_mode,
+            Mode::VirtualMicrophone
+        );
+        let mut omitted = value.clone();
+        omitted.as_object_mut().unwrap().remove("target");
+        assert!(parse_config(&omitted).is_ok());
+        for (field, replacement) in [
+            ("target", json!("synthetic.target")),
+            ("target", json!("default")),
+            ("endpoint_mode", json!("playback")),
+            ("endpoint_mode", json!("stereo_capture")),
+            ("endpoint_mode", json!("virtual_speaker")),
+            ("node_name", json!("capyio.virtual-microphone.caller")),
+            ("media", json!("127.0.0.1:40231")),
+            ("duration_secs", json!(61)),
+            ("duration_secs", json!(0)),
+        ] {
+            let mut bad = value.clone();
+            bad[field] = replacement;
+            assert!(parse_config(&bad).is_err(), "{field}");
+        }
+        let summary = Session::default().summary(&config);
+        assert!(summary.contains("new owned virtual microphone"));
+        assert!(summary.contains("application consumption"));
+        assert!(!summary.contains(WARNING));
+    }
+
+    #[test]
+    fn pure_secure_virtual_approval_binds_exact_sink_name_and_closed_fields() {
+        let config = parse_config(&secure_virtual_config_json()).unwrap();
+        let original = approval_json(&config);
+        approval(&config).validate(&config).unwrap();
+        for (field, replacement) in [
+            ("request_id", json!("00000000-0000-0000-0000-000000000000")),
+            ("route_id", json!("00000000-0000-0000-0000-000000000000")),
+            ("session_id", json!("00000000-0000-0000-0000-000000000000")),
+            ("target", json!("synthetic.target")),
+            ("endpoint_mode", json!("playback")),
+            ("endpoint_mode", json!("virtual_speaker")),
+            ("node_name", Value::Null),
+            (
+                "node_name",
+                json!(format!(
+                    "capyio.virtual-microphone.{}",
+                    config.remote.port_id
+                )),
+            ),
+            (
+                "node_name",
+                json!(format!("capyio.virtual-microphone.{}", PortId::new())),
+            ),
+            (
+                "node_name",
+                json!(format!(
+                    "capyio.virtual-speaker.{}",
+                    original["sink"]["port_id"].as_str().unwrap()
+                )),
+            ),
+            ("format", json!("pcm-s16le-48000-mono")),
+            ("media_security", json!(SECURITY)),
+            ("duration_secs", json!(21)),
+            ("approval_timeout_secs", json!(31)),
+        ] {
+            let mut bad = original.clone();
+            bad[field] = replacement;
+            let Event::Approval(bad) = Event::parse(bad).unwrap() else {
+                panic!()
+            };
+            assert!(bad.validate(&config).is_err(), "{field}");
+        }
+        for endpoint in ["source", "sink"] {
+            for field in ["node_id", "capability_id", "port_id"] {
+                let mut bad = original.clone();
+                bad[endpoint][field] = json!("00000000-0000-0000-0000-000000000000");
+                let Event::Approval(bad) = Event::parse(bad).unwrap() else {
+                    panic!()
+                };
+                assert!(bad.validate(&config).is_err(), "{endpoint}.{field}");
+            }
+        }
+        for field in ["node_name", "target", "session_id", "media_security"] {
+            let mut bad = original.clone();
+            bad.as_object_mut().unwrap().remove(field);
+            assert!(Event::parse(bad).is_err(), "{field}");
+        }
+        let mut bad = original;
+        bad["profile"] = json!("capyio.audio.frames/1");
+        assert!(Event::parse(bad).is_err());
+    }
+
+    #[test]
+    fn pure_secure_playback_config_is_explicit_and_finite() {
         let value = secure_config_json();
         let config = parse_config(&value).unwrap();
         assert_eq!(config.format(), capyio_protocol::SECURE_AUDIO_MONO_FORMAT);
@@ -1166,107 +1272,111 @@ mod tests {
 
     #[test]
     fn pure_secure_consent_requires_fresh_exact_request_route_peer() {
-        let config = parse_config(&secure_config_json()).unwrap();
-        let current = approval(&config);
-        let correct = current.expected();
-        let stale = approval(&config).expected();
-        let mut session = Session {
-            listening: true,
-            approval: Some(current),
-            ..Session::default()
-        };
-        assert_eq!(
-            input_action(correct.as_bytes(), &session).unwrap(),
-            Input::Approve
-        );
-        assert!(input_action(stale.as_bytes(), &session).is_err());
-        assert!(input_action(format!("{correct} extra").as_bytes(), &session).is_err());
-        session.approved = true;
-        assert!(input_action(correct.as_bytes(), &session).is_err());
-        let text = serde_json::to_string(&secure_config_json()).unwrap();
-        let duplicate = text.replacen(
-            "{",
-            "{\"media_security\":\"unauthenticated_udp_trusted_lab_only\",",
-            1,
-        );
-        assert!(
-            Config::parse(
-                duplicate.as_bytes(),
-                config.node_id,
-                config.remote.node_id,
-                Direction::Playback
-            )
-            .is_err()
-        );
+        for value in [secure_config_json(), secure_virtual_config_json()] {
+            let config = parse_config(&value).unwrap();
+            let current = approval(&config);
+            let correct = current.expected();
+            let stale = approval(&config).expected();
+            let mut session = Session {
+                listening: true,
+                approval: Some(current),
+                ..Session::default()
+            };
+            assert_eq!(
+                input_action(correct.as_bytes(), &session).unwrap(),
+                Input::Approve
+            );
+            assert!(input_action(stale.as_bytes(), &session).is_err());
+            assert!(input_action(format!("{correct} extra").as_bytes(), &session).is_err());
+            session.approved = true;
+            assert!(input_action(correct.as_bytes(), &session).is_err());
+            let text = serde_json::to_string(&value).unwrap();
+            let duplicate = text.replacen(
+                "{",
+                "{\"media_security\":\"unauthenticated_udp_trusted_lab_only\",",
+                1,
+            );
+            assert!(
+                Config::parse(
+                    duplicate.as_bytes(),
+                    config.node_id,
+                    config.remote.node_id,
+                    Direction::Playback
+                )
+                .is_err()
+            );
+        }
     }
 
     #[test]
     fn pure_secure_approval_profile_and_status_are_immutable() {
-        let config = parse_config(&secure_config_json()).unwrap();
-        let original = approval_json(&config);
-        for (key, replacement) in [
-            ("format", json!("pcm-s16le-48000-mono")),
-            ("media_security", json!(SECURITY)),
-            ("target", json!("different.sink")),
-            ("duration_secs", json!(21)),
-        ] {
-            let mut bad = original.clone();
-            bad[key] = replacement;
-            let Event::Approval(bad) = Event::parse(bad).unwrap() else {
-                panic!()
+        for value in [secure_config_json(), secure_virtual_config_json()] {
+            let config = parse_config(&value).unwrap();
+            let original = approval_json(&config);
+            for (key, replacement) in [
+                ("format", json!("pcm-s16le-48000-mono")),
+                ("media_security", json!(SECURITY)),
+                ("target", json!("different.sink")),
+                ("duration_secs", json!(21)),
+            ] {
+                let mut bad = original.clone();
+                bad[key] = replacement;
+                let Event::Approval(bad) = Event::parse(bad).unwrap() else {
+                    panic!()
+                };
+                assert!(bad.validate(&config).is_err());
+            }
+            let approved = approval(&config);
+            let route = approved.route_id;
+            let mut session = Session {
+                listening: true,
+                approval: Some(approved),
+                approved: true,
+                offered: true,
+                ..Session::default()
             };
-            assert!(bad.validate(&config).is_err());
-        }
-        let approved = approval(&config);
-        let route = approved.route_id;
-        let mut session = Session {
-            listening: true,
-            approval: Some(approved),
-            approved: true,
-            offered: true,
-            ..Session::default()
-        };
-        let status = json!({"version":1,"event":"status","route_id":route,"state":"starting",
-            "packets_written":3,"packets_sent":0,"bytes_written":2880,"media_security":"pinned_tls13_mono_v1"});
-        session
-            .accept(&Event::parse(status.clone()).unwrap(), &config)
-            .unwrap();
-        for (key, replacement) in [
-            ("state", json!("active")),
-            ("state", json!("draft")),
-            ("route_id", json!(RouteId::new())),
-            ("packets_sent", json!(1)),
-            ("packets_written", json!(2)),
-            ("bytes_written", json!(2879)),
-        ] {
-            let mut bad = status.clone();
-            bad[key] = replacement;
+            let status = json!({"version":1,"event":"status","route_id":route,"state":"starting",
+                "packets_written":3,"packets_sent":0,"bytes_written":2880,"media_security":"pinned_tls13_mono_v1"});
+            session
+                .accept(&Event::parse(status.clone()).unwrap(), &config)
+                .unwrap();
+            for (key, replacement) in [
+                ("state", json!("active")),
+                ("state", json!("draft")),
+                ("route_id", json!(RouteId::new())),
+                ("packets_sent", json!(1)),
+                ("packets_written", json!(2)),
+                ("bytes_written", json!(2879)),
+            ] {
+                let mut bad = status.clone();
+                bad[key] = replacement;
+                assert!(
+                    session
+                        .accept(&Event::parse(bad).unwrap(), &config)
+                        .is_err(),
+                    "{key}"
+                );
+                assert_eq!(session.packets, 3);
+                assert_eq!(session.bytes, 2880);
+            }
+            for key in ["bytes_written", "media_security"] {
+                let mut bad = status.clone();
+                bad.as_object_mut().unwrap().remove(key);
+                assert!(Event::parse(bad).is_err());
+            }
+            let mut partial = status.clone();
+            partial["bytes_written"] = json!(3000);
+            session
+                .accept(&Event::parse(partial).unwrap(), &config)
+                .unwrap();
+            assert_eq!(session.bytes, 3000);
+            let legacy = parse_config(&config_json()).unwrap();
             assert!(
                 session
-                    .accept(&Event::parse(bad).unwrap(), &config)
-                    .is_err(),
-                "{key}"
+                    .accept(&Event::parse(status).unwrap(), &legacy)
+                    .is_err()
             );
-            assert_eq!(session.packets, 3);
-            assert_eq!(session.bytes, 2880);
         }
-        for key in ["bytes_written", "media_security"] {
-            let mut bad = status.clone();
-            bad.as_object_mut().unwrap().remove(key);
-            assert!(Event::parse(bad).is_err());
-        }
-        let mut partial = status.clone();
-        partial["bytes_written"] = json!(3000);
-        session
-            .accept(&Event::parse(partial).unwrap(), &config)
-            .unwrap();
-        assert_eq!(session.bytes, 3000);
-        let legacy = parse_config(&config_json()).unwrap();
-        assert!(
-            session
-                .accept(&Event::parse(status).unwrap(), &legacy)
-                .is_err()
-        );
     }
 
     #[test]

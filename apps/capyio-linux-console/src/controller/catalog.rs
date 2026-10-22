@@ -272,7 +272,9 @@ impl Catalog {
         kind: ExportKind,
         security: media::MediaSecurity,
     ) -> io::Result<Vec<Candidate>> {
-        if security == media::MediaSecurity::Secure && kind != ExportKind::Playback {
+        if security == media::MediaSecurity::Secure
+            && !matches!(kind, ExportKind::Playback | ExportKind::VirtualMicrophone)
+        {
             return Err(invalid());
         }
         // No partial or subsequently rejected snapshot may become selectable.
@@ -993,25 +995,28 @@ mod tests {
             port["formats"] = json!([{"id":format,"parameters":parameters}]);
             accept(&mut catalog, port).unwrap();
             accept(&mut catalog, complete(1)).unwrap();
-            assert_eq!(
-                catalog.candidates(ExportKind::Playback).unwrap().len(),
-                legacy_count
-            );
-            assert_eq!(
-                catalog
-                    .security_candidates(ExportKind::Playback, media::MediaSecurity::Secure)
-                    .unwrap()
-                    .len(),
-                secure_count
-            );
-            assert!(
-                catalog
-                    .security_candidates(
-                        ExportKind::VirtualMicrophone,
-                        media::MediaSecurity::Secure
-                    )
-                    .is_err()
-            );
+            for kind in [ExportKind::Playback, ExportKind::VirtualMicrophone] {
+                assert_eq!(catalog.candidates(kind).unwrap().len(), legacy_count);
+                assert_eq!(
+                    catalog
+                        .security_candidates(kind, media::MediaSecurity::Secure)
+                        .unwrap()
+                        .len(),
+                    secure_count
+                );
+            }
+            for kind in [
+                ExportKind::Camera,
+                ExportKind::Capture,
+                ExportKind::VirtualSpeaker,
+                ExportKind::Touchpad,
+            ] {
+                assert!(
+                    catalog
+                        .security_candidates(kind, media::MediaSecurity::Secure)
+                        .is_err()
+                );
+            }
         }
     }
 
@@ -1026,13 +1031,61 @@ mod tests {
         ]);
         accept(&mut catalog, port).unwrap();
         accept(&mut catalog, complete(1)).unwrap();
-        assert_eq!(catalog.candidates(ExportKind::Playback).unwrap().len(), 1);
-        assert!(
-            catalog
-                .security_candidates(ExportKind::Playback, media::MediaSecurity::Secure)
-                .unwrap()
-                .is_empty()
-        );
+        for kind in [ExportKind::Playback, ExportKind::VirtualMicrophone] {
+            assert_eq!(catalog.candidates(kind).unwrap().len(), 1);
+            assert!(
+                catalog
+                    .security_candidates(kind, media::MediaSecurity::Secure)
+                    .unwrap()
+                    .is_empty()
+            );
+        }
+    }
+
+    #[test]
+    fn pure_secure_virtual_candidates_require_exact_source_contract() {
+        for (pointer, replacement) in [
+            ("/direction", json!("sink")),
+            ("/profile/name", json!("unsupported.profile")),
+            ("/profile/major", json!(2)),
+            ("/capability_availability", json!("busy")),
+            ("/port_availability", json!("offline")),
+            (
+                "/compatibility",
+                json!({"status":"not_supported","reason":"format_not_supported"}),
+            ),
+            (
+                "/compatibility/reason",
+                json!("audio_capture_needs_local_selection"),
+            ),
+        ] {
+            let mut port = export_port(ExportKind::VirtualMicrophone);
+            port["formats"] =
+                json!([{"id":capyio_protocol::SECURE_AUDIO_MONO_FORMAT,"parameters":{}}]);
+            *port.pointer_mut(pointer).unwrap() = replacement;
+            let mut catalog = Catalog::new(peer());
+            accept(&mut catalog, begin(1)).unwrap();
+            accept(&mut catalog, port).unwrap();
+            assert!(
+                catalog
+                    .security_candidates(
+                        ExportKind::VirtualMicrophone,
+                        media::MediaSecurity::Secure
+                    )
+                    .is_err()
+            );
+            accept(&mut catalog, complete(1)).unwrap();
+            assert!(
+                catalog
+                    .security_candidates(
+                        ExportKind::VirtualMicrophone,
+                        media::MediaSecurity::Secure
+                    )
+                    .unwrap()
+                    .is_empty(),
+                "{pointer}"
+            );
+        }
     }
 
     #[test]

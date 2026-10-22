@@ -1,4 +1,4 @@
-//! Finite mono playback over a separate pinned TLS data connection. No default
+//! Finite mono playback or owned virtual microphone over pinned TLS data. No default
 //! listener, pairing, capture permission, UDP fallback or authority renewal.
 use crate::{
     EndpointMode, MAX_STALL, PcmPlaybackSink, PipeWirePlayback, PlaybackMetrics, PlaybackPump,
@@ -42,7 +42,8 @@ fn now_ms() -> io::Result<u64> {
 
 /// Trusted, exact local consent. Neither this type nor the peer offer creates a
 /// grant or lease. `pipewire_target` is the locally selected node name/serial,
-/// never remote metadata. `identity` passed to `new` must be the paired identity
+/// never remote metadata. Explicit virtual mode instead requires the exact name
+/// derived from the original local Sink Port ID. `identity` must be the paired identity
 /// used to admit the accepted control link.
 #[derive(Clone, Debug)]
 pub struct SecurePlaybackAdmission {
@@ -158,6 +159,7 @@ pub struct SecurePlaybackOwner {
     link: CatalogControlLink,
     admission: SecurePlaybackAdmission,
     original: Route,
+    endpoint_mode: EndpointMode,
     sink_claim: PortLeaseClaim,
     identity: Option<ControlTlsServerIdentity>,
     source_request: MessageId,
@@ -192,18 +194,58 @@ impl SecurePlaybackOwner {
         identity: ControlTlsServerIdentity,
         admission: SecurePlaybackAdmission,
     ) -> io::Result<Self> {
+        Self::new_with_mode(runtime, link, identity, admission, EndpointMode::Playback)
+    }
+
+    /// Explicit local endpoint intent. Virtual mode accepts only the canonical
+    /// name derived from this Route's original local Sink, never a physical target.
+    pub fn new_with_mode(
+        runtime: NodeRuntime,
+        link: CatalogControlLink,
+        identity: ControlTlsServerIdentity,
+        admission: SecurePlaybackAdmission,
+        endpoint_mode: EndpointMode,
+    ) -> io::Result<Self> {
+        // Validate finite lifetime before Instant arithmetic, including Duration::MAX.
         let original_end = admission_end(&admission)?;
-        Self::new_until(runtime, link, identity, admission, original_end)
+        Self::new_until_with_mode(
+            runtime,
+            link,
+            identity,
+            admission,
+            original_end,
+            endpoint_mode,
+        )
     }
 
     /// Preserve a caller's original consent-time monotonic deadline across
     /// catalog/grant negotiation. This can only shorten the owner's lifetime.
     pub fn new_until(
+        runtime: NodeRuntime,
+        link: CatalogControlLink,
+        identity: ControlTlsServerIdentity,
+        admission: SecurePlaybackAdmission,
+        original_end: Instant,
+    ) -> io::Result<Self> {
+        Self::new_until_with_mode(
+            runtime,
+            link,
+            identity,
+            admission,
+            original_end,
+            EndpointMode::Playback,
+        )
+    }
+
+    /// Explicit mode with the caller's original consent deadline. Neither mode
+    /// selection nor a completed binding grants authority or renews any lease.
+    pub fn new_until_with_mode(
         mut runtime: NodeRuntime,
         mut link: CatalogControlLink,
         identity: ControlTlsServerIdentity,
         admission: SecurePlaybackAdmission,
         original_end: Instant,
+        endpoint_mode: EndpointMode,
     ) -> io::Result<Self> {
         let started = Instant::now();
         if original_end <= started {
@@ -211,7 +253,7 @@ impl SecurePlaybackOwner {
         }
         let now = now_ms()?;
         let original = runtime.route(admission.route_id).map_err(error)?.clone();
-        validate_target(&admission)?;
+        validate_mode_target(&admission, endpoint_mode, &original)?;
         let sink_claim = *runtime
             .route_port_lease_claim(original.id, original.sink)
             .ok_or_else(|| error("secure playback requires an existing local Sink lease"))?;
@@ -264,6 +306,7 @@ impl SecurePlaybackOwner {
             link,
             admission,
             original,
+            endpoint_mode,
             sink_claim,
             identity: Some(identity),
             source_request,
@@ -387,7 +430,10 @@ impl SecurePlaybackOwner {
                     return Err(error("duplicate secure audio binding"));
                 }
                 // The worker emits Bound only after the exact pinned TLS ACK.
-                self.sink = Some(PipeWirePlayback::open(&self.admission.pipewire_target)?);
+                self.sink = Some(PipeWirePlayback::open_mode(
+                    &self.admission.pipewire_target,
+                    self.endpoint_mode,
+                )?);
                 self.binding_deadline = None;
                 self.check(now_ms()?)?;
                 self.flush()?;
@@ -743,6 +789,27 @@ fn validate_target(admission: &SecurePlaybackAdmission) -> io::Result<()> {
         return Err(error("invalid explicit finite secure playback target"));
     }
     Ok(())
+}
+/// Pure validation before any lease request, listener or helper can be created.
+fn validate_mode_target(
+    admission: &SecurePlaybackAdmission,
+    mode: EndpointMode,
+    original: &Route,
+) -> io::Result<()> {
+    validate_target(admission)?;
+    match mode {
+        EndpointMode::Playback => Ok(()),
+        EndpointMode::VirtualMicrophone => {
+            crate::validate_endpoint_target(mode, &admission.pipewire_target).map_err(error)?;
+            if admission.pipewire_target != crate::virtual_microphone_name(original.sink.port_id) {
+                return Err(error(
+                    "secure virtual microphone requires the original local Sink identity",
+                ));
+            }
+            Ok(())
+        }
+        _ => Err(error("unsupported secure audio endpoint mode")),
+    }
 }
 fn media_binding(route: &Route, stream_id: StreamId) -> io::Result<AudioMediaStreamBinding> {
     Ok(AudioMediaStreamBinding {
@@ -1174,6 +1241,54 @@ mod tests {
             let mut changed = admission.clone();
             changed.local_address = address.parse().unwrap();
             assert!(validate_target(&changed).is_err());
+        }
+    }
+    #[test]
+    fn secure_virtual_microphone_requires_explicit_mode_and_original_sink_identity() {
+        let (_, route, expected, _) = fixture();
+        let admission = SecurePlaybackAdmission {
+            expected,
+            route_id: route.id,
+            stream_id: StreamId::new(),
+            local_address: "127.0.0.1".parse().unwrap(),
+            lifetime: Duration::from_secs(10),
+            pipewire_target: crate::virtual_microphone_name(route.sink.port_id),
+        };
+        validate_mode_target(&admission, EndpointMode::VirtualMicrophone, &route).unwrap();
+        admission_end(&admission).unwrap();
+        for target in [
+            "physical.selected.target".into(),
+            crate::virtual_microphone_name(route.source.port_id),
+            crate::virtual_microphone_name(capyio_core::PortId::new()),
+            "capyio.virtual-microphone.00000000-0000-0000-0000-000000000000".into(),
+            "capyio.virtual-microphone.malformed".into(),
+            crate::virtual_speaker_name(route.sink.port_id),
+            admission.pipewire_target.to_uppercase(),
+        ] {
+            let mut changed = admission.clone();
+            changed.pipewire_target = target;
+            assert!(
+                validate_mode_target(&changed, EndpointMode::VirtualMicrophone, &route).is_err()
+            );
+        }
+        for mode in [EndpointMode::StereoCapture, EndpointMode::VirtualSpeaker] {
+            assert!(validate_mode_target(&admission, mode, &route).is_err());
+        }
+        let mut physical = admission.clone();
+        physical.pipewire_target = "physical.selected.target".into();
+        validate_mode_target(&physical, EndpointMode::Playback, &route).unwrap();
+        for lifetime in [
+            Duration::MAX,
+            Duration::from_secs(61),
+            Duration::ZERO,
+            Duration::from_millis(1500),
+        ] {
+            let mut changed = admission.clone();
+            changed.lifetime = lifetime;
+            assert!(
+                validate_mode_target(&changed, EndpointMode::VirtualMicrophone, &route).is_err()
+            );
+            assert!(admission_end(&changed).is_err());
         }
     }
     #[test]

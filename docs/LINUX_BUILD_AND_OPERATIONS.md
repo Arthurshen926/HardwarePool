@@ -194,8 +194,8 @@ status and error protocol; failed or Starting status is not Active.
   changes, automatic application routing or PulseAudio/ALSA compatibility are
   promised. Legacy defaults in both directions still use unauthenticated,
   unencrypted trusted-lab UDP; pinned control TLS does not encrypt those packets.
-  Explicit secure mono **selected-target playback only** is described below in
-  [ADR 1561](adr/1561-linux-secure-playback-launcher.md), following the Android
+  Explicit secure mono selected-target playback and owned virtual microphone
+  are described below in ADRs 1561 and 1562, following the Android
   secure microphone binding in ADR 1560. Existing manifests do not silently
   upgrade. Secure virtual microphone, stereo capture and virtual speaker are not
   provided by this increment.
@@ -533,14 +533,16 @@ hosted synthetic GPU evidence are not physical-device compatibility. Legacy
 remains default; settings changes cannot extend a grant or start capture.
 
 
-## Explicit finite secure mono playback (ADR 1561)
+## Explicit finite secure mono playback and virtual microphone (ADRs 1561 and 1562)
 
 This is an opt-in paired-store path to an explicitly selected local PipeWire
-playback target. It is not encrypted reverse stereo, a virtual microphone,
-renewable streaming, or physical phone compatibility evidence. The paired-store
+playback target, or an explicitly created owned virtual microphone as specified
+in [ADR 1562](adr/1562-linux-secure-virtual-microphone.md). It is not encrypted
+reverse stereo, renewable streaming, or physical phone compatibility evidence. The paired-store
 staging profile, an already provisioned identity and exact active peer record,
 existing unlocked Secret Service collection, explicit bus address and local
-playback target remain prerequisites. There is no implicit unlock or setup.
+playback target (selected-target mode only) remain prerequisites. There is no
+implicit unlock or setup. Virtual mode does not require a physical target.
 
 Use the existing authenticated catalog preparation command with the explicit
 security selection; replace the illustrative addresses, IDs and target:
@@ -556,8 +558,17 @@ file; it does not start media or grant resources. The result uses version 1,
 `proposal_mode: linux_led`, an explicit target and a zero media port. Port zero
 requests an owned ephemeral TCP listener, not an advertised remote port. Secure
 mode has a 1–60-second upper bound, further shortened by original grants and
-leases. Unknown/mixed profiles, incoming-draft and other endpoint modes reject.
+leases. Unknown/mixed profiles, incoming-draft and reverse endpoint modes reject.
 Omitting `media_security` still selects the old plaintext trusted-lab mode.
+
+For the secure virtual microphone use the same preparation command with
+`--mode virtual-microphone` instead of `--mode playback`, and omit `--target`.
+The saved manifest uses `endpoint_mode: virtual_microphone` with no target.
+At fresh session approval, inspect the exact generated local Sink-derived node
+name as well as peer, secure format and duration. The owned PipeWire Audio/Source
+is application-selectable; this does not change the system default microphone or
+select it inside another application. A target override is rejected. Stop/EOF,
+revocation and expiry remove that owned node; there is no automatic recreation.
 
 Later, invoke the same console `playback --config /absolute/owned/new-secure-audio.json
 --peer PEER_NODE_UUID` with the four explicit paired-store selectors. The launcher

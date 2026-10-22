@@ -58,6 +58,7 @@ struct Process {
     stdout: Vec<u8>,
     stderr: Vec<u8>,
     owner: u32,
+    endpoint: Option<Value>,
 }
 impl Process {
     fn collect(&mut self) {
@@ -119,6 +120,12 @@ impl Process {
     fn publish(&self, root: &Path, scenario: &str, stage: &str, extra: Value) {
         let mut value = json!({"version":1,"scenario":scenario,"stage":stage,"format":SECURE_AUDIO_MONO_FORMAT,
             "surface":"production_console","owner_pid":self.owner,"console_pid":self.child.id(),"fixture_pid":std::process::id()});
+        if let Some(endpoint) = &self.endpoint {
+            value
+                .as_object_mut()
+                .unwrap()
+                .extend(endpoint.as_object().unwrap().clone());
+        }
         value
             .as_object_mut()
             .unwrap()
@@ -185,6 +192,12 @@ fn hosted_secure_audio_console_graph() {
     );
     let scenario = std::env::var("CAPYIO_SECURE_CONSOLE_SCENARIO").unwrap();
     assert!(SCENARIOS.contains(&scenario.as_str()));
+    let endpoint_mode =
+        std::env::var("CAPYIO_SECURE_CONSOLE_ENDPOINT_MODE").unwrap_or_else(|_| "playback".into());
+    assert!(matches!(
+        endpoint_mode.as_str(),
+        "playback" | "virtual_microphone"
+    ));
     let (mut runtime, source) = source_runtime();
     let local = NodeId::new();
     let (server, client) = identities();
@@ -210,9 +223,13 @@ fn hosted_secure_audio_console_graph() {
     .unwrap();
     let pairing =
         paired_store::PersistedPairing::new(local, &directory.encode_json().unwrap(), &bundle);
-    let config = json!({"version":1,"node_id":local,"source":source,"listen":"127.0.0.1:0","media":"127.0.0.1:0",
+    let mut config = json!({"version":1,"node_id":local,"source":source,"listen":"127.0.0.1:0","media":"127.0.0.1:0",
         "target":"capyio.test.null","endpoint_mode":"playback","proposal_mode":"linux_led","duration_secs":consent_seconds(&scenario),
         "media_security":"pinned_tls13_mono_v1"});
+    config["endpoint_mode"] = json!(endpoint_mode);
+    if endpoint_mode == "virtual_microphone" {
+        config.as_object_mut().unwrap().remove("target");
+    }
     let (child, console) = playback_console::Console::start(
         &pairing,
         &config,
@@ -227,6 +244,7 @@ fn hosted_secure_audio_console_graph() {
         stdout: vec![],
         stderr: vec![],
         owner: 0,
+        endpoint: None,
     };
     let listening = process.event("listening");
     process.owner = process.console.identify_node(&process.child);
@@ -290,6 +308,17 @@ fn hosted_secure_audio_console_graph() {
         approval["session_id"],
         serde_json::to_value(session).unwrap()
     );
+    assert_eq!(approval["endpoint_mode"], endpoint_mode);
+    if endpoint_mode == "virtual_microphone" {
+        let sink_port = approval["sink"]["port_id"].as_str().unwrap();
+        assert_eq!(
+            approval["node_name"],
+            format!("capyio.virtual-microphone.{sink_port}")
+        );
+        assert!(approval.get("target").is_none_or(Value::is_null));
+        process.endpoint = Some(json!({"endpoint_mode":endpoint_mode,
+            "sink_port_id":sink_port,"node_name":approval["node_name"]}));
+    }
     process.prompt(&approval);
     assert_eq!(approval["format"], SECURE_AUDIO_MONO_FORMAT);
     assert_eq!(approval["media_security"], "pinned_tls13_mono_v1");
@@ -523,7 +552,12 @@ fn hosted_secure_audio_console_graph() {
                 "console_reaped":true,"node_reaped":true,"protected_read":true,"secret_redacted":true}));
             wait_marker(&root, "stop_checked");
             eprintln!(
-                "capyio_secure_audio_console=passed scenario={scenario} actual_tty=true actual_node=true fresh_consent=true protected_read=true secret_redacted=true node_reaped=true"
+                "capyio_secure_audio_console=passed scenario={scenario} actual_tty=true actual_node=true fresh_consent=true protected_read=true secret_redacted=true node_reaped=true{}",
+                if endpoint_mode == "virtual_microphone" {
+                    " endpoint_mode=virtual_microphone"
+                } else {
+                    ""
+                }
             );
             return;
         }
@@ -604,6 +638,11 @@ fn hosted_secure_audio_console_graph() {
         "console_reaped":true,"node_reaped":true,"protected_read":true,"secret_redacted":true}));
     wait_marker(&root, "stop_checked");
     eprintln!(
-        "capyio_secure_audio_console=passed scenario={scenario} actual_tty=true actual_node=true fresh_consent=true protected_read=true secret_redacted=true node_reaped=true"
+        "capyio_secure_audio_console=passed scenario={scenario} actual_tty=true actual_node=true fresh_consent=true protected_read=true secret_redacted=true node_reaped=true{}",
+        if endpoint_mode == "virtual_microphone" {
+            " endpoint_mode=virtual_microphone"
+        } else {
+            ""
+        }
     );
 }

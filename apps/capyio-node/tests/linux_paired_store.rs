@@ -556,7 +556,7 @@ fn ipc_paired_store_audio_rejects_mixed_bootstrap_without_keyring_access() {
 #[test]
 fn ipc_paired_store_secure_playback_rejects_unsupported_modes_and_mixed_credentials() {
     for case in [
-        "virtual_microphone",
+        "virtual_microphone_with_target",
         "incoming_draft",
         "fixed_media_port",
         "private_pipe",
@@ -567,9 +567,10 @@ fn ipc_paired_store_secure_playback_rejects_unsupported_modes_and_mixed_credenti
         config["media_security"] = json!("pinned_tls13_mono_v1");
         config["media"] = json!("127.0.0.1:0");
         match case {
-            "virtual_microphone" => {
+            "virtual_microphone_with_target" => {
                 config["endpoint_mode"] = json!("virtual_microphone");
-                config.as_object_mut().unwrap().remove("target");
+                // A virtual Source may not also select a physical playback target.
+                assert!(config.get("target").is_some());
             }
             "incoming_draft" => config["proposal_mode"] = json!("incoming_draft"),
             "fixed_media_port" => config["media"] = json!("127.0.0.1:40211"),

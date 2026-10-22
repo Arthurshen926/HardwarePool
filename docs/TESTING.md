@@ -1504,7 +1504,7 @@ production launcher/console secure branch is not part of this slice.
 PTY controller → fixed sibling Node → isolated fake Secret Service → pinned TLS
 → private PipeWire graph proof. The Source uses the production Rust secure sender
 with synthetic PCM, not a physical Android recorder. Pure tests must reject
-unknown/mixed profiles, secure virtual/reverse modes, incorrect exact format,
+unknown/mixed profiles, unsupported secure reverse modes, incorrect exact format,
 nonzero data allocation port, stale consent and fabricated Active status.
 
 Hosted positive evidence independently measures ordered tone/silence/tone and
@@ -1523,3 +1523,9 @@ pre-EOF status snapshot instead of inventing final counters or a cause/time.
 A separate actual-Node private-backend guard rejects unsupported modes, fixed
 secure data port and mixed/private credential bootstrap before any backend read
 or listener. All these profiles are mandatory hosted execution, not silent skips.
+
+[ADR 1562](adr/1562-linux-secure-virtual-microphone.md) requires the same eleven
+profiles for secure virtual microphone, additional to the eleven selected-target
+profiles. The independent recorder links exact owned Audio/Source ports and checks
+waveform/removal, not a null-sink monitor standing in for that source. Pure guards
+reject target overrides and incorrect Sink-derived names; all old gates remain.

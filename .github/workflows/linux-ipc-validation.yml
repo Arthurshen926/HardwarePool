@@ -806,6 +806,16 @@ jobs:
             count=$((count + 1))
           done
           test "$count" -eq 11
+          count=0
+          for scenario in stop no_approval pretyped wrong_request wrong_route wrong_peer source_revoke expiry control_eof media_eof local_eof; do
+            timeout --signal=TERM --kill-after=15s 75s python3 scripts/run_pipewire_secure_console.py \
+              --hosted-private-secure-console --fixture "$fixture" --scenario "$scenario" \
+              --endpoint-mode virtual_microphone 2>&1 \
+              | tee "$RUNNER_TEMP/secure-console-virtual-microphone-$scenario.txt"
+            grep -Fx "capyio_pipewire_secure_console=passed scenario=$scenario endpoint_mode=virtual_microphone surface=production_console capture=synthetic real_graph=true owned_cleanup=true" "$RUNNER_TEMP/secure-console-virtual-microphone-$scenario.txt"
+            count=$((count + 1))
+          done
+          test "$count" -eq 11
       - uses: actions/upload-artifact@v4
         if: always()
         with:

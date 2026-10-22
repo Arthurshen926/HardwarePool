@@ -1716,6 +1716,9 @@ private-credential launcher cannot select it. Catalog export is not authority
 and cannot downgrade a secure-only Source. A monotonic consent deadline survives
 control/TLS negotiation and is intersected with original grant/lease limits.
 Secure status remains Starting: received/written PCM is not verified audibility.
-Legacy UDP, virtual endpoints and reverse stereo retain their separate limits.
+[ADR 1562](adr/1562-linux-secure-virtual-microphone.md) permits an owned virtual
+microphone instead of a selected target, with no target override and an exact
+local Sink-derived identity. No system default or application consumption is
+claimed. Legacy UDP and reverse stereo retain their separate limits.
 No unattended service, new permission, renewable grant or physical-device claim
 is introduced. Plain PCM remains at authorized local audio boundaries.

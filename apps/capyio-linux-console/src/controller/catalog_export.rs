@@ -146,8 +146,10 @@ pub(super) fn validate_export_options(output: &Path, options: &ExportOptions) ->
         };
         let secure = options.media_security == media::MediaSecurity::Secure;
         if secure {
-            if options.kind != ExportKind::Playback
-                || media.port() != 0
+            if !matches!(
+                options.kind,
+                ExportKind::Playback | ExportKind::VirtualMicrophone
+            ) || media.port() != 0
                 || options.duration_secs > 60
             {
                 return Err(invalid());
@@ -333,7 +335,8 @@ pub(super) fn prepare(
     validate_export_options(output, options)?;
     let limits = if options.media_security == media::MediaSecurity::Secure {
         format!(
-            "Catalog snapshot may already be stale; later launch revalidates it.\r\nExport is not resource authorization: no Routes, grants, leases, media or devices are created.\r\nSaving does not Start playback; fresh independent consent is required.\r\n{}Format: {}; media security: {}.\r\n",
+            "Catalog snapshot may already be stale; later launch revalidates it.\r\nExport is not resource authorization: no Routes, grants, leases, media or devices are created.\r\nSaving does not Start a {} session; fresh independent consent is required.\r\n{}Format: {}; media security: {}.\r\n",
+            options.kind.name(),
             media::SECURE_WARNING,
             capyio_protocol::SECURE_AUDIO_MONO_FORMAT,
             options.media_security.name()
@@ -957,6 +960,22 @@ mod tests {
             bad.kind = kind;
             check_option_parity(&bad, false);
         }
+        let mut virtual_mic = selected.clone();
+        virtual_mic.kind = ExportKind::VirtualMicrophone;
+        virtual_mic.target = None;
+        check_option_parity(&virtual_mic, true);
+        let manifest: Value = serde_json::from_slice(&built(&virtual_mic).unwrap()).unwrap();
+        assert_eq!(manifest["endpoint_mode"], "virtual_microphone");
+        assert_eq!(manifest["media_security"], "pinned_tls13_mono_v1");
+        assert!(manifest["target"].is_null());
+        assert!(manifest.get("node_name").is_none());
+        for kind in [ExportKind::Capture, ExportKind::VirtualSpeaker] {
+            let mut bad = virtual_mic.clone();
+            bad.kind = kind;
+            check_option_parity(&bad, false);
+        }
+        virtual_mic.duration_secs = 61;
+        check_option_parity(&virtual_mic, false);
         selected.duration_secs = 61;
         check_option_parity(&selected, false);
     }

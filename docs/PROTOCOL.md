@@ -139,6 +139,8 @@ from Linux's explicit paired-store playback manifest and terminal controller.
 Its `media_security: pinned_tls13_mono_v1` is a local launcher discriminator,
 not a new wire version, offer or encryption negotiation. Legacy omission retains
 UDP; unsupported endpoint modes and mixed selections reject without fallback.
+ADR 1562 adds local virtual-microphone projection to this same secure profile,
+not a new wire message or reversal of network Source/Sink direction.
 
 Minor 4 appends optional
 `RouteStatus.native_audio_data` at field 3 (ADR 1494). This metadata names a

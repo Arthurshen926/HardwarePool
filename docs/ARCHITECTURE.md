@@ -1809,5 +1809,7 @@ manifest selects secure mono separately from legacy UDP; authenticated catalog
 export cannot downgrade a secure-only Source. Fresh local/counterpart consent
 and original finite leases remain prerequisites. The original monotonic consent
 end is carried into the owner across negotiation. The Route stays Starting,
-with actual write counters rather than fabricated audible/Active state. Virtual
-microphone and reverse stereo remain separate integration work.
+with actual write counters rather than fabricated audible/Active state.
+[ADR 1562](adr/1562-linux-secure-virtual-microphone.md) adds the owned Audio/Source
+virtual microphone, forbidding caller target overrides and binding the exact
+node name to the local network Sink. Reverse stereo remains separate work.

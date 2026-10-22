@@ -367,13 +367,13 @@ impl Console {
             "Mode: {mode}; device: {device}; duration: {seconds} seconds\n"
         )));
         if approval["media_security"] == "pinned_tls13_mono_v1" {
-            assert_eq!(mode, "playback");
+            assert!(matches!(mode, "playback" | "virtual_microphone"));
             assert!(seconds <= 60);
             assert_eq!(
                 approval["format"],
                 capyio_protocol::SECURE_AUDIO_MONO_FORMAT
             );
-            assert!(text.contains("Experimental pinned TLS 1.3 mono media; explicit target, one finite session at most 60 seconds. No automatic downgrade or renewal.\n"));
+            assert!(text.contains("Experimental pinned TLS 1.3 mono media; explicit endpoint, one finite session at most 60 seconds. No automatic downgrade or renewal.\n"));
             assert!(text.contains("Authenticated PCM writes do not prove audibility or application consumption; the Route remains Starting.\n"));
             assert!(!text.contains("WARNING: plaintext unauthenticated UDP media"));
         } else {

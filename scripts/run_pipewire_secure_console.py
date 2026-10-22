@@ -18,6 +18,8 @@ import run_pipewire_secure_audio as secure
 from run_pipewire_loopback import (
     Harness, graph_fingerprint, interrupted, publish_marker, select_ports,
     verify_playback_process_owner, verify_signal, verify_silence,
+    virtual_expectation, virtual_nodes, select_virtual_source, recorder_port,
+    verify_process_owner, verify_virtual_removed,
 )
 
 SCENARIOS = ('stop', 'local_eof', 'no_approval', 'pretyped', 'wrong_request', 'wrong_route',
@@ -42,6 +44,44 @@ TERMINAL_CAUSES = {scenario: frozenset(('not_started',)) for scenario in NEGATIV
 }
 COMMON = secure.COMMON | {'console_pid', 'fixture_pid'}
 strict_json = secure.strict_json
+ENDPOINT_MODES = ("playback", "virtual_microphone")
+ENDPOINT_FIELDS = frozenset(("endpoint_mode", "sink_port_id", "node_name"))
+
+
+def endpoint_identity(value, mode):
+    if mode not in ENDPOINT_MODES:
+        raise ValueError("unsupported secure console endpoint")
+    present = ENDPOINT_FIELDS.intersection(value)
+    if mode == "playback":
+        if present:
+            raise ValueError("playback cannot claim virtual endpoint evidence")
+        return {}
+    if present != ENDPOINT_FIELDS or value.get("endpoint_mode") != mode:
+        raise ValueError("exact virtual endpoint evidence required")
+    virtual_expectation(value)
+    return {key: value[key] for key in ENDPOINT_FIELDS}
+
+
+def common_fields(owners):
+    return COMMON | (ENDPOINT_FIELDS if owners.get("endpoint_mode") == "virtual_microphone" else set())
+
+
+def recorder_properties(endpoint_mode):
+    if endpoint_mode not in ENDPOINT_MODES:
+        raise ValueError('unsupported secure console endpoint')
+    return ('{"node.name":"capyio.test.monitor","node.always-process":true,'
+            '"node.want-driver":true}' if endpoint_mode == 'virtual_microphone' else
+            '{"node.name":"capyio.test.monitor"}')
+
+
+def verify_links(objects, links, endpoint_mode):
+    graph_links = [o for o in objects if o.get('type') == 'PipeWire:Interface:Link']
+    actual = {(o.get('info', {}).get('output-port-id'), o.get('info', {}).get('input-port-id'))
+              for o in graph_links}
+    if (not set(links).issubset(actual)
+            or endpoint_mode == 'virtual_microphone'
+            and (len(links) != 1 or len(graph_links) != 1 or actual != set(links))):
+        raise ValueError('exact direct virtual Source or selected playback links required')
 
 
 def process_ids(value):
@@ -53,6 +93,9 @@ def process_ids(value):
 
 
 def identity(value, scenario, stage, owners):
+    mode = owners.get("endpoint_mode", "playback")
+    if endpoint_identity(value, mode) != endpoint_identity(owners, mode):
+        raise ValueError("secure console virtual identity changed")
     if (scenario not in SCENARIOS or value.get('scenario') != scenario
             or value.get('stage') != stage or value.get('surface') != 'production_console'
             or value.get('format') != FORMAT or type(value.get('version')) is not int
@@ -64,11 +107,11 @@ def api_evidence(value):
     """Project into the unchanged secure API oracle, after console validation.
 
     All five terminal-consent denials share the old no-authority invariant.
-    Only the validated console identity, cleanup and terminal-cause fields are removed; unknown fields
-    remain present so the old exact-key checks still reject them.
+    Only validated console/endpoint identity, cleanup and terminal-cause fields
+    are removed; unknown fields remain present so the old exact-key checks still reject them.
     """
     result = {key: item for key, item in value.items()
-              if key not in CLEANUP_FIELDS | {'console_pid', 'fixture_pid', 'terminal_cause'}}
+              if key not in CLEANUP_FIELDS | ENDPOINT_FIELDS | {'console_pid', 'fixture_pid', 'terminal_cause'}}
     result['surface'] = 'reusable_rust_apis'
     if value['scenario'] in NEGATIVE_SCENARIOS:
         result['scenario'] = 'no_authority'
@@ -88,7 +131,7 @@ def validate_pending(value, scenario, stage, owners):
     identity(value, scenario, stage, owners)
     if (stage not in ('before_local', 'before_source')
             or stage == 'before_source' and scenario in NEGATIVE_SCENARIOS
-            or set(value) != COMMON | {'helper_absent', 'lease_count', 'bytes_written'}):
+            or set(value) != common_fields(owners) | {'helper_absent', 'lease_count', 'bytes_written'}):
         raise ValueError('unexpected secure console pending checkpoint')
     projected = api_evidence(value)
     secure.validate_pending(projected, projected['scenario'], stage, owners['owner_pid'])
@@ -97,7 +140,7 @@ def validate_pending(value, scenario, stage, owners):
 
 def validate_bound(value, scenario, owners):
     identity(value, scenario, 'bound', owners)
-    if set(value) != COMMON | {'helper_pid', 'source_lease_expires_at_ms'}:
+    if set(value) != common_fields(owners) | {'helper_pid', 'source_lease_expires_at_ms'}:
         raise ValueError('unexpected secure console bound evidence')
     if value['helper_pid'] in process_ids(owners).values():
         raise ValueError('secure console helper must be a distinct Node child')
@@ -140,7 +183,7 @@ def validate_local_eof_result(value, owners, bound):
               'source_control_closed_observed_at_ms', 'source_control_closed',
               'source_records_sent', 'source_records_attempted', 'injected', 'verified',
               'session_closed', 'leases_released', 'helper_reaped'} | CLEANUP_FIELDS
-    if (set(value) != COMMON | fields or value.get('injected') != 'local_eof'
+    if (set(value) != common_fields(owners) | fields or value.get('injected') != 'local_eof'
             or value.get('verified') != 'local_eof'
             or value.get('terminal_observed_at_ms') is not None
             or value.get('terminal_cause') is not None
@@ -168,15 +211,18 @@ def validate_local_eof_result(value, owners, bound):
     return value
 
 
-def execution_marker(scenario):
+def execution_marker(scenario, endpoint_mode="playback"):
+    if endpoint_mode not in ENDPOINT_MODES:
+        raise ValueError("unsupported secure console endpoint")
     if scenario not in SCENARIOS:
         raise ValueError('unsupported secure console scenario')
     return (f'capyio_secure_audio_console=passed scenario={scenario}'
             ' actual_tty=true actual_node=true fresh_consent=true protected_read=true'
-            ' secret_redacted=true node_reaped=true')
+            ' secret_redacted=true node_reaped=true'
+            + (' endpoint_mode=virtual_microphone' if endpoint_mode == 'virtual_microphone' else ''))
 
 
-def verify_execution(stdout, stderr, scenario):
+def verify_execution(stdout, stderr, scenario, endpoint_mode="playback"):
     test_lines = [line for line in stdout.splitlines() if line.startswith('test ')
                   and not line.startswith('test result:')]
     summaries = [line for line in stdout.splitlines() if line.startswith('test result:')]
@@ -186,7 +232,7 @@ def verify_execution(stdout, stderr, scenario):
             or re.fullmatch(r'test result: ok\. 1 passed; 0 failed; 0 ignored;'
                             r'(?: \d+ measured; \d+ filtered out; finished in [0-9.]+s)?',
                             summaries[0]) is None
-            or markers != [execution_marker(scenario)]):
+            or markers != [execution_marker(scenario, endpoint_mode)]):
         raise ValueError('exact production console test and mandatory marker must execute once')
 
 
@@ -215,6 +261,23 @@ def verify_console_owner(owners):
         if command not in args or b'--pairing-state' not in args:
             raise ValueError('protected production playback invocation required')
     return owners
+
+
+def select_console_graph(objects, owners, bound, endpoint_mode):
+    verify_console_owner(owners)
+    if endpoint_mode == 'virtual_microphone':
+        source, port = select_virtual_source(objects, owners)
+        links = [(port['id'], recorder_port(objects))]
+        helper = verify_process_owner(objects, source, owners)
+        owned_ids = {source['id'], port['id']}
+    elif endpoint_mode == 'playback':
+        links = select_ports(objects)
+        helper, owned_ids = verify_playback_process_owner(objects, owners['owner_pid'])
+    else:
+        raise ValueError('unsupported secure console endpoint')
+    if helper != bound['helper_pid'] or os.getpgid(helper) != owners['console_pid']:
+        raise ValueError('graph is not the exact console-owned Node helper')
+    return links, owned_ids
 
 
 def verify_reaped(owners, bound):
@@ -250,8 +313,11 @@ def checkpoint_diagnostic(root, checkpoint, returncode, lease_ms, now_ms):
 
 
 class SecureConsoleHarness(Harness):
-    def __init__(self, root):
+    def __init__(self, root, endpoint_mode="playback"):
+        if endpoint_mode not in ENDPOINT_MODES:
+            raise ValueError("unsupported secure console endpoint")
         super().__init__(root, e2e=True)
+        self.endpoint_mode = endpoint_mode
         self.owners = None
         self.console_chain_verified = False
         self.fixture_pid = None
@@ -282,6 +348,8 @@ class SecureConsoleHarness(Harness):
         secure.no_children(self.owners['owner_pid'])
         objects = self.dump()
         secure.no_playback(objects)
+        if virtual_nodes(objects):
+            raise ValueError("virtual Source appeared before consent")
         if graph_fingerprint(objects) != baseline:
             raise ValueError('secure console changed graph before both grants and leases')
         verify_silence((self.root / 'capture.out').read_bytes()[offset:], minimum_samples=4800)
@@ -290,16 +358,21 @@ class SecureConsoleHarness(Harness):
         if scenario not in SCENARIOS:
             raise ValueError('unsupported secure console scenario')
         self.env.update(CAPYIO_SECURE_CONSOLE_HOSTED='1',
-                        CAPYIO_SECURE_CONSOLE_SCENARIO=scenario)
+                        CAPYIO_SECURE_CONSOLE_SCENARIO=scenario,
+                        CAPYIO_SECURE_CONSOLE_ENDPOINT_MODE=self.endpoint_mode)
         self.prepare_daemon()
+        virtual = self.endpoint_mode == 'virtual_microphone'
+        # A private always-processing recorder emits silence while unlinked.
+        # Virtual mode never connects the selected-target null-sink monitor.
+        properties = recorder_properties(self.endpoint_mode)
         record = self.spawn(['/usr/bin/pw-cat', '--record', '--rate=48000', '--channels=1',
                              '--format=s16', '--channel-map=mono', '--latency=20ms', '--target=0',
-                             '--properties={"node.name":"capyio.test.monitor"}', '-'], 'capture')
+                             '--properties=' + properties, '-'], 'capture')
         producer = self.spawn([str(fixture), '--ignored', '--exact', TEST,
                                '--nocapture', '--test-threads=1'], 'producer')
         self.fixture_pid = producer.pid
         pending = self.checkpoint(producer, 'before_local')
-        self.owners = process_ids(pending)
+        self.owners = process_ids(pending) | endpoint_identity(pending, self.endpoint_mode)
         if self.owners['fixture_pid'] != producer.pid:
             raise ValueError('secure console evidence names a different fixture')
         validate_pending(pending, scenario, 'before_local', self.owners)
@@ -312,7 +385,13 @@ class SecureConsoleHarness(Harness):
             secure.no_playback(objects)
             secure.no_children(self.owners['owner_pid'])
             try:
-                monitor_links = select_ports(objects, monitor_only=True)
+                if virtual:
+                    if virtual_nodes(objects):
+                        raise ValueError("virtual Source appeared before consent")
+                    recorder_port(objects)
+                    monitor_links = []
+                else:
+                    monitor_links = select_ports(objects, monitor_only=True)
                 break
             except ValueError:
                 if time.monotonic() >= ready:
@@ -338,11 +417,8 @@ class SecureConsoleHarness(Harness):
                 self.check()
                 objects = self.dump()
                 try:
-                    links = select_ports(objects)
-                    verify_console_owner(self.owners)
-                    helper, owned_ids = verify_playback_process_owner(objects, self.owners['owner_pid'])
-                    if helper != bound['helper_pid'] or os.getpgid(helper) != self.owners['console_pid']:
-                        raise ValueError('graph is not the exact console-owned Node helper')
+                    links, owned_ids = select_console_graph(
+                        objects, self.owners, bound, self.endpoint_mode)
                     break
                 except ValueError:
                     if time.monotonic() >= ready or producer.poll() is not None:
@@ -352,10 +428,7 @@ class SecureConsoleHarness(Harness):
                 if (source, target) not in monitor_links:
                     self.command(['/usr/bin/pw-link', str(source), str(target)])
             objects = self.dump()
-            actual = {(o.get('info', {}).get('output-port-id'), o.get('info', {}).get('input-port-id'))
-                      for o in objects if o.get('type') == 'PipeWire:Interface:Link'}
-            if not set(links).issubset(actual):
-                raise ValueError('explicit secure console playback links absent')
+            verify_links(objects, links, self.endpoint_mode)
             owned_ids.update(o['id'] for o in objects if o.get('type') == 'PipeWire:Interface:Link'
                              and (o.get('info', {}).get('output-port-id') in owned_ids
                                   or o.get('info', {}).get('input-port-id') in owned_ids))
@@ -371,6 +444,8 @@ class SecureConsoleHarness(Harness):
             objects = self.dump()
             current = graph_fingerprint(objects)
             secure.no_playback(objects)
+            if virtual:
+                verify_virtual_removed(objects, owned, baseline)
             verify_reaped(self.owners, bound)
             if (any(current.get(key) == value for key, value in owned.items())
                     or any(current.get(key) != value for key, value in baseline.items())):
@@ -392,7 +467,7 @@ class SecureConsoleHarness(Harness):
         if producer.returncode:
             raise ValueError('secure console Rust fixture failed')
         verify_execution((self.root / 'producer.out').read_text(),
-                         (self.root / 'producer.err').read_text(), scenario)
+                         (self.root / 'producer.err').read_text(), scenario, self.endpoint_mode)
         self.stop(record)
         self.children.remove(record)
 
@@ -449,6 +524,7 @@ def main():
     parser.add_argument('--hosted-private-secure-console', action='store_true', required=True)
     parser.add_argument('--fixture', type=Path, required=True)
     parser.add_argument('--scenario', choices=SCENARIOS, required=True)
+    parser.add_argument('--endpoint-mode', choices=ENDPOINT_MODES, default='playback')
     args = parser.parse_args()
     if os.environ.get('GITHUB_ACTIONS') != 'true':
         parser.error('requires explicit disposable hosted CI environment')
@@ -460,7 +536,7 @@ def main():
     with tempfile.TemporaryDirectory(prefix='capyio-secure-console-') as temporary:
         root = Path(temporary)
         root.chmod(0o700)
-        harness = SecureConsoleHarness(root)
+        harness = SecureConsoleHarness(root, args.endpoint_mode)
         try:
             harness.run_secure(args.fixture.resolve(strict=True), args.scenario)
         finally:
@@ -468,7 +544,8 @@ def main():
                 signal.signal(sig, signal.SIG_IGN)
             harness.close()
     print(f'capyio_pipewire_secure_console=passed scenario={args.scenario}'
-          ' surface=production_console capture=synthetic real_graph=true owned_cleanup=true')
+          + (' endpoint_mode=virtual_microphone' if args.endpoint_mode == 'virtual_microphone' else '')
+          + ' surface=production_console capture=synthetic real_graph=true owned_cleanup=true')
 
 
 if __name__ == '__main__':

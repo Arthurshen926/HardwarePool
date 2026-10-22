@@ -1,6 +1,7 @@
 """Pure evidence and mocked /proc checks. No socket, PTY, bus or audio opens."""
 from pathlib import Path
 import signal
+import json
 import tempfile
 import unittest
 from unittest import mock
@@ -11,6 +12,7 @@ from run_pipewire_secure_console import (
     SecureConsoleHarness, api_evidence, execution_marker, process_ids, strict_json,
     validate_bound, validate_pending, validate_result, verify_console_owner,
     verify_execution, verify_reaped, checkpoint_diagnostic,
+    endpoint_identity, recorder_properties, verify_links, select_console_graph,
 )
 
 OWNERS = {'fixture_pid': 100, 'console_pid': 150, 'owner_pid': 200}
@@ -334,6 +336,103 @@ class SecureConsoleEvidenceTests(unittest.TestCase):
                      marker.replace('fresh_consent=true ', ''), marker.replace('protected_read=true', 'protected_read=false')):
             with self.subTest(text=text), self.assertRaises(ValueError):
                 verify_execution(stdout(), text, 'stop')
+
+
+class SecureVirtualConsoleTests(unittest.TestCase):
+    endpoint = {'endpoint_mode': 'virtual_microphone',
+                'sink_port_id': '11111111-2222-4333-8444-555555555555',
+                'node_name': 'capyio.virtual-microphone.11111111-2222-4333-8444-555555555555'}
+
+    def test_all_eleven_scenarios_require_exact_virtual_identity_at_every_stage(self):
+        owners = OWNERS | self.endpoint
+        for scenario in SCENARIOS:
+            with self.subTest(scenario=scenario):
+                validate_pending(pending(scenario) | self.endpoint, scenario, 'before_local', owners)
+                b = None if scenario in NEGATIVE_SCENARIOS else bound(scenario) | self.endpoint
+                if b:
+                    validate_pending(pending(scenario, 'before_source') | self.endpoint,
+                                     scenario, 'before_source', owners)
+                    validate_bound(b, scenario, owners)
+                validate_result(result(scenario) | self.endpoint, scenario, owners, b)
+                verify_execution(stdout(), execution_marker(scenario, 'virtual_microphone'),
+                                 scenario, 'virtual_microphone')
+
+    def test_virtual_mode_cannot_be_satisfied_by_selected_target_evidence(self):
+        for scenario in SCENARIOS:
+            with self.subTest(scenario=scenario), self.assertRaises(ValueError):
+                validate_pending(pending(scenario), scenario, 'before_local', OWNERS | self.endpoint)
+            with self.subTest(scenario=scenario), self.assertRaises(ValueError):
+                verify_execution(stdout(), execution_marker(scenario), scenario, 'virtual_microphone')
+        with self.assertRaises(ValueError):
+            endpoint_identity(OWNERS | self.endpoint, 'playback')
+        with self.assertRaises(ValueError):
+            verify_execution(stdout(), execution_marker('stop', 'virtual_microphone'), 'stop')
+
+    def test_exact_generated_sink_name_not_arbitrary_or_cross_checkpoint_identity(self):
+        owners = OWNERS | self.endpoint
+        for key in self.endpoint:
+            missing = pending('stop') | self.endpoint
+            del missing[key]
+            with self.subTest(key=key), self.assertRaises(ValueError):
+                validate_pending(missing, 'stop', 'before_local', owners)
+        for replacement in ({'node_name': 'capyio.test.null'}, {'sink_port_id': 'not-a-uuid'},
+                            {'endpoint_mode': 'playback'},
+                            {'sink_port_id': 'aaaaaaaa-2222-4333-8444-555555555555',
+                             'node_name': 'capyio.virtual-microphone.aaaaaaaa-2222-4333-8444-555555555555'}):
+            with self.subTest(replacement=replacement), self.assertRaises(ValueError):
+                validate_bound(bound('stop') | self.endpoint | replacement, 'stop', owners)
+        with self.assertRaises(ValueError):
+            validate_pending(pending('stop') | self.endpoint | {'target': 'physical-device'},
+                             'stop', 'before_local', owners)
+
+    def test_unlinked_private_recorder_demands_continuing_silence_samples(self):
+        properties = json.loads(recorder_properties('virtual_microphone'))
+        self.assertEqual(properties, {'node.name': 'capyio.test.monitor',
+                                     'node.always-process': True, 'node.want-driver': True})
+        self.assertEqual(json.loads(recorder_properties('playback')),
+                         {'node.name': 'capyio.test.monitor'})
+        for mode in ('capture', 'virtual_speaker', '', '/tmp/helper'):
+            with self.assertRaises(ValueError):
+                recorder_properties(mode)
+
+    def test_virtual_graph_selection_inspects_source_owner_not_playback_monitor(self):
+        owners = OWNERS | self.endpoint
+        objects = [object()]
+        source = {'id': 20}
+        port = {'id': 21}
+        with mock.patch('run_pipewire_secure_console.verify_console_owner') as console, \
+                mock.patch('run_pipewire_secure_console.select_virtual_source', return_value=(source, port)) as selected, \
+                mock.patch('run_pipewire_secure_console.recorder_port', return_value=30), \
+                mock.patch('run_pipewire_secure_console.verify_process_owner', return_value=201) as owner, \
+                mock.patch('run_pipewire_secure_console.os.getpgid', return_value=150) as group, \
+                mock.patch('run_pipewire_secure_console.select_ports') as monitor, \
+                mock.patch('run_pipewire_secure_console.verify_playback_process_owner') as playback:
+            self.assertEqual(select_console_graph(objects, owners, bound('stop'), 'virtual_microphone'),
+                             ([(21, 30)], {20, 21}))
+            console.assert_called_once_with(owners)
+            selected.assert_called_once_with(objects, owners)
+            owner.assert_called_once_with(objects, source, owners)
+            monitor.assert_not_called()
+            playback.assert_not_called()
+            group.return_value = 999
+            with self.assertRaises(ValueError):
+                select_console_graph(objects, owners, bound('stop'), 'virtual_microphone')
+            group.return_value = 150
+            owner.return_value = 999
+            with self.assertRaises(ValueError):
+                select_console_graph(objects, owners, bound('stop'), 'virtual_microphone')
+
+    def test_only_single_actual_source_link_no_null_monitor_or_duplicate(self):
+        def link(source, target):
+            return {'type': 'PipeWire:Interface:Link',
+                    'info': {'output-port-id': source, 'input-port-id': target}}
+        direct = link(20, 30)
+        monitor = link(40, 30)
+        verify_links([direct], [(20, 30)], 'virtual_microphone')
+        for objects in ([], [monitor], [direct, monitor], [direct, direct]):
+            with self.subTest(objects=objects), self.assertRaises(ValueError):
+                verify_links(objects, [(20, 30)], 'virtual_microphone')
+        verify_links([direct, monitor], [(20, 30)], 'playback')
 
 
 class SecureConsoleOwnershipTests(unittest.TestCase):
