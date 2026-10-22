@@ -15,6 +15,8 @@ final class AndroidCameraUseModule {
     private org.json.JSONObject secureLaunchConfig;
     private String secureRouteId;
     private String attemptedSecureRoute;
+    private String pinnedFormat;
+    private io.capyio.camera.lab.FiniteCameraPreflight.Plan pinnedFinitePlan;
 
     AndroidCameraUseModule(Context context) {
         this.context = context;
@@ -27,8 +29,17 @@ final class AndroidCameraUseModule {
     }
 
     void stop(AndroidNativeCatalogRuntime runtime) {
-        useJson = runtime.cameraUse("stop", "");
-        synchronize(runtime);
+        invalidate(runtime);
+    }
+
+    /** Cancels pending native preparation as well as running capture before catalog mutation. */
+    void invalidate(AndroidNativeCatalogRuntime runtime) {
+        try {
+            useJson = runtime.cameraUse("stop", "");
+        } finally {
+            close();
+            UnifiedCameraNodeFacade.stop(context);
+        }
     }
 
     String publicStateJson() {
@@ -48,6 +59,8 @@ final class AndroidCameraUseModule {
         secureSession = null;
         secureLaunchConfig = null;
         secureRouteId = null;
+        pinnedFormat = null;
+        pinnedFinitePlan = null;
         if (routeId != null) {
             UnifiedCameraNodeFacade.stop(context);
             routeId = null;
@@ -116,13 +129,33 @@ final class AndroidCameraUseModule {
             return;
         }
         if (secureRouteId != null && !secureRouteId.equals(id)) close();
-        secureLaunchConfig = use.optJSONObject("secureConfig");
-        // Rust's finite sender can be exercised with synthetic encoded frames,
-        // but this Camera2 path must not mislabel its legacy capture as canonical.
-        if (secureLaunchConfig != null
-                && !io.capyio.camera.contract.SecureCameraCaptureSession.supportsCaptureFormat(
-                        secureLaunchConfig.optString("format", null))) {
-            throw new IllegalArgumentException("unsupported secure capture format");
+        org.json.JSONObject receivedConfig = use.optJSONObject("secureConfig");
+        // Do not guess the profile while negotiation is pending. Pin only the actual
+        // authenticated native configuration, before starting a one-shot generation.
+        if (receivedConfig == null) {
+            if (secureSession != null) throw new IllegalArgumentException("secure config disappeared");
+            return;
+        }
+        String format = receivedConfig.getString("format");
+        if (pinnedFormat == null) {
+            if ("cavc-avc-finite-720p30-v1".equals(format)) {
+                pinnedFinitePlan = UnifiedCameraNodeFacade.selectedFinitePlan();
+                if (pinnedFinitePlan == null || !format.equals(pinnedFinitePlan.formatId())) {
+                    throw new IllegalArgumentException("finite capture requires current explicit preflight");
+                }
+            } else if (!io.capyio.camera.contract.SecureCameraCaptureSession.supportsCaptureFormat(format)
+                    || !UnifiedCameraNodeFacade.matchesCapturePlan(null)) {
+                throw new IllegalArgumentException("unsupported secure capture format");
+            }
+            pinnedFormat = format;
+            secureLaunchConfig = receivedConfig;
+        } else if (!pinnedFormat.equals(format)
+                || !secureLaunchConfig.getString("streamId").equals(receivedConfig.getString("streamId"))
+                || secureLaunchConfig.getLong("epoch") != receivedConfig.getLong("epoch")) {
+            throw new IllegalArgumentException("secure capture configuration changed");
+        }
+        if (!UnifiedCameraNodeFacade.matchesCapturePlan(pinnedFinitePlan)) {
+            throw new IllegalArgumentException("capture selection changed after negotiation");
         }
         if (secureSession == null) {
             if (id.equals(attemptedSecureRoute)) return;
@@ -138,9 +171,10 @@ final class AndroidCameraUseModule {
                         @Override public boolean start(long generation) {
                             try {
                                 org.json.JSONObject config = secureLaunchConfig;
-                                if (config == null || !UnifiedCameraNodeFacade.configureSecureRoute(
+                                if (config == null || !UnifiedCameraNodeFacade.matchesCapturePlan(pinnedFinitePlan)
+                                        || !UnifiedCameraNodeFacade.configureSecureRoute(
                                         runtime, generation, config.getString("streamId"),
-                                        config.getLong("epoch"), expiry)) return false;
+                                        config.getLong("epoch"), expiry, pinnedFinitePlan)) return false;
                                 routeId = id;
                                 startedAt = android.os.SystemClock.elapsedRealtime();
                                 UnifiedCameraNodeFacade.start(context);

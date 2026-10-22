@@ -11,11 +11,13 @@ import io.capyio.camera.contract.AvcEncoderConfig;
 import io.capyio.camera.contract.SecureAvcSender;
 import io.capyio.camera.contract.BoundedAvcAccessUnitQueue;
 import io.capyio.camera.contract.EncodedAvcAccessUnit;
+import io.capyio.camera.contract.FiniteCameraEligibility;
 import java.io.IOException;
 import java.nio.ByteBuffer;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.concurrent.atomic.AtomicLong;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 
@@ -42,6 +44,10 @@ final class MediaCodecSurfaceEncoder implements AutoCloseable {
     private final Object lifecycleLock = new Object();
     private final AvcEncoderConfig config;
     private final SecureAvcSender secureSender;
+    private final FiniteCameraPreflight.Plan finitePlan;
+    private final AtomicBoolean failed = new AtomicBoolean();
+    // MediaCodec callbacks are serialized on callbackThread; only verified format can publish CSD.
+    private boolean actualFiniteFormatVerified;
     private final BoundedAvcAccessUnitQueue outputQueue;
     private final AtomicReference<AvcCodecConfig> outputConfig = new AtomicReference<>();
     private final AtomicReference<String> lastError = new AtomicReference<>();
@@ -58,7 +64,16 @@ final class MediaCodecSurfaceEncoder implements AutoCloseable {
     MediaCodecSurfaceEncoder(AvcEncoderConfig config) { this(config, null); }
 
     MediaCodecSurfaceEncoder(AvcEncoderConfig config, SecureAvcSender secureSender) {
+        this(config, secureSender, null);
+    }
+
+    MediaCodecSurfaceEncoder(AvcEncoderConfig config, SecureAvcSender secureSender,
+            FiniteCameraPreflight.Plan finitePlan) {
         this.secureSender = secureSender;
+        this.finitePlan = finitePlan;
+        if (finitePlan != null && (secureSender == null || !finitePlan.encoderConfig().equals(config))) {
+            throw new IllegalArgumentException("finite encoder requires its pinned secure plan");
+        }
         this.config = Objects.requireNonNull(config, "config");
         outputQueue = new BoundedAvcAccessUnitQueue(config.queueCapacity());
     }
@@ -75,10 +90,13 @@ final class MediaCodecSurfaceEncoder implements AutoCloseable {
         MediaCodec created = null;
         Surface createdSurface = null;
         try {
-            created = MediaCodec.createEncoderByType(MediaFormat.MIMETYPE_VIDEO_AVC);
+            created = finitePlan == null
+                    ? MediaCodec.createEncoderByType(MediaFormat.MIMETYPE_VIDEO_AVC)
+                    : MediaCodec.createByCodecName(finitePlan.codecName());
             String createdCodecName = boundCodecName(created.getName());
             created.setCallback(codecCallback, new Handler(thread.getLooper()));
-            created.configure(createFormat(config), null, null, MediaCodec.CONFIGURE_FLAG_ENCODE);
+            created.configure(finitePlan == null ? createFormat(config) : createFiniteFormat(),
+                    null, null, MediaCodec.CONFIGURE_FLAG_ENCODE);
             createdSurface = created.createInputSurface();
 
             synchronized (lifecycleLock) {
@@ -193,14 +211,20 @@ final class MediaCodecSurfaceEncoder implements AutoCloseable {
 
         @Override
         public void onOutputFormatChanged(MediaCodec codec, MediaFormat format) {
+            if (failed.get()) return;
             try {
+                if (finitePlan != null) {
+                    requireFiniteOutputFormat(format);
+                }
                 byte[] csd0 = copyFormatBuffer(format, "csd-0");
                 byte[] csd1 = format.containsKey("csd-1")
                         ? copyFormatBuffer(format, "csd-1")
                         : new byte[0];
                 AvcCodecConfig config = new AvcCodecConfig(csd0, csd1);
+                // Finite SecureAvcSender validates SPS/PPS before publishing them to its worker.
                 if (secureSender != null) secureSender.setCodecConfig(config);
                 else outputConfig.set(config);
+                if (finitePlan != null) actualFiniteFormatVerified = true;
                 int actual = format.containsKey(MediaFormat.KEY_LATENCY)
                         ? format.getInteger(MediaFormat.KEY_LATENCY)
                         : -1;
@@ -214,6 +238,7 @@ final class MediaCodecSurfaceEncoder implements AutoCloseable {
     };
 
     private void copyOutput(MediaCodec codec, int index, MediaCodec.BufferInfo info) {
+        if (failed.get()) return;
         if ((info.flags & MediaCodec.BUFFER_FLAG_PARTIAL_FRAME) != 0) {
             throw new IllegalArgumentException("partial AVC output is unsupported");
         }
@@ -225,6 +250,16 @@ final class MediaCodecSurfaceEncoder implements AutoCloseable {
                 || info.size < 0
                 || info.size > EncodedAvcAccessUnit.MAX_PAYLOAD_BYTES) {
             throw new IllegalArgumentException("AVC output bounds are invalid");
+        }
+
+        boolean codecConfig = (info.flags & MediaCodec.BUFFER_FLAG_CODEC_CONFIG) != 0;
+        int finiteAllowedFlags = MediaCodec.BUFFER_FLAG_CODEC_CONFIG
+                | MediaCodec.BUFFER_FLAG_KEY_FRAME | MediaCodec.BUFFER_FLAG_END_OF_STREAM;
+        if (finitePlan != null && (!actualFiniteFormatVerified
+                || (info.flags & ~finiteAllowedFlags) != 0
+                || (codecConfig && (endOfStream || info.size == 0
+                        || info.size > AvcCodecConfig.MAX_PARAMETER_SET_BYTES)))) {
+            throw new IllegalArgumentException("finite AVC output precedes verified format or has invalid CSD flags/bounds");
         }
 
         // Reserve before allocating either payload copy. Secure overflow terminates, never drops.
@@ -247,15 +282,23 @@ final class MediaCodecSurfaceEncoder implements AutoCloseable {
                 view.get(payload);
             }
 
+            if (finitePlan != null && codecConfig) {
+                // A config-only buffer is not a media AU. Validate repeated CSD, never silently
+                // ignore it or consume a sequence that would create a media gap. The reservation
+                // remains bounded until finally cancels it; the sender validates before update.
+                secureSender.setCodecConfig(new AvcCodecConfig(payload, new byte[0]));
+                return;
+            }
             long sequence = nextSequence.incrementAndGet();
             EncodedAvcAccessUnit unit = new EncodedAvcAccessUnit(
                     sequence,
                     info.presentationTimeUs,
-                    (info.flags & MediaCodec.BUFFER_FLAG_CODEC_CONFIG) != 0,
+                    codecConfig,
                     (info.flags & MediaCodec.BUFFER_FLAG_KEY_FRAME) != 0,
                     endOfStream,
                     payload);
             if (secureSender != null) {
+                // Finite sender validates the full access unit before any worker can see it.
                 secureSender.offerReserved(unit);
                 submitted = true;
                 return;
@@ -302,12 +345,51 @@ final class MediaCodecSurfaceEncoder implements AutoCloseable {
         return format;
     }
 
+    static MediaFormat createFiniteFormat() {
+        MediaFormat format = createFormat(AvcEncoderConfig.baseline720p30());
+        format.setInteger(MediaFormat.KEY_PROFILE, MediaCodecInfo.CodecProfileLevel.AVCProfileBaseline);
+        format.setInteger(MediaFormat.KEY_LEVEL, MediaCodecInfo.CodecProfileLevel.AVCLevel31);
+        format.setInteger(MediaFormat.KEY_ROTATION, 0);
+        return format;
+    }
+
+    private static void requireFiniteOutputFormat(MediaFormat format) {
+        FiniteCameraEligibility.requireOutput(new FiniteCameraEligibility.OutputDescriptor(
+                format.containsKey(MediaFormat.KEY_MIME) ? format.getString(MediaFormat.KEY_MIME) : null,
+                integer(format, MediaFormat.KEY_WIDTH), integer(format, MediaFormat.KEY_HEIGHT),
+                integer(format, MediaFormat.KEY_FRAME_RATE), integer(format, MediaFormat.KEY_BIT_RATE),
+                equalsInteger(format, MediaFormat.KEY_PROFILE, MediaCodecInfo.CodecProfileLevel.AVCProfileBaseline),
+                equalsInteger(format, MediaFormat.KEY_LEVEL, MediaCodecInfo.CodecProfileLevel.AVCLevel31),
+                equalsInteger(format, MediaFormat.KEY_COLOR_FORMAT, MediaCodecInfo.CodecCapabilities.COLOR_FormatSurface),
+                equalsInteger(format, MediaFormat.KEY_MAX_B_FRAMES, 0),
+                equalsInteger(format, MediaFormat.KEY_COLOR_STANDARD, MediaFormat.COLOR_STANDARD_BT709),
+                equalsInteger(format, MediaFormat.KEY_COLOR_RANGE, MediaFormat.COLOR_RANGE_LIMITED),
+                equalsInteger(format, MediaFormat.KEY_COLOR_TRANSFER, MediaFormat.COLOR_TRANSFER_SDR_VIDEO),
+                absentOrEquals(format, MediaFormat.KEY_ROTATION, 0)
+                        && absentOrEquals(format, "crop-left", 0) && absentOrEquals(format, "crop-top", 0)
+                        && absentOrEquals(format, "crop-right", 1279) && absentOrEquals(format, "crop-bottom", 719)
+                        && !format.containsKey(MediaFormat.KEY_HDR_STATIC_INFO)));
+    }
+
+    private static Integer integer(MediaFormat format, String key) {
+        return format.containsKey(key) ? format.getInteger(key) : null;
+    }
+
+    private static boolean equalsInteger(MediaFormat format, String key, int expected) {
+        return Integer.valueOf(expected).equals(integer(format, key));
+    }
+
+    private static boolean absentOrEquals(MediaFormat format, String key, int expected) {
+        return !format.containsKey(key) || equalsInteger(format, key, expected);
+    }
+
     private static String boundCodecName(String value) {
         String name = value == null ? "unavailable" : value.replaceAll("[\\p{Cntrl}]", "?");
         return name.length() <= MAX_ERROR_CHARS ? name : name.substring(0, MAX_ERROR_CHARS);
     }
 
     private void recordError(String message) {
+        failed.set(true);
         if (secureSender != null) secureSender.close();
         String bounded = message == null ? "unknown AVC encoder error" : message;
         if (bounded.length() > MAX_ERROR_CHARS) {
@@ -318,6 +400,7 @@ final class MediaCodecSurfaceEncoder implements AutoCloseable {
 
     @Override
     public void close() {
+        failed.set(true);
         if (secureSender != null) secureSender.close();
         MediaCodec currentCodec;
         Surface currentSurface;

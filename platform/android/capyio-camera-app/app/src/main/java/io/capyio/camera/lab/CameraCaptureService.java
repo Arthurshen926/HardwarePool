@@ -80,6 +80,11 @@ public final class CameraCaptureService extends Service {
             CameraSourceSelection source, AvcQualityPreset quality,
             CameraRouteBinding route, SecureCameraBinding secure) {
         if (!secure.ready() || !route.isLive()) throw new IllegalStateException("secure generation not Ready");
+        FiniteCameraPreflight.Plan plan = secure.finitePlan();
+        if (plan != null && (!plan.source().equals(source) || quality != AvcQualityPreset.BALANCED)) {
+            secure.stop();
+            throw new IllegalArgumentException("finite capture source or quality differs from its pinned plan");
+        }
         long token = secureTokens.incrementAndGet();
         PendingSecure pending = new PendingSecure(token,
                 new Config(facing, source, quality, null, route, secure));
@@ -198,12 +203,14 @@ public final class CameraCaptureService extends Service {
         try {
             enterForeground(notification(getString(R.string.camera_notification_starting)));
         } catch (SecurityException | IllegalStateException error) {
+            if (requested.secure() != null) requested.secure().stop();
             stopCapture(true, "Open CapyIO in the foreground and allow camera access, then retry sharing.");
             return START_NOT_STICKY;
         }
         try {
             startCapture(requested);
         } catch (IllegalArgumentException | IllegalStateException error) {
+            if (requested.secure() != null) requested.secure().stop();
             stopCapture(true, "Invalid capture request: " + error.getClass().getSimpleName());
         }
         return START_NOT_STICKY;

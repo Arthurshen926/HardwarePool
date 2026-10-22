@@ -62,6 +62,7 @@ public final class AndroidCapabilityModulesContractTest {
         check(!ResourceConsentMemory.allows("touchpad", -1, -1, -1));
         projectsAndAdmitsClosedAudioQuickActions();
         attachesAndAdmitsClosedCameraQuickAction();
+        advertisesOnlyTheExplicitEligibleCameraProfile();
         attachesAndAdmitsHapticsSink();
         System.out.println("Android Capability module composition: PASS ("
                 + assertions + " assertions)");
@@ -892,6 +893,45 @@ public final class AndroidCapabilityModulesContractTest {
                 AndroidCameraCommand.ACTION_ID,
                 "start",
                 CapabilityLifecycleState.ACTIVE) == null);
+    }
+
+    private static void advertisesOnlyTheExplicitEligibleCameraProfile() {
+        var selectedFormats = new java.util.concurrent.atomic.AtomicReference<List<String>>(List.of());
+        var registry = AndroidCapabilityModules.createRegistry(
+                new AudioNodeController(), new CapabilityLifecycleController(),
+                new GamepadNodeController(), new TouchpadNodeController(),
+                new CapabilityLifecycleController(), () -> true, () -> true,
+                new CapabilityLifecycleController()::snapshot, () -> true, selectedFormats::get,
+                true, false, HardwarePresence.PRESENT, HardwarePresence.PRESENT,
+                HardwarePresence.PRESENT, HardwarePresence.PRESENT,
+                HardwarePresence.PRESENT, HardwarePresence.PRESENT);
+        CapabilitySnapshot unavailable = capability(registry.snapshot("test-node"), "android.camera");
+        check(unavailable.availability() == CapabilityAvailability.OFFLINE);
+        check(!AndroidSharingSelection.isSelectable(unavailable));
+        check(unavailable.ports().get(0).formats().equals(List.of("platform-negotiated-video-frame")));
+        var selection = new AndroidSharingSelection();
+        check(!selection.update(registry.snapshot("test-node"), "test-node:android.camera", true));
+        check(selection.publicationCatalog(registry.snapshot("test-node")).capabilities().stream()
+                .noneMatch(item -> item.capabilityKey().equals("android.camera")));
+        selectedFormats.set(List.of("cavc-avc-finite-720p30-v1"));
+        CapabilitySnapshot finite = capability(registry.snapshot("test-node"), "android.camera");
+        check(finite.ports().get(0).formats().equals(List.of("cavc-avc-finite-720p30-v1")));
+        selectedFormats.set(List.of()); // Preflight/source/quality invalidation never falls back.
+        unavailable = capability(registry.snapshot("test-node"), "android.camera");
+        check(unavailable.availability() == CapabilityAvailability.OFFLINE);
+        check(!AndroidSharingSelection.isSelectable(unavailable));
+        check(unavailable.ports().get(0).formats().equals(List.of("platform-negotiated-video-frame")));
+        selectedFormats.set(List.of("cavc-avc-access-unit-v1"));
+        check(capability(registry.snapshot("test-node"), "android.camera").ports().get(0)
+                .formats().equals(List.of("cavc-avc-access-unit-v1")));
+        for (List<String> invalid : List.of(List.of("unknown"),
+                List.of("cavc-avc-access-unit-v1", "cavc-avc-finite-720p30-v1"))) {
+            selectedFormats.set(invalid);
+            try {
+                registry.snapshot("test-node");
+                throw new AssertionError("invalid camera format selection accepted");
+            } catch (IllegalArgumentException expected) { check(true); }
+        }
     }
 
     private static void attachesAndAdmitsHapticsSink() {

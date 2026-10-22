@@ -80,3 +80,10 @@ receiver-side malicious-input scenarios remain separate and mandatory.
 Next work must explicitly gate a canonical Camera2 size/FPS/rotation policy,
 encoder capability/output validation and opt-in advertisement. Until then an
 existing Android phone remains legacy-only, regardless of this sender proof.
+
+## Subsequent bounded capture slice
+
+ADR 1557 adds explicit experimental Java capture eligibility/output gates. The
+legacy-only statements above describe this ADR’s original sender-only slice; the
+new option is restricted to eligible orientation-zero cameras and is not a
+physical-phone compatibility claim.

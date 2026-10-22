@@ -386,6 +386,8 @@ export interface UiAndroidCameraSettings {
   permissionReady: boolean;
   selectedSourceKey: string | null;
   quality: "economy" | "balanced" | "clear";
+  captureProfile: "legacy" | "finite_720p30_v1";
+  finitePreflight: "not_requested" | "eligible" | "unsupported";
   problemCode: string | null;
   sources: UiAndroidCameraSource[];
 }
@@ -589,6 +591,7 @@ export interface CapyIOApi {
   refreshAndroidCameraSources(): Promise<UiAndroidCameraSettings>;
   selectAndroidCameraSource(sourceKey: string): Promise<UiAndroidCameraSettings>;
   selectAndroidCameraQuality(quality: UiAndroidCameraSettings["quality"]): Promise<UiAndroidCameraSettings>;
+  selectAndroidCameraProfile(profile: UiAndroidCameraSettings["captureProfile"]): Promise<UiAndroidCameraSettings>;
   selectAudioEndpoint(actionId: string, selectionToken: string): Promise<UiQuickAction>;
 }
 

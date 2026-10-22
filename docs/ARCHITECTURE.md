@@ -1763,12 +1763,20 @@ Export remains nonsecret configuration only, with no Start or resource authority
 
 [ADR 1555](adr/1555-linux-explicit-finite-camera-stream.md) defines the additive
 secure-only `cavc-avc-finite-720p30-v1` descriptor and local immutable work/rate
-budgets. Legacy wire formats and limits remain unchanged. This Linux/synthetic
-profile is not advertised by the production Android camera path.
+budgets. Legacy wire formats and limits remain unchanged. ADR 1557 adds a separately gated, explicit experimental Android capture option;
+legacy remains the default.
 
 ### Android Rust finite camera sender
 
 [ADR 1556](adr/1556-android-rust-finite-camera-sender.md) adds independent finite
 profile admission to the actual Rust sender and immutable JNI generation binding.
-Android catalog advertisement and Camera2 capture remain legacy-only; synthetic
-sender-to-Linux evidence does not establish phone compatibility.
+ADR 1557 subsequently adds explicit experimental orientation-zero eligibility and
+actual Java output admission. Synthetic sender-to-Linux evidence still does not
+establish phone compatibility.
+
+### Experimental Android finite capture
+
+[ADR 1557](adr/1557-android-experimental-finite-capture.md) adds explicit opt-in
+eligibility and actual output checks for orientation-zero cameras only. Eligibility
+is not verified output or physical-device compatibility. Legacy remains default,
+and changing settings cannot extend an existing grant or start capture.

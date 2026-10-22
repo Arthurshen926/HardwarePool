@@ -516,3 +516,10 @@ does not enable finite Camera2 capture or advertise the format on Android. Do no
 edit a phone catalog or relabel its legacy capture to force this profile. The
 existing legacy phone path remains unchanged; canonical hardware-gated capture
 and explicit opt-in are separate remaining work.
+
+### Experimental Android finite capture
+
+[ADR 1557](adr/1557-android-experimental-finite-capture.md) adds explicit opt-in
+eligibility and actual output checks for orientation-zero cameras only. Eligibility
+is not verified output or physical-device compatibility. Legacy remains default,
+and changing settings cannot extend an existing grant or start capture.

@@ -4,6 +4,7 @@ import java.util.List;
 import java.util.Objects;
 import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.concurrent.locks.LockSupport;
@@ -16,7 +17,9 @@ import java.util.concurrent.locks.LockSupport;
  *
  * Payload live-set budget (not a total VM/GC heap bound): two 4 MiB owned AUs,
  * two conservatively counted 4 MiB callback scratch copies, worker payload clone
- * 4 MiB + record 4 MiB, <= 1 MiB config copies, native budget 20 MiB = < 45 MiB.
+ * 4 MiB + record 4 MiB, <= 1 MiB config copies/finite-parser scratch, native
+ * budget 20 MiB = < 45 MiB. Finite validation does not clone whole AUs; slice
+ * RBSP scratch is at most 129 bytes and combined CSD is at most 64 KiB.
  * A conservative 64 MiB application-owned payload budget leaves headroom for headers
  * and bounded bookkeeping. Uncollected garbage and OS codec/driver buffers are NOT
  * bounded by this queue and are not included in that application live-set claim.
@@ -34,6 +37,8 @@ public final class SecureAvcSender implements AutoCloseable {
     private final long lifetimeNanos;
     private final Listener listener;
     private final AvcWireSessionEncoder encoder;
+    private final FiniteCameraAvcValidator finiteValidator;
+    private final AtomicBoolean validating = new AtomicBoolean();
     private final AtomicInteger lifecycle = new AtomicInteger(); // 0 new, 1 running, 2 terminal
     private final AtomicInteger reservations = new AtomicInteger();
     private final ConcurrentLinkedQueue<EncodedAvcAccessUnit> queue = new ConcurrentLinkedQueue<>();
@@ -46,6 +51,13 @@ public final class SecureAvcSender implements AutoCloseable {
     public SecureAvcSender(SecureCameraTransport transport, long generation,
             AvcWireRecordEncoder.StreamKey stream, AvcEncoderConfig encoderConfig,
             long expiresAtMs, Listener listener) {
+        this(transport, generation, stream, encoderConfig, expiresAtMs, listener, false);
+    }
+
+    /** Opt-in finite gate; the existing constructor retains legacy behavior. */
+    public SecureAvcSender(SecureCameraTransport transport, long generation,
+            AvcWireRecordEncoder.StreamKey stream, AvcEncoderConfig encoderConfig,
+            long expiresAtMs, Listener listener, boolean finiteProfile) {
         if (generation <= 0 || expiresAtMs <= 0) throw new IllegalArgumentException("invalid secure generation");
         this.transport = Objects.requireNonNull(transport, "transport");
         this.generation = generation;
@@ -55,6 +67,7 @@ public final class SecureAvcSender implements AutoCloseable {
                 Math.max(0, expiresAtMs - System.currentTimeMillis()));
         this.listener = Objects.requireNonNull(listener, "listener");
         encoder = new AvcWireSessionEncoder(stream, encoderConfig);
+        finiteValidator = finiteProfile ? new FiniteCameraAvcValidator(encoderConfig) : null;
     }
 
     public void start() {
@@ -69,7 +82,22 @@ public final class SecureAvcSender implements AutoCloseable {
     }
 
     public void setCodecConfig(AvcCodecConfig config) {
-        if (lifecycle.get() == 1) codecConfig.compareAndSet(null, Objects.requireNonNull(config, "config"));
+        if (finiteValidator == null) {
+            if (lifecycle.get() == 1) codecConfig.compareAndSet(null, Objects.requireNonNull(config, "config"));
+            return;
+        }
+        beginFiniteValidation();
+        try {
+            if (!live()) throw new IllegalStateException("finite secure sender is unavailable");
+            finiteValidator.acceptConfig(config);
+            if (lifecycle.get() != 1) throw new IllegalStateException("finite secure sender stopped");
+            codecConfig.compareAndSet(null, config);
+        } catch (RuntimeException error) {
+            terminate("finite AVC codec config rejected");
+            throw error;
+        } finally {
+            validating.set(false);
+        }
     }
 
     /** No payload allocation or copying is allowed until this returns true. */
@@ -105,6 +133,31 @@ public final class SecureAvcSender implements AutoCloseable {
             terminate("secure output reservation mismatch");
             return;
         }
+        if (finiteValidator != null) {
+            boolean acquired = false;
+            try {
+                beginFiniteValidation();
+                acquired = true;
+                if (!live()) throw new IllegalStateException("finite secure sender is unavailable");
+                finiteValidator.acceptUnit(unit);
+                copyingBytes.remove();
+                if (lifecycle.get() != 1) {
+                    reservations.decrementAndGet();
+                    return;
+                }
+                queue.offer(unit);
+                if (lifecycle.get() != 1) drainQueue();
+                LockSupport.unpark(worker);
+            } catch (RuntimeException error) {
+                // Consume the caller's reservation before propagating to its error latch.
+                cancelReservation();
+                terminate("finite AVC access unit rejected");
+                throw error;
+            } finally {
+                if (acquired) validating.set(false);
+            }
+            return;
+        }
         copyingBytes.remove();
         if (lifecycle.get() != 1) {
             reservations.decrementAndGet();
@@ -113,6 +166,15 @@ public final class SecureAvcSender implements AutoCloseable {
         queue.offer(unit);
         if (lifecycle.get() != 1) drainQueue();
         LockSupport.unpark(worker);
+    }
+
+    private void beginFiniteValidation() {
+        // Production config/AU callbacks share one handler. Reject misuse without
+        // acquiring a contended lock or waiting on another producer callback.
+        if (!validating.compareAndSet(false, true)) {
+            terminate("concurrent finite AVC producer callbacks");
+            throw new IllegalStateException("finite AVC validation must be serialized");
+        }
     }
 
     public void cancelReservation() {

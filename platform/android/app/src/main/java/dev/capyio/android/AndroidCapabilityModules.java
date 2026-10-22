@@ -84,6 +84,33 @@ final class AndroidCapabilityModules {
             HardwarePresence imuPresence,
             HardwarePresence touchSurfacePresence,
             HardwarePresence vibratorPresence) {
+        return createRegistry(audioController, imuController, gamepadController, touchpadController,
+                hapticsController, microphonePermissionReady, notificationPermissionReady,
+                cameraLifecycle, cameraPermissionReady,
+                () -> List.of("cavc-avc-access-unit-v1"), cameraAdapterAttached, hapticsAdapterAttached,
+                microphonePresence, speakerPresence, cameraPresence, imuPresence,
+                touchSurfacePresence, vibratorPresence);
+    }
+
+    static CapabilityModuleRegistry createRegistry(
+            AudioNodeController audioController,
+            CapabilityLifecycleController imuController,
+            GamepadNodeController gamepadController,
+            TouchpadNodeController touchpadController,
+            CapabilityLifecycleController hapticsController,
+            BooleanSupplier microphonePermissionReady,
+            BooleanSupplier notificationPermissionReady,
+            Supplier<CapabilityLifecycleSnapshot> cameraLifecycle,
+            BooleanSupplier cameraPermissionReady,
+            Supplier<List<String>> cameraFormats,
+            boolean cameraAdapterAttached,
+            boolean hapticsAdapterAttached,
+            HardwarePresence microphonePresence,
+            HardwarePresence speakerPresence,
+            HardwarePresence cameraPresence,
+            HardwarePresence imuPresence,
+            HardwarePresence touchSurfacePresence,
+            HardwarePresence vibratorPresence) {
         CapabilityModuleRegistry registry = new CapabilityModuleRegistry();
         registry.register(new AudioModule(
                 audioController,
@@ -112,8 +139,13 @@ final class AndroidCapabilityModules {
                             "capyio.video.frames/1",
                             "platform-negotiated-video-frame"));
                 }
+                List<String> formats = cameraFormats.get();
+                if (!formats.isEmpty() && !formats.equals(List.of("cavc-avc-access-unit-v1"))
+                        && !formats.equals(List.of("cavc-avc-finite-720p30-v1"))) {
+                    throw new IllegalArgumentException("camera catalog requires one exact selected profile");
+                }
                 return List.of(cameraCapability(
-                        cameraLifecycle.get(), cameraPermissionReady.getAsBoolean(), cameraPresence));
+                        cameraLifecycle.get(), cameraPermissionReady.getAsBoolean(), cameraPresence, formats));
             }
         });
         registry.register(controllerModule(
@@ -142,12 +174,18 @@ final class AndroidCapabilityModules {
     private static CapabilitySnapshot cameraCapability(
             CapabilityLifecycleSnapshot lifecycle,
             boolean permissionReady,
-            HardwarePresence hardwarePresence) {
+            HardwarePresence hardwarePresence,
+            List<String> formats) {
         CapabilityAvailability availability;
         String problemCode = lifecycle.problemCode();
         if (hardwarePresence != HardwarePresence.PRESENT) {
             availability = CapabilityAvailability.OFFLINE;
             problemCode = inventoryProblem(hardwarePresence);
+        } else if (formats.isEmpty()) {
+            // Keep the required local inventory entry, but do not make it shareable or
+            // describe unsupported capture as either a finite or legacy AVC Source.
+            availability = CapabilityAvailability.OFFLINE;
+            problemCode = "CAPY.ANDROID.CAMERA_FINITE_PREFLIGHT_REQUIRED";
         } else if (lifecycle.state() == CapabilityLifecycleState.FAILED) {
             availability = CapabilityAvailability.OFFLINE;
         } else if (lifecycle.state().ownsAdapterLifecycle()) {
@@ -170,7 +208,7 @@ final class AndroidCapabilityModules {
                         "Camera Frame Source",
                         CapabilityPortDirection.SOURCE,
                         "capyio.video.frames/1",
-                        List.of("cavc-avc-access-unit-v1"))),
+                        formats.isEmpty() ? List.of("platform-negotiated-video-frame") : formats)),
                 problemCode);
     }
 

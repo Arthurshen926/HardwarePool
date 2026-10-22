@@ -175,6 +175,7 @@ public final class AudioNodeService extends Service {
     private AndroidControllerUseModule controllerUse;
     private AndroidAudioUseModule audioUse;
     private final AndroidCameraUseModule cameraUse = new AndroidCameraUseModule(this);
+    private long cameraSettingsRevision;
     private final AndroidDisplayUseModule displayUse = new AndroidDisplayUseModule(this, this);
     private final Runnable secureTouchpadPoll = new Runnable() {
         @Override public void run() {
@@ -385,6 +386,7 @@ public final class AudioNodeService extends Service {
                 AudioNodeService::cameraLifecycleSnapshot,
                 () -> checkSelfPermission(Manifest.permission.CAMERA)
                         == PackageManager.PERMISSION_GRANTED,
+                UnifiedCameraNodeFacade::advertisedFormats,
                 true,
                 true,
                 inventory.microphonePresence(),
@@ -973,7 +975,7 @@ public final class AudioNodeService extends Service {
         return capabilityRegistry.snapshot(nodeId);
     }
 
-    private String publicationCatalogJson() {
+    private synchronized String publicationCatalogJson() {
         return catalogModule.publicationJson(capabilityCatalogSnapshot());
     }
 
@@ -1002,7 +1004,7 @@ public final class AudioNodeService extends Service {
         return new CapabilityLifecycleSnapshot(state, camera.generation(), camera.problemCode());
     }
 
-    private void notifyStateListener() {
+    private synchronized void notifyStateListener() {
         if (catalogRuntime != null) {
             try {
                 refreshNativeCatalog(capabilityCatalogSnapshot());
@@ -1055,10 +1057,59 @@ public final class AudioNodeService extends Service {
             }
         }
 
+        public long cameraSettingsRevision() {
+            synchronized (AudioNodeService.this) { return cameraSettingsRevision; }
+        }
+
+        public void startLocalCamera(long expectedRevision) {
+            synchronized (AudioNodeService.this) {
+                if (expectedRevision == cameraSettingsRevision) UnifiedCameraNodeFacade.start(AudioNodeService.this);
+            }
+        }
+
+        public String getCameraSettingsJson(boolean permissionReady) {
+            synchronized (AudioNodeService.this) {
+                return UnifiedCameraNodeFacade.settingsJson(permissionReady);
+            }
+        }
+
+        /** Stop native preparation, invalidate Java capture and unpublish before any settings edit.
+         * A fresh explicit Start/sharing action is required; settings never create a grant. */
+        private boolean invalidateCameraSettings() {
+            cameraSettingsRevision++;
+            cameraUse.invalidate(catalogRuntime);
+            String id = nodeId + ":android.camera";
+            return !catalogModule.selectedIds().contains(id)
+                    || catalogModule.select(capabilityCatalogSnapshot(), id, false,
+                            AudioNodeService.this::replaceNativePublication);
+        }
+
+        public boolean updateCameraSettings(String operation, String value) {
+            synchronized (AudioNodeService.this) {
+                try {
+                    if (!invalidateCameraSettings()) return false;
+                    boolean accepted = switch (operation) {
+                        case "refresh" -> checkSelfPermission(Manifest.permission.CAMERA)
+                                == PackageManager.PERMISSION_GRANTED
+                                && UnifiedCameraNodeFacade.refreshSources(AudioNodeService.this);
+                        case "source" -> UnifiedCameraNodeFacade.selectSource(value);
+                        case "quality" -> UnifiedCameraNodeFacade.selectQuality(value);
+                        case "profile" -> UnifiedCameraNodeFacade.selectProfile(value);
+                        default -> false;
+                    };
+                    UnifiedCameraNodeFacade.preflightSelectedProfile(AudioNodeService.this);
+                    refreshNativeCatalog(capabilityCatalogSnapshot());
+                    notifyPresentationListener();
+                    return accepted;
+                } catch (RuntimeException failed) { return false; }
+            }
+        }
+
         public boolean startCameraUse(String peer) {
             synchronized (AudioNodeService.this) {
                 try {
                     if (!setLocalCapabilityShared(nodeId + ":android.camera", true)) return false;
+                    cameraSettingsRevision++; // Supersede any older permission-dialog/local Start.
                     cameraUse.start(catalogRuntime, peer);
                     return true;
                 } catch (RuntimeException failed) { return false; }
@@ -1068,6 +1119,7 @@ public final class AudioNodeService extends Service {
         public boolean stopCameraUse() {
             synchronized (AudioNodeService.this) {
                 try {
+                    cameraSettingsRevision++;
                     cameraUse.stop(catalogRuntime);
                     return true;
                 } catch (RuntimeException failed) { return false; }
@@ -1189,13 +1241,15 @@ public final class AudioNodeService extends Service {
         }
 
         public CapabilityCatalogSnapshot capabilityCatalog() {
-            CapabilityCatalogSnapshot catalog = AudioNodeService.this.capabilityCatalogSnapshot();
-            try {
-                refreshNativeCatalog(catalog);
-            } catch (RuntimeException rejected) {
-                // Read remains available while native state keeps its last valid snapshot.
+            synchronized (AudioNodeService.this) {
+                CapabilityCatalogSnapshot catalog = AudioNodeService.this.capabilityCatalogSnapshot();
+                try {
+                    refreshNativeCatalog(catalog);
+                } catch (RuntimeException rejected) {
+                    // Read remains available while native state keeps its last valid snapshot.
+                }
+                return catalog;
             }
-            return catalog;
         }
 
         public CapabilityLifecycleSnapshot cameraLifecycle() {
@@ -1279,8 +1333,10 @@ public final class AudioNodeService extends Service {
         }
 
         public CapabilityCatalogSnapshot publicationCatalog() {
-            return catalogModule.publication(
-                    AudioNodeService.this.capabilityCatalogSnapshot());
+            synchronized (AudioNodeService.this) {
+                return catalogModule.publication(
+                        AudioNodeService.this.capabilityCatalogSnapshot());
+            }
         }
 
         public String publicationCatalogJson() {
@@ -1288,23 +1344,25 @@ public final class AudioNodeService extends Service {
         }
 
         public boolean setLocalCapabilityShared(String capabilityId, boolean selected) {
-            CapabilityCatalogSnapshot catalog = AudioNodeService.this.capabilityCatalogSnapshot();
-            boolean accepted = catalogModule.select(
-                    catalog,
-                    capabilityId,
-                    selected,
-                    AudioNodeService.this::replaceNativePublication);
-            if (accepted) {
-                // A started Service, not merely a bound foreground Service, owns
-                // the waiting listener when the Activity leaves the foreground.
-                if (!catalogModule.selectedIds().isEmpty()) {
-                    startForegroundAction(AudioNodeService.this, ACTION_REFRESH_PUBLICATION);
-                } else {
-                    startServiceAction(AudioNodeService.this, ACTION_REFRESH_PUBLICATION);
+            synchronized (AudioNodeService.this) {
+                CapabilityCatalogSnapshot catalog = AudioNodeService.this.capabilityCatalogSnapshot();
+                boolean accepted = catalogModule.select(
+                        catalog,
+                        capabilityId,
+                        selected,
+                        AudioNodeService.this::replaceNativePublication);
+                if (accepted) {
+                    // A started Service, not merely a bound foreground Service, owns
+                    // the waiting listener when the Activity leaves the foreground.
+                    if (!catalogModule.selectedIds().isEmpty()) {
+                        startForegroundAction(AudioNodeService.this, ACTION_REFRESH_PUBLICATION);
+                    } else {
+                        startServiceAction(AudioNodeService.this, ACTION_REFRESH_PUBLICATION);
+                    }
+                    notifyStateListener();
                 }
-                notifyStateListener();
+                return accepted;
             }
-            return accepted;
         }
 
         public CapabilityLifecycleSnapshot imuLifecycle() {

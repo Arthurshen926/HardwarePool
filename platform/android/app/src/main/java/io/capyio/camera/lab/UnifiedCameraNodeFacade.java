@@ -17,6 +17,11 @@ import java.util.Locale;
 /** Narrow public facade used by the unified Node host without exposing camera internals. */
 public final class UnifiedCameraNodeFacade {
     private static final int MAX_SELECTION_KEY_LENGTH = 96;
+    public static final String LEGACY_PROFILE = "legacy";
+    public static final String FINITE_PROFILE = "finite_720p30_v1";
+    private static String preferredProfile = LEGACY_PROFILE; // Deliberately process-local opt-in.
+    private static FiniteCameraPreflight.Plan finitePlan;
+    private static String finitePreflight = "not_requested";
     private static CameraSourceSelection preferredSource;
     private static AvcQualityPreset preferredQuality = AvcQualityPreset.BALANCED;
     private static List<CameraSourceSelection> availableSources = List.of();
@@ -27,7 +32,7 @@ public final class UnifiedCameraNodeFacade {
     private static volatile SecureCameraBinding secureBinding;
 
     public static synchronized boolean configureRoute(String host, String stream, long epoch, long expiry) {
-        if (isRunning() || !configurePeer(host)) return false;
+        if (!LEGACY_PROFILE.equals(preferredProfile) || isRunning() || !configurePeer(host)) return false;
         secureBinding = null;
         routeBinding = new CameraRouteBinding(stream,epoch,expiry);
         return true;
@@ -37,8 +42,14 @@ public final class UnifiedCameraNodeFacade {
     public static synchronized boolean configureSecureRoute(
             io.capyio.camera.contract.SecureCameraTransport transport, long generation,
             String stream, long epoch, long expiry) {
-        if (isRunning()) return false;
-        SecureCameraBinding binding = new SecureCameraBinding(transport, generation);
+        return configureSecureRoute(transport, generation, stream, epoch, expiry, null);
+    }
+
+    public static synchronized boolean configureSecureRoute(
+            io.capyio.camera.contract.SecureCameraTransport transport, long generation,
+            String stream, long epoch, long expiry, FiniteCameraPreflight.Plan plan) {
+        if (isRunning() || !matchesCapturePlan(plan)) return false;
+        SecureCameraBinding binding = new SecureCameraBinding(transport, generation, plan);
         CameraRouteBinding route = new CameraRouteBinding(stream, epoch, expiry);
         if (!binding.ready() || !route.isLive()) return false;
         peerEndpoint = null;
@@ -87,6 +98,10 @@ public final class UnifiedCameraNodeFacade {
     public static synchronized void start(Context context) {
         if (peerEndpoint == null && secureBinding == null) {
             transportProblemCode = "CAPY.ANDROID.CAMERA_AUTHENTICATED_PEER_REQUIRED";
+            return;
+        }
+        if (!matchesCapturePlan(secureBinding == null ? null : secureBinding.finitePlan())) {
+            transportProblemCode = "CAPY.ANDROID.CAMERA_PROFILE_CHANGED";
             return;
         }
         transportProblemCode = null;
@@ -146,6 +161,7 @@ public final class UnifiedCameraNodeFacade {
         if (isRunning()) {
             return false;
         }
+        finitePlan = null;
         try {
             availableSources = CameraSourceSelection.enumerate(
                     CameraInventoryCollector.collect(context));
@@ -166,6 +182,7 @@ public final class UnifiedCameraNodeFacade {
         if (sourceKey == null || sourceKey.length() > MAX_SELECTION_KEY_LENGTH || isRunning()) {
             return false;
         }
+        finitePlan = null;
         if (sourceKey.isEmpty()) {
             preferredSource = null;
             return true;
@@ -185,10 +202,48 @@ public final class UnifiedCameraNodeFacade {
         }
         try {
             preferredQuality = AvcQualityPreset.valueOf(quality.toUpperCase(Locale.ROOT));
+            finitePlan = null;
             return true;
         } catch (IllegalArgumentException rejected) {
             return false;
         }
+    }
+
+    /** These setters are called only after the Node service cancels its pending Route. */
+    public static synchronized boolean selectProfile(String profile) {
+        if (isRunning() || !(LEGACY_PROFILE.equals(profile) || FINITE_PROFILE.equals(profile))) return false;
+        preferredProfile = profile;
+        finitePlan = null;
+        finitePreflight = LEGACY_PROFILE.equals(profile) ? "not_requested" : "unsupported";
+        return true;
+    }
+
+    public static synchronized void preflightSelectedProfile(Context context) {
+        finitePlan = null;
+        finitePreflight = LEGACY_PROFILE.equals(preferredProfile) ? "not_requested" : "unsupported";
+        if (!FINITE_PROFILE.equals(preferredProfile) || preferredSource == null
+                || preferredQuality != AvcQualityPreset.BALANCED) return;
+        try {
+            finitePlan = FiniteCameraPreflight.preflight(context, preferredSource);
+            finitePreflight = "eligible"; // Metadata eligibility is NOT output/device verification.
+        } catch (Exception unsupported) {
+            finitePlan = null; // No legacy fallback, including failed/unknown camera metadata.
+        }
+    }
+
+    public static synchronized List<String> advertisedFormats() {
+        if (LEGACY_PROFILE.equals(preferredProfile)) return List.of("cavc-avc-access-unit-v1");
+        return matchesCapturePlan(finitePlan) ? List.of(finitePlan.formatId()) : List.of();
+    }
+
+    public static synchronized FiniteCameraPreflight.Plan selectedFinitePlan() {
+        return FINITE_PROFILE.equals(preferredProfile) && matchesCapturePlan(finitePlan) ? finitePlan : null;
+    }
+
+    public static synchronized boolean matchesCapturePlan(FiniteCameraPreflight.Plan plan) {
+        if (LEGACY_PROFILE.equals(preferredProfile)) return plan == null;
+        return plan != null && plan == finitePlan && preferredSource != null
+                && preferredSource.equals(plan.source()) && preferredQuality == AvcQualityPreset.BALANCED;
     }
 
     public static synchronized String settingsJson(boolean permissionReady) {
@@ -207,6 +262,8 @@ public final class UnifiedCameraNodeFacade {
                     .put("selectedSourceKey", preferredSource == null
                             ? JSONObject.NULL : preferredSource.key())
                     .put("quality", preferredQuality.name().toLowerCase(Locale.ROOT))
+                    .put("captureProfile", preferredProfile)
+                    .put("finitePreflight", finitePreflight)
                     .put("problemCode", lifecycle.problemCode() != null ? lifecycle.problemCode()
                             : inventoryProblemCode == null ? JSONObject.NULL : inventoryProblemCode);
             JSONArray sources = new JSONArray();

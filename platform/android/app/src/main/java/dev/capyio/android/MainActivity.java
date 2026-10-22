@@ -39,7 +39,6 @@ import dev.capyio.android.contract.CapabilityLifecycleSnapshot;
 import dev.capyio.android.contract.CapabilityLifecycleState;
 import dev.capyio.android.contract.GamepadControlsSnapshot;
 import dev.capyio.android.contract.TouchpadContactSnapshot;
-import io.capyio.camera.lab.UnifiedCameraNodeFacade;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -87,6 +86,8 @@ public final class MainActivity extends Activity {
     private volatile AudioNodeService.NodeBinder binder;
     private AudioCapabilityKind pendingStart;
     private boolean pendingCameraStart;
+    private long pendingCameraSettingsRevision;
+    private AudioNodeService.NodeBinder pendingCameraOwner;
     private AndroidCapabilityCommand.Target pendingConnectedDeviceStart;
     private boolean bound;
     private volatile boolean uiInputActive;
@@ -304,11 +305,15 @@ public final class MainActivity extends Activity {
             boolean requested = pendingCameraStart;
             pendingCameraStart = false;
             if (requested && cameraPermissionsGranted()) {
-                UnifiedCameraNodeFacade.start(this);
+                AudioNodeService.NodeBinder current = binder;
+                if (current != null && current == pendingCameraOwner) {
+                    current.startLocalCamera(pendingCameraSettingsRevision);
+                }
                 renderPermissionState(null);
             } else {
                 renderPermissionState(getString(R.string.permission_denied));
             }
+            pendingCameraOwner = null;
             dispatchSharedUiState();
             return;
         }
@@ -478,7 +483,9 @@ public final class MainActivity extends Activity {
         return microphoneGranted && notificationGranted;
     }
 
-    private void requestStartCamera() {
+    private void requestStartCamera(long expectedRevision) {
+        AudioNodeService.NodeBinder current = binder;
+        if (current == null || current.cameraSettingsRevision() != expectedRevision) return;
         List<String> missing = new ArrayList<>();
         if (checkSelfPermission(Manifest.permission.CAMERA) != PackageManager.PERMISSION_GRANTED) {
             missing.add(Manifest.permission.CAMERA);
@@ -490,10 +497,12 @@ public final class MainActivity extends Activity {
         }
         if (!missing.isEmpty()) {
             pendingCameraStart = true;
+            pendingCameraSettingsRevision = expectedRevision;
+            pendingCameraOwner = current;
             requestPermissions(missing.toArray(new String[0]), REQUEST_CAMERA_PERMISSIONS);
             return;
         }
-        UnifiedCameraNodeFacade.start(this);
+        current.startLocalCamera(expectedRevision);
     }
 
     private boolean cameraPermissionsGranted() {
@@ -1114,7 +1123,8 @@ public final class MainActivity extends Activity {
 
         @JavascriptInterface
         public String getCameraSettingsJson() {
-            return UnifiedCameraNodeFacade.settingsJson(cameraPermissionsGranted());
+            AudioNodeService.NodeBinder current = binder;
+            return current == null ? "" : current.getCameraSettingsJson(cameraPermissionsGranted());
         }
 
         @JavascriptInterface
@@ -1122,14 +1132,16 @@ public final class MainActivity extends Activity {
             if (!cameraPermissionsGranted()) {
                 return false;
             }
-            boolean accepted = UnifiedCameraNodeFacade.refreshSources(MainActivity.this);
+            AudioNodeService.NodeBinder current = binder;
+            boolean accepted = current != null && current.updateCameraSettings("refresh", "");
             dispatchSharedUiState();
             return accepted;
         }
 
         @JavascriptInterface
         public boolean selectCameraSource(String sourceKey) {
-            boolean accepted = UnifiedCameraNodeFacade.selectSource(sourceKey);
+            AudioNodeService.NodeBinder current = binder;
+            boolean accepted = current != null && current.updateCameraSettings("source", sourceKey);
             if (accepted) {
                 dispatchSharedUiState();
             }
@@ -1138,10 +1150,19 @@ public final class MainActivity extends Activity {
 
         @JavascriptInterface
         public boolean selectCameraQuality(String quality) {
-            boolean accepted = UnifiedCameraNodeFacade.selectQuality(quality);
+            AudioNodeService.NodeBinder current = binder;
+            boolean accepted = current != null && current.updateCameraSettings("quality", quality);
             if (accepted) {
                 dispatchSharedUiState();
             }
+            return accepted;
+        }
+
+        @JavascriptInterface
+        public boolean selectCameraProfile(String profile) {
+            AudioNodeService.NodeBinder current = binder;
+            boolean accepted = current != null && current.updateCameraSettings("profile", profile);
+            if (accepted) dispatchSharedUiState();
             return accepted;
         }
 
@@ -1221,11 +1242,13 @@ public final class MainActivity extends Activity {
                 if (cameraCommand == null) {
                     return false;
                 }
+                long expectedRevision = current.cameraSettingsRevision();
                 handler.post(() -> {
                     if (cameraCommand.operation() == AndroidCameraCommand.Operation.STOP) {
-                        UnifiedCameraNodeFacade.stop(MainActivity.this);
-                    } else {
-                        requestStartCamera();
+                        pendingCameraStart = false;
+                        current.stopCameraUse();
+                    } else if (binder == current) {
+                        requestStartCamera(expectedRevision);
                     }
                 });
                 return true;

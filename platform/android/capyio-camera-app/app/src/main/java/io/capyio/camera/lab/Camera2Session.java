@@ -19,6 +19,7 @@ import android.os.Build;
 import android.os.Handler;
 import android.os.HandlerThread;
 import android.os.SystemClock;
+import android.util.Range;
 import android.util.Size;
 import android.view.Surface;
 import android.view.TextureView;
@@ -161,7 +162,19 @@ final class Camera2Session implements AutoCloseable {
         }
 
         CameraManager manager = context.getSystemService(CameraManager.class);
-        Selection selection = selectCamera(manager, preferredFacing, preferredSource);
+        FiniteCameraPreflight.Plan finitePlan = secureBinding == null ? null : secureBinding.finitePlan();
+        Selection selection;
+        if (finitePlan != null) {
+            if (!finitePlan.source().equals(preferredSource) || qualityPreset != AvcQualityPreset.BALANCED) {
+                throw new IllegalStateException("finite capture source or quality changed");
+            }
+            FiniteCameraPreflight.revalidate(context, finitePlan);
+            selection = new Selection(finitePlan.cameraId(), finitePlan.source().key(), null,
+                    new Size(1280, 720), 0,
+                    FrameObservation.LensFacing.valueOf(finitePlan.source().facing().name()));
+        } else {
+            selection = selectCamera(manager, preferredFacing, preferredSource);
+        }
         sensorOrientationDegrees = selection.sensorOrientationDegrees();
         lensFacing = selection.lensFacing();
         sourceKey = selection.sourceKey();
@@ -179,7 +192,9 @@ final class Camera2Session implements AutoCloseable {
         }
         captureSize = selection.size();
         AvcEncoderConfig encoderConfig =
-                configForSize(selection.size(), qualityPreset, sensorOrientationDegrees);
+                finitePlan == null
+                        ? configForSize(selection.size(), qualityPreset, sensorOrientationDegrees)
+                        : finitePlan.encoderConfig();
         SecureAvcSender secure = null;
         AvcSender createdSender;
         if (secureBinding != null) {
@@ -188,7 +203,7 @@ final class Camera2Session implements AutoCloseable {
             }
             secure = new SecureAvcSender(secureBinding.transport(), secureBinding.generation(),
                     routeBinding.streamKey(), encoderConfig, routeBinding.expiresAtMs(),
-                    listener::onTransportStatus);
+                    listener::onTransportStatus, finitePlan != null);
             SecureAvcSender selected = secure;
             createdSender = new AvcSender() {
                 public void start() { selected.start(); }
@@ -203,7 +218,7 @@ final class Camera2Session implements AutoCloseable {
                     encoderConfig, listener::onTransportStatus, routeBinding);
         }
         createdSender.start();
-        MediaCodecSurfaceEncoder createdEncoder = new MediaCodecSurfaceEncoder(encoderConfig, secure);
+        MediaCodecSurfaceEncoder createdEncoder = new MediaCodecSurfaceEncoder(encoderConfig, secure, finitePlan);
         try {
             if (secureBinding != null && !secureBinding.ready()) {
                 throw new IllegalStateException("secure generation cancelled before encoder start");
@@ -228,6 +243,11 @@ final class Camera2Session implements AutoCloseable {
             createdSender.close();
             fail("Secure generation cancelled before camera open");
             return;
+        }
+        if (finitePlan != null) {
+            // Metadata can change during encoder creation. Revalidate the same Plan immediately
+            // before open; failure never reselects a camera, size, rate, profile or codec.
+            FiniteCameraPreflight.revalidate(context, finitePlan);
         }
         manager.openCamera(selection.cameraId(), executor(), deviceCallback);
     }
@@ -330,6 +350,14 @@ final class Camera2Session implements AutoCloseable {
                             request.addTarget(display);
                         }
                         request.addTarget(encoded);
+                        if (secureBinding != null && secureBinding.finitePlan() != null) {
+                            request.set(CaptureRequest.CONTROL_AE_MODE, CaptureRequest.CONTROL_AE_MODE_ON);
+                            request.set(CaptureRequest.CONTROL_AE_TARGET_FPS_RANGE, new Range<>(30, 30));
+                            if (Build.VERSION.SDK_INT >= 31) {
+                                request.set(CaptureRequest.SCALER_ROTATE_AND_CROP,
+                                        CaptureRequest.SCALER_ROTATE_AND_CROP_NONE);
+                            }
+                        }
                         Float selectedZoomRatio = targetZoomRatio;
                         if (selectedZoomRatio != null && Build.VERSION.SDK_INT >= 30) {
                             request.set(CaptureRequest.CONTROL_ZOOM_RATIO, selectedZoomRatio);
@@ -635,6 +663,8 @@ final class Camera2Session implements AutoCloseable {
                 return;
             }
         }
+        // Service cleanup is posted to its main handler; stop secure writes synchronously first.
+        if (secureBinding != null) secureBinding.stop();
         listener.onError(reason);
     }
 

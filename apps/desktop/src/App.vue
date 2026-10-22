@@ -1053,6 +1053,14 @@ async function selectCameraSource(event: Event): Promise<void> {
   finally { cameraSettingsBusy.value = false; }
 }
 
+async function selectCameraProfile(event: Event): Promise<void> {
+  cameraSettingsBusy.value = true;
+  errorMessage.value = "";
+  try { androidCamera.value = await api.selectAndroidCameraProfile((event.target as HTMLSelectElement).value as UiAndroidCameraSettings["captureProfile"]); }
+  catch (error) { errorMessage.value = normalizeError(error); }
+  finally { cameraSettingsBusy.value = false; }
+}
+
 async function selectCameraQuality(event: Event): Promise<void> {
   cameraSettingsBusy.value = true;
   errorMessage.value = "";
@@ -1894,11 +1902,17 @@ async function refreshVisibleState(): Promise<void> {
         <div>
           <p class="eyebrow">Android Node · Camera2 Source</p>
           <h2 id="android-camera-title">本机摄像头设置</h2>
-          <p>选择只在停止状态生效；权限、采集生命周期、共享勾选与 Route 保持分离。</p>
+          <p>停止后可修改或刷新；编辑会取消待处理申请和相机共享，之后必须重新点击 Start。不会延长授权。</p>
         </div>
         <StatusPill :tone="androidCamera.state === 'active' ? 'success' : androidCamera.state === 'failed' ? 'danger' : 'warning'" :label="androidCamera.state" />
       </header>
       <form class="imu-live__controls" @submit.prevent="refreshCameraSources">
+        <label>采集模式（仅本次进程）
+          <select :value="androidCamera.captureProfile" :disabled="cameraSettingsBusy || ['starting', 'active'].includes(androidCamera.state)" @change="selectCameraProfile">
+            <option value="legacy">Legacy · 默认模式</option>
+            <option value="finite_720p30_v1">实验 · 有限 720p30 · 必须选择具体相机</option>
+          </select>
+        </label>
         <label>具体 Camera2 来源
           <select :value="androidCamera.selectedSourceKey ?? ''" :disabled="cameraSettingsBusy || ['starting', 'active'].includes(androidCamera.state) || !androidCamera.permissionReady" @change="selectCameraSource">
             <option value="">自动（优先后置）</option>
@@ -1914,7 +1928,12 @@ async function refreshVisibleState(): Promise<void> {
         </label>
         <button class="ghost-button" type="submit" :disabled="cameraSettingsBusy || ['starting', 'active'].includes(androidCamera.state) || !androidCamera.permissionReady">刷新硬件来源</button>
       </form>
-      <p v-if="!androidCamera.permissionReady" class="gamepad-lab__note">首次在此页启动摄像头后由 Android 请求权限；停止后即可刷新并选择具体摄像头。</p>
+      <p v-if="androidCamera.captureProfile === 'finite_720p30_v1'" class="gamepad-lab__note" role="status">
+        实验有限模式：1280×720 / 30 fps / Balanced 4 Mbit/s；仅接受 sensor orientation = 0°，普通手机通常不支持。必须明确选择相机，自动或不兼容来源不会退回 Legacy。
+        预检：{{ androidCamera.finitePreflight === 'eligible' ? '符合元数据条件（eligible），不代表已验证编码输出、设备兼容或接收端显示' : '不支持或未满足条件，未发布有限格式' }}。
+        最长 60 秒且受帧数、字节和速率上限约束，不是连续相机支持声明。
+      </p>
+      <p v-if="!androidCamera.permissionReady" class="gamepad-lab__note">相机权限仍由 Android 在显式启动时请求；获得权限后才能刷新具体来源。模式选择不会授予权限。</p>
       <p v-if="androidCamera.transportStatus" class="imu-lab__detail">视频传输：{{ androidCamera.transportStatus }}</p>
       <p v-if="androidCamera.sentAccessUnits !== undefined" class="imu-lab__detail">采集 {{ androidCamera.capturedFrames }} 帧 · 编码 {{ androidCamera.encodedAccessUnits }} · 已发送 {{ androidCamera.sentAccessUnits }} · 发送队列丢弃 {{ androidCamera.exportDroppedAccessUnits }}。已发送不等于 Windows 相机应用已显示画面。</p>
       <p v-if="androidCamera.problemCode" class="error-banner" role="status">{{ androidCamera.problemCode }}</p>

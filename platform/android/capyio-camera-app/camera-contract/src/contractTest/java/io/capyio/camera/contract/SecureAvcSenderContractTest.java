@@ -17,6 +17,13 @@ public final class SecureAvcSenderContractTest {
         staleGenerationAndRejectedRecordAreTerminal();
         inFlightUnitRetainsCapacity();
         expiryStopsWithoutRetry();
+        FiniteCameraAvcValidatorContractTest.Fixture fixture =
+                FiniteCameraAvcValidatorContractTest.loadFixture(args);
+        finiteCanonicalFixtureReachesTransport(fixture);
+        finiteInvalidConfigNeverReachesTransport(fixture);
+        finiteInvalidUnitNeverReachesTransport(fixture);
+        finiteConfigMutationTerminatesWithoutReset(fixture);
+        finiteSequenceGapCannotSilentlyDrop(fixture);
         System.out.println("Secure AVC sender contract tests: PASS");
     }
 
@@ -127,6 +134,141 @@ public final class SecureAvcSenderContractTest {
                 System.currentTimeMillis() - 1, (s, n, d) -> {});
         sender.start();
         check(!sender.reserveOutput(6) && nativeBoundary.stops.get() == 1, "expired sender terminal");
+    }
+
+    private static SecureAvcSender finiteSender(FakeTransport transport) {
+        byte[] id = new byte[16];
+        id[0] = 1;
+        return new SecureAvcSender(transport, 7,
+                new AvcWireRecordEncoder.StreamKey(id, 9), AvcEncoderConfig.baseline720p30(),
+                System.currentTimeMillis() + 10_000, (s, n, d) -> {}, true);
+    }
+
+    private static void finiteCanonicalFixtureReachesTransport(
+            FiniteCameraAvcValidatorContractTest.Fixture fixture) throws Exception {
+        FakeTransport transport = new FakeTransport();
+        SecureAvcSender sender = finiteSender(transport);
+        try {
+            sender.start();
+            sender.setCodecConfig(fixture.config());
+            sender.setCodecConfig(new AvcCodecConfig(FiniteCameraAvcValidatorContractTest.concat(
+                    fixture.csd0(), fixture.csd1()), new byte[0]));
+            for (int i = 0; i < fixture.units().size(); i++) {
+                sender.offer(fixture.units().get(i));
+                int expected = i + 2; // One initial CONFIG plus each AU/EOS.
+                await(() -> transport.records.size() == expected);
+                if (i == 0) sender.setCodecConfig(fixture.config());
+            }
+            check(transport.records.size() == 5, "finite config/3 media/EOS complete records");
+            check(transport.records.get(0)[6] == 1, "finite config precedes media");
+            for (int i = 1; i < transport.records.size(); i++) {
+                byte[] record = transport.records.get(i);
+                check(record[6] == 2 && ByteBuffer.wrap(record).getLong(36) == i,
+                        "finite transport preserves contiguous fixture sequence");
+                byte[] expected = FiniteCameraAvcValidatorContractTest.payload(fixture.units().get(i - 1));
+                check(java.util.Arrays.equals(java.util.Arrays.copyOfRange(record, 56, record.length), expected),
+                        "validator forwards original committed fixture payload without rewriting");
+            }
+            check(transport.starts.get() == 0 && transport.stops.get() == 0,
+                    "finite validation does not manufacture native lifecycle authority");
+            check(sender.reserveOutput(fixture.units().get(0).payloadLength()), "reserve before late callback");
+            FiniteCameraAvcValidatorContractTest.reject(
+                    () -> sender.offerReserved(fixture.units().get(0)), "EOS cannot reset finite validator");
+            sender.cancelReservation(); // Failed offer already released it; cancellation is idempotent.
+            check(transport.stops.get() == 1 && transport.records.size() == 5,
+                    "late callback terminates without sending or double release");
+        } finally {
+            sender.close();
+        }
+    }
+
+    private static void finiteInvalidConfigNeverReachesTransport(
+            FiniteCameraAvcValidatorContractTest.Fixture fixture) {
+        FakeTransport transport = new FakeTransport();
+        SecureAvcSender sender = finiteSender(transport);
+        try {
+            sender.start();
+            byte[] mainProfile = fixture.csd0().clone();
+            mainProfile[5] = 77;
+            FiniteCameraAvcValidatorContractTest.reject(
+                    () -> sender.setCodecConfig(new AvcCodecConfig(mainProfile, fixture.csd1())),
+                    "finite sender rejects unverified actual profile before publication");
+            check(transport.calls.get() == 0 && transport.records.isEmpty() && transport.stops.get() == 1,
+                    "invalid config reaches neither wire encoder nor transport");
+            FiniteCameraAvcValidatorContractTest.reject(() -> sender.setCodecConfig(fixture.config()),
+                    "repeated valid config cannot resurrect failed sender");
+            FiniteCameraAvcValidatorContractTest.reject(sender::start, "failed sender cannot restart");
+            check(!sender.reserveOutput(6), "invalid config prevents later payload copy");
+        } finally {
+            sender.close();
+        }
+        check(transport.stops.get() == 1, "invalid config stops original generation exactly once");
+    }
+
+    private static void finiteInvalidUnitNeverReachesTransport(
+            FiniteCameraAvcValidatorContractTest.Fixture fixture) {
+        FakeTransport transport = new FakeTransport();
+        SecureAvcSender sender = finiteSender(transport);
+        try {
+            sender.start();
+            sender.setCodecConfig(fixture.config());
+            EncodedAvcAccessUnit invalid = unit(1); // Existing legacy fake is not a valid finite slice.
+            check(sender.reserveOutput(invalid.payloadLength()), "finite copy reservation");
+            FiniteCameraAvcValidatorContractTest.reject(() -> sender.offerReserved(invalid),
+                    "malformed AU must fail before queue insertion");
+            sender.cancelReservation();
+            check(transport.records.isEmpty() && transport.calls.get() == 0 && transport.stops.get() == 1,
+                    "no optimistic config record or malformed media reached transport");
+            check(!sender.reserveOutput(fixture.units().get(0).payloadLength()),
+                    "later real IDR cannot recover from invalid AU");
+            FiniteCameraAvcValidatorContractTest.reject(() -> sender.setCodecConfig(fixture.config()),
+                    "format callback cannot reset failed finite media state");
+        } finally {
+            sender.close();
+        }
+    }
+
+    private static void finiteConfigMutationTerminatesWithoutReset(
+            FiniteCameraAvcValidatorContractTest.Fixture fixture) throws Exception {
+        FakeTransport transport = new FakeTransport();
+        SecureAvcSender sender = finiteSender(transport);
+        try {
+            sender.start();
+            sender.setCodecConfig(fixture.config());
+            sender.offer(fixture.units().get(0));
+            await(() -> transport.records.size() == 2);
+            byte[] changed = fixture.csd0().clone();
+            changed[6] ^= 0x40; // Otherwise valid but different parameter set.
+            FiniteCameraAvcValidatorContractTest.reject(
+                    () -> sender.setCodecConfig(new AvcCodecConfig(changed, fixture.csd1())),
+                    "finite repeated config cannot be silently ignored after first publication");
+            check(transport.stops.get() == 1 && transport.records.size() == 2,
+                    "parameter-set mutation terminates without a changed config record");
+            check(!sender.reserveOutput(fixture.units().get(1).payloadLength()), "mutation is non-resetting");
+            FiniteCameraAvcValidatorContractTest.reject(sender::start, "mutation cannot restart sender");
+        } finally {
+            sender.close();
+        }
+    }
+
+    private static void finiteSequenceGapCannotSilentlyDrop(
+            FiniteCameraAvcValidatorContractTest.Fixture fixture) throws Exception {
+        FakeTransport transport = new FakeTransport();
+        SecureAvcSender sender = finiteSender(transport);
+        try {
+            sender.start();
+            sender.setCodecConfig(fixture.config());
+            sender.offer(fixture.units().get(0));
+            await(() -> transport.records.size() == 2);
+            EncodedAvcAccessUnit gap = fixture.units().get(2);
+            check(sender.reserveOutput(gap.payloadLength()), "reserve gapped finite unit");
+            FiniteCameraAvcValidatorContractTest.reject(() -> sender.offerReserved(gap),
+                    "finite sequence gap is an error rather than legacy IDR recovery");
+            check(transport.records.size() == 2 && transport.stops.get() == 1,
+                    "gapped unit never reaches transport");
+        } finally {
+            sender.close();
+        }
     }
 
     private interface Condition { boolean met(); }

@@ -131,6 +131,14 @@ pub(super) fn receive_status(
         job.secure_transport = true;
     }
     if let Some(offer) = offer {
+        let route = host.runtime.route(peer.id).map_err(|e| e.to_string())?;
+        if crate::camera_sender::CameraSenderProfile::requires_secure_transport(
+            peer.selected_format.as_ref(),
+        ) || crate::camera_sender::CameraSenderProfile::requires_secure_transport(
+            route.selected_format.as_ref(),
+        ) {
+            return Err("finite camera cannot use plaintext transport".into());
+        }
         if host
             .camera_use
             .as_ref()

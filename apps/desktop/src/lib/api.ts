@@ -1,3 +1,4 @@
+import { parseAndroidCameraSettings } from "./android-camera-settings";
 import { invoke } from "@tauri-apps/api/core";
 
 import { BrowserMockCapyIOApi } from "./mock";
@@ -75,6 +76,7 @@ declare global {
       refreshCameraSources(): boolean;
       selectCameraSource(sourceKey: string): boolean;
       selectCameraQuality(quality: string): boolean;
+      selectCameraProfile(profile: string): boolean;
     };
   }
 }
@@ -393,12 +395,7 @@ class AndroidNodeCapyIOApi implements CapyIOApi {
   async getAndroidCameraSettings(): Promise<UiAndroidCameraSettings | null> {
     const encoded = window.CapyIOAndroid?.getCameraSettingsJson();
     if (!encoded) return null;
-    const state = JSON.parse(encoded) as UiAndroidCameraSettings;
-    if (state.schemaVersion !== 1 || !Array.isArray(state.sources)
-      || !["economy", "balanced", "clear"].includes(state.quality)) {
-      throw new Error("Android camera bridge returned incompatible data");
-    }
-    return state;
+    return parseAndroidCameraSettings(JSON.parse(encoded));
   }
   async refreshAndroidCameraSources(): Promise<UiAndroidCameraSettings> {
     if (!window.CapyIOAndroid?.refreshCameraSources()) {
@@ -411,6 +408,14 @@ class AndroidNodeCapyIOApi implements CapyIOApi {
   async selectAndroidCameraSource(sourceKey: string): Promise<UiAndroidCameraSettings> {
     if (!window.CapyIOAndroid?.selectCameraSource(sourceKey)) {
       throw new Error("Android rejected camera source selection");
+    }
+    const state = await this.getAndroidCameraSettings();
+    if (!state) throw new Error("Android camera settings became unavailable");
+    return state;
+  }
+  async selectAndroidCameraProfile(profile: UiAndroidCameraSettings["captureProfile"]): Promise<UiAndroidCameraSettings> {
+    if (!window.CapyIOAndroid?.selectCameraProfile(profile)) {
+      throw new Error("Android rejected camera profile selection");
     }
     const state = await this.getAndroidCameraSettings();
     if (!state) throw new Error("Android camera settings became unavailable");
@@ -664,6 +669,7 @@ class TauriCapyIOApi implements CapyIOApi {
   refreshAndroidCameraSources(): Promise<UiAndroidCameraSettings> { return Promise.reject(new Error("Android camera settings require the Android backend")); }
   selectAndroidCameraSource(): Promise<UiAndroidCameraSettings> { return Promise.reject(new Error("Android camera settings require the Android backend")); }
   selectAndroidCameraQuality(): Promise<UiAndroidCameraSettings> { return Promise.reject(new Error("Android camera settings require the Android backend")); }
+  selectAndroidCameraProfile(): Promise<UiAndroidCameraSettings> { return Promise.reject(new Error("Android camera settings require the Android backend")); }
 
   selectAudioEndpoint(actionId: string, selectionToken: string): Promise<UiQuickAction> {
     return invoke<UiQuickAction>("select_audio_endpoint", {

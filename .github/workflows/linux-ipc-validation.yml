@@ -361,6 +361,18 @@ jobs:
         with:
           ref: ${{ github.sha }}
           persist-credentials: false
+      - uses: pnpm/setup@v1
+        with:
+          version: 11.5.3
+          runtime: node@24
+          cache: true
+          install: false
+      - name: Validate explicit Android camera profile UI
+        run: |
+          set -euo pipefail
+          timeout --signal=TERM --kill-after=10s 180s pnpm install --frozen-lockfile --ignore-scripts
+          pnpm --filter @capyio/desktop typecheck
+          node --test scripts/android_camera_settings_ui.test.mjs
       - name: Require preinstalled pinned NDK and JDK
         run: |
           set -euo pipefail
@@ -405,7 +417,7 @@ jobs:
           test -d "$sdk/build-tools/36.0.0" || { echo 'Preinstalled build-tools 36.0.0 are required; no SDK install fallback.' >&2; exit 1; }
           # Compile source/resources only, not APK assembly/signing or capture.
           # JNI is cross-compiled above; web assets do not affect Java types.
-          timeout --signal=TERM --kill-after=10s 600s bash platform/android/gradlew -p platform/android --no-daemon -Pandroid.builder.sdkDownload=false :app:compileDebugJavaWithJavac -x syncSharedUi -x buildRustJni
+          timeout --signal=TERM --kill-after=10s 600s bash platform/android/gradlew -p platform/android --no-daemon -Pandroid.builder.sdkDownload=false :app:compileDebugJavaWithJavac :app:capabilityCompositionTest -x syncSharedUi -x buildRustJni
       - name: Check generated Java native names against Android exports
         run: |
           set -euo pipefail
@@ -415,7 +427,7 @@ jobs:
       - name: Run existing Java lifecycle and native LAN contracts
         run: |
           set -euo pipefail
-          for main in dev.capyio.android.contract.AudioNodeContractTest dev.capyio.android.contract.CapabilityCatalogContractTest dev.capyio.android.contract.CapabilityLifecycleContractTest dev.capyio.android.lan.NativeLanContractTest dev.capyio.android.lan.NativeLanEndpointConcurrencyTest io.capyio.camera.contract.CaptureStateMachineContractTest io.capyio.camera.contract.SecureAvcSenderContractTest; do
+          for main in dev.capyio.android.contract.AudioNodeContractTest dev.capyio.android.contract.CapabilityCatalogContractTest dev.capyio.android.contract.CapabilityLifecycleContractTest dev.capyio.android.lan.NativeLanContractTest dev.capyio.android.lan.NativeLanEndpointConcurrencyTest io.capyio.camera.contract.CaptureStateMachineContractTest io.capyio.camera.contract.SecureAvcSenderContractTest io.capyio.camera.contract.FiniteCameraAvcValidatorContractTest io.capyio.camera.contract.FiniteCameraEligibilityContractTest; do
             timeout --signal=TERM --kill-after=10s 60s java -ea -Dcapyio.nativeLanFixture="$GITHUB_WORKSPACE/fixtures/audio/native_lan_v1_opus_single.hex" -cp "$RUNNER_TEMP/android-contract-classes" "$main"
           done
 

@@ -440,6 +440,9 @@ export class BrowserMockCapyIOApi implements CapyIOApi {
   async selectAndroidCameraSource(): Promise<UiAndroidCameraSettings> {
     throw new Error("Android camera selection requires the Android backend.");
   }
+  async selectAndroidCameraProfile(): Promise<UiAndroidCameraSettings> {
+    throw new Error("Android camera profile requires the Android backend.");
+  }
   async selectAndroidCameraQuality(): Promise<UiAndroidCameraSettings> {
     throw new Error("Android camera quality requires the Android backend.");
   }

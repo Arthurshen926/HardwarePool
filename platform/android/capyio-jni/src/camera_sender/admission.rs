@@ -23,6 +23,11 @@ impl CameraSenderProfile {
     pub(crate) fn matches_selection(self, selected: Option<&FormatDescriptor>) -> bool {
         selected == Some(&FormatDescriptor::new(self.format_name()))
     }
+    /// A parameter mutation cannot turn the secure-only finite identifier into lab plaintext.
+    #[cfg(any(target_os = "android", test))]
+    pub(crate) fn requires_secure_transport(selected: Option<&FormatDescriptor>) -> bool {
+        selected.is_some_and(|format| format.id == Self::Finite720p30V1.format_name())
+    }
     pub(crate) fn format_name(self) -> &'static str {
         match self {
             Self::Legacy => "cavc-avc-access-unit-v1",
@@ -279,6 +284,21 @@ mod tests {
     }
     #[test]
     fn exact_profiles_reject_parameters_aliases_and_mutation() {
+        let mut finite = FormatDescriptor::new(CameraSenderProfile::Finite720p30V1.format_name());
+        assert!(CameraSenderProfile::requires_secure_transport(Some(
+            &finite
+        )));
+        finite
+            .parameters
+            .insert("unexpected".into(), "value".into());
+        assert!(CameraSenderProfile::requires_secure_transport(Some(
+            &finite
+        )));
+        assert!(!CameraSenderProfile::requires_secure_transport(None));
+        assert!(!CameraSenderProfile::requires_secure_transport(Some(
+            &FormatDescriptor::new(CameraSenderProfile::Legacy.format_name(),)
+        )));
+
         for profile in [
             CameraSenderProfile::Legacy,
             CameraSenderProfile::Finite720p30V1,
