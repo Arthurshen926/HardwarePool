@@ -227,16 +227,50 @@ def verify_reaped(owners, bound):
         raise ValueError('actual secure console, Node or playback helper survived cleanup')
 
 
+def checkpoint_diagnostic(root, checkpoint, returncode, lease_ms, now_ms):
+    """Bounded, payload-free evidence before temporary files are removed."""
+    stage = checkpoint if checkpoint in ('before_local', 'before_source', 'bound', 'stopped') else 'other'
+    state = 'alive' if returncode is None else 'exited:' + str(int(returncode))
+    locations = []
+    size = None
+    try:
+        with (root / 'producer.err').open('rb') as stream:
+            stream.seek(0, os.SEEK_END)
+            size = stream.tell()
+            stream.seek(max(0, size - 4096))
+            tail = stream.read(4096).decode('utf-8', errors='replace')
+        locations = re.findall(
+            r'panicked at (apps/capyio-node/tests/(?:linux_secure_audio|support/(?:secure_console|playback_console|pty_console))\.rs:[0-9]{1,6}:[0-9]{1,4}):', tail)[-4:]
+    except OSError:
+        pass
+    # Never print stderr/stdout, panic payloads, terminal bytes or private frames.
+    return (f'secure_console_checkpoint_failure stage={stage} producer={state}'
+            f' now_ms={int(now_ms)} source_lease_expires_at_ms={lease_ms}'
+            f' stderr_bytes={size} panic_locations={",".join(locations) or "none"}')
+
+
 class SecureConsoleHarness(Harness):
     def __init__(self, root):
         super().__init__(root, e2e=True)
         self.owners = None
         self.console_chain_verified = False
         self.fixture_pid = None
+        self.last_source_lease = None
 
     def checkpoint(self, producer, name):
-        self.wait_checkpoint(producer, PREFIX + name + '.json')
-        return strict_json((self.root / (PREFIX + name + '.json')).read_bytes())
+        try:
+            self.wait_checkpoint(producer, PREFIX + name + '.json')
+        except Exception:
+            print(checkpoint_diagnostic(self.root, name, producer.poll(),
+                                        self.last_source_lease, time.time_ns() // 1_000_000),
+                  file=sys.stderr, flush=True)
+            raise
+        result = strict_json((self.root / (PREFIX + name + '.json')).read_bytes())
+        if name == 'bound':
+            value = result.get('source_lease_expires_at_ms')
+            if type(value) is int and 0 < value < 2 ** 64:
+                self.last_source_lease = value
+        return result
 
     def observe_pending(self, producer, baseline):
         offset = (self.root / 'capture.out').stat().st_size

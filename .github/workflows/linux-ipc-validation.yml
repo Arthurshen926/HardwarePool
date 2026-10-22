@@ -794,10 +794,13 @@ jobs:
           )"
           "$fixture" --list | tee "$RUNNER_TEMP/secure-console-tests.txt"
           grep -Fx 'secure_console::hosted_secure_audio_console_graph: test' "$RUNNER_TEMP/secure-console-tests.txt"
+          "$fixture" --exact secure_console::pure_secure_console_expiry_fits_existing_checkpoint_without_shortening_waveform \
+            --test-threads=1 --color never | tee "$RUNNER_TEMP/secure-console-budget.txt"
+          grep -Fx 'test secure_console::pure_secure_console_expiry_fits_existing_checkpoint_without_shortening_waveform ... ok' "$RUNNER_TEMP/secure-console-budget.txt"
           count=0
           for scenario in stop no_approval pretyped wrong_request wrong_route wrong_peer source_revoke expiry control_eof media_eof local_eof; do
             timeout --signal=TERM --kill-after=15s 75s python3 scripts/run_pipewire_secure_console.py \
-              --hosted-private-secure-console --fixture "$fixture" --scenario "$scenario" \
+              --hosted-private-secure-console --fixture "$fixture" --scenario "$scenario" 2>&1 \
               | tee "$RUNNER_TEMP/secure-console-$scenario.txt"
             grep -Fx "capyio_pipewire_secure_console=passed scenario=$scenario surface=production_console capture=synthetic real_graph=true owned_cleanup=true" "$RUNNER_TEMP/secure-console-$scenario.txt"
             count=$((count + 1))

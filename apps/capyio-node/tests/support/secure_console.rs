@@ -16,6 +16,22 @@ const SCENARIOS: [&str; 11] = [
     "media_eof",
     "local_eof",
 ];
+// The unchanged graph harness permits ten seconds from links-ready to the
+// stopped checkpoint. Expiry must leave room for actual finite teardown, not
+// ask the harness to wait less than the deliberately approved session itself.
+fn consent_seconds(scenario: &str) -> u64 {
+    if scenario == "expiry" { 8 } else { 12 }
+}
+#[test]
+fn pure_secure_console_expiry_fits_existing_checkpoint_without_shortening_waveform() {
+    let expiry = consent_seconds("expiry");
+    assert_eq!(expiry, 8);
+    assert!(expiry + 2 <= 10); // Existing checkpoint; two seconds for teardown.
+    assert!(expiry >= 3 + 3); // Full three-second waveform plus setup reserve.
+    for scenario in SCENARIOS.into_iter().filter(|name| *name != "expiry") {
+        assert_eq!(consent_seconds(scenario), 12);
+    }
+}
 fn negative(name: &str) -> bool {
     matches!(
         name,
@@ -195,7 +211,7 @@ fn hosted_secure_audio_console_graph() {
     let pairing =
         paired_store::PersistedPairing::new(local, &directory.encode_json().unwrap(), &bundle);
     let config = json!({"version":1,"node_id":local,"source":source,"listen":"127.0.0.1:0","media":"127.0.0.1:0",
-        "target":"capyio.test.null","endpoint_mode":"playback","proposal_mode":"linux_led","duration_secs":12,
+        "target":"capyio.test.null","endpoint_mode":"playback","proposal_mode":"linux_led","duration_secs":consent_seconds(&scenario),
         "media_security":"pinned_tls13_mono_v1"});
     let (child, console) = playback_console::Console::start(
         &pairing,
@@ -362,7 +378,13 @@ fn hosted_secure_audio_console_graph() {
         wait_marker(&root, "source_checked");
         let now = now_ms();
         consent
-            .resolve(&mut runtime, route, true, now, now + 12000)
+            .resolve(
+                &mut runtime,
+                route,
+                true,
+                now,
+                now + consent_seconds(&scenario) * 1000,
+            )
             .unwrap();
         link.send_route_status(runtime.route(route).unwrap())
             .unwrap();

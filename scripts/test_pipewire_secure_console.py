@@ -10,7 +10,7 @@ from run_pipewire_secure_console import (
     CLEANUP_FIELDS, FORMAT, NEGATIVE_SCENARIOS, PREFIX, SCENARIOS, TEST,
     SecureConsoleHarness, api_evidence, execution_marker, process_ids, strict_json,
     validate_bound, validate_pending, validate_result, verify_console_owner,
-    verify_execution, verify_reaped,
+    verify_execution, verify_reaped, checkpoint_diagnostic,
 )
 
 OWNERS = {'fixture_pid': 100, 'console_pid': 150, 'owner_pid': 200}
@@ -481,6 +481,34 @@ class SecureConsoleOwnershipTests(unittest.TestCase):
                     mock.patch('run_pipewire_secure_console.os.killpg') as kill:
                 h.cleanup_console()
                 kill.assert_not_called()
+
+
+class CheckpointDiagnostics(unittest.TestCase):
+    def test_alive_checkpoint_reports_only_safe_timing_and_location(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            secret = 'PRIVATE_CREDENTIAL_PAYLOAD'
+            (root / 'producer.err').write_text(
+                "thread 'fixture' panicked at apps/capyio-node/tests/support/secure_console.rs:546:21:\n"
+                + secret)
+            result = checkpoint_diagnostic(root, 'stopped', None, 12000, 10000)
+            self.assertIn('producer=alive', result)
+            self.assertIn('source_lease_expires_at_ms=12000', result)
+            self.assertIn('secure_console.rs:546:21', result)
+            self.assertNotIn(secret, result)
+            self.assertNotIn("thread 'fixture'", result)
+
+    def test_diagnostic_read_is_bounded_and_missing_log_safe(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            (root / 'producer.err').write_text(
+                'panicked at apps/capyio-node/tests/linux_secure_audio.rs:1:1:\n' + 'x' * 5000)
+            result = checkpoint_diagnostic(root, 'secret-stage', 101, None, 10000)
+            self.assertIn('stage=other producer=exited:101', result)
+            self.assertIn('panic_locations=none', result)
+            self.assertNotIn('secret-stage', result)
+            (root / 'producer.err').unlink()
+            self.assertIn('stderr_bytes=None', checkpoint_diagnostic(root, 'stopped', None, None, 1))
 
 
 if __name__ == '__main__':
