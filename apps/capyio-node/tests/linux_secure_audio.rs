@@ -26,6 +26,7 @@ use serde_json::{Value, json};
 use std::{
     collections::{BTreeMap, BTreeSet},
     fs,
+    net::TcpListener,
     path::{Path, PathBuf},
     sync::{
         Arc,
@@ -546,6 +547,20 @@ fn pure_secure_audio_expiry_requires_exact_negotiated_deadline() {
     }
 }
 
+#[test]
+fn pure_secure_audio_control_endpoint_requires_actual_bound_port() {
+    let mut endpoint = ControlTlsEndpoint {
+        address: "127.0.0.1:0".parse().unwrap(),
+        io_timeout: Duration::from_secs(2),
+    };
+    assert!(matches!(
+        endpoint.validate(),
+        Err(capyio_control_tls::ControlTlsError::InvalidEndpoint)
+    ));
+    endpoint.address.set_port(49152);
+    endpoint.validate().unwrap();
+}
+
 fn receive_offer(
     runtime: &mut NodeRuntime,
     link: &mut CatalogControlLink,
@@ -688,16 +703,19 @@ fn hosted_secure_audio_android_sender_graph() {
     let (linux, sink) = sink_runtime();
     let (server_identity, client_identity) = identities();
     let nodes = ControlTlsNodeBinding::new(sink.node_id, source.node_id).unwrap();
-    let server = AuthenticatedControlServer::bind_fresh_session(
-        ControlTlsEndpoint {
-            address: "127.0.0.1:0".parse().unwrap(),
-            io_timeout: Duration::from_secs(2),
-        },
+    // Port zero requests an ephemeral listener, not a valid peer endpoint.
+    // Retain the bound socket rather than reserving and reopening its port.
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let server = AuthenticatedControlServer::from_listener_fresh_session(
+        listener,
         server_identity.clone(),
         nodes,
+        Duration::from_secs(2),
     )
     .unwrap();
     let address = server.local_addr().unwrap();
+    assert!(address.ip().is_loopback());
+    assert_ne!(address.port(), 0);
     let mut directory = PairedPeerDirectory::new(source.node_id).unwrap();
     directory
         .add(

@@ -168,6 +168,7 @@ jobs:
           secure::tests::secure_audio_terminal_observation_is_not_replaced_after_cleanup
           secure::tests::secure_audio_failed_terminal_clock_cannot_gain_postcleanup_timestamp
           pure_secure_audio_expiry_requires_exact_negotiated_deadline
+          pure_secure_audio_control_endpoint_requires_actual_bound_port
           payload::tests::parser_consumes_exact_fixture_and_validates_receipt
           payload::tests::parser_rejects_wrong_identity_epoch_profile_and_corruption
           payload::tests::endpoint_contract_and_private_directory_are_required
