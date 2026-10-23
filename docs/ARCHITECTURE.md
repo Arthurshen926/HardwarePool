@@ -1839,3 +1839,12 @@ speaker opt-in on the ADR 1566 receiver. Legacy defaults and microphone choices
 remain independent. Current visible consent, immutable selection revision and
 native authority gate every generation; no secure request enters the UDP owner.
 The reverse Linux Node/console launch integration is still separate.
+
+### Receiver-assigned stereo StreamId admission
+
+[ADR 1568](adr/1568-receiver-assigned-secure-stereo-stream.md) adds a separate typed
+Linux reusable Source admission that learns a receiver-assigned nonnil StreamId
+from the first exact authenticated offer receipt. The strict-ID constructor
+remains strict. The selected-ID diagnostic is not TLS Bound, helper readiness,
+Route Active or audibility. No Node/console launch integration is added; an exact
+typed bilateral pre-stamp grant handshake remains separate blocked Stage B work.

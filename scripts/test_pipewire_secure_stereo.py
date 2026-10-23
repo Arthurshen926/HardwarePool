@@ -8,7 +8,7 @@ from unittest.mock import patch
 
 from run_pipewire_capture import signal_payload
 from run_pipewire_secure_stereo import (
-    BOUND_FIELDS, CAUSES, FORMAT, SCENARIOS, TEST, SecureStereoHarness, integer,
+    ASSIGNED_TEST, ASSIGNED_JOB_TEST, BOUND_FIELDS, CAUSES, FORMAT, SCENARIOS, TEST, SecureStereoHarness, integer,
     strict_json, validate_bound, validate_pending, validate_pcm_enabled, validate_result, verify_execution,
     verify_stereo,
     JOB_SCENARIOS, JOB_TEST, JOB_PREFIX, JOB_MARKER, JOB_MARKER_CONTENT,
@@ -323,6 +323,31 @@ class SharedStereoReceiveJobEvidenceTests(unittest.TestCase):
                     good.replace('1 passed', '0 passed'), good.replace('0 ignored', '1 ignored')):
             with self.subTest(raw=raw), self.assertRaises(ValueError):
                 verify_job_execution(raw)
+
+
+class ReceiverAssignedExecutionTests(unittest.TestCase):
+    def test_distinct_exact_cases_must_execute(self):
+        for verifier, old, assigned in (
+                (verify_execution, TEST, ASSIGNED_TEST),
+                (verify_job_execution, JOB_TEST, ASSIGNED_JOB_TEST)):
+            good = f'test {assigned} ... ok\ntest result: ok. 1 passed; 0 failed; 0 ignored;'
+            verifier(good, True)
+            verifier(good.replace(assigned, old))
+            for bad in ('', good.replace(assigned, old),
+                        good.replace('... ok', '... ignored'),
+                        good.replace('1 passed', '0 passed'),
+                        good.replace('0 ignored', '1 ignored')):
+                with self.subTest(bad=bad), self.assertRaises(ValueError):
+                    verifier(bad, True)
+            with self.assertRaises(ValueError):
+                verifier(good)
+
+    def test_assigned_and_strict_harness_modes_remain_separate(self):
+        for harness_type in (SecureStereoHarness, SecureStereoJobHarness):
+            with patch('run_pipewire_capture.CaptureHarness.__init__', return_value=None):
+                with patch.object(harness_type, 'env', {}, create=True):
+                    self.assertFalse(harness_type(Path('/tmp/unused'), 'waveform').receiver_assigned)
+                    self.assertTrue(harness_type(Path('/tmp/unused'), 'waveform', True).receiver_assigned)
 
 
 if __name__ == '__main__':

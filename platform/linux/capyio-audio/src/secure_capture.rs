@@ -50,6 +50,23 @@ pub struct SecureStereoSourceAdmission {
     pub lifetime: Duration,
     pub pipewire_target: String,
 }
+/// Trusted local intent for a receiver-selected StreamId. This admission has no
+/// placeholder ID: only the first exact authenticated stereo offer selects it.
+/// Selection is not TLS readiness, Route activation, or physical audibility.
+#[derive(Clone, Debug)]
+pub struct SecureStereoReceiverAssignedSourceAdmission {
+    pub expected: ControlTlsBinding,
+    pub route_id: RouteId,
+    pub lifetime: Duration,
+    pub pipewire_target: String,
+}
+
+#[derive(Clone, Copy)]
+enum StreamSelection {
+    Strict(StreamId),
+    ReceiverAssigned,
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum SecureStereoSourceEvent {
     Starting,
@@ -104,7 +121,9 @@ struct SendPermit {
 pub struct SecureStereoSourceOwner {
     runtime: NodeRuntime,
     link: CatalogControlLink,
-    admission: SecureStereoSourceAdmission,
+    admission: SecureStereoReceiverAssignedSourceAdmission,
+    stream_selection: StreamSelection,
+    selected_stream_id: Option<StreamId>,
     original: Route,
     session: Session,
     source_catalog: CapabilityDescriptor,
@@ -143,14 +162,62 @@ impl SecureStereoSourceOwner {
     /// No initial local claim is accepted: the first authenticated peer Acquire
     /// creates it once. Subsequent Acquire/Renew cannot silently refresh it.
     pub fn new_until(
-        mut runtime: NodeRuntime,
-        mut link: CatalogControlLink,
+        runtime: NodeRuntime,
+        link: CatalogControlLink,
         identity: ControlTlsClientIdentity,
         server_name: String,
         admission: SecureStereoSourceAdmission,
         original_consent_end: Instant,
     ) -> io::Result<Self> {
         validate_admission(&admission)?;
+        let selection = StreamSelection::Strict(admission.stream_id);
+        Self::new_with_selection_until(
+            runtime,
+            link,
+            identity,
+            server_name,
+            SecureStereoReceiverAssignedSourceAdmission {
+                expected: admission.expected,
+                route_id: admission.route_id,
+                lifetime: admission.lifetime,
+                pipewire_target: admission.pipewire_target,
+            },
+            original_consent_end,
+            selection,
+        )
+    }
+
+    /// Learn the receiver's nonnil StreamId exactly once from its authenticated
+    /// offer, after validating the original finite authority. No retry/rebinding.
+    pub fn new_receiver_assigned_until(
+        runtime: NodeRuntime,
+        link: CatalogControlLink,
+        identity: ControlTlsClientIdentity,
+        server_name: String,
+        admission: SecureStereoReceiverAssignedSourceAdmission,
+        original_consent_end: Instant,
+    ) -> io::Result<Self> {
+        Self::new_with_selection_until(
+            runtime,
+            link,
+            identity,
+            server_name,
+            admission,
+            original_consent_end,
+            StreamSelection::ReceiverAssigned,
+        )
+    }
+
+    fn new_with_selection_until(
+        mut runtime: NodeRuntime,
+        mut link: CatalogControlLink,
+        identity: ControlTlsClientIdentity,
+        server_name: String,
+        admission: SecureStereoReceiverAssignedSourceAdmission,
+        original_consent_end: Instant,
+        stream_selection: StreamSelection,
+    ) -> io::Result<Self> {
+        validate_source_intent(&admission.pipewire_target, admission.lifetime)?;
         let started = Instant::now();
         let now = now_ms()?;
         let original = runtime.route(admission.route_id).map_err(error)?.clone();
@@ -208,6 +275,8 @@ impl SecureStereoSourceOwner {
             runtime,
             link,
             admission,
+            stream_selection,
+            selected_stream_id: None,
             original,
             session,
             source_catalog,
@@ -252,6 +321,11 @@ impl SecureStereoSourceOwner {
     }
     pub fn is_closed(&self) -> bool {
         self.closed
+    }
+    /// Diagnostic only: a selected offer can still fail TLS. This never implies
+    /// Bound, helper creation, Active, PCM acceptance, or physical audibility.
+    pub fn selected_stream_id(&self) -> Option<StreamId> {
+        self.selected_stream_id
     }
     pub fn helper_pid(&self) -> Option<u32> {
         self.input.as_ref().map(PipeWireCapture::pid)
@@ -597,7 +671,9 @@ impl SecureStereoSourceOwner {
         if self.source_claim.is_none()
             || self.sink_claim.is_none()
             || self.original.state != RouteState::Starting
-            || offer.stream_id != self.admission.stream_id
+            || matches!(self.stream_selection, StreamSelection::Strict(id) if offer.stream_id != id)
+            || self.selected_stream_id.is_some()
+            || offer.stream_id.as_uuid().is_nil()
             || offer.transport != SecureAudioTransport::Tls13MtlsStereoV1
             || self.worker.is_some()
             || self.identity.is_none()
@@ -617,6 +693,10 @@ impl SecureStereoSourceOwner {
             now_ms()?,
         )
         .map_err(error)?;
+        // Receipt, exact Route/profile binding and original claims are all
+        // validated before latching. Never clear this diagnostic on failure/Stop.
+        self.check()?;
+        self.selected_stream_id = Some(offer.stream_id);
         let media = AudioMediaStreamBinding {
             session_id: self.original.session_id,
             route_id: self.original.id,
@@ -638,7 +718,10 @@ impl SecureStereoSourceOwner {
             .take()
             .ok_or_else(|| error("stereo identity consumed"))?;
         let server_name = self.server_name.clone();
-        let operation_end = self.operation_end();
+        let operation_end = self
+            .pending_end
+            .unwrap_or(self.end)
+            .min(self.operation_end());
         let media_end = self.end;
         self.pending_end = Some(operation_end);
         let stop = self.stop.clone();
@@ -759,12 +842,17 @@ impl Drop for SecureStereoSourceOwner {
 }
 
 fn validate_admission(admission: &SecureStereoSourceAdmission) -> io::Result<()> {
-    CaptureEndpoint::SelectedSource(admission.pipewire_target.clone())
+    if admission.stream_id.as_uuid().is_nil() {
+        return Err(error("exact finite stereo Source consent required"));
+    }
+    validate_source_intent(&admission.pipewire_target, admission.lifetime)
+}
+fn validate_source_intent(target: &str, lifetime: Duration) -> io::Result<()> {
+    CaptureEndpoint::SelectedSource(target.to_owned())
         .validate()
         .map_err(error)?;
-    if !(Duration::from_secs(1)..=Duration::from_secs(60)).contains(&admission.lifetime)
-        || admission.lifetime.subsec_nanos() != 0
-        || admission.stream_id.as_uuid().is_nil()
+    if !(Duration::from_secs(1)..=Duration::from_secs(60)).contains(&lifetime)
+        || lifetime.subsec_nanos() != 0
     {
         return Err(error("exact finite stereo Source consent required"));
     }

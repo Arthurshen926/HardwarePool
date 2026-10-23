@@ -1579,3 +1579,19 @@ Closed selection/DTO/progress contracts and frontend dispatch tests supplement
 actual SDK compilation and ARM64/JNI symbol checks. Retained real TLS/PipeWire
 receiver-job tests remain synthetic-sink evidence, not an Android device or
 complete reverse Linux launcher proof.
+
+### Receiver-assigned secure stereo Stage A
+
+[ADR 1568](adr/1568-receiver-assigned-secure-stereo-stream.md) adds six mandatory
+`wire_receiver_assigned_*` cases, all of which must execute: independent-ID
+selection, strict mismatch, failed media TLS, same/changed duplicate offers,
+source lease loss and nonrefreshing pending-handshake deadline. Poll to actual
+receipt consumption and assert the intended negative cause, not a generic timeout.
+
+The `--receiver-assigned-stream-id` harness flag selects separate hosted test
+names and result lines for all nine owner scenarios and both actual Android
+receive-job scenarios (`waveform`, `partial_ack`). Old exact-ID invocations and
+output remain unchanged. CI asserts listed names plus executed 6/9/2 counts;
+no-run/listing alone is insufficient. Independent stereo PCM and teardown oracles
+remain mandatory. Software fixture grants and synthetic acknowledged sinks do
+not prove production bilateral consent, a full launcher or physical AudioTrack.

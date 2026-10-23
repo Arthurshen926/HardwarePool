@@ -23,6 +23,7 @@ from run_pipewire_loopback import graph_fingerprint, interrupted
 SCENARIOS = ('waveform', 'stop', 'source_revoke', 'sink_revoke', 'control_eof',
              'media_eof', 'expiry', 'backpressure', 'partial_write')
 TEST = 'hosted_secure_stereo_linux_capture_android_sink'
+ASSIGNED_TEST = 'hosted_receiver_assigned_secure_stereo_linux_capture_android_sink'
 FORMAT = 'pcm-s16le-48000-stereo-tls13-v1'
 PREFIX = '.capyio-secure-stereo-'
 COMMON = {'version', 'scenario', 'stage', 'format', 'surface', 'owner_pid'}
@@ -157,19 +158,21 @@ def validate_result(value, scenario, owner_pid, bound):
     return value
 
 
-def verify_execution(raw):
-    if (f'test {TEST} ... ok' not in raw
+def verify_execution(raw, receiver_assigned=False):
+    expected = ASSIGNED_TEST if receiver_assigned else TEST
+    if (f'test {expected} ... ok' not in raw
             or 'test result: ok. 1 passed; 0 failed; 0 ignored;' not in raw):
         raise ValueError('exact hosted stereo case must execute, not skip')
 
 
 class SecureStereoHarness(CaptureHarness):
-    def __init__(self, root, scenario):
+    def __init__(self, root, scenario, receiver_assigned=False):
         if scenario not in SCENARIOS:
             raise ValueError('explicit secure stereo scenario required')
         # Reuse only the existing private graph/tool/process primitives. The old
         # capture fixture and every old acceptance scenario remain unchanged.
         super().__init__(root, 'waveform')
+        self.receiver_assigned = receiver_assigned
         self.secure_scenario = scenario
         self.env.update(CAPYIO_SECURE_STEREO_HOSTED='1', CAPYIO_SECURE_STEREO_SCENARIO=scenario)
 
@@ -193,7 +196,8 @@ class SecureStereoHarness(CaptureHarness):
             raise ValueError('PipeWire binary changed during version probe')
         daemon = self.prepare_daemon()
         source = self.start_source()
-        producer = self.spawn([str(fixture), '--ignored', '--exact', TEST,
+        producer = self.spawn([str(fixture), '--ignored', '--exact',
+                               ASSIGNED_TEST if self.receiver_assigned else TEST,
                                '--nocapture', '--test-threads=1'], 'producer')
         self.diagnostic_processes = {'daemon': daemon.pid, 'source': source.pid,
                                      'fixture': producer.pid, 'owner': producer.pid}
@@ -265,12 +269,13 @@ class SecureStereoHarness(CaptureHarness):
             time.sleep(.01)
         if producer.returncode:
             raise ValueError('secure stereo Rust lifecycle fixture failed')
-        verify_execution((self.root / 'producer.out').read_text())
+        verify_execution((self.root / 'producer.out').read_text(), self.receiver_assigned)
 
 
 # The existing reusable-owner profiles and validators above remain independent.
 JOB_SCENARIOS = ('waveform', 'partial_ack')
 JOB_TEST = 'hosted_secure_stereo_linux_capture_android_receive_job'
+ASSIGNED_JOB_TEST = 'hosted_receiver_assigned_secure_stereo_linux_capture_android_receive_job'
 JOB_PREFIX = '.capyio-secure-stereo-job-'
 JOB_MARKER = '.capyio-secure-stereo-job'
 JOB_MARKER_CONTENT = 'capyio-hosted-secure-stereo-job-v1\n'
@@ -375,17 +380,19 @@ def validate_job_result(value, scenario, owner_pid, bound):
     return value
 
 
-def verify_job_execution(raw):
-    if (f'test {JOB_TEST} ... ok' not in raw
+def verify_job_execution(raw, receiver_assigned=False):
+    expected = ASSIGNED_JOB_TEST if receiver_assigned else JOB_TEST
+    if (f'test {expected} ... ok' not in raw
             or 'test result: ok. 1 passed; 0 failed; 0 ignored;' not in raw):
         raise ValueError('exact hosted receive-job case must execute, not skip')
 
 
 class SecureStereoJobHarness(CaptureHarness):
-    def __init__(self, root, scenario):
+    def __init__(self, root, scenario, receiver_assigned=False):
         if scenario not in JOB_SCENARIOS:
             raise ValueError('explicit secure stereo receive-job scenario required')
         super().__init__(root, 'waveform')
+        self.receiver_assigned = receiver_assigned
         self.bridge_scenario = scenario
         self.env.update(CAPYIO_SECURE_STEREO_JOB_HOSTED='1', CAPYIO_SECURE_STEREO_JOB_SCENARIO=scenario)
 
@@ -410,7 +417,8 @@ class SecureStereoJobHarness(CaptureHarness):
         (self.root / JOB_MARKER).write_text(JOB_MARKER_CONTENT)
         daemon = self.prepare_daemon()
         source = self.start_source()
-        producer = self.spawn([str(fixture), '--ignored', '--exact', JOB_TEST,
+        producer = self.spawn([str(fixture), '--ignored', '--exact',
+                               ASSIGNED_JOB_TEST if self.receiver_assigned else JOB_TEST,
                                '--nocapture', '--test-threads=1'], 'producer')
         self.diagnostic_processes = {'daemon': daemon.pid, 'source': source.pid,
                                      'fixture': producer.pid, 'owner': producer.pid}
@@ -482,7 +490,7 @@ class SecureStereoJobHarness(CaptureHarness):
             time.sleep(.01)
         if producer.returncode:
             raise ValueError('secure stereo Rust lifecycle fixture failed')
-        verify_job_execution((self.root / 'producer.out').read_text())
+        verify_job_execution((self.root / 'producer.out').read_text(), self.receiver_assigned)
 
 
 def main():
@@ -490,6 +498,8 @@ def main():
     modes = parser.add_mutually_exclusive_group(required=True)
     modes.add_argument('--hosted-pipewire-secure-stereo', action='store_true')
     modes.add_argument('--hosted-pipewire-secure-stereo-job', action='store_true')
+    parser.add_argument('--receiver-assigned-stream-id', action='store_true',
+                        help='run the separate receiver-assigned Source admission cases')
     parser.add_argument('--fixture', required=True, type=Path)
     parser.add_argument('--scenario', choices=tuple(dict.fromkeys(SCENARIOS + JOB_SCENARIOS)), required=True)
     args = parser.parse_args()
@@ -505,7 +515,7 @@ def main():
     signal.signal(signal.SIGINT, interrupted)
     with tempfile.TemporaryDirectory(prefix='capyio-secure-stereo-') as directory:
         harness_type = SecureStereoJobHarness if args.hosted_pipewire_secure_stereo_job else SecureStereoHarness
-        harness = harness_type(Path(directory), args.scenario)
+        harness = harness_type(Path(directory), args.scenario, args.receiver_assigned_stream_id)
         try:
             run = harness.run_bridge if args.hosted_pipewire_secure_stereo_job else harness.run_secure
             run(args.fixture.resolve(strict=True))
@@ -521,13 +531,14 @@ def main():
             signal.signal(signal.SIGTERM, signal.SIG_IGN)
             signal.signal(signal.SIGINT, signal.SIG_IGN)
             harness.close()
+    label = 'receiver_assigned_secure_stereo' if args.receiver_assigned_stream_id else 'secure_stereo'
     if args.hosted_pipewire_secure_stereo_job:
-        print(f'capyio_pipewire_secure_stereo_job=passed scenario={args.scenario}'
+        print(f'capyio_pipewire_{label}_job=passed scenario={args.scenario}'
               ' pinned_tls=true independent_consent=true exact_claims=true stereo=true'
               ' shared_runtime=true actual_write_ack=true worker_confirmed=true'
               ' simulated_sink=true route_starting=true cleanup=true')
         return
-    print(f'capyio_pipewire_secure_stereo=passed scenario={args.scenario}'
+    print(f'capyio_pipewire_{label}=passed scenario={args.scenario}'
           ' pinned_tls=true independent_consent=true exact_claims=true stereo=true'
           ' actual_rust_apis=true simulated_sink=true cleanup=true')
 

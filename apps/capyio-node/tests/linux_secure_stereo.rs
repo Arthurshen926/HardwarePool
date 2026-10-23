@@ -20,7 +20,8 @@ use capyio_control_tls::{
 };
 use capyio_core::*;
 use capyio_linux_audio::{
-    SecureStereoSourceAdmission, SecureStereoSourceEvent, SecureStereoSourceOwner,
+    SecureStereoReceiverAssignedSourceAdmission, SecureStereoSourceAdmission,
+    SecureStereoSourceEvent, SecureStereoSourceOwner,
 };
 use capyio_pairing::CertificateFingerprint;
 use capyio_protocol::SECURE_AUDIO_STEREO_FORMAT;
@@ -481,6 +482,16 @@ fn pure_secure_stereo_terminal_deadline_has_no_early_tolerance() {
 #[test]
 #[ignore = "requires explicit hosted-private-secure-stereo harness and real private PipeWire graph"]
 fn hosted_secure_stereo_linux_capture_android_sink() {
+    hosted_stereo_sink(false);
+}
+
+#[test]
+#[ignore = "requires explicit hosted-private-secure-stereo harness and real private PipeWire graph"]
+fn hosted_receiver_assigned_secure_stereo_linux_capture_android_sink() {
+    hosted_stereo_sink(true);
+}
+
+fn hosted_stereo_sink(receiver_assigned: bool) {
     assert_eq!(
         std::env::var("CAPYIO_SECURE_STEREO_HOSTED").as_deref(),
         Ok("1")
@@ -655,22 +666,17 @@ fn hosted_secure_stereo_linux_capture_android_sink() {
         },
     )
     .unwrap();
-    let source_admission = SecureStereoSourceAdmission {
-        expected: source_link.tls_binding(),
-        route_id: route,
-        stream_id: stream,
-        lifetime: Duration::from_secs(20),
-        pipewire_target: "capyio.test.stereo.source".into(),
-    };
-    let mut source_owner = SecureStereoSourceOwner::new_until(
+    let mut source_owner = make_source_owner(
         source_runtime,
         source_link,
         media_client,
-        "localhost".into(),
-        source_admission,
+        route,
+        (!receiver_assigned).then_some(stream),
         source_original_end,
-    )
-    .unwrap();
+    );
+    if receiver_assigned {
+        assert_eq!(source_owner.selected_stream_id(), None);
+    }
     let mut bound = None;
     let mut injected = None;
     let mut sink_bound = false;
@@ -687,6 +693,7 @@ fn hosted_secure_stereo_linux_capture_android_sink() {
             match source_owner.poll() {
                 Ok(Some(SecureStereoSourceEvent::Bound)) => {
                     assert!(bound.is_none());
+                    assert_eq!(source_owner.selected_stream_id(), Some(stream));
                     let evidence = json!({"helper_pid":source_owner.helper_pid().unwrap(),
                         "source_lease_expires_at_ms":source_owner.source_lease_expires_at_ms().unwrap(),
                         "sink_lease_expires_at_ms":source_owner.sink_lease_expires_at_ms().unwrap(),
@@ -957,6 +964,16 @@ fn job_pending(root: &Path, scenario: &str, stage: &str, source: &NodeRuntime, s
 #[test]
 #[ignore = "requires explicit hosted-private-secure-stereo-job harness and real private PipeWire graph"]
 fn hosted_secure_stereo_linux_capture_android_receive_job() {
+    hosted_stereo_job(false);
+}
+
+#[test]
+#[ignore = "requires explicit hosted-private-secure-stereo harness and real private PipeWire graph"]
+fn hosted_receiver_assigned_secure_stereo_linux_capture_android_receive_job() {
+    hosted_stereo_job(true);
+}
+
+fn hosted_stereo_job(receiver_assigned: bool) {
     assert_eq!(
         std::env::var("CAPYIO_SECURE_STEREO_JOB_HOSTED").as_deref(),
         Ok("1")
@@ -1119,21 +1136,17 @@ fn hosted_secure_stereo_linux_capture_android_receive_job() {
     let runtime = Arc::new(Mutex::new(sink_runtime));
     let control_live = Arc::new(AtomicBool::new(true));
     let gate = StereoAdmissionGate::new();
-    let mut source_owner = SecureStereoSourceOwner::new_until(
+    let mut source_owner = make_source_owner(
         source_runtime,
         source_link,
         media_client,
-        "localhost".into(),
-        SecureStereoSourceAdmission {
-            expected: control_binding,
-            route_id: route,
-            stream_id: stream,
-            lifetime: Duration::from_secs(20),
-            pipewire_target: "capyio.test.stereo.source".into(),
-        },
+        route,
+        (!receiver_assigned).then_some(stream),
         source_original_end,
-    )
-    .unwrap();
+    );
+    if receiver_assigned {
+        assert_eq!(source_owner.selected_stream_id(), None);
+    }
     let (mut negotiation, request) = {
         let guard = runtime.lock().unwrap();
         StereoSinkNegotiation::prepare(
@@ -1203,6 +1216,7 @@ fn hosted_secure_stereo_linux_capture_android_receive_job() {
         {
             Some(SecureStereoSourceEvent::Bound) => {
                 assert!(bound.is_none());
+                assert_eq!(source_owner.selected_stream_id(), Some(stream));
                 let evidence = json!({"helper_pid":source_owner.helper_pid().unwrap(),
                     "source_lease_expires_at_ms":source_owner.source_lease_expires_at_ms().unwrap(),
                     "sink_lease_expires_at_ms":source_owner.sink_lease_expires_at_ms().unwrap(),
@@ -1492,4 +1506,457 @@ fn hosted_secure_stereo_linux_capture_android_receive_job() {
     }).as_object().unwrap().clone());
     publish_job(&root, &scenario, "stopped", result);
     wait_job_marker(&root, "stop_checked");
+}
+
+/// `None` is a typed receiver-assigned admission, never a dummy StreamId.
+fn make_source_owner(
+    runtime: NodeRuntime,
+    link: CatalogControlLink,
+    identity: ControlTlsClientIdentity,
+    route_id: RouteId,
+    strict_stream: Option<StreamId>,
+    original_end: Instant,
+) -> SecureStereoSourceOwner {
+    let expected = link.tls_binding();
+    match strict_stream {
+        Some(stream_id) => SecureStereoSourceOwner::new_until(
+            runtime,
+            link,
+            identity,
+            "localhost".into(),
+            SecureStereoSourceAdmission {
+                expected,
+                route_id,
+                stream_id,
+                lifetime: Duration::from_secs(20),
+                pipewire_target: "capyio.test.stereo.source".into(),
+            },
+            original_end,
+        ),
+        None => SecureStereoSourceOwner::new_receiver_assigned_until(
+            runtime,
+            link,
+            identity,
+            "localhost".into(),
+            SecureStereoReceiverAssignedSourceAdmission {
+                expected,
+                route_id,
+                lifetime: Duration::from_secs(20),
+                pipewire_target: "capyio.test.stereo.source".into(),
+            },
+            original_end,
+        ),
+    }
+    .unwrap()
+}
+
+/// Real authenticated control/TLS fixture with independently generated receiver
+/// IDs. No PipeWire process is permitted: these tests stop before media Bound.
+struct WireSource {
+    owner: SecureStereoSourceOwner,
+    sink: CatalogControlLink,
+    route: Route,
+}
+impl WireSource {
+    fn new(strict: Option<StreamId>) -> Self {
+        let (mut source_runtime, source) = runtime(Platform::Linux, PortDirection::Source);
+        let (mut sink_runtime, sink) = runtime(Platform::Android, PortDirection::Sink);
+        let (control_server, media_client, control_client, _media_server) = identities();
+        let binding = ControlTlsNodeBinding::new(source.node_id, sink.node_id).unwrap();
+        let server = AuthenticatedControlServer::from_listener_fresh_session(
+            TcpListener::bind("127.0.0.1:0").unwrap(),
+            control_server,
+            binding,
+            Duration::from_secs(2),
+        )
+        .unwrap();
+        let control_address = server.local_addr().unwrap();
+        let accept = thread::spawn(move || {
+            let end = Instant::now() + BOUND;
+            let channel = loop {
+                assert!(Instant::now() < end, "bounded real control acceptance");
+                if let Some(channel) = server.try_accept_until(end).unwrap() {
+                    break channel;
+                }
+                thread::sleep(TICK);
+            };
+            let mut link = CatalogControlLink::admit_accepted_new_peer(
+                &mut source_runtime,
+                channel,
+                "Synthetic Android".into(),
+            )
+            .unwrap();
+            let catalog = link.receive_catalog().unwrap();
+            link.apply_catalog(&mut source_runtime, catalog).unwrap();
+            let catalog = link
+                .prepare_catalog(&source_runtime, &BTreeSet::from([source.capability_id]))
+                .unwrap();
+            link.send_catalog(catalog).unwrap();
+            (source_runtime, link)
+        });
+        let channel = AuthenticatedControlClientChannel::connect_fresh_session(
+            ControlTlsEndpoint {
+                address: control_address,
+                io_timeout: Duration::from_secs(2),
+            },
+            "localhost",
+            control_client,
+            binding,
+        )
+        .unwrap();
+        let mut sink_link = CatalogControlLink::admit_dialed_new_peer(
+            &mut sink_runtime,
+            channel,
+            "Synthetic Linux".into(),
+        )
+        .unwrap();
+        // This argument selects Source publication, not every local endpoint.
+        // Sink-only capabilities remain visible without any Source selection.
+        let catalog = sink_link
+            .prepare_catalog(&sink_runtime, &BTreeSet::new())
+            .unwrap();
+        sink_link.send_catalog(catalog).unwrap();
+        let catalog = sink_link.receive_catalog().unwrap();
+        sink_link.apply_catalog(&mut sink_runtime, catalog).unwrap();
+        let (mut source_runtime, mut source_link) = accept.join().unwrap();
+        let session = source_link.session_id();
+        assert_eq!(session, sink_link.session_id());
+        let route = source_runtime
+            .create_route(session, source, sink, RouteBackend::AdapterManaged)
+            .unwrap();
+        source_link
+            .send_route_status(source_runtime.route(route).unwrap())
+            .unwrap();
+        let ReceivedControlMessage::RouteStatus(status) = sink_link
+            .receive_control_message_until(Instant::now() + BOUND)
+            .unwrap()
+        else {
+            panic!("authenticated pending stereo Draft required");
+        };
+        sink_link
+            .apply_route_status(&mut sink_runtime, &status, false)
+            .unwrap();
+
+        let grant_expiry = now_ms() + 20_000;
+        for runtime in [&mut source_runtime, &mut sink_runtime] {
+            runtime.authorize_route(route, Some(grant_expiry)).unwrap();
+            runtime
+                .prepare_route(
+                    route,
+                    Some(FormatDescriptor::new(SECURE_AUDIO_STEREO_FORMAT)),
+                    QosMode::Interactive,
+                    now_ms(),
+                )
+                .unwrap();
+        }
+        sink_runtime
+            .set_local_port_lease_policy(sink, PortLeasePolicy::Exclusive)
+            .unwrap();
+        let mut owner = make_source_owner(
+            source_runtime,
+            source_link,
+            media_client,
+            route,
+            strict,
+            Instant::now() + Duration::from_secs(10),
+        );
+        let deadline = Instant::now() + Duration::from_millis(200);
+        let ReceivedControlMessage::PortLeaseRequest(request) =
+            sink_link.receive_control_message_until(deadline).unwrap()
+        else {
+            panic!("one authenticated Sink Acquire required")
+        };
+        sink_link
+            .answer_port_lease_request_until(&mut sink_runtime, request, now_ms(), deadline)
+            .unwrap();
+        let request_id = sink_link
+            .send_port_lease_request_until(
+                route,
+                source,
+                capyio_protocol::PortLeaseAction::Acquire,
+                5_000,
+                deadline,
+            )
+            .unwrap();
+        let mut response_seen = false;
+        let mut start_seen = false;
+        while !start_seen {
+            assert!(
+                Instant::now() < deadline,
+                "bounded original lease negotiation"
+            );
+            owner.poll().unwrap();
+            match sink_link.poll_control_message_until(deadline).unwrap() {
+                Some(ReceivedControlMessage::PortLeaseResponse(response)) => {
+                    assert!(!response_seen);
+                    assert_eq!(response.request_message_id, request_id);
+                    assert_eq!(
+                        response.outcome,
+                        capyio_protocol::PortLeaseOutcome::Acquired
+                    );
+                    response_seen = true;
+                }
+                Some(ReceivedControlMessage::RouteCommand(command)) => {
+                    assert_eq!(command.action, capyio_protocol::RouteCommandAction::Start);
+                    assert_eq!(command.route_id, route);
+                    assert!(response_seen);
+                    start_seen = true;
+                }
+                None => thread::sleep(TICK),
+                _ => panic!("unexpected authenticated negotiation message"),
+            }
+        }
+        let route = owner.runtime().route(route).unwrap().clone();
+        assert_eq!(route.state, RouteState::Starting);
+        assert!(owner.source_lease_expires_at_ms().is_some());
+        assert!(owner.sink_lease_expires_at_ms().is_some());
+        assert_eq!(owner.helper_pid(), None);
+        Self {
+            owner,
+            sink: sink_link,
+            route,
+        }
+    }
+    fn send_offer(&mut self, listener: &TcpListener, stream_id: StreamId) {
+        self.sink
+            .send_secure_stereo_audio_data_offer_until(
+                &self.route,
+                capyio_protocol::SecureAudioDataOffer {
+                    port: listener.local_addr().unwrap().port(),
+                    stream_id,
+                    transport: capyio_protocol::SecureAudioTransport::Tls13MtlsStereoV1,
+                },
+                now_ms(),
+                Instant::now() + Duration::from_millis(100),
+            )
+            .unwrap();
+    }
+    fn consume_first(&mut self, stream: StreamId) {
+        let end = Instant::now() + Duration::from_millis(150);
+        while self.owner.selected_stream_id().is_none() {
+            assert!(Instant::now() < end, "authenticated offer was not consumed");
+            assert_ne!(
+                self.owner.poll().unwrap(),
+                Some(SecureStereoSourceEvent::Bound)
+            );
+            thread::sleep(TICK);
+        }
+        assert_eq!(self.owner.selected_stream_id(), Some(stream));
+        assert_eq!(self.owner.helper_pid(), None);
+        assert_eq!(self.owner.packets_sent(), 0);
+    }
+    fn terminal(&mut self) -> io::Error {
+        let end = Instant::now() + Duration::from_secs(1);
+        loop {
+            assert!(Instant::now() < end, "bounded terminal observation");
+            match self.owner.poll() {
+                Err(reason) => return reason,
+                Ok(event) => assert_ne!(event, Some(SecureStereoSourceEvent::Bound)),
+            }
+            assert_eq!(self.owner.helper_pid(), None);
+            thread::sleep(TICK);
+        }
+    }
+    fn assert_terminal(&mut self, stream: Option<StreamId>, cause: &str) {
+        assert!(self.owner.is_closed());
+        assert_eq!(self.owner.terminal_cause(), Some(cause));
+        assert_eq!(self.owner.selected_stream_id(), stream);
+        assert_eq!(self.owner.helper_pid(), None);
+        assert_eq!(self.owner.packets_sent(), 0);
+        closed(self.owner.runtime(), self.route.session_id);
+        assert!(self.owner.poll().is_err());
+        assert_eq!(self.owner.terminal_cause(), Some(cause));
+        assert_eq!(self.owner.selected_stream_id(), stream);
+    }
+}
+fn wire_listener() -> TcpListener {
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    listener.set_nonblocking(true).unwrap();
+    listener
+}
+fn accept_pending(listener: &TcpListener) -> TcpStream {
+    let end = Instant::now() + Duration::from_millis(100);
+    loop {
+        match listener.accept() {
+            Ok((socket, _)) => return socket,
+            Err(reason) if reason.kind() == io::ErrorKind::WouldBlock => {
+                assert!(Instant::now() < end, "media TCP connect missing");
+                thread::sleep(TICK);
+            }
+            Err(reason) => panic!("media accept failed: {reason}"),
+        }
+    }
+}
+
+#[test]
+fn wire_receiver_assigned_learns_authenticated_offer() {
+    let mut fixture = WireSource::new(None);
+    assert_eq!(fixture.owner.selected_stream_id(), None);
+    let receiver_stream = StreamId::new();
+    let listener = wire_listener();
+    fixture.send_offer(&listener, receiver_stream);
+    fixture.consume_first(receiver_stream);
+    let _pending = accept_pending(&listener);
+    // Selection alone is not media Bound, Active, capture, or audibility.
+    assert_eq!(
+        fixture
+            .owner
+            .runtime()
+            .route(fixture.route.id)
+            .unwrap()
+            .state,
+        RouteState::Starting
+    );
+    fixture.owner.stop().unwrap();
+    fixture.assert_terminal(Some(receiver_stream), "local_stop");
+}
+
+#[test]
+fn wire_receiver_assigned_strict_constructor_rejects_independent_id() {
+    let strict = StreamId::new();
+    let mut fixture = WireSource::new(Some(strict));
+    let receiver_stream = StreamId::new();
+    assert_ne!(strict, receiver_stream);
+    let listener = wire_listener();
+    fixture.send_offer(&listener, receiver_stream);
+    let reason = fixture.terminal();
+    assert_eq!(
+        reason.to_string(),
+        "stereo offer precedes exact authority or is repeated"
+    );
+    assert_eq!(
+        listener.accept().unwrap_err().kind(),
+        io::ErrorKind::WouldBlock
+    );
+    fixture.assert_terminal(None, "failure");
+}
+
+#[test]
+fn wire_receiver_assigned_failed_media_tls_is_terminal() {
+    let mut fixture = WireSource::new(None);
+    let stream = StreamId::new();
+    let listener = wire_listener();
+    fixture.send_offer(&listener, stream);
+    fixture.consume_first(stream);
+    let mut invalid_tls = accept_pending(&listener);
+    invalid_tls
+        .set_read_timeout(Some(Duration::from_millis(100)))
+        .unwrap();
+    let mut hello = [0; 4096];
+    assert!(invalid_tls.read(&mut hello).unwrap() > 0);
+    // Malformed TLS handshake record, not a mere unaccepted-listener timeout.
+    invalid_tls
+        .write_all(&[22, 3, 3, 0, 4, 255, 0, 0, 0])
+        .unwrap();
+    let reason = fixture.terminal();
+    assert_eq!(reason.kind(), io::ErrorKind::InvalidData);
+    assert!(
+        reason
+            .to_string()
+            .contains("received unexpected handshake message")
+    );
+    assert!(reason.to_string().contains("0xff"));
+    fixture.assert_terminal(Some(stream), "media_failure");
+}
+
+#[test]
+fn wire_receiver_assigned_duplicate_offer_cannot_replace_first() {
+    for changed in [false, true] {
+        let mut fixture = WireSource::new(None);
+        let first = StreamId::new();
+        let listener = wire_listener();
+        fixture.send_offer(&listener, first);
+        fixture.consume_first(first);
+        let _pending = accept_pending(&listener);
+        let second = if changed { StreamId::new() } else { first };
+        fixture.send_offer(&listener, second);
+        let reason = fixture.terminal();
+        assert!(
+            !reason.to_string().contains("deadline"),
+            "duplicate is not timeout evidence"
+        );
+        fixture.assert_terminal(Some(first), "control_failure");
+    }
+}
+
+#[test]
+fn wire_receiver_assigned_source_lease_loss_rejects_offer() {
+    let mut fixture = WireSource::new(None);
+    let listener = wire_listener();
+    fixture
+        .owner
+        .runtime_mut()
+        .release_route_port_lease(
+            fixture.route.id,
+            fixture.route.source,
+            fixture.route.session_id,
+        )
+        .unwrap();
+    fixture.send_offer(&listener, StreamId::new());
+    let reason = fixture.terminal();
+    assert_eq!(
+        reason.to_string(),
+        "original stereo Source claim changed or absent"
+    );
+    assert_eq!(
+        listener.accept().unwrap_err().kind(),
+        io::ErrorKind::WouldBlock
+    );
+    fixture.assert_terminal(None, "source_revoked");
+}
+
+#[test]
+fn wire_receiver_assigned_pending_handshake_keeps_deadline() {
+    let mut fixture = WireSource::new(None);
+    let listener = wire_listener();
+    let stream = StreamId::new();
+    let sent_at = Instant::now();
+    fixture.send_offer(&listener, stream);
+    fixture.consume_first(stream);
+    let _pending = accept_pending(&listener);
+    let claims = (
+        fixture.owner.source_lease_expires_at_ms(),
+        fixture.owner.sink_lease_expires_at_ms(),
+    );
+    thread::sleep(Duration::from_millis(150));
+    fixture
+        .sink
+        .send_heartbeat_until(91, false, Instant::now() + Duration::from_millis(50))
+        .unwrap();
+    // Wait for actual authenticated heartbeat consumption, not one nonblocking poll.
+    let heartbeat_end = Instant::now() + Duration::from_millis(70);
+    loop {
+        assert!(
+            Instant::now() < heartbeat_end,
+            "pending-handshake heartbeat was not acknowledged"
+        );
+        fixture.owner.poll().unwrap();
+        if let Some(ReceivedControlMessage::Heartbeat(heartbeat)) = fixture
+            .sink
+            .poll_control_message_until(heartbeat_end)
+            .unwrap()
+        {
+            assert!(heartbeat.acknowledgement);
+            assert_eq!(heartbeat.sequence, 91);
+            break;
+        }
+        thread::sleep(TICK);
+    }
+    let reason = fixture.terminal();
+    assert!(matches!(
+        reason.kind(),
+        io::ErrorKind::TimedOut | io::ErrorKind::Other
+    ));
+    assert!(
+        sent_at.elapsed() < Duration::from_millis(380),
+        "heartbeat refreshed original 250 ms operation budget"
+    );
+    assert_eq!(
+        (
+            fixture.owner.source_lease_expires_at_ms(),
+            fixture.owner.sink_lease_expires_at_ms()
+        ),
+        claims
+    );
+    fixture.assert_terminal(Some(stream), "media_timeout");
 }

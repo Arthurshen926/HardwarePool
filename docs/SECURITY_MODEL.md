@@ -1765,3 +1765,15 @@ remembered legacy speaker approval. Stop revokes admission before cleanup;
 failed or uncertain release quarantines the process reservation. Native
 worker-confirmed ACK counters do not authenticate audibility or retract PCM
 already accepted by the platform. Legacy defaults remain unchanged.
+
+### Receiver-assigned stereo selection
+
+[ADR 1568](adr/1568-receiver-assigned-secure-stereo-stream.md) permits one ID latch
+only after exact authenticated receipt and current Session/peer/Route/epoch,
+profile/transport, grant and both original claims pass validation. The new
+admission has no sentinel ID; strict-ID callers cannot silently switch modes.
+Pinned TLS identity/IP, original wall/monotonic authority caps, Bound-before-helper
+and once-only Acquire/Start remain mandatory. Duplicate offers, failed TLS,
+revocation, Stop or reconnect cannot rebind or refresh admission. Selected-ID
+telemetry is not readiness or audibility. A wider production peer grant with a
+local-only timer does not substitute for future exact bilateral consent binding.

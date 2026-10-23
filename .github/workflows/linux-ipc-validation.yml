@@ -963,6 +963,48 @@ jobs:
             count=$((count + 1))
           done
           test "$count" -eq 2
+      - name: Require receiver-assigned stereo admission wire and graph execution
+        run: |
+          set -euo pipefail
+          fixture="$(python3 - "$RUNNER_TEMP/secure-stereo-build.jsonl" <<'PYFIXTURE'
+          import json, sys
+          items = [json.loads(line) for line in open(sys.argv[1])]
+          matches = [item['executable'] for item in items if item.get('reason') == 'compiler-artifact' and item.get('target', {}).get('name') == 'linux_secure_stereo' and item.get('executable')]
+          assert len(matches) == 1
+          print(matches[0])
+          PYFIXTURE
+          )"
+          count=0
+          for case in learns_authenticated_offer strict_constructor_rejects_independent_id failed_media_tls_is_terminal duplicate_offer_cannot_replace_first source_lease_loss_rejects_offer pending_handshake_keeps_deadline; do
+            name="wire_receiver_assigned_$case"
+            grep -Fx "$name: test" "$RUNNER_TEMP/secure-stereo-tests.txt"
+            timeout --signal=TERM --kill-after=15s 30s "$fixture" --exact "$name" --test-threads=1 --color never \
+              2>&1 | tee "$RUNNER_TEMP/secure-stereo-assigned-wire-$case.txt"
+            grep -Fx "test $name ... ok" "$RUNNER_TEMP/secure-stereo-assigned-wire-$case.txt"
+            grep -F 'test result: ok. 1 passed; 0 failed; 0 ignored;' "$RUNNER_TEMP/secure-stereo-assigned-wire-$case.txt"
+            count=$((count + 1))
+          done
+          test "$count" -eq 6
+          grep -Fx 'hosted_receiver_assigned_secure_stereo_linux_capture_android_sink: test' "$RUNNER_TEMP/secure-stereo-tests.txt"
+          count=0
+          for scenario in waveform stop source_revoke sink_revoke control_eof media_eof expiry backpressure partial_write; do
+            timeout --signal=TERM --kill-after=15s 75s python3 scripts/run_pipewire_secure_stereo.py \
+              --hosted-pipewire-secure-stereo --receiver-assigned-stream-id --fixture "$fixture" --scenario "$scenario" \
+              2>&1 | tee "$RUNNER_TEMP/secure-stereo-assigned-$scenario.txt"
+            grep -Fx "capyio_pipewire_receiver_assigned_secure_stereo=passed scenario=$scenario pinned_tls=true independent_consent=true exact_claims=true stereo=true actual_rust_apis=true simulated_sink=true cleanup=true" "$RUNNER_TEMP/secure-stereo-assigned-$scenario.txt"
+            count=$((count + 1))
+          done
+          test "$count" -eq 9
+          grep -Fx 'hosted_receiver_assigned_secure_stereo_linux_capture_android_receive_job: test' "$RUNNER_TEMP/secure-stereo-tests.txt"
+          count=0
+          for scenario in waveform partial_ack; do
+            timeout --signal=TERM --kill-after=15s 75s python3 scripts/run_pipewire_secure_stereo.py \
+              --hosted-pipewire-secure-stereo-job --receiver-assigned-stream-id --fixture "$fixture" --scenario "$scenario" \
+              2>&1 | tee "$RUNNER_TEMP/secure-stereo-assigned-job-$scenario.txt"
+            grep -Fx "capyio_pipewire_receiver_assigned_secure_stereo_job=passed scenario=$scenario pinned_tls=true independent_consent=true exact_claims=true stereo=true shared_runtime=true actual_write_ack=true worker_confirmed=true simulated_sink=true route_starting=true cleanup=true" "$RUNNER_TEMP/secure-stereo-assigned-job-$scenario.txt"
+            count=$((count + 1))
+          done
+          test "$count" -eq 2
       - name: Require actual secure playback terminal Node and private PipeWire proof
         run: |
           set -euo pipefail

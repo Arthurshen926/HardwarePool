@@ -45,8 +45,8 @@ pub use secure::{SecurePlaybackAdmission, SecurePlaybackEvent, SecurePlaybackOwn
 mod secure_capture;
 #[cfg(target_os = "linux")]
 pub use secure_capture::{
-    SecureStereoSourceAdmission, SecureStereoSourceEvent, SecureStereoSourceOwner,
-    SecureStereoSourceStopHandle,
+    SecureStereoReceiverAssignedSourceAdmission, SecureStereoSourceAdmission,
+    SecureStereoSourceEvent, SecureStereoSourceOwner, SecureStereoSourceStopHandle,
 };
 
 pub const PCM_PACKET_BYTES: usize = 960;
