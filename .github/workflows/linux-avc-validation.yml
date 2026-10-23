@@ -28,8 +28,17 @@ jobs:
       - name: Install official validation dependencies in disposable runner only
         run: |
           set -euo pipefail
-          sudo apt-get update
-          sudo apt-get install --yes --no-install-recommends libavcodec-dev libavutil-dev libpipewire-0.3-dev libspa-0.2-dev pipewire-bin
+          # This disposable runner already trusts both official mirrors. Prefer
+          # its existing HTTPS fallback after repeated Azure mirror stalls.
+          grep -Fx $'http://azure.archive.ubuntu.com/ubuntu/\tpriority:1' /etc/apt/apt-mirrors.txt
+          grep -Fx $'https://archive.ubuntu.com/ubuntu/\tpriority:2' /etc/apt/apt-mirrors.txt
+          sudo sed -i \
+            -e 's|^http://azure\.archive\.ubuntu\.com/ubuntu/\tpriority:1$|http://azure.archive.ubuntu.com/ubuntu/\tpriority:2|' \
+            -e 's|^https://archive\.ubuntu\.com/ubuntu/\tpriority:2$|https://archive.ubuntu.com/ubuntu/\tpriority:1|' \
+            /etc/apt/apt-mirrors.txt
+          apt_options=(-o Acquire::Retries=1 -o Acquire::http::Timeout=15 -o Acquire::https::Timeout=15)
+          sudo apt-get "${apt_options[@]}" update
+          sudo apt-get "${apt_options[@]}" install --yes --no-install-recommends libavcodec-dev libavutil-dev libpipewire-0.3-dev libspa-0.2-dev pipewire-bin
           dpkg-query -W libavcodec-dev libavutil-dev libpipewire-0.3-dev | tee "$RUNNER_TEMP/avc-dependencies.txt"
           cat > "$RUNNER_TEMP/avc-license.c" <<'C'
           #include <stdio.h>
