@@ -656,3 +656,11 @@ prepares locally and hands the same link to its Source owner without a Prepared
 echo or pre-acquired Source lease. Crossed Acquire and one Start advance epoch
 zero to one. Reverse Prepared evidence is minted by authenticated decode, not by
 a public DTO. Legitimate subsequent Starting/offers remain lifecycle traffic.
+
+### Explicit bilateral stereo launcher selection
+
+ADR 1571 adds no media wire encoding. The exact authenticated Source capability
+metadata `capyio.secure_stereo.bilateral_consent: v1` identifies the opt-in bilateral
+ordering contract, not a grant. Local FIFO configuration separately selects
+`pinned_tls13_stereo_v1`; PCM/encoded-record counters are 1920/2128 bytes, not the
+mono dimensions. Unmarked legacy admission remains separate.

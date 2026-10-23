@@ -1848,3 +1848,11 @@ from the first exact authenticated offer receipt. The strict-ID constructor
 remains strict. The selected-ID diagnostic is not TLS Bound, helper readiness,
 Route Active or audibility. No Node/console launch integration is added; an exact
 typed bilateral pre-stamp grant handshake remains separate blocked Stage B work.
+
+### Explicit bilateral Linux stereo entry
+
+[ADR 1571](adr/1571-explicit-linux-bilateral-stereo-entry.md) supersedes the
+library-only activation boundary for the separate paired-store selected-source
+launcher/console. The new authenticated Source catalog marker selects bilateral
+consent dispatch, never grants consent. Existing default/legacy paths remain
+unchanged; receipt-bound Prepared handoff precedes crossed claims and one Start.

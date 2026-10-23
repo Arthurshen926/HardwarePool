@@ -146,10 +146,14 @@ pub(super) fn validate_export_options(output: &Path, options: &ExportOptions) ->
         };
         let secure = options.media_security.is_secure();
         if secure {
-            if !matches!(
-                options.kind,
-                ExportKind::Playback | ExportKind::VirtualMicrophone
-            ) || media.port() != 0
+            if !(if options.media_security == media::MediaSecurity::SecureStereo {
+                options.kind == ExportKind::Capture
+            } else {
+                matches!(
+                    options.kind,
+                    ExportKind::Playback | ExportKind::VirtualMicrophone
+                )
+            }) || media.port() != 0
                 || options.duration_secs > options.media_security.max_duration_secs()
             {
                 return Err(invalid());
@@ -940,6 +944,22 @@ mod tests {
             target: matches!(kind, ExportKind::Playback | ExportKind::Capture)
                 .then(|| "synthetic.target".into()),
             duration_secs: 7,
+        }
+    }
+
+    #[test]
+    fn pure_secure_stereo_export_only_selected_capture() {
+        for kind in EXPORT_KINDS {
+            let mut selected = options(kind);
+            selected.media_security = media::MediaSecurity::SecureStereo;
+            selected.media = Some("127.0.0.1:0".parse().unwrap());
+            for duration in [0, 1, 60, 61, 300, u64::MAX] {
+                selected.duration_secs = duration;
+                check_option_parity(
+                    &selected,
+                    kind == ExportKind::Capture && (1..=60).contains(&duration),
+                );
+            }
         }
     }
 

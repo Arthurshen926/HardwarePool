@@ -27,6 +27,9 @@ pub(super) enum MediaSecurity {
     #[serde(rename = "pinned_tls13_mono_300s_v1")]
     #[value(name = "pinned_tls13_mono_300s_v1")]
     Secure300,
+    #[serde(rename = "pinned_tls13_stereo_v1")]
+    #[value(name = "pinned_tls13_stereo_v1")]
+    SecureStereo,
 }
 impl MediaSecurity {
     pub(super) fn is_secure(self) -> bool {
@@ -35,7 +38,7 @@ impl MediaSecurity {
 
     pub(super) fn max_duration_secs(self) -> u64 {
         match self {
-            Self::Secure => 60,
+            Self::Secure | Self::SecureStereo => 60,
             Self::Legacy | Self::Secure300 => 300,
         }
     }
@@ -45,6 +48,7 @@ impl MediaSecurity {
             Self::Legacy => None,
             Self::Secure => Some(capyio_protocol::SECURE_AUDIO_MONO_FORMAT),
             Self::Secure300 => Some(capyio_protocol::SECURE_AUDIO_MONO_300S_FORMAT),
+            Self::SecureStereo => Some(capyio_protocol::SECURE_AUDIO_STEREO_FORMAT),
         }
     }
 
@@ -52,6 +56,9 @@ impl MediaSecurity {
         match self {
             Self::Legacy => WARNING,
             Self::Secure => SECURE_WARNING,
+            Self::SecureStereo => {
+                "Experimental pinned TLS 1.3 stereo capture; explicit selected source and fresh independent approval on both peers, 1..60 seconds. No downgrade, renewal or virtual speaker.\r\nSent transport records do not prove Android acceptance or audibility; the Route remains Starting.\r\n"
+            }
             Self::Secure300 => {
                 "Experimental pinned TLS 1.3 mono media; explicit 300-second profile, one finite session at most 300 seconds. No automatic downgrade or renewal.\r\nAuthenticated PCM writes do not prove audibility or application consumption; the Route remains Starting.\r\nAndroid live microphone support is not available for this profile.\r\n"
             }
@@ -63,6 +70,7 @@ impl MediaSecurity {
             Self::Legacy => SECURITY,
             Self::Secure => "pinned_tls13_mono_v1",
             Self::Secure300 => "pinned_tls13_mono_300s_v1",
+            Self::SecureStereo => "pinned_tls13_stereo_v1",
         }
     }
 }
@@ -176,6 +184,8 @@ struct PlaybackConfig {
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct CaptureConfig {
+    #[serde(default)]
+    media_security: MediaSecurity,
     version: u32,
     node_id: NodeId,
     sink: Port,
@@ -229,7 +239,7 @@ impl Config {
                     version: value.version,
                     node_id: value.node_id,
                     remote: value.sink,
-                    media_security: MediaSecurity::Legacy,
+                    media_security: value.media_security,
                     listen: value.listen,
                     media: value.media,
                     target: value.target,
@@ -261,8 +271,11 @@ impl Config {
         let secure = self.media_security.is_secure();
         let mut media = self.media;
         if secure {
-            if !matches!(self.endpoint_mode, Mode::Playback | Mode::VirtualMicrophone)
-                || self.media.port() != 0
+            if !(if self.media_security == MediaSecurity::SecureStereo {
+                self.endpoint_mode == Mode::StereoCapture
+            } else {
+                matches!(self.endpoint_mode, Mode::Playback | Mode::VirtualMicrophone)
+            }) || self.media.port() != 0
                 || self.duration_secs > self.media_security.max_duration_secs()
             {
                 return Err(invalid());
@@ -309,6 +322,9 @@ impl Config {
             }
             Direction::Capture => {
                 value["sink"] = json!(self.remote);
+                if self.media_security.is_secure() {
+                    value["media_security"] = json!(self.media_security);
+                }
                 // Manifest and event names intentionally differ in the Node API.
                 value["endpoint_mode"] = json!(match self.endpoint_mode {
                     Mode::StereoCapture => CaptureMode::SelectedSource,
@@ -487,6 +503,7 @@ enum Stage {
     Catalog,
     AwaitingLocalApproval,
     AwaitingPeerConsentOrLease,
+    AwaitingPeerApproval,
 }
 #[derive(Debug, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
@@ -519,6 +536,16 @@ enum TerminalCause {
     MediaTimeout,
     MediaFailure,
     ControlClosed,
+    ControlFailure,
+    CaptureClosed,
+    CaptureFailure,
+    CaptureTimeout,
+    ClockRegressed,
+    Expired,
+    SourceRevoked,
+    SessionChanged,
+    CatalogChanged,
+    NegotiationTimeout,
 }
 
 #[derive(Debug, Deserialize, Serialize)]
@@ -538,9 +565,41 @@ struct SimpleEvent {
     packets_dropped_busy: Option<u64>,
 }
 
+// Stereo capture counts local PCM reads separately from complete TLS records.
+#[derive(Debug, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+struct StereoStatus {
+    version: u32,
+    event: String,
+    route_id: RouteId,
+    state: RouteState,
+    media_security: MediaSecurity,
+    packets_sent: u64,
+    packets_captured: u64,
+    bytes_read: u64,
+    transport_bytes_sent: u64,
+}
+#[derive(Debug, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+struct StereoTerminal {
+    version: u32,
+    event: String,
+    packets_sent: u64,
+    packets_captured: u64,
+    bytes_read: u64,
+    transport_bytes_sent: u64,
+    terminal_cause: TerminalCause,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    terminal_observed_at_ms: Option<u64>,
+}
+
 #[derive(Debug)]
 enum Event {
     Listening(Listening),
+    StereoAwaiting(AwaitingPeer),
+    StereoBound(AwaitingPeer),
+    StereoStatus(StereoStatus),
+    StereoTerminal(StereoTerminal),
     Approval(Box<Approval>),
     AwaitingPeer(AwaitingPeer),
     Stage(StageStatus),
@@ -557,6 +616,14 @@ impl Event {
             serde_json::from_value(value).map_err(|_| invalid())
         }
         match text(&value, "event")? {
+            "awaiting_peer_approval" => Ok(Self::StereoAwaiting(decode(value)?)),
+            "bound" => Ok(Self::StereoBound(decode(value)?)),
+            "status" if value["media_security"] == "pinned_tls13_stereo_v1" => {
+                Ok(Self::StereoStatus(decode(value)?))
+            }
+            "stopped" | "failed" if value.get("packets_captured").is_some() => {
+                Ok(Self::StereoTerminal(decode(value)?))
+            }
             "listening" => Ok(Self::Listening(decode(value)?)),
             "approval_required" => {
                 // Option fields must be present as explicit nulls when absent.
@@ -635,6 +702,9 @@ impl Event {
 
     fn canonical(&self) -> io::Result<String> {
         let result = match self {
+            Self::StereoAwaiting(value) | Self::StereoBound(value) => serde_json::to_string(value),
+            Self::StereoStatus(value) => serde_json::to_string(value),
+            Self::StereoTerminal(value) => serde_json::to_string(value),
             Self::Listening(value) => serde_json::to_string(value),
             Self::Approval(value) => serde_json::to_string(value),
             Self::AwaitingPeer(value) => serde_json::to_string(value),
@@ -658,6 +728,9 @@ struct Session {
     approval: Option<Approval>,
     approved: bool,
     offered: bool,
+    stereo_waiting: bool,
+    stereo_bound: bool,
+    captured: u64,
     stopping: bool,
     finished: Option<Finished>,
     packets: u64,
@@ -677,8 +750,28 @@ impl Session {
             return Err(invalid());
         }
         if let Event::Stopped(value) | Event::Failed(value) = event
-            && !config.media_security.is_secure()
+            && (!config.media_security.is_secure()
+                || config.media_security == MediaSecurity::SecureStereo)
             && (value.terminal_observed_at_ms.is_some() || value.packets_written.is_some())
+        {
+            return Err(invalid());
+        }
+        if let Event::Stopped(value) | Event::Failed(value) = event
+            && matches!(
+                value.terminal_cause,
+                Some(
+                    TerminalCause::ControlFailure
+                        | TerminalCause::CaptureClosed
+                        | TerminalCause::CaptureFailure
+                        | TerminalCause::CaptureTimeout
+                        | TerminalCause::ClockRegressed
+                        | TerminalCause::Expired
+                        | TerminalCause::SourceRevoked
+                        | TerminalCause::SessionChanged
+                        | TerminalCause::CatalogChanged
+                        | TerminalCause::NegotiationTimeout
+                )
+            )
         {
             return Err(invalid());
         }
@@ -697,6 +790,60 @@ impl Session {
             return Err(invalid());
         }
         match event {
+            Event::StereoAwaiting(value) => {
+                if config.media_security != MediaSecurity::SecureStereo
+                    || !self.approved
+                    || self.stereo_waiting
+                    || self.offered
+                    || self.approval.as_ref().map(|a| a.route_id) != Some(value.route_id)
+                {
+                    return Err(invalid());
+                }
+                self.stereo_waiting = true;
+            }
+            Event::StereoBound(value) => {
+                if config.media_security != MediaSecurity::SecureStereo
+                    || !self.offered
+                    || self.stereo_bound
+                    || self.approval.as_ref().map(|a| a.route_id) != Some(value.route_id)
+                {
+                    return Err(invalid());
+                }
+                self.stereo_bound = true;
+            }
+            Event::StereoStatus(value) => {
+                if value.media_security != MediaSecurity::SecureStereo
+                    || !matches!(value.state, RouteState::Prepared | RouteState::Starting)
+                    || (self.stereo_bound && value.state != RouteState::Starting)
+                    || self.approval.as_ref().map(|a| a.route_id) != Some(value.route_id)
+                {
+                    return Err(invalid());
+                }
+                self.stereo_counts(
+                    config,
+                    value.packets_sent,
+                    value.packets_captured,
+                    value.bytes_read,
+                    value.transport_bytes_sent,
+                )?;
+            }
+            Event::StereoTerminal(value) => {
+                if value.event != "failed" && value.terminal_observed_at_ms.is_none() {
+                    return Err(invalid());
+                }
+                self.stereo_counts(
+                    config,
+                    value.packets_sent,
+                    value.packets_captured,
+                    value.bytes_read,
+                    value.transport_bytes_sent,
+                )?;
+                self.finished = Some(if value.event == "stopped" {
+                    Finished::Stopped
+                } else {
+                    Finished::Failed
+                });
+            }
             Event::Listening(value) => {
                 if self.listening
                     || self.approval.is_some()
@@ -716,6 +863,8 @@ impl Session {
             }
             Event::AwaitingPeer(value) => {
                 if !self.approved
+                    || (config.media_security == MediaSecurity::SecureStereo
+                        && !self.stereo_waiting)
                     || self.offered
                     || self.approval.as_ref().map(|a| a.route_id) != Some(value.route_id)
                 {
@@ -728,6 +877,11 @@ impl Session {
                     Stage::Listening | Stage::Catalog => self.approval.is_none(),
                     Stage::AwaitingLocalApproval => self.approval.is_some() && !self.offered,
                     Stage::AwaitingPeerConsentOrLease => self.approved && !self.offered,
+                    Stage::AwaitingPeerApproval => {
+                        config.media_security == MediaSecurity::SecureStereo
+                            && self.approved
+                            && !self.offered
+                    }
                 };
                 if !self.listening || !valid {
                     return Err(invalid());
@@ -740,6 +894,7 @@ impl Session {
                     {
                         return Err(invalid());
                     }
+                    MediaSecurity::SecureStereo => return Err(invalid()),
                     MediaSecurity::Secure | MediaSecurity::Secure300 => {
                         let bytes = value.bytes_written.ok_or_else(invalid)?;
                         if value.media_security != Some(config.media_security)
@@ -774,6 +929,9 @@ impl Session {
                 self.bytes = value.bytes_written.unwrap_or(0);
             }
             Event::Stopped(_) => {
+                if config.media_security == MediaSecurity::SecureStereo && self.offered {
+                    return Err(invalid());
+                }
                 if !self.stopping && !self.approved {
                     return Err(invalid());
                 }
@@ -781,6 +939,37 @@ impl Session {
             }
             Event::Failed(_) => self.finished = Some(Finished::Failed),
         }
+        Ok(())
+    }
+
+    fn stereo_counts(
+        &mut self,
+        config: &Config,
+        sent: u64,
+        captured: u64,
+        pcm: u64,
+        wire: u64,
+    ) -> io::Result<()> {
+        let max = config.duration_secs.checked_mul(100).ok_or_else(invalid)?;
+        if config.media_security != MediaSecurity::SecureStereo
+            || !self.approved
+            || !self.offered
+            || sent < self.packets
+            || captured < self.captured
+            || pcm < self.bytes
+            || sent > captured
+            || sent > max
+            || (pcm != 0 && !self.stereo_bound)
+            || sent.checked_mul(2128) != Some(wire)
+            || !captured
+                .checked_mul(1920)
+                .is_some_and(|full| pcm >= full && pcm - full < 1920)
+        {
+            return Err(invalid());
+        }
+        self.packets = sent;
+        self.captured = captured;
+        self.bytes = pcm;
         Ok(())
     }
 
@@ -902,7 +1091,10 @@ fn run_direction(args: &Args, path: &Path, peer: NodeId, direction: Direction) -
         if let Some(value) = node.poll()? {
             received = true;
             let event = Event::parse(value)?;
-            let status = matches!(event, Event::Stage(_) | Event::Route(_));
+            let status = matches!(
+                event,
+                Event::Stage(_) | Event::Route(_) | Event::StereoStatus(_)
+            );
             if status && !status_pending {
                 return Err(invalid());
             }
@@ -1025,6 +1217,254 @@ fn run_direction(args: &Args, path: &Path, peer: NodeId, direction: Direction) -
 mod tests {
     use super::*;
     use std::os::unix::fs::{DirBuilderExt, PermissionsExt};
+
+    fn stereo_config() -> Config {
+        let mut value = capture_config_json();
+        value["media_security"] = json!("pinned_tls13_stereo_v1");
+        value["media"] = json!("127.0.0.1:0");
+        parse_capture_config(&value).unwrap()
+    }
+
+    #[test]
+    fn pure_secure_stereo_requires_explicit_finite_selected_source() {
+        let config = stereo_config();
+        assert_eq!(
+            parse_capture_config(&config.wire()).unwrap().media_security,
+            MediaSecurity::SecureStereo
+        );
+        for (key, replacement) in [
+            ("duration_secs", json!(0)),
+            ("duration_secs", json!(61)),
+            ("media", json!("127.0.0.1:1234")),
+            ("target", json!("default")),
+            ("target", Value::Null),
+            ("endpoint_mode", json!("virtual_speaker")),
+            ("media_security", json!("pinned_tls13_mono_v1")),
+        ] {
+            let mut value = config.wire();
+            value[key] = replacement;
+            assert!(parse_capture_config(&value).is_err(), "{key}");
+        }
+        let mut playback = secure_config_json();
+        playback["media_security"] = json!("pinned_tls13_stereo_v1");
+        assert!(parse_config(&playback).is_err());
+        assert!(
+            config
+                .media_security
+                .warning()
+                .contains("do not prove Android acceptance")
+        );
+    }
+
+    #[test]
+    fn pure_secure_stereo_rejects_cross_bound_approval_and_early_pcm() {
+        let config = stereo_config();
+        for (key, value) in [
+            ("request_id", json!("00000000-0000-0000-0000-000000000000")),
+            ("route_id", json!("00000000-0000-0000-0000-000000000000")),
+            (
+                "source",
+                json!({"node_id":NodeId::new(),"capability_id":CapabilityId::new(),"port_id":PortId::new()}),
+            ),
+            (
+                "sink",
+                json!({"node_id":NodeId::new(),"capability_id":CapabilityId::new(),"port_id":PortId::new()}),
+            ),
+            ("media_security", json!("pinned_tls13_mono_v1")),
+            ("format", json!("pcm-s16le-48000-stereo")),
+            ("target", json!("other.source")),
+        ] {
+            let mut value_json = approval_json(&config);
+            value_json[key] = value;
+            let event = Event::parse(value_json).unwrap();
+            assert!(
+                Session {
+                    listening: true,
+                    ..Session::default()
+                }
+                .accept(&event, &config)
+                .is_err(),
+                "{key}"
+            );
+        }
+        let mut session = Session {
+            approved: true,
+            offered: true,
+            ..Session::default()
+        };
+        assert!(session.stereo_counts(&config, 0, 0, 1, 0).is_err());
+        session.stereo_counts(&config, 0, 0, 0, 0).unwrap();
+        session.stereo_bound = true;
+        // A final partial local read is not a complete transported record.
+        session.stereo_counts(&config, 0, 0, 1919, 0).unwrap();
+        assert!(session.stereo_counts(&config, 0, 0, 1920, 0).is_err());
+        assert!(
+            session
+                .stereo_counts(&config, u64::MAX, u64::MAX, u64::MAX, u64::MAX)
+                .is_err()
+        );
+    }
+
+    #[test]
+    fn pure_secure_stereo_accepts_all_owner_failure_causes_without_cross_profile_admission() {
+        let config = stereo_config();
+        let mono = parse_config(&secure_config_json()).unwrap();
+        // Exhaustive current SourceOwner::fail/observe and control/media classifiers.
+        for cause in [
+            "failure",
+            "local_stop",
+            "peer_stop",
+            "media_closed",
+            "media_timeout",
+            "media_failure",
+            "control_closed",
+            "control_failure",
+            "capture_closed",
+            "capture_failure",
+            "capture_timeout",
+            "clock_regressed",
+            "expired",
+            "source_revoked",
+            "session_changed",
+            "catalog_changed",
+            "negotiation_timeout",
+        ] {
+            let value = json!({"version":1,"event":"failed","packets_sent":1,
+                "packets_captured":1,"bytes_read":1920,"transport_bytes_sent":2128,
+                "terminal_cause":cause,"terminal_observed_at_ms":1});
+            let event = Event::parse(value).unwrap();
+            let mut session = Session {
+                approved: true,
+                offered: true,
+                stereo_bound: true,
+                ..Session::default()
+            };
+            session.accept(&event, &config).unwrap();
+            assert_eq!(session.finished, Some(Finished::Failed), "{cause}");
+            assert_eq!((session.packets, session.bytes), (1, 1920));
+            assert!(
+                Session {
+                    approved: true,
+                    offered: true,
+                    stereo_bound: true,
+                    ..Session::default()
+                }
+                .accept(&event, &mono)
+                .is_err()
+            );
+        }
+        for cause in [
+            "control_failure",
+            "capture_closed",
+            "capture_failure",
+            "capture_timeout",
+            "clock_regressed",
+            "expired",
+            "source_revoked",
+            "session_changed",
+            "catalog_changed",
+            "negotiation_timeout",
+        ] {
+            let event=Event::parse(json!({"version":1,"event":"failed","packets_written":1,
+                "bytes_written":960,"packets_dropped_busy":0,"terminal_cause":cause,"terminal_observed_at_ms":1})).unwrap();
+            assert!(
+                Session {
+                    approved: true,
+                    offered: true,
+                    ..Session::default()
+                }
+                .accept(&event, &mono)
+                .is_err(),
+                "{cause}"
+            );
+        }
+        assert!(
+            Event::parse(json!({"version":1,"event":"failed","packets_sent":0,
+            "packets_captured":0,"bytes_read":0,"transport_bytes_sent":0,
+            "terminal_cause":"unknown_future_cause","terminal_observed_at_ms":1}))
+            .is_err()
+        );
+    }
+
+    #[test]
+    fn pure_secure_stereo_fresh_consent_and_ordered_bound_counters() {
+        let config = stereo_config();
+        let approval = approval(&config);
+        let route = approval.route_id;
+        let mut session = Session {
+            listening: true,
+            approval: Some(approval),
+            ..Session::default()
+        };
+        assert!(input_action(b"start", &session).is_err());
+        assert!(matches!(
+            input_action(
+                session.approval.as_ref().unwrap().expected().as_bytes(),
+                &session
+            )
+            .unwrap(),
+            Input::Approve
+        ));
+        let waiting = json!({"version":1,"event":"awaiting_peer_approval","route_id":route});
+        assert!(
+            session
+                .accept(&Event::parse(waiting.clone()).unwrap(), &config)
+                .is_err()
+        );
+        session.approved = true;
+        session
+            .accept(&Event::parse(waiting.clone()).unwrap(), &config)
+            .unwrap();
+        assert!(
+            session
+                .accept(&Event::parse(waiting).unwrap(), &config)
+                .is_err()
+        );
+        session
+            .accept(
+                &Event::parse(json!({"version":1,"event":"awaiting_peer_offer","route_id":route}))
+                    .unwrap(),
+                &config,
+            )
+            .unwrap();
+        let status = json!({"version":1,"event":"status","route_id":route,"state":"starting","media_security":"pinned_tls13_stereo_v1",
+            "packets_sent":1,"packets_captured":2,"bytes_read":3840,"transport_bytes_sent":2128});
+        assert!(
+            session
+                .accept(&Event::parse(status.clone()).unwrap(), &config)
+                .is_err()
+        );
+        session
+            .accept(
+                &Event::parse(json!({"version":1,"event":"bound","route_id":route})).unwrap(),
+                &config,
+            )
+            .unwrap();
+        session
+            .accept(&Event::parse(status.clone()).unwrap(), &config)
+            .unwrap();
+        for (key, value) in [
+            ("transport_bytes_sent", json!(1920)),
+            ("bytes_read", json!(2128)),
+            ("packets_sent", json!(3)),
+            ("state", json!("active")),
+        ] {
+            let mut bad = status.clone();
+            bad[key] = value;
+            assert!(
+                session
+                    .accept(&Event::parse(bad).unwrap(), &config)
+                    .is_err(),
+                "{key}"
+            );
+        }
+        let mut extra = status;
+        extra["packets_written"] = json!(0);
+        assert!(Event::parse(extra).is_err());
+        session.accept(&Event::parse(json!({"version":1,"event":"stopped","packets_sent":1,"packets_captured":2,"bytes_read":3840,
+            "transport_bytes_sent":2128,"terminal_cause":"local_stop","terminal_observed_at_ms":1})).unwrap(), &config).unwrap();
+        assert_eq!(session.finished, Some(Finished::Stopped));
+    }
 
     fn config_json() -> Value {
         json!({"version":1,"node_id":NodeId::new(),

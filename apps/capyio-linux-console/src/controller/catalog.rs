@@ -273,7 +273,11 @@ impl Catalog {
         security: media::MediaSecurity,
     ) -> io::Result<Vec<Candidate>> {
         if security.is_secure()
-            && !matches!(kind, ExportKind::Playback | ExportKind::VirtualMicrophone)
+            && !(if security == media::MediaSecurity::SecureStereo {
+                kind == ExportKind::Capture
+            } else {
+                matches!(kind, ExportKind::Playback | ExportKind::VirtualMicrophone)
+            })
         {
             return Err(invalid());
         }
@@ -971,6 +975,52 @@ mod tests {
         ExportKind::VirtualSpeaker,
         ExportKind::Touchpad,
     ];
+
+    #[test]
+    fn pure_secure_stereo_candidates_require_exact_single_sink_and_hint() {
+        for (formats, expected) in [
+            (
+                json!([{"id":capyio_protocol::SECURE_AUDIO_STEREO_FORMAT,"parameters":{}}]),
+                1,
+            ),
+            (
+                json!([{"id":capyio_protocol::SECURE_AUDIO_STEREO_FORMAT,"parameters":{"x":"y"}}]),
+                0,
+            ),
+            (
+                json!([{"id":capyio_protocol::SECURE_AUDIO_STEREO_FORMAT,"parameters":{}},{"id":"pcm-s16le-48000-stereo","parameters":{}}]),
+                0,
+            ),
+            (json!([{"id":"pcm-s16le-48000-stereo","parameters":{}}]), 0),
+        ] {
+            let mut value = export_port(ExportKind::Capture);
+            value["formats"] = formats;
+            let mut catalog = Catalog::new(peer());
+            accept(&mut catalog, begin(1)).unwrap();
+            accept(&mut catalog, value).unwrap();
+            accept(&mut catalog, complete(1)).unwrap();
+            assert_eq!(
+                catalog
+                    .security_candidates(ExportKind::Capture, media::MediaSecurity::SecureStereo)
+                    .unwrap()
+                    .len(),
+                expected
+            );
+            assert!(
+                catalog
+                    .security_candidates(
+                        ExportKind::VirtualSpeaker,
+                        media::MediaSecurity::SecureStereo
+                    )
+                    .is_err()
+            );
+            assert!(
+                catalog
+                    .security_candidates(ExportKind::Playback, media::MediaSecurity::SecureStereo)
+                    .is_err()
+            );
+        }
+    }
 
     #[test]
     fn pure_secure_candidates_never_downgrade_or_select_parameterized_format() {

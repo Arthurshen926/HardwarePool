@@ -364,6 +364,31 @@ fn launcher_hint(
     if !port.qos_modes.contains(&QosMode::Interactive) {
         return unsupported("qos_not_supported");
     }
+    // Secure stereo is a narrow Android Speaker/Sink contract, never inferred
+    // from the legacy stereo descriptor or a mixed publication.
+    if port
+        .formats
+        .iter()
+        .any(|format| format.id == capyio_protocol::SECURE_AUDIO_STEREO_FORMAT)
+    {
+        if peer.platform != Platform::Android || capability.class != CapabilityClass::Speaker {
+            return unsupported("platform_or_class_not_supported");
+        }
+        if port.direction != PortDirection::Sink
+            || port.profile != ProfileId::audio_frames_v1()
+            || port.qos_modes != [QosMode::Interactive].into_iter().collect()
+            || port.formats
+                != vec![FormatDescriptor::new(
+                    capyio_protocol::SECURE_AUDIO_STEREO_FORMAT,
+                )]
+        {
+            return unsupported("format_not_supported");
+        }
+        return (
+            "needs_local_selection",
+            "audio_capture_needs_local_selection",
+        );
+    }
     let (format, reason) = if port.profile == ProfileId::audio_frames_v1() {
         match port.direction {
             PortDirection::Source => (
@@ -666,6 +691,53 @@ mod tests {
             );
         }
         assert_ne!(display_text("\\n").unwrap(), display_text("\n").unwrap());
+    }
+
+    #[test]
+    fn secure_stereo_hint_requires_android_speaker_exact_singleton() {
+        let mut peer = peer(1);
+        peer.platform = Platform::Android;
+        let id = *peer.capabilities.keys().next().unwrap();
+        let cap = peer.capabilities.get_mut(&id).unwrap();
+        cap.class = CapabilityClass::Speaker;
+        let port = cap.ports.values_mut().next().unwrap();
+        port.direction = PortDirection::Sink;
+        port.formats = vec![FormatDescriptor::new(
+            capyio_protocol::SECURE_AUDIO_STEREO_FORMAT,
+        )];
+        let hint = |peer: &NodeDescriptor| {
+            let cap = &peer.capabilities[&id];
+            launcher_hint(peer, cap, cap.ports.values().next().unwrap())
+        };
+        assert_eq!(
+            hint(&peer),
+            (
+                "needs_local_selection",
+                "audio_capture_needs_local_selection"
+            )
+        );
+        peer.platform = Platform::Linux;
+        assert_eq!(
+            hint(&peer),
+            ("not_supported", "platform_or_class_not_supported")
+        );
+        peer.platform = Platform::Android;
+        peer.capabilities.get_mut(&id).unwrap().class = CapabilityClass::Microphone;
+        assert_eq!(
+            hint(&peer),
+            ("not_supported", "platform_or_class_not_supported")
+        );
+        peer.capabilities.get_mut(&id).unwrap().class = CapabilityClass::Speaker;
+        peer.capabilities
+            .get_mut(&id)
+            .unwrap()
+            .ports
+            .values_mut()
+            .next()
+            .unwrap()
+            .formats
+            .push(FormatDescriptor::new("pcm-s16le-48000-stereo"));
+        assert_eq!(hint(&peer), ("not_supported", "format_not_supported"));
     }
 
     #[test]

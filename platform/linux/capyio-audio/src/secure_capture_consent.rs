@@ -221,6 +221,19 @@ impl SecureStereoSourceHandshake {
     pub fn cleanup_errors(&self) -> &[String] {
         &self.cleanup_errors
     }
+    /// Explicit bounded cancellation. Unlike Drop, reports retirement or control
+    /// cleanup failure; callers must not acknowledge a clean Stop after an error.
+    /// The authoritative Runtime and cleanup diagnostics remain inspectable.
+    pub fn cancel(&mut self) -> io::Result<()> {
+        if !self.terminal {
+            let _ = self.fail(error("bilateral source explicitly cancelled"));
+        }
+        if self.cleanup_errors.is_empty() {
+            Ok(())
+        } else {
+            Err(error("bilateral source cancellation cleanup failed"))
+        }
+    }
     pub fn state(&self) -> SecureStereoSourceHandshakeEvent {
         if self.terminal {
             SecureStereoSourceHandshakeEvent::Terminal
@@ -530,7 +543,7 @@ impl SecureStereoSourceHandshake {
 }
 impl Drop for SecureStereoSourceHandshake {
     fn drop(&mut self) {
-        if self.runtime.is_some() && self.link.is_some() {
+        if !self.terminal && self.runtime.is_some() && self.link.is_some() {
             let _ = self.fail(error("bilateral source handshake dropped"));
         }
     }

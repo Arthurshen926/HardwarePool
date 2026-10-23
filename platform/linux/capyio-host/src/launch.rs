@@ -28,6 +28,10 @@ use std::{
     time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
 
+#[cfg(feature = "paired-store")]
+#[path = "secure_stereo_launch.rs"]
+mod secure_stereo_launch;
+
 const LOCAL_FRAME: usize = 4096;
 const BOOTSTRAP: Duration = Duration::from_secs(5);
 const ACCEPT: Duration = Duration::from_secs(15);
@@ -69,12 +73,14 @@ enum MediaSecurity {
     PinnedTls13MonoV1,
     #[serde(rename = "pinned_tls13_mono_300s_v1")]
     PinnedTls13Mono300sV1,
+    #[serde(rename = "pinned_tls13_stereo_v1")]
+    PinnedTls13StereoV1,
 }
 impl MediaSecurity {
     fn profile(self) -> Option<capyio_protocol::SecureAudioSessionProfile> {
         use capyio_protocol::SecureAudioSessionProfile::*;
         match self {
-            Self::TrustedLabUdp => None,
+            Self::TrustedLabUdp | Self::PinnedTls13StereoV1 => None,
             Self::PinnedTls13MonoV1 => Some(Finite60sV1),
             Self::PinnedTls13Mono300sV1 => Some(Finite300sV1),
         }
@@ -82,6 +88,7 @@ impl MediaSecurity {
     fn name(self) -> &'static str {
         match self {
             Self::TrustedLabUdp => "unauthenticated_udp_trusted_lab_only",
+            Self::PinnedTls13StereoV1 => "pinned_tls13_stereo_v1",
             Self::PinnedTls13MonoV1 => "pinned_tls13_mono_v1",
             Self::PinnedTls13Mono300sV1 => "pinned_tls13_mono_300s_v1",
         }
@@ -120,6 +127,8 @@ struct CaptureLaunchConfig {
     #[serde(default)]
     endpoint_mode: CaptureMode,
     duration_secs: u64,
+    #[serde(default)]
+    media_security: MediaSecurity,
 }
 #[derive(Clone, Copy, Default, Deserialize, Eq, PartialEq)]
 #[serde(rename_all = "snake_case")]
@@ -129,6 +138,9 @@ enum CaptureMode {
     VirtualSpeaker,
 }
 fn parse_capture(bytes: &[u8]) -> io::Result<LaunchConfig> {
+    if bytes.iter().find(|byte| !byte.is_ascii_whitespace()) != Some(&b'{') {
+        return Err(fail());
+    }
     let value: CaptureLaunchConfig = sanitized(serde_json::from_slice(bytes))?;
     match value.endpoint_mode {
         CaptureMode::SelectedSource => {
@@ -140,12 +152,29 @@ fn parse_capture(bytes: &[u8]) -> io::Result<LaunchConfig> {
         CaptureMode::VirtualSpeaker if value.target.is_some() => return Err(fail()),
         CaptureMode::VirtualSpeaker => {}
     }
+    let stereo = value.media_security == MediaSecurity::PinnedTls13StereoV1;
+    if value.media_security != MediaSecurity::TrustedLabUdp && !stereo {
+        return Err(fail());
+    }
+    if stereo
+        && (value.endpoint_mode != CaptureMode::SelectedSource
+            || value.media.port() != 0
+            || !(1..=60).contains(&value.duration_secs))
+    {
+        return Err(fail());
+    }
+    let mut validation_media = value.media;
+    if stereo {
+        validation_media.set_port(if value.listen.port() <= 1 { 2 } else { 1 });
+    }
     // Validate shared addresses and lifetime with a non-resource placeholder.
     let encoded = sanitized(serde_json::to_vec(
-        &json!({"version":value.version,"node_id":value.node_id,"source":value.sink,"listen":value.listen,"media":value.media,"target":value.target.as_deref().unwrap_or("capyio.validation.only"),"duration_secs":value.duration_secs}),
+        &json!({"version":value.version,"node_id":value.node_id,"source":value.sink,"listen":value.listen,"media":validation_media,"target":value.target.as_deref().unwrap_or("capyio.validation.only"),"duration_secs":value.duration_secs}),
     ))?;
     let mut config = LaunchConfig::parse(&encoded)?;
     config.target = value.target;
+    config.media = value.media;
+    config.media_security = value.media_security;
     config.endpoint_mode = match value.endpoint_mode {
         CaptureMode::SelectedSource => EndpointMode::StereoCapture,
         CaptureMode::VirtualSpeaker => EndpointMode::VirtualSpeaker,
@@ -180,6 +209,9 @@ impl LaunchConfig {
 
     fn parse(bytes: &[u8]) -> io::Result<Self> {
         let value: Self = sanitized(serde_json::from_slice(bytes))?;
+        if value.media_security == MediaSecurity::PinnedTls13StereoV1 {
+            return Err(fail());
+        }
         if value.version != 1
             || value.node_id.as_uuid().is_nil()
             || value.source.node_id == value.node_id
@@ -354,6 +386,18 @@ fn launch(io: &mut LauncherIo, capture: bool, source: CredentialSource) -> io::R
         channel,
         peer.display_name.clone(),
     ))?;
+    #[cfg(feature = "paired-store")]
+    if config.media_security == MediaSecurity::PinnedTls13StereoV1 {
+        return secure_stereo_launch::run(
+            io,
+            &config,
+            runtime,
+            link,
+            sink,
+            identity,
+            peer.server_name.clone(),
+        );
+    }
     // All failures from here reconcile the exact authenticated Session.
     let prepared = prepare(io, &config, &mut runtime, &mut link, sink);
     let prepared = match prepared {
@@ -420,7 +464,8 @@ enum PreparedPlayback {
 }
 
 fn validate_credential_source(config: &LaunchConfig, source: &CredentialSource) -> io::Result<()> {
-    if config.media_security.profile().is_some() && matches!(source, CredentialSource::PrivatePipe)
+    if config.media_security != MediaSecurity::TrustedLabUdp
+        && matches!(source, CredentialSource::PrivatePipe)
     {
         return Err(fail());
     }
@@ -1275,6 +1320,11 @@ fn local_runtime_profile(
     endpoint: EndpointMode,
     security: MediaSecurity,
 ) -> io::Result<(NodeRuntime, PortRef)> {
+    if security == MediaSecurity::PinnedTls13StereoV1
+        && (endpoint != EndpointMode::StereoCapture || mode != ProposalMode::LinuxLed)
+    {
+        return Err(fail());
+    }
     if security.profile().is_some()
         && (!matches!(
             endpoint,
@@ -1349,7 +1399,9 @@ fn local_runtime_profile(
         profile: ProfileId::audio_frames_v1(),
         schema_id: None,
         formats: vec![FormatDescriptor::new(
-            if let Some(profile) = security.profile() {
+            if security == MediaSecurity::PinnedTls13StereoV1 {
+                capyio_protocol::SECURE_AUDIO_STEREO_FORMAT
+            } else if let Some(profile) = security.profile() {
                 profile.format_name()
             } else if capture {
                 "pcm-s16le-48000-stereo"
@@ -1379,14 +1431,18 @@ fn local_runtime_profile(
                 "Explicit lab playback"
             }
             .into(),
-            class: if endpoint == EndpointMode::VirtualMicrophone {
+            class: if security == MediaSecurity::PinnedTls13StereoV1 {
+                CapabilityClass::Custom("system_audio_capture".into())
+            } else if endpoint == EndpointMode::VirtualMicrophone {
                 CapabilityClass::Microphone
             } else {
                 CapabilityClass::Speaker
             },
             availability: Availability::Available,
             permission_requirement: PermissionRequirement::None,
-            metadata: if mode == ProposalMode::IncomingDraft {
+            metadata: if security == MediaSecurity::PinnedTls13StereoV1 {
+                BTreeMap::from([("capyio.secure_stereo.bilateral_consent".into(), "v1".into())])
+            } else if mode == ProposalMode::IncomingDraft {
                 BTreeMap::from([(
                     capyio_protocol::NATIVE_AUDIO_INBOUND_DRAFT_METADATA_KEY.into(),
                     capyio_protocol::NATIVE_AUDIO_INBOUND_DRAFT_MONO_V1.into(),

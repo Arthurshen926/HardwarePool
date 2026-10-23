@@ -114,6 +114,9 @@ struct StereoEntry {
     generation: u64,
     control_generation: u64,
     control_live: Arc<AtomicBool>,
+    // Retained independently of Runtime lookup, including registry failure.
+    bilateral: bool,
+    cleanup_failed: AtomicBool,
     route: RouteId,
     expected: Mutex<Route>,
     session: Session,
@@ -145,6 +148,9 @@ impl StereoEntry {
         self.gate.is_open()
     }
     fn state(&self) -> i32 {
+        if self.cleanup_failed.load(Ordering::Acquire) {
+            return FAILED;
+        }
         self.live();
         self.job
             .get()
@@ -276,6 +282,46 @@ pub(super) fn reap_finished(runtime: Option<u64>) {
     if let Some(job) = entry.job.get() {
         job.reap_finished();
     }
+    let mut cleanup_failed = false;
+    match catalog_runtimes().lock() {
+        Ok(mut registry) => {
+            if let Some(host) = registry.get_mut(&entry.runtime) {
+                if entry.bilateral {
+                    host.bilateral_stereo.invalidate(entry.route);
+                    cleanup_failed = host
+                        .runtime
+                        .retire_route_authorization(entry.route)
+                        .is_err();
+                    host.stereo_consents.remove(&entry.route);
+                    host.audio_status_pending.insert(entry.route);
+                } else if host
+                    .runtime
+                    .route(entry.route)
+                    .is_ok_and(|r| matches!(r.state, RouteState::Prepared | RouteState::Starting))
+                {
+                    if entry.state() == FAILED {
+                        let _ = crate::audio_negotiation::fail(host, entry.route);
+                    } else {
+                        let _ = host.runtime.begin_route_stop(entry.route);
+                        let _ = host.runtime.stop_route(entry.route);
+                    }
+                }
+                reconcile(&host.runtime);
+            } else {
+                cleanup_failed = entry.bilateral;
+            }
+        }
+        Err(_) => cleanup_failed = entry.bilateral,
+    }
+    if cleanup_failed {
+        // Failure to establish Runtime retirement is not successful Stop. This
+        // latch overrides a completed job's STOPPED and survives later stop().
+        entry.cleanup_failed.store(true, Ordering::Release);
+        entry.gate.invalidate();
+        entry.reject();
+    }
+    // Publish only after cleanup; do not preserve an earlier worker STOPPED
+    // when its authoritative retirement failed or could not be observed.
     if let Ok(mut last) = terminal().lock() {
         *last = Some(Terminal {
             runtime: entry.runtime,
@@ -283,21 +329,6 @@ pub(super) fn reap_finished(runtime: Option<u64>) {
             state: entry.state(),
             counters: entry.counters(),
         });
-    }
-    if let Ok(mut registry) = catalog_runtimes().lock()
-        && let Some(host) = registry.get_mut(&entry.runtime)
-        && host
-            .runtime
-            .route(entry.route)
-            .is_ok_and(|r| matches!(r.state, RouteState::Prepared | RouteState::Starting))
-    {
-        if entry.state() == FAILED {
-            let _ = crate::audio_negotiation::fail(host, entry.route);
-        } else {
-            let _ = host.runtime.begin_route_stop(entry.route);
-            let _ = host.runtime.stop_route(entry.route);
-        }
-        reconcile(&host.runtime);
     }
 }
 fn lookup(runtime: jlong, generation: jlong) -> Result<Arc<StereoEntry>, &'static str> {
@@ -336,6 +367,25 @@ pub(super) fn launch_ready(host: &AndroidCatalogRuntimeV1, route: &Route, now: u
 }
 
 fn start(runtime: u64, route: RouteId) -> Result<u64, String> {
+    let result = start_inner(runtime, route);
+    if result.is_err() {
+        let mut registry = catalog_runtimes()
+            .lock()
+            .map_err(|_| "Runtime registry poisoned")?;
+        if let Some(host) = registry.get_mut(&runtime)
+            && host.stereo_dispatch_routes.contains(&route)
+        {
+            host.bilateral_stereo.invalidate(route);
+            host.runtime
+                .retire_route_authorization(route)
+                .map_err(|e| e.to_string())?;
+            host.stereo_consents.remove(&route);
+            host.audio_status_pending.insert(route);
+        }
+    }
+    result
+}
+fn start_inner(runtime: u64, route: RouteId) -> Result<u64, String> {
     reap_finished(None);
     let session = {
         let registry = catalog_runtimes()
@@ -445,6 +495,8 @@ fn start(runtime: u64, route: RouteId) -> Result<u64, String> {
                 generation: id,
                 control_generation: generation,
                 control_live: identity.live.clone(),
+                bilateral: host.stereo_dispatch_routes.contains(&route),
+                cleanup_failed: AtomicBool::new(false),
                 route,
                 session: host
                     .runtime
@@ -458,17 +510,37 @@ fn start(runtime: u64, route: RouteId) -> Result<u64, String> {
                         .map_err(|e| e.to_string())?,
                 ],
                 expected: Mutex::new(original),
-                gate: StereoAdmissionGate::new(),
+                gate: if host.stereo_dispatch_routes.contains(&route) {
+                    host.bilateral_stereo.gate(route)?
+                } else {
+                    StereoAdmissionGate::new()
+                },
                 state: AtomicI32::new(PENDING),
                 pending_finished: AtomicBool::new(false),
                 pending_end: negotiation.operation_deadline(),
                 job: OnceLock::new(),
             });
+            if host.stereo_dispatch_routes.contains(&route) {
+                host.audio_status_pending.remove(&route);
+            }
             *slot = Some(entry.clone());
             (negotiation, request, entry)
         };
         let result = (|| {
             let link = owner.link.as_mut().ok_or("control link disappeared")?;
+            // The receiver's immutable Prepared must precede Source Acquire.
+            // Legacy Stage A keeps its original publication contract.
+            let bilateral = catalog_runtimes()
+                .lock()
+                .map_err(|_| "Runtime registry poisoned")?
+                .get(&runtime)
+                .ok_or("Runtime absent")?
+                .stereo_dispatch_routes
+                .contains(&route);
+            if bilateral {
+                link.send_route_status_until(negotiation.route(), negotiation.operation_deadline())
+                    .map_err(|e| e.to_string())?;
+            }
             let sent = link
                 .send_prepared_port_lease_request_until(request, negotiation.operation_deadline())
                 .map_err(|e| e.to_string())?;
@@ -772,7 +844,12 @@ pub(super) fn retire_terminal(owner: &mut NativeControlListener) -> Result<(), S
         .lock()
         .map_err(|_| "Runtime registry poisoned")?;
     let host = registry.get_mut(&entry.runtime).ok_or("Runtime absent")?;
-    if host
+    if host.stereo_dispatch_routes.contains(&entry.route) {
+        host.bilateral_stereo.invalidate(entry.route);
+        host.runtime
+            .retire_route_authorization(entry.route)
+            .map_err(|e| e.to_string())?;
+    } else if host
         .runtime
         .route(entry.route)
         .is_ok_and(|route| matches!(route.state, RouteState::Prepared | RouteState::Starting))
@@ -822,9 +899,17 @@ pub(super) fn take_statuses(
         host.audio_status_pending.remove(&route.id);
     }
     routes
+        .into_iter()
+        .filter(|route| {
+            !(host.stereo_dispatch_routes.contains(&route.id)
+                && route.state == RouteState::Prepared)
+        })
+        .collect()
 }
 
-pub(super) fn disconnect(owner: &mut NativeControlListener) {
+/// Invalidate first and always consume/close the owned link, even when Runtime
+/// reconciliation fails. Callers still stop other media owners before reporting.
+pub(super) fn disconnect(owner: &mut NativeControlListener) -> Result<(), String> {
     if let Some(identity) = owner.stereo_identity.take() {
         identity.invalidate();
     }
@@ -832,6 +917,44 @@ pub(super) fn disconnect(owner: &mut NativeControlListener) {
         pending.cancel();
     }
     owner.control_generation = 0;
+    let mut errors = Vec::new();
+    if let Some(mut link) = owner.link.take() {
+        if let Some(runtime) = owner.runtime_handle {
+            match catalog_runtimes().lock() {
+                Ok(mut registry) => {
+                    if let Some(host) = registry.get_mut(&runtime) {
+                        if host.stereo_dispatch_routes.iter().any(|id| {
+                            host.runtime
+                                .route(*id)
+                                .is_ok_and(|route| route.session_id == link.session_id())
+                        }) {
+                            if let Err(error) =
+                                host.invalidate_bilateral_stereo_session(link.session_id())
+                            {
+                                errors.push(error.to_string());
+                            }
+                            if let Err(error) = host.invalidate_stereo_consent_control() {
+                                errors.push(error);
+                            }
+                        }
+                        if let Err(error) = link.close_and_reconcile(&mut host.runtime) {
+                            errors.push(error.to_string());
+                        }
+                    } else {
+                        errors.push("Runtime absent during disconnect".into());
+                    }
+                }
+                Err(_) => errors.push("Runtime registry poisoned".into()),
+            }
+        }
+        // No registry, retirement or reconciliation failure may strand TLS.
+        link.close();
+    }
+    if errors.is_empty() {
+        Ok(())
+    } else {
+        Err(errors.join("; "))
+    }
 }
 pub(super) enum ControlPoll {
     Idle,

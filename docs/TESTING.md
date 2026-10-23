@@ -1615,3 +1615,13 @@ for real pinned control TLS through exported Linux and Android supervisors, plus
 control-link, Android, Linux-audio and Runtime suites. These are not default
 JNI/CLI activation or physical speaker/capture tests. Preserve exact test logs
 and any parallel fixture race qualifications from B1.
+
+## Explicit bilateral stereo launcher candidate
+
+ADR 1571 adds `cargo test -p capyio-node --features paired-store --test
+linux_secure_stereo_entry -- --test-threads=1`. Its private synthetic Secret
+Service and actual Node/FIFO/TLS checks establish executable consent/claim/Start
+ordering, not media capture or AudioTrack playback. Retain host/console units,
+B1/B2 aggregates and all mono/Stage A regressions. Report actual PTY/private
+PipeWire, Android-target and physical-device results independently, including
+missing dependency blockers; never count ignored graph tests as passed.

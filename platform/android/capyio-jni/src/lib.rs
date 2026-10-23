@@ -58,6 +58,7 @@ mod secure_speaker_policy;
 pub mod secure_stereo_receiver;
 mod stereo_admission;
 mod stereo_consent;
+pub mod stereo_dispatch;
 pub mod stereo_job;
 pub mod stereo_negotiation;
 pub mod stereo_supervisor;
@@ -518,6 +519,7 @@ pub struct AndroidCatalogRuntimeV1 {
     stereo_consents: BTreeMap<RouteId, stereo_negotiation::StereoConsentStamp>,
     stereo_consent_gate: stereo_consent::StereoConsentGate,
     bilateral_stereo: stereo_supervisor::BilateralRegistry,
+    stereo_dispatch_routes: BTreeSet<RouteId>,
     stereo_generations: BTreeMap<RouteId, stereo_job::StereoGenerationClaim>,
     #[cfg(target_os = "android")]
     camera_use: Option<AndroidCameraUse>,
@@ -681,6 +683,7 @@ impl AndroidCatalogRuntimeV1 {
     }
 
     pub fn resource_requests_json(&mut self, now_ms: u64) -> Result<Vec<u8>, String> {
+        self.invalidate_bilateral_stereo_expiry(now_ms)?;
         self.invalidate_bilateral_pending_expiry(now_ms);
         serde_json::to_vec(&self.touchpad_consent.requests(&mut self.runtime, now_ms))
             .map_err(|e| e.to_string())
@@ -693,6 +696,9 @@ impl AndroidCatalogRuntimeV1 {
         now_ms: u64,
     ) -> Result<(), String> {
         self.invalidate_bilateral_pending_expiry(now_ms);
+        if self.stereo_dispatch_routes.contains(&route_id) {
+            return self.resolve_dispatched_stereo_request(route_id, allow);
+        }
         if self.bilateral_stereo.contains(route_id) {
             return Err("registered bilateral stereo requires its supervisor approval".into());
         }
@@ -777,6 +783,7 @@ impl AndroidCatalogRuntimeV1 {
             stereo_consents: BTreeMap::new(),
             stereo_consent_gate: stereo_consent::StereoConsentGate::default(),
             bilateral_stereo: stereo_supervisor::BilateralRegistry::default(),
+            stereo_dispatch_routes: BTreeSet::new(),
             stereo_generations: BTreeMap::new(),
             #[cfg(target_os = "android")]
             camera_use: None,

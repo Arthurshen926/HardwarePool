@@ -798,20 +798,39 @@ pub extern "system" fn Java_dev_capyio_android_AndroidNativeControlListener_nati
                 {
                     return Err("control Runtime binding mismatch".into());
                 }
-                secure_stereo::retire_terminal(owner)?;
                 let now_ms = SystemTime::now()
                     .duration_since(UNIX_EPOCH)
                     .map_err(|_| "system clock is before Unix epoch".to_owned())?
                     .as_millis() as u64;
+                let upkeep = (|| -> Result<(), String> {
+                    secure_stereo::retire_terminal(owner)?;
                 if let Some(runtime) = catalog_runtimes()
                     .lock()
                     .map_err(|_| "native catalog Runtime registry is poisoned".to_owned())?
                     .get_mut(&runtime_handle)
                 {
+                    runtime.invalidate_bilateral_stereo_expiry(now_ms)?;
                     runtime.runtime.expire_port_leases(now_ms);
                     runtime.expire_touchpad_requests(now_ms);
                     secure_camera::reconcile(&runtime.runtime);
                     secure_audio::reconcile(&runtime.runtime);
+                }
+                    Ok(())
+                })();
+                if let Err(error) = upkeep {
+                    let cleanup = secure_stereo::disconnect(owner);
+                    secure_stereo::stop_runtime(runtime_handle, None);
+                    secure_audio::stop_runtime(runtime_handle, None);
+                    secure_touchpad::stop_runtime(runtime_handle, None);
+                    secure_haptics::stop_runtime(runtime_handle, None);
+                    secure_camera::stop_runtime(runtime_handle, None);
+                    owner.runtime_handle = None;
+                    owner.dialed = false;
+                    owner.pending_heartbeat = None;
+                    return Err(match cleanup {
+                        Ok(()) => error,
+                        Err(cleanup) => format!("{error}; stereo cleanup: {cleanup}"),
+                    });
                 }
                 let settings = catalog_runtimes()
                     .lock()
@@ -1001,21 +1020,29 @@ pub extern "system" fn Java_dev_capyio_android_AndroidNativeControlListener_nati
                             }
                             Ok(())
                         }
-                        Ok(ReceivedControlMessage::Catalog(catalog)) => {
+                        Ok(ReceivedControlMessage::Catalog(catalog)) => (|| -> Result<(), String> {
                             let mut runtimes = catalog_runtimes().lock().map_err(|_| {
                                 "native catalog Runtime registry is poisoned".to_owned()
                             })?;
                             let runtime = runtimes.get_mut(&runtime_handle).ok_or_else(|| {
                                 "unknown native catalog Runtime handle".to_owned()
                             })?;
-                            let result = link
-                                .apply_catalog(&mut runtime.runtime, catalog)
-                                .map(|_| ())
-                                .map_err(|error| error.to_string());
+                            let marked = runtime.stereo_dispatch_routes.iter().any(|id| runtime.runtime.route(*id)
+                                .is_ok_and(|route| route.session_id == link.session_id()));
+                            let result = if marked {
+                                // A dedicated bilateral attempt pins its exchanged catalog.
+                                // Revoke before rejecting any later replacement, not after.
+                                runtime.invalidate_bilateral_stereo_session(link.session_id())
+                                    .map_err(|e| e.to_string())?;
+                                Err("bilateral dedicated catalog replacement requires a new attempt".into())
+                            } else {
+                                link.apply_catalog(&mut runtime.runtime, catalog)
+                                    .map(|_| ()).map_err(|error| error.to_string())
+                            };
                             secure_stereo::reconcile(&runtime.runtime);
                             result
-                        }
-                        Ok(ReceivedControlMessage::RouteStatus(status)) => {
+                        })(),
+                        Ok(ReceivedControlMessage::RouteStatus(status)) => (|| -> Result<(), String> {
                             let route = {
                                 let mut runtimes = catalog_runtimes().lock().map_err(|_| {
                                     "native catalog Runtime registry is poisoned".to_owned()
@@ -1026,15 +1053,17 @@ pub extern "system" fn Java_dev_capyio_android_AndroidNativeControlListener_nati
                                     })?;
                                 if status.route.profile == capyio_core::ProfileId::audio_frames_v1()
                                 {
-                                    let route = runtime.receive_audio_route_status(
-                                        link,
-                                        &status,
-                                        &owner
-                                            .peer_address
-                                            .ok_or("authenticated peer absent")?
-                                            .to_string(),
-                                        now_ms,
-                                    )?;
+                                    let route = match runtime.receive_bilateral_stereo_status(
+                                        link, &status, owner.control_generation,
+                                    )? {
+                                        Some(route) => route,
+                                        None => runtime.receive_audio_route_status(
+                                            link,
+                                            &status,
+                                            &owner.peer_address.ok_or("authenticated peer absent")?.to_string(),
+                                            now_ms,
+                                        )?,
+                                    };
                                     if let Some(offer) = status.secure_audio_data {
                                         secure_audio::cache_offer(
                                             runtime_handle,
@@ -1198,9 +1227,15 @@ pub extern "system" fn Java_dev_capyio_android_AndroidNativeControlListener_nati
                                         .clone()
                                 }
                             };
-                            link.send_route_status(&route)
-                                .map_err(|error| error.to_string())
-                        }
+                            // Bilateral Prepared is committed by explicit native Start,
+                            // immediately before Source Acquire, never by the generic echo.
+                            let bilateral = catalog_runtimes().lock().map_err(|_| "Runtime registry poisoned")?
+                                .get(&runtime_handle).ok_or("Runtime absent")?
+                                .stereo_dispatch_routes.contains(&route.id);
+                            if bilateral { Ok(()) } else {
+                                link.send_route_status(&route).map_err(|error| error.to_string())
+                            }
+                        })(),
                         Ok(ReceivedControlMessage::PortLeaseRequest(request)) => {
                             let mut runtimes = catalog_runtimes().lock().map_err(|_| {
                                 "native catalog Runtime registry is poisoned".to_owned()
@@ -1431,7 +1466,7 @@ pub extern "system" fn Java_dev_capyio_android_AndroidNativeControlListener_nati
                 secure_touchpad::stop_runtime(runtime_handle, None);
                 secure_haptics::stop_runtime(runtime_handle, None);
                 secure_camera::stop_runtime(runtime_handle, None);
-                secure_stereo::disconnect(owner);
+                let stereo_cleanup = secure_stereo::disconnect(owner);
                 secure_stereo::stop_runtime(runtime_handle, None);
                 secure_audio::stop_runtime(runtime_handle, None);
                 if let Some(link) = owner.link.as_mut()
@@ -1446,7 +1481,10 @@ pub extern "system" fn Java_dev_capyio_android_AndroidNativeControlListener_nati
                 owner.runtime_handle = None;
                 owner.dialed = false;
                 owner.pending_heartbeat = None;
-                Err(failure)
+                Err(match stereo_cleanup {
+                    Ok(()) => failure,
+                    Err(cleanup) => format!("{failure}; stereo cleanup: {cleanup}"),
+                })
             }));
             Ok(match result {
                 Ok(Ok(connected)) => connected,
@@ -1502,7 +1540,7 @@ pub extern "system" fn Java_dev_capyio_android_AndroidNativeControlListener_nati
                 secure_touchpad::stop_runtime(runtime_handle, None);
                 secure_haptics::stop_runtime(runtime_handle, None);
                 secure_camera::stop_runtime(runtime_handle, None);
-                secure_stereo::disconnect(owner);
+                let stereo_cleanup = secure_stereo::disconnect(owner);
                 secure_stereo::stop_runtime(runtime_handle, None);
                 secure_audio::stop_runtime(runtime_handle, None);
                 let link = owner.link.take();
@@ -1521,7 +1559,7 @@ pub extern "system" fn Java_dev_capyio_android_AndroidNativeControlListener_nati
                     link.close_and_reconcile(&mut runtime.runtime)
                         .map_err(|e| e.to_string())?;
                 }
-                Ok(())
+                stereo_cleanup
             }));
             if !matches!(result, Ok(Ok(()))) {
                 throw(
@@ -1560,7 +1598,7 @@ pub extern "system" fn Java_dev_capyio_android_AndroidNativeControlListener_nati
                 let mut owner = owner_handle
                     .lock()
                     .map_err(|_| "control connection poisoned")?;
-                secure_stereo::disconnect(&mut owner);
+                let stereo_cleanup = secure_stereo::disconnect(&mut owner);
                 owner.closed = true;
                 if let Some(link) = owner.link.as_mut() {
                     if let Some(runtime) = catalog_runtimes()
@@ -1572,7 +1610,7 @@ pub extern "system" fn Java_dev_capyio_android_AndroidNativeControlListener_nati
                             .map_err(|error| error.to_string())?;
                     }
                 }
-                Ok(())
+                stereo_cleanup
             }));
             if let Ok(Err(error)) = result {
                 throw(env, "java/lang/IllegalStateException", error);

@@ -25,6 +25,15 @@ pub(crate) struct BilateralRegistry(
     Arc<Mutex<BTreeMap<RouteId, (SessionId, StereoAdmissionGate)>>>,
 );
 impl BilateralRegistry {
+    #[cfg(any(target_os = "android", test))]
+    pub(crate) fn gate(&self, route: RouteId) -> Result<StereoAdmissionGate, String> {
+        self.0
+            .lock()
+            .map_err(|_| "bilateral registry poisoned".to_owned())?
+            .get(&route)
+            .map(|(_, gate)| gate.clone())
+            .ok_or("bilateral Route absent".into())
+    }
     pub(crate) fn contains(&self, route: RouteId) -> bool {
         self.0
             .lock()
@@ -104,6 +113,11 @@ impl AndroidCatalogRuntimeV1 {
         for route in routes {
             if self.bilateral_stereo.contains(route.id)
                 && (matches!(route.authorization,AuthorizationState::Authorized{expires_at_ms:Some(end)} if now>=end)
+                    || (self.stereo_dispatch_routes.contains(&route.id)
+                        && self
+                            .touchpad_consent
+                            .pending_deadline(route.id)
+                            .is_some_and(|end| now >= end))
                     || self
                         .runtime
                         .route_port_lease_claim(route.id, route.sink)

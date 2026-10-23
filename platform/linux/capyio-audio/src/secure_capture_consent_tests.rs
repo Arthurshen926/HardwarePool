@@ -444,3 +444,28 @@ fn bilateral_source_authenticated_prepared_before_local_approval_cannot_authoriz
             .is_none()
     );
 }
+
+#[test]
+fn explicit_cancel_reports_retirement_and_preserves_cleanup_failure() {
+    let mut peers = Peers::new(Duration::from_secs(60));
+    peers.ready();
+    let id = peers.source.route_id().unwrap();
+    peers.source.cancel().unwrap();
+    retired(peers.source.runtime(), id);
+    assert!(peers.source.is_terminal());
+    assert!(peers.source.cleanup_errors().is_empty());
+    peers.source.cancel().unwrap();
+
+    let mut peers = Peers::new(Duration::from_secs(60));
+    peers.ready();
+    // Deterministic actual Runtime failure: the private fixture corrupts only
+    // the owned target identity, so retirement returns RouteNotFound. No mock
+    // success, injected sleeps or swallowed errors can satisfy this oracle.
+    peers.source.original.as_mut().unwrap().id = RouteId::new();
+    assert!(peers.source.cancel().is_err());
+    assert!(peers.source.is_terminal());
+    assert!(!peers.source.cleanup_errors().is_empty());
+    let retained = peers.source.cleanup_errors().to_vec();
+    assert!(peers.source.cancel().is_err());
+    assert_eq!(peers.source.cleanup_errors(), retained);
+}

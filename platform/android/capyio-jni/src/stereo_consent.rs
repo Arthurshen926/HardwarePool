@@ -1,6 +1,6 @@
-//! Dormant bilateral consent foundation. No JNI/audio dispatcher calls these
-//! methods yet. A future coordinated bilateral integration must explicitly wire
-//! them; this module alone does not change the current speaker handshake.
+//! Bilateral consent foundation. The explicit marked Linux production dispatcher
+//! and portable supervisor use this gate; unmarked legacy routes do not.
+//! A catalog marker never substitutes for either peer's fresh local approval.
 #![allow(dead_code)]
 use crate::{
     AndroidCatalogRuntimeV1, stereo_admission::EndpointAuthority,

@@ -1797,3 +1797,11 @@ Only registered B2 Routes receive its selection/control retirement policy.
 Authorized failures retire the target to Failed + Revoked before dedicated-session
 reconciliation, and source constructor failures return the retained Runtime and
 cleanup diagnostics. Other-session authority is not revoked by target cleanup.
+
+ADR 1571 activates a separate paired-store-only selected-source launcher with
+fresh request/Route/peer confirmation, exact Android Speaker/Sink eligibility and
+1–60 second limits. The authenticated catalog marker is dispatch eligibility,
+not local approval. It cannot bypass B1 decoder receipts or B2 zero-claim
+Prepared handoff. Defaults remain noncapturing, and send counters do not establish
+receiver acceptance or physical audibility. See the ADR for terminal ownership
+and software-versus-device evidence requirements.

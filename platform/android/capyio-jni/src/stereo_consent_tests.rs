@@ -30,15 +30,43 @@ struct Fixture {
     route: RouteId,
     android_identity: capyio_control_tls::ControlTlsServerIdentity,
     linux_identity: capyio_control_tls::ControlTlsClientIdentity,
+    dispatch_error: Option<String>,
+    collision_route: Option<Route>,
 }
 impl Fixture {
     fn new(android_accepts: bool) -> Self {
         Self::with_stage(android_accepts, true)
     }
     fn with_stage(android_accepts: bool, stage: bool) -> Self {
+        Self::with_dispatch(android_accepts, stage, false)
+    }
+    fn with_dispatch(android_accepts: bool, stage: bool, dispatch: bool) -> Self {
+        let fixture = Self::with_dispatch_tamper(android_accepts, stage, dispatch, |_| {}, false);
+        assert!(fixture.dispatch_error.is_none());
+        fixture
+    }
+    fn with_dispatch_tamper(
+        android_accepts: bool,
+        stage: bool,
+        dispatch: bool,
+        tamper: impl FnOnce(&mut NodeDescriptor),
+        collision: bool,
+    ) -> Self {
         let mut host = AndroidCatalogRuntimeV1::new(&catalog(1)).unwrap();
         let android = host.runtime.snapshot().local_node;
-        let (_, linux, source, _) = nodes();
+        let (_, mut linux, source, _) = nodes();
+        if dispatch {
+            linux
+                .capabilities
+                .get_mut(&source.capability_id)
+                .unwrap()
+                .metadata
+                .insert(
+                    crate::stereo_dispatch::BILATERAL_SOURCE_MARKER.into(),
+                    crate::stereo_dispatch::BILATERAL_SOURCE_VERSION.into(),
+                );
+        }
+        tamper(&mut linux);
         let cap = android
             .capabilities
             .values()
@@ -154,16 +182,43 @@ impl Fixture {
         else {
             panic!("Pending status");
         };
-        host.receive_audio_route_status(
-            &sink_link,
-            &status,
-            "127.0.0.1",
-            ClockSample::now().unwrap().wall,
-        )
-        .unwrap();
-        host.bind_stereo_consent_control(&sink_link, 17).unwrap();
-        if stage {
-            host.stage_stereo_consent(&sink_link, route).unwrap();
+        let collision_route = if collision {
+            let id = host
+                .runtime
+                .create_route(
+                    binding.session_id,
+                    source,
+                    sink,
+                    RouteBackend::AdapterManaged,
+                )
+                .unwrap();
+            Some(host.runtime.route(id).unwrap().clone())
+        } else {
+            None
+        };
+        let mut dispatch_error = None;
+        if dispatch {
+            match host.receive_bilateral_stereo_status(&mut sink_link, &status, 17) {
+                Ok(value) => assert!(value.is_some()),
+                Err(error) => dispatch_error = Some(error),
+            }
+        } else {
+            assert!(
+                host.receive_bilateral_stereo_status(&mut sink_link, &status, 17)
+                    .unwrap()
+                    .is_none()
+            );
+            host.receive_audio_route_status(
+                &sink_link,
+                &status,
+                "127.0.0.1",
+                ClockSample::now().unwrap().wall,
+            )
+            .unwrap();
+            host.bind_stereo_consent_control(&sink_link, 17).unwrap();
+            if stage {
+                host.stage_stereo_consent(&sink_link, route).unwrap();
+            }
         }
         Self {
             host,
@@ -173,6 +228,8 @@ impl Fixture {
             route,
             android_identity: android_server,
             linux_identity: linux_client,
+            dispatch_error,
+            collision_route,
         }
     }
     fn other_same_binding(&self) -> (CatalogControlLink, CatalogControlLink) {
@@ -852,4 +909,177 @@ fn dormant_exact_duplicate_after_approval_preserves_prepared_stamp_without_rearm
     assert_eq!(f.host.runtime.route(f.route).unwrap(), &original);
     assert_eq!(f.host.stereo_consents[&f.route].monotonic_deadline(), end);
     assert!(f.host.resolve_stereo_consent(f.route, true).is_err());
+}
+
+#[test]
+fn production_marked_dispatch_requires_fresh_bilateral_approval_both_tls_roles() {
+    for accepts in [false, true] {
+        let mut f = Fixture::with_dispatch(accepts, false, true);
+        let original = f.host.runtime.route(f.route).unwrap().clone();
+        assert_eq!(original.authorization, AuthorizationState::Pending);
+        assert_eq!(original.state, RouteState::Draft);
+        assert!(
+            f.host
+                .runtime
+                .route_port_lease_claim(f.route, original.sink)
+                .is_none()
+        );
+        assert!(
+            f.host
+                .resolve_touchpad_request(f.route, true, ClockSample::now().unwrap().wall)
+                .is_err()
+        );
+        assert_eq!(*f.host.runtime.route(f.route).unwrap(), original);
+        let status = f.wire_grant(3_000);
+        f.host
+            .receive_bilateral_stereo_status(&mut f.sink_link, &status, 17)
+            .unwrap();
+        assert_eq!(*f.host.runtime.route(f.route).unwrap(), original);
+        f.host
+            .resolve_touchpad_request(f.route, true, ClockSample::now().unwrap().wall)
+            .unwrap();
+        let prepared = f.host.runtime.route(f.route).unwrap();
+        assert_eq!(prepared.state, RouteState::Prepared);
+        assert_eq!(prepared.epoch, 0);
+        assert_eq!(prepared.authorization, status.route.authorization);
+        assert!(
+            f.host
+                .runtime
+                .route_port_lease_claim(f.route, prepared.sink)
+                .is_none()
+        );
+        assert!(f.host.bilateral_stereo.gate(f.route).unwrap().is_open());
+        f.host
+            .invalidate_bilateral_stereo_session(f.sink_link.session_id())
+            .unwrap();
+        assert!(!f.host.bilateral_stereo.gate(f.route).unwrap().is_open());
+        assert_eq!(
+            f.host.runtime.route(f.route).unwrap().state,
+            RouteState::Failed
+        );
+        assert_eq!(
+            f.host.runtime.route(f.route).unwrap().authorization,
+            AuthorizationState::Revoked
+        );
+    }
+}
+
+#[test]
+fn production_marked_dispatch_does_not_accept_forged_peer_dto_or_wrong_connection() {
+    for wrong_connection in [false, true] {
+        let mut f = Fixture::with_dispatch(true, false, true);
+        let mut status = f.wire_grant(3_000);
+        let result = if wrong_connection {
+            let (mut other, _peer) = f.other_same_binding();
+            f.host
+                .receive_bilateral_stereo_status(&mut other, &status, 17)
+        } else {
+            status.route.authorization = AuthorizationState::Authorized {
+                expires_at_ms: Some(ClockSample::now().unwrap().wall + 40_000),
+            };
+            f.host
+                .receive_bilateral_stereo_status(&mut f.sink_link, &status, 17)
+        };
+        assert!(result.is_err());
+        assert_eq!(
+            f.host.runtime.route(f.route).unwrap().authorization,
+            AuthorizationState::Revoked
+        );
+        assert!(!f.host.bilateral_stereo.gate(f.route).unwrap().is_open());
+    }
+}
+
+#[test]
+fn production_dispatch_unmarked_legacy_is_unchanged() {
+    let f = Fixture::with_dispatch(true, false, false);
+    assert!(f.host.stereo_dispatch_routes.is_empty());
+    assert!(
+        !f.host
+            .bilateral_stereo
+            .owns_session(f.sink_link.session_id())
+    );
+    let route = f.host.runtime.route(f.route).unwrap();
+    assert_eq!(route.state, RouteState::Draft);
+    assert_eq!(route.authorization, AuthorizationState::Pending);
+    assert!(
+        f.host
+            .runtime
+            .route_port_lease_claim(f.route, route.sink)
+            .is_none()
+    );
+}
+
+#[test]
+fn production_dispatch_rejects_unknown_marker_and_non_linux_before_import() {
+    for variant in 0..3 {
+        let f = Fixture::with_dispatch_tamper(
+            true,
+            false,
+            true,
+            |node| {
+                if variant == 2 {
+                    node.platform = Platform::Windows;
+                } else {
+                    let cap = node.capabilities.values_mut().next().unwrap();
+                    cap.metadata.insert(
+                        crate::stereo_dispatch::BILATERAL_SOURCE_MARKER.into(),
+                        if variant == 0 { "v2" } else { "v1,v2" }.into(),
+                    );
+                }
+            },
+            false,
+        );
+        assert!(f.dispatch_error.is_some());
+        assert!(f.host.runtime.snapshot().routes.is_empty());
+        assert!(f.host.stereo_dispatch_routes.is_empty());
+        assert!(
+            !f.host
+                .bilateral_stereo
+                .owns_session(f.sink_link.session_id())
+        );
+    }
+}
+
+#[test]
+fn production_dispatch_dedicated_session_collision_preserves_existing_route() {
+    let f = Fixture::with_dispatch_tamper(true, false, true, |_| {}, true);
+    assert!(f.dispatch_error.is_some());
+    let existing = f.collision_route.unwrap();
+    assert_eq!(*f.host.runtime.route(existing.id).unwrap(), existing);
+    assert_eq!(f.host.runtime.snapshot().routes.len(), 1);
+    assert!(f.host.runtime.route(f.route).is_err());
+    assert!(f.host.stereo_dispatch_routes.is_empty());
+}
+
+#[test]
+fn production_dispatch_denial_is_terminal_even_before_peer_approval() {
+    let mut f = Fixture::with_dispatch(true, false, true);
+    f.host
+        .resolve_touchpad_request(f.route, false, ClockSample::now().unwrap().wall)
+        .unwrap();
+    assert_eq!(
+        f.host.runtime.route(f.route).unwrap().state,
+        RouteState::Failed
+    );
+    assert_eq!(
+        f.host.runtime.route(f.route).unwrap().authorization,
+        AuthorizationState::Revoked
+    );
+    assert!(!f.host.bilateral_stereo.gate(f.route).unwrap().is_open());
+}
+
+#[test]
+fn production_dispatch_pending_expiry_retires_before_request_projection() {
+    let mut f = Fixture::with_dispatch(true, false, true);
+    let end = f.host.touchpad_consent.pending_deadline(f.route).unwrap();
+    f.host.resource_requests_json(end).unwrap();
+    assert_eq!(
+        f.host.runtime.route(f.route).unwrap().state,
+        RouteState::Failed
+    );
+    assert_eq!(
+        f.host.runtime.route(f.route).unwrap().authorization,
+        AuthorizationState::Revoked
+    );
+    assert!(!f.host.bilateral_stereo.gate(f.route).unwrap().is_open());
 }
