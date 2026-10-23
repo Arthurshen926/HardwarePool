@@ -259,7 +259,7 @@ jobs:
           secure_stereo_receiver::tests::hosted::authenticated_response_replay_is_rejected_without_replacing_claim
           secure_stereo_receiver::tests::hosted::stop_interrupts_partial_tls_handshake
           secure_stereo_receiver::tests::hosted::queued_record_never_refreshes_its_original_permit_deadline
-          secure_audio_negotiation::tests::stereo_reusable_api_is_not_an_android_live_or_legacy_handoff
+          secure_audio_negotiation::tests::exact_stereo_live_profile_is_not_a_mono_or_legacy_handoff
           secure_capture::tests::pure_stereo_source_consent_requires_explicit_target_and_60s_profile
           secure_capture::tests::pure_stereo_source_freezes_route_profile_generation_qos_and_control_roles
           secure_capture::tests::pure_stereo_source_owned_start_is_the_only_admitted_route_transition
