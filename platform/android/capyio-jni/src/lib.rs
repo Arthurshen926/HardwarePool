@@ -57,8 +57,10 @@ mod secure_audio_negotiation;
 mod secure_speaker_policy;
 pub mod secure_stereo_receiver;
 mod stereo_admission;
+mod stereo_consent;
 pub mod stereo_job;
 pub mod stereo_negotiation;
+pub mod stereo_supervisor;
 mod touchpad_consent;
 pub use control_exchange::{
     authenticate_android_control_dial, exchange_accepted_android_catalog,
@@ -513,9 +515,9 @@ pub struct AndroidCatalogRuntimeV1 {
     audio_uses: BTreeMap<capyio_core::RouteId, AndroidAudioUse>,
     #[cfg(any(target_os = "android", test))]
     secure_audio_uses: BTreeMap<RouteId, secure_audio_negotiation::SecureAudioUse>,
-    #[cfg(any(target_os = "android", test))]
     stereo_consents: BTreeMap<RouteId, stereo_negotiation::StereoConsentStamp>,
-    #[cfg(any(target_os = "android", test))]
+    stereo_consent_gate: stereo_consent::StereoConsentGate,
+    bilateral_stereo: stereo_supervisor::BilateralRegistry,
     stereo_generations: BTreeMap<RouteId, stereo_job::StereoGenerationClaim>,
     #[cfg(target_os = "android")]
     camera_use: Option<AndroidCameraUse>,
@@ -601,6 +603,7 @@ impl AndroidCatalogRuntimeV1 {
         &mut self,
         mut link: CatalogControlLink,
     ) -> Result<(), AndroidCatalogRuntimeError> {
+        self.invalidate_bilateral_stereo_session(link.session_id())?;
         link.close_and_reconcile(&mut self.runtime)?;
         Ok(())
     }
@@ -639,6 +642,8 @@ impl AndroidCatalogRuntimeV1 {
             let outgoing = link.prepare_catalog(&self.runtime, selected_capabilities)?;
             link.send_catalog(outgoing)?;
             let incoming = link.receive_catalog()?;
+            self.check_unregistered_catalog_peer(link.peer_node_id())
+                .map_err(|_| CatalogLinkError::InvalidPeerRoute)?;
             link.apply_catalog(&mut self.runtime, incoming)?;
             Ok(())
         })();
@@ -662,15 +667,21 @@ impl AndroidCatalogRuntimeV1 {
         route_id: RouteId,
         now_ms: u64,
     ) -> Result<(), String> {
+        self.invalidate_bilateral_pending_expiry(now_ms);
+        if self.bilateral_stereo.contains(route_id) {
+            return Err("registered bilateral request belongs to its supervisor".into());
+        }
         self.touchpad_consent
             .enqueue(&mut self.runtime, route_id, now_ms)
     }
 
     pub fn expire_touchpad_requests(&mut self, now_ms: u64) {
+        self.invalidate_bilateral_pending_expiry(now_ms);
         self.touchpad_consent.expire(&mut self.runtime, now_ms);
     }
 
     pub fn resource_requests_json(&mut self, now_ms: u64) -> Result<Vec<u8>, String> {
+        self.invalidate_bilateral_pending_expiry(now_ms);
         serde_json::to_vec(&self.touchpad_consent.requests(&mut self.runtime, now_ms))
             .map_err(|e| e.to_string())
     }
@@ -681,6 +692,10 @@ impl AndroidCatalogRuntimeV1 {
         allow: bool,
         now_ms: u64,
     ) -> Result<(), String> {
+        self.invalidate_bilateral_pending_expiry(now_ms);
+        if self.bilateral_stereo.contains(route_id) {
+            return Err("registered bilateral stereo requires its supervisor approval".into());
+        }
         #[cfg(any(target_os = "android", test))]
         if stereo_negotiation::StereoConsentStamp::is_exact_stereo_sink(&self.runtime, route_id) {
             let original_instant = std::time::Instant::now();
@@ -759,9 +774,9 @@ impl AndroidCatalogRuntimeV1 {
             audio_uses: BTreeMap::new(),
             #[cfg(any(target_os = "android", test))]
             secure_audio_uses: BTreeMap::new(),
-            #[cfg(any(target_os = "android", test))]
             stereo_consents: BTreeMap::new(),
-            #[cfg(any(target_os = "android", test))]
+            stereo_consent_gate: stereo_consent::StereoConsentGate::default(),
+            bilateral_stereo: stereo_supervisor::BilateralRegistry::default(),
             stereo_generations: BTreeMap::new(),
             #[cfg(target_os = "android")]
             camera_use: None,
@@ -821,6 +836,34 @@ impl AndroidCatalogRuntimeV1 {
         // Retire both pending consent and running Routes before publication of
         // a changed selection, even if its PCM format happens to be identical.
         let before = self.runtime.snapshot();
+        // Only the explicitly registered dormant supervisor owns this stronger
+        // policy. Revoke its fast-path token before any endpoint/adapter drift.
+        for route in &before.routes {
+            if !self.bilateral_stereo.contains(route.id) {
+                continue;
+            }
+            let old = before
+                .local_node
+                .capabilities
+                .get(&route.sink.capability_id);
+            let fresh = node.capabilities.get(&route.sink.capability_id);
+            let adapter_changed = old.is_some_and(|cap| {
+                before
+                    .local_node
+                    .adapter_instances
+                    .get(&cap.adapter_instance_id)
+                    != node.adapter_instances.get(&cap.adapter_instance_id)
+            });
+            if old != fresh
+                || adapter_changed
+                || before.local_node.online_state != node.online_state
+            {
+                self.bilateral_stereo.invalidate(route.id);
+                self.runtime.retire_route_authorization(route.id)?;
+                self.stereo_consents.remove(&route.id);
+                self.audio_status_pending.insert(route.id);
+            }
+        }
         for route in &before.routes {
             if route.sink.node_id != before.local_node.id
                 || !before
@@ -842,6 +885,13 @@ impl AndroidCatalogRuntimeV1 {
                         | capyio_core::RouteState::Offline
                 )
             {
+                continue;
+            }
+            if self.bilateral_stereo.contains(route.id) {
+                self.bilateral_stereo.invalidate(route.id);
+                self.runtime.retire_route_authorization(route.id)?;
+                self.stereo_consents.remove(&route.id);
+                self.audio_status_pending.insert(route.id);
                 continue;
             }
             if route.state == capyio_core::RouteState::Draft
@@ -921,6 +971,8 @@ impl AndroidCatalogRuntimeV1 {
         )?;
         let exchange = (|| -> Result<(), CatalogLinkError> {
             let incoming = link.receive_catalog()?;
+            self.check_unregistered_catalog_peer(link.peer_node_id())
+                .map_err(|_| CatalogLinkError::InvalidPeerRoute)?;
             link.apply_catalog(&mut self.runtime, incoming)?;
             let outgoing = link.prepare_catalog(&self.runtime, selected_capabilities)?;
             link.send_catalog(outgoing)?;

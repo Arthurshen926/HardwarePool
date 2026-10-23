@@ -1595,3 +1595,23 @@ output remain unchanged. CI asserts listed names plus executed 6/9/2 counts;
 no-run/listing alone is insufficient. Independent stereo PCM and teardown oracles
 remain mandatory. Software fixture grants and synthetic acknowledged sinks do
 not prove production bilateral consent, a full launcher or physical AudioTrack.
+
+### Dormant stereo consent foundation (ADR 1569)
+
+Run `cargo test -p capyio-control-link`, `cargo test -p capyio-runtime` and
+`cargo test -p capyio-android-jni`; the Android `dormant_` tests use projected
+catalogs, actual pinned control TLS and real resource request/resolve internals.
+They do not activate or prove the JNI/audio dispatcher. Runtime retirement tests
+require target-only cleanup, idempotence and rejection of authorize, prepare,
+recover, Acquire and late Start completion after terminal retirement. Preserve
+existing stereo, mono and legacy suites. These are software tests, not physical
+AudioTrack/audibility or production launcher interoperability evidence.
+
+## Dormant B2 bilateral stereo library gate
+
+ADR 1570 defines the independent-approval library boundary. Run
+`cargo test -p capyio-linux-audio --test bilateral_stereo -- --test-threads=1`
+for real pinned control TLS through exported Linux and Android supervisors, plus
+control-link, Android, Linux-audio and Runtime suites. These are not default
+JNI/CLI activation or physical speaker/capture tests. Preserve exact test logs
+and any parallel fixture race qualifications from B1.

@@ -49,6 +49,14 @@ pub use secure_capture::{
     SecureStereoSourceEvent, SecureStereoSourceOwner, SecureStereoSourceStopHandle,
 };
 
+#[cfg(target_os = "linux")]
+mod secure_capture_consent;
+#[cfg(target_os = "linux")]
+pub use secure_capture_consent::{
+    SecureStereoSourceFailure, SecureStereoSourceHandshake, SecureStereoSourceHandshakeEvent,
+    SecureStereoSourceIntent,
+};
+
 pub const PCM_PACKET_BYTES: usize = 960;
 pub const MAX_STALL: Duration = Duration::from_millis(250);
 

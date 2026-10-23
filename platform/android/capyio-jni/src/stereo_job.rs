@@ -39,7 +39,7 @@ pub type StereoFailure = Arc<dyn Fn() + Send + Sync>;
 
 /// Shared with the authoritative Runtime owner. Invalidate synchronously before
 /// publishing a changed original authority. Closed generations can never reopen.
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct StereoAdmissionGate(Arc<AtomicBool>);
 impl Default for StereoAdmissionGate {
     fn default() -> Self {

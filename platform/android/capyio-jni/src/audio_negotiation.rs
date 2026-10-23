@@ -242,6 +242,10 @@ pub(crate) fn publish(
     now: u64,
 ) -> Result<(), String> {
     for id in std::mem::take(&mut host.audio_status_pending) {
+        if host.bilateral_stereo.contains(id) {
+            host.audio_status_pending.insert(id);
+            continue;
+        }
         let route = host.runtime.route(id).map_err(|e| e.to_string())?;
         if route.session_id == link.session_id() {
             let selected = host.published_source_capabilities();
@@ -258,7 +262,7 @@ pub(crate) fn publish(
     let ids: Vec<_> = host
         .audio_uses
         .iter()
-        .filter(|(_, job)| job.offer_pending)
+        .filter(|(id, job)| job.offer_pending && !host.bilateral_stereo.contains(**id))
         .map(|(id, _)| *id)
         .collect();
     for id in ids {
@@ -328,6 +332,11 @@ impl AndroidCatalogRuntimeV1 {
         authenticated_peer_address: &str,
         now: u64,
     ) -> Result<Route, String> {
+        if self.bilateral_stereo.contains(status.route.id)
+            || self.bilateral_stereo.owns_session(status.session_id)
+        {
+            return Err("registered bilateral Route belongs to its supervisor".into());
+        }
         if local_port(self, &status.route).is_none() {
             return Err("audio status is not for local hardware".into());
         }
@@ -436,6 +445,9 @@ impl AndroidCatalogRuntimeV1 {
     /// Called only after the platform adapter successfully prepared its owned
     /// endpoint. It supplies a reciprocal UDP port, not authority to capture.
     pub fn prepare_audio_endpoint(&mut self, id: RouteId, port: u16) -> Result<(), String> {
+        if self.bilateral_stereo.contains(id) {
+            return Err("registered bilateral Route belongs to its supervisor".into());
+        }
         if port == 0 {
             return Err("invalid audio port".into());
         }
@@ -451,6 +463,11 @@ impl AndroidCatalogRuntimeV1 {
         command: &capyio_protocol::ValidatedRouteCommand,
         now: u64,
     ) -> Result<Route, String> {
+        if self.bilateral_stereo.contains(command.route_id)
+            || self.bilateral_stereo.owns_session(command.session_id)
+        {
+            return Err("registered bilateral Route belongs to its supervisor".into());
+        }
         let route = self
             .runtime
             .route(command.route_id)
@@ -526,6 +543,15 @@ impl AndroidCatalogRuntimeV1 {
             .map(|route| route.id)
             .collect();
         for id in ids {
+            if self.bilateral_stereo.contains(id) {
+                self.bilateral_stereo.invalidate(id);
+                self.runtime
+                    .retire_route_authorization(id)
+                    .map_err(|e| e.to_string())?;
+                self.stereo_consents.remove(&id);
+                self.audio_status_pending.insert(id);
+                continue;
+            }
             let route = self.runtime.route(id).map_err(|e| e.to_string())?.clone();
             if route.state == RouteState::Draft {
                 if route.authorization == AuthorizationState::Pending {
@@ -559,6 +585,15 @@ impl AndroidCatalogRuntimeV1 {
         request: capyio_control_link::ReceivedPortLeaseRequest,
         now: u64,
     ) -> Result<(), String> {
+        if self.bilateral_stereo.contains(request.request().route_id)
+            || self
+                .bilateral_stereo
+                .owns_session(request.request().session_id)
+            || self.bilateral_stereo.owns_session(link.session_id())
+        {
+            return Err("registered bilateral Route belongs to its supervisor".into());
+        }
+        self.invalidate_bilateral_stereo_expiry(now)?;
         self.runtime.expire_port_leases(now);
         let lease = request.request();
         if lease.action == capyio_protocol::PortLeaseAction::Renew
@@ -618,6 +653,9 @@ impl AndroidCatalogRuntimeV1 {
             &snapshot.sessions,
             direction,
         )?;
+        if self.bilateral_stereo.owns_session(session) {
+            return Err("registered bilateral Session belongs to its supervisor".into());
+        }
         let id = self
             .runtime
             .create_route(session, source, sink, RouteBackend::AdapterManaged)

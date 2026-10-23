@@ -1,11 +1,89 @@
 //! Deterministic snapshot/commit tests and mandatory real pinned-control tests.
-//! The fixture owns the authoritative Runtime in a mutex. All TLS operations
-//! occur outside its guard; no Runtime clone authorizes negotiation or media.
+//! The fixture owns the authoritative Runtime in a mutex. Checked boundaries
+//! reject a retained caller guard, while allowing legitimate worker ownership.
+//! This does not inspect locks inside production code; no Runtime clone
+//! authorizes negotiation or media.
 use super::*;
 use capyio_core::*;
 use capyio_protocol::{PortLeaseOutcome, SECURE_AUDIO_STEREO_FORMAT};
 use capyio_runtime::PortLeasePolicy;
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
+
+// No raw mutex is exposed: every successful acquisition, including a poisoned
+// guard recovered by a test, is tracked on the acquiring thread. This oracle
+// covers fixture callers only, not locks acquired inside production operations.
+mod runtime_lock {
+    use super::NodeRuntime;
+    use std::{
+        cell::RefCell,
+        collections::HashSet,
+        ops::{Deref, DerefMut},
+        sync::{
+            LockResult, Mutex, MutexGuard, PoisonError,
+            atomic::{AtomicUsize, Ordering},
+        },
+    };
+
+    static NEXT_ID: AtomicUsize = AtomicUsize::new(1);
+    thread_local! {
+        static OWNED: RefCell<HashSet<usize>> = RefCell::new(HashSet::new());
+    }
+
+    pub(crate) struct RuntimeMutex {
+        id: usize,
+        inner: Mutex<NodeRuntime>,
+    }
+    pub(crate) struct RuntimeGuard<'a> {
+        id: usize,
+        inner: MutexGuard<'a, NodeRuntime>,
+    }
+    impl RuntimeMutex {
+        pub(crate) fn new(runtime: NodeRuntime) -> Self {
+            let id = NEXT_ID
+                .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |id| id.checked_add(1))
+                .expect("fixture lock identity exhausted");
+            Self {
+                id,
+                inner: Mutex::new(runtime),
+            }
+        }
+        fn track<'a>(&self, inner: MutexGuard<'a, NodeRuntime>) -> RuntimeGuard<'a> {
+            OWNED.with(|owned| assert!(owned.borrow_mut().insert(self.id)));
+            RuntimeGuard { id: self.id, inner }
+        }
+        pub(crate) fn lock(&self) -> LockResult<RuntimeGuard<'_>> {
+            match self.inner.lock() {
+                Ok(guard) => Ok(self.track(guard)),
+                Err(error) => Err(PoisonError::new(self.track(error.into_inner()))),
+            }
+        }
+        pub(crate) fn network_action<T>(&self, action: impl FnOnce() -> T) -> T {
+            OWNED.with(|owned| {
+                assert!(
+                    !owned.borrow().contains(&self.id),
+                    "network caller retained authoritative Runtime guard"
+                )
+            });
+            action()
+        }
+    }
+    impl Deref for RuntimeGuard<'_> {
+        type Target = NodeRuntime;
+        fn deref(&self) -> &Self::Target {
+            &self.inner
+        }
+    }
+    impl DerefMut for RuntimeGuard<'_> {
+        fn deref_mut(&mut self) -> &mut Self::Target {
+            &mut self.inner
+        }
+    }
+    impl Drop for RuntimeGuard<'_> {
+        fn drop(&mut self) {
+            OWNED.with(|owned| assert!(owned.borrow_mut().remove(&self.id)));
+        }
+    }
+}
 
 pub(crate) mod fixture {
     use super::*;
@@ -24,6 +102,8 @@ pub(crate) mod fixture {
         thread,
         time::{SystemTime, UNIX_EPOCH},
     };
+
+    pub(crate) use super::runtime_lock::RuntimeMutex;
 
     pub(crate) const CONTROL_GENERATION: u64 = 17;
     pub(crate) fn wall_now() -> u64 {
@@ -226,7 +306,7 @@ pub(crate) mod fixture {
         deferred.take().unwrap_or_else(receive)
     }
     pub(crate) struct Fixture {
-        pub(crate) runtime: Arc<Mutex<NodeRuntime>>,
+        pub(crate) runtime: Arc<RuntimeMutex>,
         pub(crate) source_runtime: NodeRuntime,
         pub(crate) sink: CatalogControlLink,
         pub(crate) source: CatalogControlLink,
@@ -332,7 +412,7 @@ pub(crate) mod fixture {
                 sink_port,
                 now,
             );
-            let runtime = Arc::new(Mutex::new(sink_runtime));
+            let runtime = Arc::new(RuntimeMutex::new(sink_runtime));
             let original_end = Instant::now() + lifetime;
             let (negotiation, request) = {
                 let guard = runtime.lock().unwrap();
@@ -367,21 +447,15 @@ pub(crate) mod fixture {
                 route_id,
             }
         }
-        pub(crate) fn assert_unlocked(&self) {
-            assert!(
-                self.runtime.try_lock().is_ok(),
-                "network action retained authoritative Runtime guard"
-            );
-        }
         pub(crate) fn send_request(&mut self, commit: bool) -> MessageId {
-            self.assert_unlocked();
-            let sent = self
-                .sink
-                .send_prepared_port_lease_request_until(
-                    self.pending_request.take().unwrap(),
-                    self.negotiation.operation_deadline(),
-                )
-                .unwrap();
+            let sent = self.runtime.network_action(|| {
+                self.sink
+                    .send_prepared_port_lease_request_until(
+                        self.pending_request.take().unwrap(),
+                        self.negotiation.operation_deadline(),
+                    )
+                    .unwrap()
+            });
             if commit {
                 self.negotiation.commit_source_request(sent).unwrap();
             }
@@ -390,14 +464,16 @@ pub(crate) mod fixture {
             // Otherwise commit_response would read this earlier FIFO frame
             // instead of the response it is checking.
             assert!(self.deferred_source_request.is_none());
-            self.assert_unlocked();
-            let ReceivedControlMessage::PortLeaseRequest(request) = self
-                .source
-                .receive_control_message_until(self.negotiation.operation_deadline())
-                .unwrap()
+            let ReceivedControlMessage::PortLeaseRequest(request) =
+                self.runtime.network_action(|| {
+                    self.source
+                        .receive_control_message_until(self.negotiation.operation_deadline())
+                        .unwrap()
+                })
             else {
                 panic!("missing exact initial Source Acquire")
             };
+
             let initial = request.request();
             assert_eq!(initial.message_id, sent);
             assert_eq!(initial.session_id, self.negotiation.route().session_id);
@@ -413,16 +489,17 @@ pub(crate) mod fixture {
             sent
         }
         pub(crate) fn source_response(&mut self) {
-            self.assert_unlocked();
-            let request = take_source_acquire(&mut self.deferred_source_request, || {
-                let ReceivedControlMessage::PortLeaseRequest(request) = self
-                    .source
-                    .receive_control_message_until(self.negotiation.operation_deadline())
-                    .unwrap()
-                else {
-                    panic!("missing exact Source Acquire")
-                };
-                request
+            let request = self.runtime.network_action(|| {
+                take_source_acquire(&mut self.deferred_source_request, || {
+                    let ReceivedControlMessage::PortLeaseRequest(request) = self
+                        .source
+                        .receive_control_message_until(self.negotiation.operation_deadline())
+                        .unwrap()
+                    else {
+                        panic!("missing exact Source Acquire")
+                    };
+                    request
+                })
             });
             assert_eq!(
                 request.request().session_id,
@@ -435,35 +512,40 @@ pub(crate) mod fixture {
                 .source
                 .prepare_port_lease_response(&mut self.source_runtime, request, wall_now())
                 .unwrap();
-            self.assert_unlocked();
-            self.source
-                .send_prepared_port_lease_response_until(
-                    response,
-                    self.negotiation.operation_deadline(),
-                )
-                .unwrap();
+            self.runtime.network_action(|| {
+                self.source
+                    .send_prepared_port_lease_response_until(
+                        response,
+                        self.negotiation.operation_deadline(),
+                    )
+                    .unwrap()
+            });
         }
         pub(crate) fn sink_request(&mut self, action: PortLeaseAction) -> MessageId {
-            self.assert_unlocked();
-            let remaining = self
-                .original_end
-                .saturating_duration_since(Instant::now())
-                .as_millis() as u64;
-            self.source
-                .send_port_lease_request_until(
-                    self.route_id,
-                    self.negotiation.route().sink,
-                    action,
-                    remaining.saturating_sub(300).min(5_000),
-                    self.negotiation.operation_deadline(),
-                )
-                .unwrap()
+            let remaining = {
+                self.original_end
+                    .saturating_duration_since(Instant::now())
+                    .as_millis() as u64
+            };
+
+            self.runtime.network_action(|| {
+                self.source
+                    .send_port_lease_request_until(
+                        self.route_id,
+                        self.negotiation.route().sink,
+                        action,
+                        remaining.saturating_sub(300).min(5_000),
+                        self.negotiation.operation_deadline(),
+                    )
+                    .unwrap()
+            })
         }
         pub(crate) fn receive(&mut self) -> ReceivedControlMessage {
-            self.assert_unlocked();
-            self.sink
-                .receive_control_message_until(self.negotiation.operation_deadline())
-                .unwrap()
+            self.runtime.network_action(|| {
+                self.sink
+                    .receive_control_message_until(self.negotiation.operation_deadline())
+                    .unwrap()
+            })
         }
         pub(crate) fn accept(
             &mut self,
@@ -492,18 +574,21 @@ pub(crate) mod fixture {
                 panic!("exact Sink response action absent")
             };
             assert!(!self.negotiation.ready());
-            self.assert_unlocked();
-            self.sink
-                .send_prepared_port_lease_response_until(
-                    response,
-                    self.negotiation.operation_deadline(),
-                )
-                .unwrap();
+            self.runtime.network_action(|| {
+                self.sink
+                    .send_prepared_port_lease_response_until(
+                        response,
+                        self.negotiation.operation_deadline(),
+                    )
+                    .unwrap()
+            });
             self.negotiation.commit_sink_response().unwrap();
-            let ReceivedControlMessage::PortLeaseResponse(response) = self
-                .source
-                .receive_control_message_until(self.negotiation.operation_deadline())
-                .unwrap()
+            let ReceivedControlMessage::PortLeaseResponse(response) =
+                self.runtime.network_action(|| {
+                    self.source
+                        .receive_control_message_until(self.negotiation.operation_deadline())
+                        .unwrap()
+                })
             else {
                 panic!("missing committed Sink response")
             };
@@ -548,10 +633,11 @@ pub(crate) mod fixture {
             self.source_runtime
                 .begin_route_start(self.route_id, wall_now())
                 .unwrap();
-            self.assert_unlocked();
-            self.source
-                .send_route_command(self.route_id, RouteCommandAction::Start)
-                .unwrap();
+            self.runtime.network_action(|| {
+                self.source
+                    .send_route_command(self.route_id, RouteCommandAction::Start)
+                    .unwrap()
+            });
             assert!(matches!(
                 self.receive_accept().unwrap(),
                 StereoNegotiationAction::None
@@ -574,6 +660,80 @@ pub(crate) mod fixture {
 mod pure {
     use super::*;
     use fixture::*;
+    #[test]
+    fn runtime_guard_oracle_allows_other_thread_ownership() {
+        let (runtime, _) = pure_prepared(wall_now());
+        let runtime = Arc::new(RuntimeMutex::new(runtime));
+        let worker_runtime = Arc::clone(&runtime);
+        let (held_tx, held_rx) = std::sync::mpsc::channel();
+        let (release_tx, release_rx) = std::sync::mpsc::channel();
+        let worker = std::thread::spawn(move || {
+            let guard = worker_runtime.lock().unwrap();
+            held_tx.send(()).unwrap();
+            release_rx.recv().unwrap();
+            drop(guard);
+        });
+        held_rx.recv().unwrap();
+        let calls = std::cell::Cell::new(0);
+        runtime.network_action(|| calls.set(calls.get() + 1));
+        assert_eq!(calls.get(), 1);
+        release_tx.send(()).unwrap();
+        worker.join().unwrap();
+    }
+
+    #[test]
+    fn runtime_guard_oracle_rejects_caller_before_boundary_and_clears_on_drop() {
+        let (runtime, _) = pure_prepared(wall_now());
+        let runtime = Arc::new(RuntimeMutex::new(runtime));
+        let alias = Arc::clone(&runtime);
+        let (other, _) = pure_prepared(wall_now());
+        let other = RuntimeMutex::new(other);
+        let calls = std::cell::Cell::new(0);
+        let guard = runtime.lock().unwrap();
+        let boundary = || alias.network_action(|| calls.set(calls.get() + 1));
+        assert!(std::panic::catch_unwind(std::panic::AssertUnwindSafe(boundary)).is_err());
+        assert_eq!(calls.get(), 0);
+        // A different Runtime on this same thread has a distinct identity.
+        other.network_action(|| calls.set(calls.get() + 1));
+        assert_eq!(calls.get(), 1);
+        drop(guard);
+        boundary();
+        assert_eq!(calls.get(), 2);
+        let guard = alias.lock().unwrap();
+        assert!(std::panic::catch_unwind(std::panic::AssertUnwindSafe(boundary)).is_err());
+        assert_eq!(calls.get(), 2);
+        drop(guard);
+    }
+
+    #[test]
+    fn runtime_guard_oracle_preserves_poison_and_tracks_recovered_guard() {
+        let (runtime, _) = pure_prepared(wall_now());
+        let runtime = Arc::new(RuntimeMutex::new(runtime));
+        let worker_runtime = Arc::clone(&runtime);
+        assert!(
+            std::thread::spawn(move || {
+                let _guard = worker_runtime.lock().unwrap();
+                panic!("deliberate fixture poison");
+            })
+            .join()
+            .is_err()
+        );
+        let guard = match runtime.lock() {
+            Ok(_) => panic!("poison must remain visible"),
+            Err(error) => error.into_inner(),
+        };
+        let calls = std::cell::Cell::new(0);
+        let boundary = || runtime.network_action(|| calls.set(calls.get() + 1));
+        assert!(std::panic::catch_unwind(std::panic::AssertUnwindSafe(boundary)).is_err());
+        assert_eq!(calls.get(), 0);
+        drop(guard);
+        boundary();
+        assert_eq!(calls.get(), 1);
+        assert!(runtime.lock().is_err());
+        boundary();
+        assert_eq!(calls.get(), 2);
+    }
+
     #[test]
     fn deferred_initial_source_acquire_preserves_both_claim_orders_and_exact_sink_reply() {
         use capyio_protocol::{
@@ -792,6 +952,24 @@ mod hosted {
     use super::*;
     use fixture::*;
     #[test]
+    fn runtime_guard_oracle_blocks_actual_send_before_consuming_request() {
+        let mut f = Fixture::new(true);
+        let runtime = Arc::clone(&f.runtime);
+        let guard = runtime.lock().unwrap();
+        assert!(f.pending_request.is_some());
+        assert!(
+            std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| { f.send_request(true) }))
+                .is_err()
+        );
+        // This is the first send argument, consumed only after the boundary
+        // check. The same real TLS send and receive must work after release.
+        assert!(f.pending_request.is_some());
+        drop(guard);
+        f.send_request(true);
+        assert!(f.pending_request.is_none());
+    }
+
+    #[test]
     fn ipc_stereo_supervisor_crossed_claims_both_control_roles_use_current_runtime() {
         for accepts in [false, true] {
             for response_first in [false, true] {
@@ -872,9 +1050,11 @@ mod hosted {
                 1_000,
             )
             .unwrap();
-        f.sink
-            .send_prepared_port_lease_request_until(other, f.negotiation.operation_deadline())
-            .unwrap();
+        f.runtime.network_action(|| {
+            f.sink
+                .send_prepared_port_lease_request_until(other, f.negotiation.operation_deadline())
+                .unwrap()
+        });
         f.source_response();
         let foreign = f.receive();
         assert!(f.accept(foreign).is_err());
@@ -909,9 +1089,11 @@ mod hosted {
             action,
             StereoNegotiationAction::SendLeaseResponse(_)
         ));
-        f.source
-            .send_route_command(f.route_id, RouteCommandAction::Stop)
-            .unwrap();
+        f.runtime.network_action(|| {
+            f.source
+                .send_route_command(f.route_id, RouteCommandAction::Stop)
+                .unwrap()
+        });
         let stop = f.receive();
         // A pending response is not authority to ignore Stop. Whether rejected
         // as uncommitted action or recognized as PeerStop, it is terminal.

@@ -376,6 +376,8 @@ mod tests {
             )),
             received_secure_audio_offer: None,
             secure_audio_offer_seen: false,
+            stereo_consent_receipts: crate::stereo_consent::ReceiptCache::default(),
+            stereo_prepared_receipts: crate::stereo_prepared::ReceiptCache::default(),
         };
         assert!(matches!(
             closed.authenticated_local_addr(),

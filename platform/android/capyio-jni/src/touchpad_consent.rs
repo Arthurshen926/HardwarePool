@@ -499,6 +499,10 @@ fn consent_port(runtime: &NodeRuntime, route: &Route) -> Option<PortRef> {
 }
 
 impl TouchpadConsentGate {
+    pub(crate) fn pending_deadline(&self, route: RouteId) -> Option<u64> {
+        self.pending.get(&route).copied()
+    }
+
     pub(crate) fn requires_confirmation(runtime: &NodeRuntime, route: &Route) -> bool {
         consent_port(runtime, route).is_some()
     }

@@ -23,3 +23,9 @@ path = "src/main.rs"
 [dev-dependencies]
 rcgen = { version = "=0.14.5", default-features = false, features = ["ring"] }
 capyio-testkit = { path = "../../../crates/capyio-testkit" }
+
+# Real portable bilateral library tests; no production dependency or device use.
+[target.'cfg(target_os = "linux")'.dev-dependencies]
+capyio-android-jni = { path = "../../android/capyio-jni" }
+capyio-control-credentials = { path = "../../../crates/capyio-control-credentials" }
+serde_json.workspace = true

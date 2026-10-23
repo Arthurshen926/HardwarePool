@@ -65,6 +65,15 @@ where
     G: DerefMut<Target = AndroidCatalogRuntimeV1>,
 {
     if let Ok(mut host) = access() {
+        // A callback may have switched hosts after admission. Never reconcile
+        // that replacement into an already registered bilateral Session.
+        if host
+            .check_unregistered_catalog_peer(link.peer_node_id())
+            .is_err()
+        {
+            link.close();
+            return;
+        }
         let _ = link.close_and_reconcile(&mut host.runtime);
     } else {
         link.close();
@@ -90,6 +99,7 @@ where
         let incoming = link.receive_catalog().map_err(|error| error.to_string())?;
         let (outgoing, revision) = {
             let mut host = access()?;
+            host.check_unregistered_catalog_peer(link.peer_node_id())?;
             link.apply_catalog(&mut host.runtime, incoming)
                 .map_err(|error| error.to_string())?;
             let selected = selected_sources(&host);
@@ -139,6 +149,7 @@ where
         let incoming = link.receive_catalog().map_err(|error| error.to_string())?;
         {
             let mut host = access()?;
+            host.check_unregistered_catalog_peer(link.peer_node_id())?;
             link.apply_catalog(&mut host.runtime, incoming)
                 .map_err(|error: CatalogLinkError| error.to_string())?;
         }

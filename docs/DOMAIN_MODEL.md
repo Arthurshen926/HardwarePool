@@ -143,3 +143,10 @@ Node, Adapter and Route IDs. Human text is never parsed for behavior.
 System projections, Panels, Recorders, ROS topics, USB/IP devices and virtual
 devices are expressed as Adapter-owned Capabilities and Ports. UI may group them
 by mechanism, but Core does not add a distinct lifecycle hierarchy for each.
+
+ADR 1569 adds an explicit Runtime-owned terminal retirement operation for a
+failed consent/preparation attempt. Its Failed + Revoked pair cannot be
+reauthorized through Runtime; callers need a new Route. The operation invalidates
+the data epoch, releases only that Route's leases and cancels its pending Start
+operations. This terminal operation is distinct from recoverable Offline and
+re-preparable Stopped states and does not change ordinary grant/recovery policy.

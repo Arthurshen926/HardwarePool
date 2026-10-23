@@ -1777,3 +1777,23 @@ and once-only Acquire/Start remain mandatory. Duplicate offers, failed TLS,
 revocation, Stop or reconnect cannot rebind or refresh admission. Selected-ID
 telemetry is not readiness or audibility. A wider production peer grant with a
 local-only timer does not substitute for future exact bilateral consent binding.
+
+### Dormant bilateral stereo consent receipts
+
+[ADR 1569](adr/1569-dormant-stereo-consent-receipts.md) adds decode-minted,
+instance-bound one-use receipt evidence and a dormant Android pre-stamp gate.
+Caller-created validated DTOs are not transport evidence. Original receipt/request
+anchors, exact Route/catalog identity, current control generation and fresh local
+approval bound preparation; shared clone lineage cannot approve twice. Partial
+failure uses target-only terminal Failed + Revoked retirement, not recoverable
+Offline/Stopped authority. Existing JNI/audio dispatch is unchanged; coherent
+bilateral library activation and production launcher integration remain pending.
+
+ADR 1570 adds dormant bilateral stereo library supervisors, not active JNI/CLI
+routing. Independent exact local approvals intersect before immutable Prepared.
+B2 preserves original monotonic caps and wall high-water through owner handoff;
+its persistent shared revocation gate is distinct from consumed prelaunch proof.
+Only registered B2 Routes receive its selection/control retirement policy.
+Authorized failures retire the target to Failed + Revoked before dedicated-session
+reconciliation, and source constructor failures return the retained Runtime and
+cleanup diagnostics. Other-session authority is not revoked by target cleanup.

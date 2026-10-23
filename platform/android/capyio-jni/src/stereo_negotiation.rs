@@ -30,6 +30,14 @@ use std::{
 /// Clones share one consumed claim, including failed prepare attempts.
 /// A broad legacy grant must be narrowed by its consent owner before capture.
 #[derive(Clone, Debug)]
+pub(crate) struct BilateralConsentBound {
+    pub(crate) receipt: Arc<capyio_control_link::StereoConsentReceipt>,
+    pub(crate) live_control: Arc<AtomicBool>,
+    pub(crate) control_generation: u64,
+    pub(crate) end: Instant,
+}
+
+#[derive(Clone, Debug)]
 pub struct StereoConsentStamp {
     consumed: Arc<AtomicBool>,
     original: Route,
@@ -37,6 +45,7 @@ pub struct StereoConsentStamp {
     endpoints: [EndpointAuthority; 2],
     consent_wall: u64,
     end: Instant,
+    bilateral: Option<BilateralConsentBound>,
 }
 impl StereoConsentStamp {
     /// Exact opt-in detection only; never infer stereo from a generic Speaker.
@@ -116,7 +125,39 @@ impl StereoConsentStamp {
             endpoints,
             consent_wall: now,
             end: instant + Duration::from_millis(remaining),
+            bilateral: None,
         })
+    }
+    /// Dormant bilateral-consent seam. Retain the first authenticated receipt's
+    /// monotonic cap instead of reconstructing a fresh cap at preparation.
+    #[allow(dead_code)] // Dormant until the bilateral JNI integration is wired.
+    pub(crate) fn capture_bounded(
+        runtime: &NodeRuntime,
+        route_id: RouteId,
+        now: u64,
+        instant: Instant,
+        authority: BilateralConsentBound,
+    ) -> Result<Self, String> {
+        if authority.end <= instant
+            || authority.end > authority.receipt.monotonic_deadline()
+            || !authority.receipt.is_live()
+            || !authority.live_control.load(Ordering::Acquire)
+            || authority.control_generation == 0
+        {
+            return Err("stereo original bilateral consent elapsed or retired".into());
+        }
+        let mut stamp = Self::capture(runtime, route_id, now, instant)?;
+        let mut expected = authority.receipt.status().route.clone();
+        expected.authorization = stamp.original.authorization;
+        if expected != stamp.original
+            || expiry(&stamp.original).map_err(|e| e.to_string())?
+                > expiry(&authority.receipt.status().route).map_err(|e| e.to_string())?
+        {
+            return Err("stereo bilateral receipt does not bind this grant".into());
+        }
+        stamp.end = stamp.end.min(authority.end);
+        stamp.bilateral = Some(authority);
+        Ok(stamp)
     }
     pub fn route_id(&self) -> RouteId {
         self.original.id
@@ -136,6 +177,15 @@ impl StereoConsentStamp {
         self.consumed
             .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
             .map_err(|_| "stereo original consent already consumed")?;
+        if let Some(authority) = &self.bilateral {
+            link.validate_stereo_consent_receipt(&authority.receipt)
+                .map_err(|e| e.to_string())?;
+            if !authority.live_control.load(Ordering::Acquire)
+                || authority.control_generation != control_generation
+            {
+                return Err("stereo bilateral receipt or control retired".into());
+            }
+        }
         let mut expected = self.original;
         expected.state = RouteState::Prepared;
         expected.selected_format = Some(FormatDescriptor::new(SECURE_AUDIO_STEREO_FORMAT));

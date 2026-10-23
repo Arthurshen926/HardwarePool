@@ -27,6 +27,15 @@ use std::{
     time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
 
+#[cfg(test)]
+thread_local! {
+    static FAIL_BILATERAL_ACQUIRE: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+#[cfg(test)]
+pub(crate) fn fail_next_bilateral_acquire() {
+    FAIL_BILATERAL_ACQUIRE.with(|flag| flag.set(true));
+}
+
 fn error(reason: impl ToString) -> io::Error {
     io::Error::other(reason.to_string())
 }
@@ -156,6 +165,8 @@ pub struct SecureStereoSourceOwner {
     terminal_cause: Option<&'static str>,
     terminal_at: Option<u64>,
     terminal_recorded: bool,
+    bilateral: bool,
+    cleanup_errors: Vec<String>,
 }
 impl SecureStereoSourceOwner {
     /// Both peers must independently approve the exact finite Prepared Route.
@@ -209,6 +220,51 @@ impl SecureStereoSourceOwner {
     }
 
     fn new_with_selection_until(
+        runtime: NodeRuntime,
+        link: CatalogControlLink,
+        identity: ControlTlsClientIdentity,
+        server_name: String,
+        admission: SecureStereoReceiverAssignedSourceAdmission,
+        original_consent_end: Instant,
+        stream_selection: StreamSelection,
+    ) -> io::Result<Self> {
+        Self::build_until(
+            runtime,
+            link,
+            identity,
+            server_name,
+            admission,
+            original_consent_end,
+            stream_selection,
+            None,
+        )
+        .map_err(|failure| failure.error)
+    }
+
+    /// Only the owning bilateral handshake can supply this original clock floor.
+    pub(crate) fn new_bilateral_until(
+        runtime: NodeRuntime,
+        link: CatalogControlLink,
+        identity: ControlTlsClientIdentity,
+        server_name: String,
+        admission: SecureStereoReceiverAssignedSourceAdmission,
+        original_consent_end: Instant,
+        wall_floor: u64,
+    ) -> Result<Self, Box<crate::SecureStereoSourceFailure>> {
+        Self::build_until(
+            runtime,
+            link,
+            identity,
+            server_name,
+            admission,
+            original_consent_end,
+            StreamSelection::ReceiverAssigned,
+            Some(wall_floor),
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn build_until(
         mut runtime: NodeRuntime,
         mut link: CatalogControlLink,
         identity: ControlTlsClientIdentity,
@@ -216,59 +272,132 @@ impl SecureStereoSourceOwner {
         admission: SecureStereoReceiverAssignedSourceAdmission,
         original_consent_end: Instant,
         stream_selection: StreamSelection,
-    ) -> io::Result<Self> {
-        validate_source_intent(&admission.pipewire_target, admission.lifetime)?;
-        let started = Instant::now();
-        let now = now_ms()?;
-        let original = runtime.route(admission.route_id).map_err(error)?.clone();
-        validate_prepared(&runtime, &original, admission.expected, now)?;
-        if link.tls_binding() != admission.expected
-            || link.peer_node_id() != original.sink.node_id
-            || link.authenticated_peer_certificate().map_err(error)?
-                != identity.expected_peer_certificate
-            || server_name.is_empty()
-            || server_name.len() > 253
-            || runtime
-                .route_port_lease_claim(original.id, original.source)
-                .is_some()
-        {
-            return Err(error(
-                "secure stereo requires the exact paired control and a fresh Source claim",
-            ));
-        }
-        let local_consent_end = original_consent_end
-            .min(started + admission.lifetime)
-            .min(started + Duration::from_millis(expiry(&original)? - now));
-        let remaining = local_consent_end
-            .checked_duration_since(started)
-            .filter(|remaining| *remaining > MAX_STALL)
-            .ok_or_else(|| error("original stereo Source consent elapsed"))?;
-        let local_wall_end = now
-            .checked_add(remaining.as_millis() as u64)
-            .ok_or_else(|| error("stereo Source deadline overflow"))?;
-        let session = runtime
-            .session(admission.expected.session_id)
-            .map_err(error)?
-            .clone();
-        let (source_catalog, source_adapter, sink_catalog, sink_adapter) =
-            catalogs(&runtime, &original)?;
-        let rate = SecureStereoPcmRateBudget::new(admission.lifetime).map_err(error)?;
-        runtime
-            .set_local_port_lease_policy(original.source, PortLeasePolicy::Exclusive)
-            .map_err(error)?;
-        let negotiation_end = local_consent_end.min(started + MAX_STALL);
-        let ttl = lease_ttl(local_wall_end, now)?;
-        let sink_request = match link.send_port_lease_request_until(
-            original.id,
-            original.sink,
-            PortLeaseAction::Acquire,
-            ttl,
+        wall_floor: Option<u64>,
+    ) -> Result<Self, Box<crate::SecureStereoSourceFailure>> {
+        // The Runtime remains owned here until every fallible preconstruction
+        // step succeeds. In particular, failed first Acquire cannot lose it.
+        let prepared = (|| -> io::Result<_> {
+            validate_source_intent(&admission.pipewire_target, admission.lifetime)?;
+            let started = Instant::now();
+            let now = now_ms()?;
+            if wall_floor.is_some_and(|floor| now < floor) {
+                return Err(error(
+                    "stereo consent wall clock regressed at owner handoff",
+                ));
+            }
+            let original = runtime.route(admission.route_id).map_err(error)?.clone();
+            validate_prepared(&runtime, &original, admission.expected, now)?;
+            if link.tls_binding() != admission.expected
+                || link.peer_node_id() != original.sink.node_id
+                || link.authenticated_peer_certificate().map_err(error)?
+                    != identity.expected_peer_certificate
+                || server_name.is_empty()
+                || server_name.len() > 253
+                || runtime
+                    .route_port_lease_claim(original.id, original.source)
+                    .is_some()
+            {
+                return Err(error(
+                    "secure stereo requires the exact paired control and a fresh Source claim",
+                ));
+            }
+            let local_consent_end = original_consent_end
+                .min(started + admission.lifetime)
+                .min(started + Duration::from_millis(expiry(&original)? - now));
+            let remaining = local_consent_end
+                .checked_duration_since(started)
+                .filter(|remaining| *remaining > MAX_STALL)
+                .ok_or_else(|| error("original stereo Source consent elapsed"))?;
+            let local_wall_end = now
+                .checked_add(remaining.as_millis() as u64)
+                .ok_or_else(|| error("stereo Source deadline overflow"))?;
+            let session = runtime
+                .session(admission.expected.session_id)
+                .map_err(error)?
+                .clone();
+            let (source_catalog, source_adapter, sink_catalog, sink_adapter) =
+                catalogs(&runtime, &original)?;
+            let rate = SecureStereoPcmRateBudget::new(admission.lifetime).map_err(error)?;
+            runtime
+                .set_local_port_lease_policy(original.source, PortLeasePolicy::Exclusive)
+                .map_err(error)?;
+            let negotiation_end = local_consent_end.min(started + MAX_STALL);
+            let ttl = lease_ttl(local_wall_end, now)?;
+            let mut send = || {
+                link.send_port_lease_request_until(
+                    original.id,
+                    original.sink,
+                    PortLeaseAction::Acquire,
+                    ttl,
+                    negotiation_end,
+                )
+            };
+            #[cfg(test)]
+            let sent = if wall_floor.is_some()
+                && FAIL_BILATERAL_ACQUIRE.with(|flag| flag.replace(false))
+            {
+                Err(CatalogLinkError::Closed)
+            } else {
+                send()
+            };
+            #[cfg(not(test))]
+            let sent = send();
+            let sink_request = match sent {
+                Ok(request) => request,
+                Err(reason) => {
+                    if wall_floor.is_none() {
+                        let _ = link.close_and_reconcile(&mut runtime);
+                    }
+                    return Err(error(reason));
+                }
+            };
+            Ok((
+                started,
+                now,
+                original,
+                local_consent_end,
+                local_wall_end,
+                session,
+                source_catalog,
+                source_adapter,
+                sink_catalog,
+                sink_adapter,
+                rate,
+                negotiation_end,
+                sink_request,
+            ))
+        })();
+        let (
+            started,
+            now,
+            original,
+            local_consent_end,
+            local_wall_end,
+            session,
+            source_catalog,
+            source_adapter,
+            sink_catalog,
+            sink_adapter,
+            rate,
             negotiation_end,
-        ) {
-            Ok(request) => request,
+            sink_request,
+        ) = match prepared {
+            Ok(parts) => parts,
             Err(reason) => {
-                let _ = link.close_and_reconcile(&mut runtime);
-                return Err(error(reason));
+                let cleanup_errors = if wall_floor.is_some() {
+                    crate::secure_capture_consent::retire_and_close(
+                        &mut runtime,
+                        &mut link,
+                        Some(admission.route_id),
+                    )
+                } else {
+                    Vec::new()
+                };
+                return Err(Box::new(crate::SecureStereoSourceFailure {
+                    error: reason,
+                    cleanup_errors,
+                    runtime,
+                }));
             }
         };
         Ok(Self {
@@ -309,7 +438,13 @@ impl SecureStereoSourceOwner {
             terminal_cause: None,
             terminal_at: None,
             terminal_recorded: false,
+            bilateral: wall_floor.is_some(),
+            cleanup_errors: Vec::new(),
         })
+    }
+    /// Bounded B2 cleanup diagnostics, including failures during error-driven Stop.
+    pub fn cleanup_errors(&self) -> &[String] {
+        &self.cleanup_errors
     }
     pub fn runtime(&self) -> &NodeRuntime {
         &self.runtime
@@ -806,6 +941,13 @@ impl SecureStereoSourceOwner {
         if let Some(pump) = &mut self.pump {
             pump.discard();
         }
+        let retirement = if self.bilateral {
+            self.runtime
+                .retire_route_authorization(self.original.id)
+                .map_err(error)
+        } else {
+            Ok(())
+        };
         let control = self
             .link
             .close_and_reconcile(&mut self.runtime)
@@ -832,7 +974,16 @@ impl SecureStereoSourceOwner {
         } else {
             Ok(())
         };
-        control.and(capture).and(network)
+        if self.bilateral {
+            for result in [&retirement, &control, &capture, &network] {
+                if let Err(reason) = result
+                    && self.cleanup_errors.len() < 4
+                {
+                    self.cleanup_errors.push(reason.to_string());
+                }
+            }
+        }
+        retirement.and(control).and(capture).and(network)
     }
 }
 impl Drop for SecureStereoSourceOwner {
@@ -847,7 +998,7 @@ fn validate_admission(admission: &SecureStereoSourceAdmission) -> io::Result<()>
     }
     validate_source_intent(&admission.pipewire_target, admission.lifetime)
 }
-fn validate_source_intent(target: &str, lifetime: Duration) -> io::Result<()> {
+pub(crate) fn validate_source_intent(target: &str, lifetime: Duration) -> io::Result<()> {
     CaptureEndpoint::SelectedSource(target.to_owned())
         .validate()
         .map_err(error)?;
@@ -916,7 +1067,7 @@ fn validate_current(
     catalogs(runtime, route)?;
     Ok(())
 }
-fn catalogs(
+pub(crate) fn catalogs(
     runtime: &NodeRuntime,
     route: &Route,
 ) -> io::Result<(

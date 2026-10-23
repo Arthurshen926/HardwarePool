@@ -636,3 +636,23 @@ without Java-chosen endpoints or leases. Read packs remaining PCM at array index
 zero; ACK retains the original logical record offset and actual aligned write
 count. Busy ACK retries never repeat a platform write. There is no new wire
 format, lease renewal or UDP fallback.
+
+### Dormant stereo consent evidence
+
+ADR 1569 adds no wire messages. Existing finite Authorized Draft
+RouteStatus records are retained as opaque authenticated-receipt evidence inside
+the control link, with exact private connection identity and first receive clocks.
+The bounded one-use cache does not relax generic import or grant local consent.
+The dormant Android gate rejects all media offers on this pre-stamp path. Active
+bilateral handshake sequencing is a separate integration/release gate.
+
+### Dormant bilateral stereo library ordering
+
+ADR 1570's opt-in supervisors use existing messages without changing generic
+status admission. Either endpoint may propose Pending, but the Linux Source's
+explicit finite Authorized Draft always precedes fresh Android approval. Android
+sends exact bounded Prepared, then Source Acquire; Linux narrows its own Draft,
+prepares locally and hands the same link to its Source owner without a Prepared
+echo or pre-acquired Source lease. Crossed Acquire and one Start advance epoch
+zero to one. Reverse Prepared evidence is minted by authenticated decode, not by
+a public DTO. Legitimate subsequent Starting/offers remain lifecycle traffic.

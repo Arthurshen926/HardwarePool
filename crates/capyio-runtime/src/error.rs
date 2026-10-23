@@ -26,6 +26,10 @@ pub enum RuntimeError {
     },
     #[error("Route {0} is unknown")]
     UnknownRoute(RouteId),
+    #[error("Route {0} authorization was terminally retired; create a new Route")]
+    RouteAuthorizationRetired(RouteId),
+    #[error("Route {0} has no local endpoint whose authorization can be retired")]
+    RouteAuthorizationNotLocal(RouteId),
     #[error("Route {0} already exists")]
     DuplicateRoute(RouteId),
     #[error("Adapter {adapter_id} is unknown on Node {node_id}")]

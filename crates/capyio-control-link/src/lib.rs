@@ -42,6 +42,8 @@ pub struct CatalogControlLink {
     host: PeerCatalogControlHost,
     received_secure_audio_offer: Option<(Route, capyio_protocol::SecureAudioDataOffer)>,
     secure_audio_offer_seen: bool,
+    stereo_consent_receipts: stereo_consent::ReceiptCache,
+    stereo_prepared_receipts: stereo_prepared::ReceiptCache,
 }
 
 /// One bounded, publication-filtered snapshot. A host must serialize publication
@@ -90,6 +92,11 @@ fn valid_controller_offer(offer: &v1::ControllerReceiverOffer) -> bool {
         && (8..=64).contains(&offer.token.len())
         && offer.token.bytes().all(|byte| byte.is_ascii_hexdigit())
 }
+
+mod stereo_consent;
+pub use stereo_consent::{StereoConsentControlIdentity, StereoConsentReceipt};
+mod stereo_prepared;
+pub use stereo_prepared::StereoPreparedReceipt;
 
 mod native_audio;
 pub use native_audio::NativeAudioWorkerPreparation;
@@ -226,6 +233,8 @@ impl CatalogControlLink {
             host: PeerCatalogControlHost::new(AdmittedPeerBinding::new(binding.session_id, peer)),
             received_secure_audio_offer: None,
             secure_audio_offer_seen: false,
+            stereo_consent_receipts: stereo_consent::ReceiptCache::default(),
+            stereo_prepared_receipts: stereo_prepared::ReceiptCache::default(),
         }
     }
 
@@ -419,7 +428,13 @@ impl CatalogControlLink {
                 return Err(error.into());
             }
         };
-        self.decode_control_message(bytes)
+        let decoded = self.decode_control_message(bytes);
+        if decoded.is_err() {
+            // Dormant receipts fail closed without changing legacy decode errors.
+            self.stereo_consent_receipts.invalidate();
+            self.stereo_prepared_receipts.invalidate();
+        }
+        decoded
     }
 
     /// One bounded nonblocking authenticated frame step. Partial frames stay in
@@ -562,6 +577,8 @@ impl CatalogControlLink {
                     // Any subsequent status invalidates unconsumed preparation.
                     self.received_secure_audio_offer = None;
                 }
+                self.observe_stereo_consent(&status);
+                self.observe_stereo_prepared(&status);
                 ReceivedControlMessage::RouteStatus(Box::new(status))
             }
             Some(v1::envelope::Payload::PortLeaseRequest(_)) => {
@@ -1192,6 +1209,8 @@ impl CatalogControlLink {
     }
 
     pub fn close(&mut self) {
+        self.stereo_consent_receipts.invalidate();
+        self.stereo_prepared_receipts.invalidate();
         self.received_secure_audio_offer = None;
         self.channel.take();
     }
@@ -1250,4 +1269,11 @@ pub enum CatalogLinkError {
     Protocol(#[from] capyio_protocol::ProtocolError),
     #[error(transparent)]
     Admission(#[from] ControlHostError),
+}
+
+impl Drop for CatalogControlLink {
+    fn drop(&mut self) {
+        self.stereo_consent_receipts.invalidate();
+        self.stereo_prepared_receipts.invalidate();
+    }
 }

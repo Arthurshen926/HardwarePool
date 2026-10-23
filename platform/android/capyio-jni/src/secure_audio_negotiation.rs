@@ -158,6 +158,9 @@ impl AndroidCatalogRuntimeV1 {
         if sessions.next().is_some() {
             return Err("ambiguous ready Sessions".into());
         }
+        if self.bilateral_stereo.owns_session(session.id) {
+            return Err("registered bilateral Session belongs to its supervisor".into());
+        }
         let (source, sink) =
             crate::audio_selection::select_secure_endpoints(&snapshot.local_node, peer)?;
         let id = self

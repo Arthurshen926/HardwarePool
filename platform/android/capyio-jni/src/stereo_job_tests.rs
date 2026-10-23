@@ -383,20 +383,21 @@ mod hosted {
             });
             let failures = Arc::new(AtomicUsize::new(0));
             let failure_count = Arc::clone(&failures);
-            fixture.assert_unlocked();
-            let job = StereoReceiveJob::start(
-                7,
-                JOB_GENERATION,
-                snapshot,
-                fixture.identity.clone(),
-                CONTROL_GENERATION,
-                StereoAdmissionGate::new(),
-                authority,
-                Arc::new(move || {
-                    failure_count.fetch_add(1, Ordering::AcqRel);
-                }),
-            )
-            .unwrap();
+            let job = fixture.runtime.network_action(|| {
+                StereoReceiveJob::start(
+                    7,
+                    JOB_GENERATION,
+                    snapshot,
+                    fixture.identity.clone(),
+                    CONTROL_GENERATION,
+                    StereoAdmissionGate::new(),
+                    authority,
+                    Arc::new(move || {
+                        failure_count.fetch_add(1, Ordering::AcqRel);
+                    }),
+                )
+                .unwrap()
+            });
             Self {
                 fixture,
                 job,
@@ -406,22 +407,25 @@ mod hosted {
             }
         }
         fn publish(&mut self) {
-            self.fixture.assert_unlocked();
-            self.fixture
-                .sink
-                .send_secure_stereo_audio_data_offer_until(
-                    self.job.snapshot().route(),
-                    self.job.offer(),
-                    fixture::wall_now(),
-                    self.job.operation_deadline(),
-                )
-                .unwrap();
+            self.fixture.runtime.network_action(|| {
+                self.fixture
+                    .sink
+                    .send_secure_stereo_audio_data_offer_until(
+                        self.job.snapshot().route(),
+                        self.job.offer(),
+                        fixture::wall_now(),
+                        self.job.operation_deadline(),
+                    )
+                    .unwrap()
+            });
             self.job.offer_committed().unwrap();
-            let ReceivedControlMessage::RouteStatus(status) = self
-                .fixture
-                .source
-                .receive_control_message_until(self.job.operation_deadline())
-                .unwrap()
+            let ReceivedControlMessage::RouteStatus(status) =
+                self.fixture.runtime.network_action(|| {
+                    self.fixture
+                        .source
+                        .receive_control_message_until(self.job.operation_deadline())
+                        .unwrap()
+                })
             else {
                 panic!("missing actual stereo media offer")
             };
@@ -431,20 +435,21 @@ mod hosted {
         }
         fn connect(&mut self, enable: bool) {
             self.publish();
-            self.fixture.assert_unlocked();
-            self.media = Some(
-                StereoAudioTlsChannel::connect_until(
-                    ControlTlsEndpoint {
-                        address: self.job.listener_address(),
-                        io_timeout: MAX_STEREO_OPERATION,
-                    },
-                    "localhost",
-                    self.fixture.source_identity.clone(),
-                    self.job.snapshot().binding(fixture::wall_now()).unwrap(),
-                    self.job.operation_deadline(),
+            self.fixture.runtime.network_action(|| {
+                self.media = Some(
+                    StereoAudioTlsChannel::connect_until(
+                        ControlTlsEndpoint {
+                            address: self.job.listener_address(),
+                            io_timeout: MAX_STEREO_OPERATION,
+                        },
+                        "localhost",
+                        self.fixture.source_identity.clone(),
+                        self.job.snapshot().binding(fixture::wall_now()).unwrap(),
+                        self.job.operation_deadline(),
+                    )
+                    .unwrap(),
                 )
-                .unwrap(),
-            );
+            });
             wait_until(|| self.job.state() != PENDING);
             assert_eq!(self.job.state(), BOUND);
             assert_eq!(self.job.metrics().records_admitted, 0);
@@ -482,7 +487,9 @@ mod hosted {
         }
         fn send(&mut self, sequence: u64) {
             let record = self.record(sequence);
-            self.media.as_mut().unwrap().send_record(&record).unwrap();
+            self.fixture
+                .runtime
+                .network_action(|| self.media.as_mut().unwrap().send_record(&record).unwrap());
         }
         fn permit(&self) -> (PcmReadPermit, [u8; 1920]) {
             let mut buffer = [0; 1920];
@@ -760,16 +767,18 @@ mod hosted {
             } else {
                 binding.epoch += 1;
             }
-            let result = StereoAudioTlsChannel::connect_until(
-                ControlTlsEndpoint {
-                    address: f.job.listener_address(),
-                    io_timeout: MAX_STEREO_OPERATION,
-                },
-                "localhost",
-                identity,
-                binding,
-                f.job.operation_deadline(),
-            );
+            let result = f.fixture.runtime.network_action(|| {
+                StereoAudioTlsChannel::connect_until(
+                    ControlTlsEndpoint {
+                        address: f.job.listener_address(),
+                        io_timeout: MAX_STEREO_OPERATION,
+                    },
+                    "localhost",
+                    identity,
+                    binding,
+                    f.job.operation_deadline(),
+                )
+            });
             assert!(result.is_err());
             f.terminal(FAILED);
             assert_eq!(f.job.metrics().records_admitted, 0);
@@ -806,23 +815,25 @@ mod hosted {
             }
             let runtime = Arc::clone(&fixture.runtime);
             let gate = StereoAdmissionGate::new();
-            let result = StereoReceiveJob::start(
-                7,
-                JOB_GENERATION,
-                snapshot,
-                identity,
-                generation,
-                gate.clone(),
-                Arc::new(move |snapshot| {
-                    snapshot.validate(
-                        &runtime.lock().unwrap(),
-                        CONTROL_GENERATION,
-                        fixture::wall_now(),
-                        Instant::now(),
-                    )
-                }),
-                Arc::new(|| panic!("rejected preparation spawned worker")),
-            );
+            let result = fixture.runtime.network_action(|| {
+                StereoReceiveJob::start(
+                    7,
+                    JOB_GENERATION,
+                    snapshot,
+                    identity,
+                    generation,
+                    gate.clone(),
+                    Arc::new(move |snapshot| {
+                        snapshot.validate(
+                            &runtime.lock().unwrap(),
+                            CONTROL_GENERATION,
+                            fixture::wall_now(),
+                            Instant::now(),
+                        )
+                    }),
+                    Arc::new(|| panic!("rejected preparation spawned worker")),
+                )
+            });
             assert!(result.is_err());
             assert!(!gate.is_open());
         }
@@ -834,14 +845,18 @@ mod hosted {
             f.connect(true);
             let mut wire = f.record(0);
             if replay {
-                f.media.as_mut().unwrap().send_record(&wire).unwrap();
+                f.fixture
+                    .runtime
+                    .network_action(|| f.media.as_mut().unwrap().send_record(&wire).unwrap());
                 let (permit, _) = f.permit();
                 f.ack(permit, 1920);
                 wait_until(|| f.job.metrics().records_accepted == 1);
             } else {
                 wire[1200] ^= 1;
             }
-            f.media.as_mut().unwrap().send_record(&wire).unwrap();
+            f.fixture
+                .runtime
+                .network_action(|| f.media.as_mut().unwrap().send_record(&wire).unwrap());
             f.terminal(FAILED);
             assert_eq!(f.job.metrics().records_accepted, u64::from(replay));
             assert_eq!(f.job.metrics().records_admitted, u64::from(replay));
@@ -867,7 +882,7 @@ mod hosted {
     #[test]
     fn ipc_stereo_job_weak_owner_callbacks_release_owner_and_job_after_finished_reap() {
         struct Owner {
-            runtime: Arc<Mutex<NodeRuntime>>,
+            runtime: Arc<fixture::RuntimeMutex>,
             gate: StereoAdmissionGate,
             job: OnceLock<Arc<StereoReceiveJob>>,
             authority_checks: AtomicUsize,
@@ -915,49 +930,55 @@ mod hosted {
                 }
             }
         });
-        fixture.assert_unlocked();
-        let job = StereoReceiveJob::start(
-            7,
-            JOB_GENERATION,
-            snapshot,
-            fixture.identity.clone(),
-            CONTROL_GENERATION,
-            owner.gate.clone(),
-            authority,
-            failure,
-        )
-        .unwrap();
+        let job = fixture.runtime.network_action(|| {
+            StereoReceiveJob::start(
+                7,
+                JOB_GENERATION,
+                snapshot,
+                fixture.identity.clone(),
+                CONTROL_GENERATION,
+                owner.gate.clone(),
+                authority,
+                failure,
+            )
+            .unwrap()
+        });
         let weak_job = Arc::downgrade(&job);
         assert!(owner.job.set(Arc::clone(&job)).is_ok());
-        fixture
-            .sink
-            .send_secure_stereo_audio_data_offer_until(
-                job.snapshot().route(),
-                job.offer(),
-                fixture::wall_now(),
-                job.operation_deadline(),
-            )
-            .unwrap();
+        fixture.runtime.network_action(|| {
+            fixture
+                .sink
+                .send_secure_stereo_audio_data_offer_until(
+                    job.snapshot().route(),
+                    job.offer(),
+                    fixture::wall_now(),
+                    job.operation_deadline(),
+                )
+                .unwrap()
+        });
         job.offer_committed().unwrap();
-        let ReceivedControlMessage::RouteStatus(status) = fixture
-            .source
-            .receive_control_message_until(job.operation_deadline())
-            .unwrap()
-        else {
+        let ReceivedControlMessage::RouteStatus(status) = fixture.runtime.network_action(|| {
+            fixture
+                .source
+                .receive_control_message_until(job.operation_deadline())
+                .unwrap()
+        }) else {
             panic!("missing actual stereo media offer")
         };
         assert_eq!(status.secure_audio_data, Some(job.offer()));
-        let media = StereoAudioTlsChannel::connect_until(
-            ControlTlsEndpoint {
-                address: job.listener_address(),
-                io_timeout: MAX_STEREO_OPERATION,
-            },
-            "localhost",
-            fixture.source_identity.clone(),
-            job.snapshot().binding(fixture::wall_now()).unwrap(),
-            job.operation_deadline(),
-        )
-        .unwrap();
+        let media = fixture.runtime.network_action(|| {
+            StereoAudioTlsChannel::connect_until(
+                ControlTlsEndpoint {
+                    address: job.listener_address(),
+                    io_timeout: MAX_STEREO_OPERATION,
+                },
+                "localhost",
+                fixture.source_identity.clone(),
+                job.snapshot().binding(fixture::wall_now()).unwrap(),
+                job.operation_deadline(),
+            )
+            .unwrap()
+        });
         wait_until(|| job.state() != PENDING);
         assert_eq!(job.state(), BOUND);
         assert!(owner.authority_checks.load(Ordering::Acquire) > 1);
@@ -1012,4 +1033,31 @@ mod hosted {
         );
         drop(media);
     }
+}
+
+/// Deterministic PCM boundary seam: the same registry gate retained by a B2
+/// supervisor must close callbacks synchronously, without invoking Runtime.
+#[test]
+fn bilateral_shared_registration_revokes_outstanding_pcm_read_and_ack() {
+    let registry = crate::stereo_supervisor::BilateralRegistry::default();
+    let route = capyio_core::RouteId::new();
+    let gate = registry
+        .register(route, capyio_core::SessionId::new())
+        .unwrap();
+    let mut job = bare_job(ENABLED);
+    Arc::get_mut(&mut job).unwrap().gate = gate;
+    put_record(&job);
+    let permit = read(&job);
+    let clone = registry.clone();
+    clone.invalidate(route);
+    assert!(
+        job.acknowledge(JOB_GENERATION, permit.token, permit.offset, 4)
+            .is_err()
+    );
+    assert!(
+        job.try_read(JOB_GENERATION, &mut [0; SECURE_STEREO_PCM_PAYLOAD_BYTES])
+            .is_err()
+    );
+    assert_eq!(job.accepted_bytes(), 0);
+    assert!(!job.gate().is_open());
 }

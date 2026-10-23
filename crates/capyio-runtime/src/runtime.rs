@@ -321,10 +321,52 @@ impl NodeRuntime {
                 .routes
                 .get_mut(&route_id)
                 .ok_or(RuntimeError::UnknownRoute(route_id))?;
+            if route.state == RouteState::Failed
+                && route.authorization == AuthorizationState::Revoked
+            {
+                return Err(RuntimeError::RouteAuthorizationRetired(route_id));
+            }
             route.authorize(expires_at_ms)?;
             route.state
         };
         self.emit(RuntimeEventKind::RouteChanged { route_id, state });
+        Ok(())
+    }
+
+    /// Irreversibly retires one locally owned Route after a failed consent or
+    /// preparation attempt. This is not recovery/renewal: a new Route is needed.
+    /// Only this Route's claims and pending Start operations are removed. Repeat
+    /// calls are idempotent and emit no additional events.
+    pub fn retire_route_authorization(&mut self, route_id: RouteId) -> Result<(), RuntimeError> {
+        let route = self
+            .routes
+            .get_mut(&route_id)
+            .ok_or(RuntimeError::UnknownRoute(route_id))?;
+        if route.source.node_id != self.local_node.id && route.sink.node_id != self.local_node.id {
+            return Err(RuntimeError::RouteAuthorizationNotLocal(route_id));
+        }
+        if route.state == RouteState::Failed && route.authorization == AuthorizationState::Revoked {
+            return Ok(());
+        }
+        route.authorization = AuthorizationState::Revoked;
+        route.state = RouteState::Failed;
+        // Zero is invalid for live data if the old epoch exhausted u64. This
+        // terminal Route can never start a new epoch or regain authorization.
+        route.epoch = route.epoch.checked_add(1).unwrap_or(0);
+        self.emit(RuntimeEventKind::RouteChanged {
+            route_id,
+            state: RouteState::Failed,
+        });
+        self.release_route_leases(route_id);
+        let starts = self.operations.records().filter_map(|record| {
+            (record.status == OperationStatus::Pending && matches!(record.operation, HostOperation::StartRoute { route_id: id } if id == route_id)).then_some(record.id)
+        }).collect::<Vec<_>>();
+        for operation in starts {
+            // IDs were collected from the bounded registry and only these
+            // pending records are changed by this deterministic transition.
+            let update = self.operations.cancel(operation)?;
+            self.emit_operation_update(operation, update);
+        }
         Ok(())
     }
 
@@ -1424,5 +1466,219 @@ mod draft_authorization_tests {
             matches!(runtime.restrict_draft_authorization(id, 200, 100), Err(RuntimeError::DraftAuthorizationLeasePresent(found)) if found == id)
         );
         assert_eq!(runtime.snapshot(), before);
+    }
+}
+
+#[cfg(test)]
+mod terminal_authorization_tests {
+    use super::*;
+    use capyio_core::*;
+
+    fn node(direction: PortDirection) -> (NodeDescriptor, PortRef) {
+        let mut node = NodeDescriptor::new(
+            NodeId::new(),
+            "retirement test",
+            Platform::Linux,
+            "test",
+            "test",
+            [ProtocolVersion::new(1, 0)],
+        );
+        let adapter_id = AdapterInstanceId::new();
+        let capability_id = CapabilityId::new();
+        let port_id = PortId::new();
+        node.add_adapter(AdapterInstanceDescriptor {
+            id: adapter_id,
+            adapter_type: "test.audio".into(),
+            display_name: "test".into(),
+            deployment_mode: AdapterDeploymentMode::InProcess,
+            version: "test".into(),
+            state: AdapterState::Ready,
+            health: AdapterHealth::Healthy,
+            owned_capabilities: Default::default(),
+            supported_route_modes: [RouteBackend::AdapterManaged].into_iter().collect(),
+        })
+        .unwrap();
+        let port = PortDescriptor {
+            id: port_id,
+            capability_id,
+            display_name: "test port".into(),
+            direction,
+            profile: ProfileId::audio_frames_v1(),
+            schema_id: None,
+            formats: vec![FormatDescriptor::new("test-pcm")],
+            qos_modes: [QosMode::Interactive].into_iter().collect(),
+            clock_domain: None,
+            availability: Availability::Available,
+            permission_requirement: PermissionRequirement::None,
+            interoperability_mode: InteroperabilityMode::AdapterManaged,
+        };
+        node.replace_adapter_catalog(
+            adapter_id,
+            vec![CapabilityDescriptor {
+                id: capability_id,
+                adapter_instance_id: adapter_id,
+                display_name: "test audio".into(),
+                class: CapabilityClass::Speaker,
+                availability: Availability::Available,
+                permission_requirement: PermissionRequirement::None,
+                metadata: Default::default(),
+                ports: [(port_id, port)].into_iter().collect(),
+            }],
+        )
+        .unwrap();
+        let reference = PortRef {
+            node_id: node.id,
+            capability_id,
+            port_id,
+        };
+        (node, reference)
+    }
+    fn fixture() -> (NodeRuntime, RouteId, PortRef) {
+        let (local, source) = node(PortDirection::Source);
+        let (peer, sink) = node(PortDirection::Sink);
+        let peer_id = peer.id;
+        let mut runtime = NodeRuntime::new(local).unwrap();
+        runtime.register_peer(peer, true).unwrap();
+        let session = runtime.open_session(peer_id).unwrap();
+        let route = runtime
+            .create_route(session, source, sink, RouteBackend::AdapterManaged)
+            .unwrap();
+        runtime.authorize_route(route, Some(10_000)).unwrap();
+        (runtime, route, source)
+    }
+    fn assert_terminal(runtime: &mut NodeRuntime, route: RouteId, source: PortRef) {
+        assert_eq!(
+            runtime.route(route).unwrap().authorization,
+            AuthorizationState::Revoked
+        );
+        assert_eq!(runtime.route(route).unwrap().state, RouteState::Failed);
+        let before = runtime.snapshot();
+        assert!(
+            matches!(runtime.authorize_route(route, Some(20_000)), Err(RuntimeError::RouteAuthorizationRetired(id)) if id == route)
+        );
+        assert!(runtime.renew_route_authorization(route, 20_000, 1).is_err());
+        assert!(
+            runtime
+                .prepare_route(
+                    route,
+                    Some(FormatDescriptor::new("test-pcm")),
+                    QosMode::Interactive,
+                    1
+                )
+                .is_err()
+        );
+        assert!(runtime.recover_route(route, 1).is_err());
+        assert!(
+            runtime
+                .acquire_route_port_lease(route, source, 2_000, 1)
+                .is_err()
+        );
+        assert!(runtime.begin_route_start(route, 1).is_err());
+        assert!(runtime.activate_route(route).is_err());
+        assert!(runtime.set_route_active(route, true, 1).is_err());
+        assert_eq!(runtime.snapshot(), before);
+        runtime.retire_route_authorization(route).unwrap();
+        assert_eq!(runtime.snapshot(), before);
+    }
+    #[test]
+    fn terminal_retirement_cleans_partial_authorized_draft_and_cannot_restart() {
+        let (mut runtime, route, source) = fixture();
+        let epoch = runtime.route(route).unwrap().epoch;
+        runtime.retire_route_authorization(route).unwrap();
+        assert_ne!(runtime.route(route).unwrap().epoch, epoch);
+        assert_terminal(&mut runtime, route, source);
+    }
+    #[test]
+    fn terminal_retirement_only_releases_target_and_cancels_its_pending_start() {
+        let (mut runtime, route, source) = fixture();
+        runtime
+            .set_local_port_lease_policy(source, PortLeasePolicy::Shared { max_routes: 2 })
+            .unwrap();
+        runtime
+            .acquire_route_port_lease(route, source, 5_000, 1)
+            .unwrap();
+        runtime
+            .prepare_route(
+                route,
+                Some(FormatDescriptor::new("test-pcm")),
+                QosMode::Interactive,
+                1,
+            )
+            .unwrap();
+        let original = runtime.route(route).unwrap().clone();
+        let other = runtime
+            .create_route(
+                original.session_id,
+                original.source,
+                original.sink,
+                original.backend,
+            )
+            .unwrap();
+        runtime.authorize_route(other, Some(10_000)).unwrap();
+        runtime
+            .acquire_route_port_lease(other, source, 4_000, 1)
+            .unwrap();
+        let other_claim = *runtime.route_port_lease_claim(other, source).unwrap();
+        let other_before = runtime.route(other).unwrap().clone();
+        let pending = runtime
+            .begin_host_operation(HostOperation::StartRoute { route_id: route })
+            .unwrap();
+        let other_pending = runtime
+            .begin_host_operation(HostOperation::StartRoute { route_id: other })
+            .unwrap();
+        runtime.retire_route_authorization(route).unwrap();
+        assert!(runtime.route_port_lease_claim(route, source).is_none());
+        assert_eq!(runtime.route(other).unwrap(), &other_before);
+        assert_eq!(
+            runtime.route_port_lease_claim(other, source),
+            Some(&other_claim)
+        );
+        assert_eq!(
+            runtime.host_operation(other_pending).unwrap().status,
+            OperationStatus::Pending
+        );
+        assert_eq!(
+            runtime.host_operation(pending).unwrap().status,
+            OperationStatus::Cancelled
+        );
+        let before_late = runtime.snapshot();
+        assert_eq!(
+            runtime
+                .complete_host_operation(
+                    pending,
+                    HostOperationCompletion::Succeeded {
+                        output: crate::HostOperationOutput::RouteStarted
+                    }
+                )
+                .unwrap(),
+            OperationUpdate::AlreadyTerminal(OperationStatus::Cancelled)
+        );
+        assert_eq!(runtime.snapshot(), before_late);
+        assert_terminal(&mut runtime, route, source);
+    }
+    #[test]
+    fn terminal_retirement_unknown_and_nonlocal_targets_do_not_mutate() {
+        let (mut runtime, route, _) = fixture();
+        let before = runtime.snapshot();
+        assert!(matches!(
+            runtime.retire_route_authorization(RouteId::new()),
+            Err(RuntimeError::UnknownRoute(_))
+        ));
+        assert_eq!(runtime.snapshot(), before);
+        // Deterministic ownership-boundary fixture: no local endpoint.
+        runtime.routes.get_mut(&route).unwrap().source.node_id = NodeId::new();
+        let before = runtime.snapshot();
+        assert!(
+            matches!(runtime.retire_route_authorization(route), Err(RuntimeError::RouteAuthorizationNotLocal(id)) if id == route)
+        );
+        assert_eq!(runtime.snapshot(), before);
+    }
+    #[test]
+    fn terminal_retirement_exhausted_epoch_becomes_invalid_zero_not_reusable() {
+        let (mut runtime, route, source) = fixture();
+        runtime.routes.get_mut(&route).unwrap().epoch = u64::MAX;
+        runtime.retire_route_authorization(route).unwrap();
+        assert_eq!(runtime.route(route).unwrap().epoch, 0);
+        assert_terminal(&mut runtime, route, source);
     }
 }

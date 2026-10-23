@@ -634,7 +634,9 @@ dependencies = [
 name = "capyio-linux-audio"
 version = "0.1.0"
 dependencies = [
+ "capyio-android-jni",
  "capyio-audio",
+ "capyio-control-credentials",
  "capyio-control-link",
  "capyio-control-tls",
  "capyio-core",
@@ -643,6 +645,7 @@ dependencies = [
  "capyio-runtime",
  "capyio-testkit",
  "rcgen",
+ "serde_json",
 ]
 
 [[package]]
