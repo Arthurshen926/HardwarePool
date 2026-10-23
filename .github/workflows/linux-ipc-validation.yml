@@ -135,7 +135,7 @@ jobs:
         run: |
           set -euo pipefail
           cargo test --locked -p capyio-control-link --doc -- --color never | tee "$RUNNER_TEMP/prepared-control-doc-tests.txt"
-          grep -F 'test result: ok. 4 passed; 0 failed; 0 ignored;' "$RUNNER_TEMP/prepared-control-doc-tests.txt"
+          grep -F 'test result: ok. 6 passed; 0 failed; 0 ignored;' "$RUNNER_TEMP/prepared-control-doc-tests.txt"
       - name: Require finite IPC regression tests
         run: |
           set -euo pipefail
