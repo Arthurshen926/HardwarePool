@@ -50,6 +50,26 @@ jobs:
           timeout --signal=TERM --kill-after=10s 600s cargo test --locked -p capyio-node --features paired-store --test linux_paired_store --test linux_camera --test linux_touchpad -- --test-threads=1
           cargo test --locked -p capyio-node --features paired-store --bin capyio-node paired_store_cli_tests
           cargo clippy --locked -p capyio-node -p capyio-linux-host --features paired-store --all-targets -- -D warnings
+      - name: Require explicit bilateral stereo entry with private paired store
+        run: |
+          set -euo pipefail
+          command -v dbus-daemon
+          cargo test --locked -p capyio-node --features paired-store --test linux_secure_stereo_entry -- --list --color never | tee "$RUNNER_TEMP/stereo-entry-tests.txt"
+          cat > "$RUNNER_TEMP/stereo-entry-required.txt" <<'TESTS'
+          node_stereo_requires_fresh_bilateral_approval_then_crosses_claims_and_start
+          node_stereo_wrong_request_or_route_never_grants
+          node_stereo_stop_without_approval_and_terminal_eof_never_capture
+          node_stereo_android_denial_and_original_short_expiry_retire_without_media
+          node_stereo_rejects_unpaired_and_invalid_configuration_before_credentials_or_network
+          TESTS
+          while IFS= read -r name; do
+            grep -Fx "$name: test" "$RUNNER_TEMP/stereo-entry-tests.txt"
+          done < "$RUNNER_TEMP/stereo-entry-required.txt"
+          timeout --signal=TERM --kill-after=10s 240s cargo test --locked -p capyio-node --features paired-store --test linux_secure_stereo_entry -- --test-threads=1 --color never | tee "$RUNNER_TEMP/stereo-entry-results.txt"
+          while IFS= read -r name; do
+            grep -Fx "test $name ... ok" "$RUNNER_TEMP/stereo-entry-results.txt"
+          done < "$RUNNER_TEMP/stereo-entry-required.txt"
+          grep -F 'test result: ok. 5 passed; 0 failed; 0 ignored;' "$RUNNER_TEMP/stereo-entry-results.txt"
       - name: Require read-only authenticated catalog Node and terminal proof
         run: |
           set -euo pipefail
